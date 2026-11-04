@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+.output/
+
+# Cloudflare Workers local state and secrets
+.wrangler/
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+!.env.example
+
+# Logs and caches
+*.log
+.cache/
+coverage/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
