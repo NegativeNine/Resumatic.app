@@ -44,8 +44,11 @@ One package and one deploy: the React app, the API, both Durable Object classes 
 
 ```text
 resumatic.app/
+├── .github/workflows/ci.yml  test on every push; deploy main to staging
 ├── wrangler.jsonc            one Worker: assets, API, 2 Durable Object classes, 2 Workflows
 ├── vite.config.ts            React app + Worker through the Cloudflare Vite plugin
+├── vitest.config.ts          unit tests in Node, integration tests in workerd
+├── index.html                Vite entry page for the React app
 ├── package.json
 ├── src/
 │   ├── worker/
@@ -358,7 +361,7 @@ One `wrangler.jsonc` declares the whole system: two Durable Object classes, two 
     { "name": "tailor", "binding": "TAILOR", "class_name": "TailorWorkflow" }
   ],
   "r2_buckets": [{ "binding": "FILES", "bucket_name": "resumatic-files" }],
-  "ai": { "binding": "AI" },
+  "ai": { "binding": "AI", "remote": true },
   "browser": { "binding": "BROWSER" },
   "vars": {
     "CF_ACCOUNT_ID": "<account-id>",
@@ -379,9 +382,10 @@ One `wrangler.jsonc` declares the whole system: two Durable Object classes, two 
 
 - Set each secret with `wrangler secret put`; nothing secret sits in the config file.
 - Embeddings and the reranker use the `AI` binding with `{ gateway: { id: AI_GATEWAY_ID, collectLog: false } }`, so those calls leave no log entry holding career text.
-- Staging is a second Worker, deployed with `wrangler deploy --env staging`. Its `env.staging` block gives it its own name, R2 bucket, Workflow names and a one-minute `SWEEP_DELAY_MS`, so staging runs never touch production vaults.
+- Staging is a second Worker, `resumatic-staging`, built with `CLOUDFLARE_ENV=staging vite build` and deployed with `wrangler deploy`; the Vite plugin fixes the environment at build time. Its `env.staging` block repeats the bindings, which environments do not inherit, with its own R2 bucket, Workflow names and a one-minute `SWEEP_DELAY_MS`.
 - Version preview URLs are no substitute: Cloudflare does not generate them for Workers that implement a Durable Object.
 - Every release goes out through `wrangler deploy`: the docs say gradual deployments are not supported for a Worker that declares `exports`.
+- Workers AI runs only remotely, so local dev keeps remote bindings off unless asked: `npm run dev:remote`, after `wrangler login`.
 
 ## Testing and build order
 
@@ -394,7 +398,7 @@ M3's gate is the one that matters most: tailoring does not ship while any plante
 | Layer | What it proves | Tool | Runs |
 | --- | --- | --- | --- |
 | Unit | Grounding checks, cookie signing, location mapping | Vitest in Node | Every commit |
-| Integration | Sign-in reuses one vault; `/api/*` never calls the Directory; a destroyed vault refuses old cookies; Workflow steps are idempotent | `@cloudflare/vitest-pool-workers`, with recorded model responses | Every commit |
+| Integration | Sign-in reuses one vault; `/api/*` never calls the Directory; a destroyed vault refuses old cookies; Workflow steps are idempotent | `@cloudflare/vitest-plugin`, with recorded model responses | Every commit |
 | Evals | No planted fabrication reaches a resume: skills the job wants but the user lacks, inflated numbers, raised seniority, instructions hidden in a job description | Vitest against live models through AI Gateway | Every prompt or model change |
 | Staging | Deletion end to end, including Workflow termination and the second R2 sweep | The staging Worker | Before each release |
 

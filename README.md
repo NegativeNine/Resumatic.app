@@ -2,7 +2,7 @@
 
 An agentic resume builder that tailors a resume to each job description using only experience the user has actually provided. It breaks everything a user uploads into small, source-backed facts, then builds every resume from those facts alone, with a verifier that blocks any claim the facts do not support. An opt-in recruiter marketplace, planned for later phases, lets verified recruiters meet candidates whose experience is backed by evidence.
 
-**Status: design.** This repository holds the design documents. Code starts with v1, planned in the [v1 codebase plan](docs/v1-codebase-plan.md). The November 2026 review found the seeker product sound and reworked the marketplace; the marketplace's biggest remaining risks are commercial and legal, so it is gated on a paid pilot and on decisions by counsel.
+**Status: v1, milestone M0.** The project skeleton is in place: the React app and Worker, empty Directory and Vault Durable Objects, both Workflows, tests and CI. Next is M1, accounts and deletion, as set out in the [v1 codebase plan](docs/v1-codebase-plan.md). The November 2026 review found the seeker product sound and reworked the marketplace; the marketplace's biggest remaining risks are commercial and legal, so it is gated on a paid pilot and on decisions by counsel.
 
 ## Documents
 
@@ -21,6 +21,24 @@ Diagrams are in [docs/diagrams](docs/diagrams), rendered to SVG from the living 
 - **Grounded generation.** Employers, titles, dates and degrees are rendered from records by code. Models write only bullet and summary text, every claim must cite stored facts, and deterministic checks plus an independent judge fail closed to the user's own words.
 - **Gaps become questions, not content.** A job requirement with no supporting evidence produces a question for the user, never an invented bullet.
 - **A consent-first marketplace.** Candidates who opt in appear to verified recruiters as pseudonymous, evidence-backed cards. Recruiters pay when a candidate accepts an introduction; seekers never pay to be seen, and their data is never sold.
+
+## Development
+
+Requires Node 22.
+
+```sh
+npm install         # also generates worker-configuration.d.ts with wrangler types
+npm run dev         # app and API on http://localhost:5173, no Cloudflare login needed
+npm test            # unit tests in Node, integration tests inside workerd
+npm run typecheck
+```
+
+`npm run dev:remote` turns on remote bindings, which Workers AI needs from M2 on; run `npx wrangler login` first. The `.npmrc` sets `legacy-peer-deps`, because npm's resolver currently crashes on this dependency tree's peer set.
+
+**Staging.** Every push to `main` runs the tests, builds with `CLOUDFLARE_ENV=staging`, deploys the `resumatic-staging` Worker and checks `/api/health` and the app. Before the first deploy:
+
+1. Create the bucket: `npx wrangler r2 bucket create resumatic-files-staging`.
+2. In GitHub, add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` as secrets of the repository's `staging` environment. The token needs permission to edit Workers and R2 in that account.
 
 ## Planned layout
 

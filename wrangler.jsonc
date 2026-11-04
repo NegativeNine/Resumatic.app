@@ -1,0 +1,62 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "resumatic",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // The Vite plugin supplies the assets directory at build time.
+  "assets": {
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/auth/*", "/admin/*"]
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "DIRECTORY", "class_name": "Directory" },
+      { "name": "VAULT", "class_name": "Vault" }
+    ]
+  },
+  // Declarative Durable Object lifecycle; replaces the legacy migrations array.
+  // Environments inherit this block.
+  "exports": {
+    "Directory": { "type": "durable-object", "storage": "sqlite" },
+    "Vault": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "workflows": [
+    { "name": "distill", "binding": "DISTILL", "class_name": "DistillWorkflow" },
+    { "name": "tailor", "binding": "TAILOR", "class_name": "TailorWorkflow" }
+  ],
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "resumatic-files" }],
+  "ai": { "binding": "AI", "remote": true },
+  "browser": { "binding": "BROWSER" },
+  "vars": {
+    // Where the Directory is pinned on its first request. Final choice is made at launch.
+    "DIRECTORY_HINT": "enam",
+    // Delay before the second R2 sweep after an account deletion.
+    "SWEEP_DELAY_MS": "3600000"
+  },
+  "observability": { "logs": { "enabled": true } },
+  "env": {
+    // Build with CLOUDFLARE_ENV=staging, then run wrangler deploy. Deploys as the Worker "resumatic-staging".
+    // Bindings, Workflows and vars are not inherited, so they are repeated with staging names.
+    "staging": {
+      "durable_objects": {
+        "bindings": [
+          { "name": "DIRECTORY", "class_name": "Directory" },
+          { "name": "VAULT", "class_name": "Vault" }
+        ]
+      },
+      "workflows": [
+        { "name": "distill-staging", "binding": "DISTILL", "class_name": "DistillWorkflow" },
+        { "name": "tailor-staging", "binding": "TAILOR", "class_name": "TailorWorkflow" }
+      ],
+      "r2_buckets": [{ "binding": "FILES", "bucket_name": "resumatic-files-staging" }],
+      "ai": { "binding": "AI", "remote": true },
+      "browser": { "binding": "BROWSER" },
+      "vars": {
+        "DIRECTORY_HINT": "enam",
+        "SWEEP_DELAY_MS": "60000"
+      }
+    }
+  }
+}
