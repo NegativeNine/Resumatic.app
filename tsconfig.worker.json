@@ -17,10 +17,15 @@
   },
   "include": [
     "worker-configuration.d.ts",
+    "src/env.d.ts",
     "src/worker",
     "src/directory",
     "src/vault",
     "src/workflows",
+    "src/pipeline",
+    "src/grounding",
+    "src/ai",
+    "src/render",
     "src/shared"
   ]
 }

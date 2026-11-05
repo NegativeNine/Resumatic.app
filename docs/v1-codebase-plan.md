@@ -44,18 +44,26 @@ One package and one deploy: the React app, the API, both Durable Object classes 
 
 ```text
 resumatic.app/
-├── .github/workflows/ci.yml  test on every push; deploy main to staging
+├── .github/workflows/
+│   ├── ci.yml                test on every push; deploy main to staging, then the end-to-end check
+│   └── evals.yml             no-fabrication evals on prompt, pipeline or grounding changes, and nightly
 ├── wrangler.jsonc            one Worker: assets, API, 2 Durable Object classes, 2 Workflows
 ├── vite.config.ts            React app + Worker through the Cloudflare Vite plugin
-├── vitest.config.ts          unit tests in Node, integration tests in workerd
+├── vitest.config.ts          unit tests in Node, integration tests in workerd, evals on request
 ├── index.html                Vite entry page for the React app
+├── public/_headers           CSP and other headers for the static app
+├── scripts/e2e-staging.mjs   end-to-end check against the deployed staging Worker
 ├── package.json
 ├── src/
+│   ├── env.d.ts              secrets, which wrangler types cannot see
 │   ├── worker/
 │   │   ├── index.ts          fetch handler; exports Directory, Vault and both Workflows
 │   │   ├── routes.ts         Hono routes: /auth/*, /api/*, /admin/*
 │   │   ├── session.ts        sign and verify the session cookie (HMAC-SHA256)
-│   │   └── oidc.ts           Google sign-in: redirect, code exchange, ID-token check
+│   │   ├── oidc.ts           Google sign-in: redirect, code exchange, ID-token check
+│   │   ├── jwt.ts            RS256 token verification against a cached key set
+│   │   ├── access.ts         Cloudflare Access token check for /admin/*
+│   │   └── crypto.ts         base64url, HMAC tokens, constant-time comparison
 │   ├── directory/            control plane
 │   │   ├── directory.ts      class Directory extends DurableObject
 │   │   └── schema.ts         tables and migrations, run on wake
@@ -65,26 +73,35 @@ resumatic.app/
 │   │   └── search.ts         cosine search over the vault's own vectors
 │   ├── workflows/
 │   │   ├── distill.ts        class DistillWorkflow extends WorkflowEntrypoint
-│   │   └── tailor.ts         class TailorWorkflow extends WorkflowEntrypoint
+│   │   ├── tailor.ts         class TailorWorkflow extends WorkflowEntrypoint
+│   │   └── steps.ts          retry settings; final errors become NonRetryableError
+│   ├── pipeline/             the steps' logic, with models passed in, so evals run it from Node
+│   │   ├── distill.ts        extract facts and drop what the document does not support
+│   │   └── tailor.ts         analyze, select, write, verify, compose
 │   ├── grounding/            pure TypeScript: no Cloudflare imports, no I/O
 │   │   ├── quote.ts          a quote must appear verbatim in its source
 │   │   ├── claims.ts         numbers, names and scope verbs must match the evidence
-│   │   └── verdict.ts        fail closed: keep, repair once, or fall back to the fact
+│   │   └── verdict.ts        a line's citations and claims; the fallback fact
 │   ├── ai/
+│   │   ├── models.ts         the Models interface, model routing, and the setModels test seam
 │   │   ├── llm.ts            one call path to chat models through AI Gateway, JSON out
-│   │   ├── prompts.ts        extract, analyze, write, judge
-│   │   └── vectors.ts        bge-m3 embeddings and the bge reranker on Workers AI
+│   │   ├── prompts.ts        extract, analyze, write, judge, repair, with their output schemas
+│   │   └── vectors.ts        bge-m3 embeddings, the bge reranker and toMarkdown on Workers AI
 │   ├── render/
 │   │   ├── template.ts       resume JSON to HTML; headers printed from vault rows
-│   │   └── pdf.ts            HTML to PDF with Browser Run
+│   │   └── pdf.ts            HTML to PDF with Browser Run, and the setPdfRenderer test seam
 │   ├── shared/
-│   │   ├── types.ts          Fact, Evidence, ResumeLine and RPC argument types
+│   │   ├── api.ts            the HTTP contract: routes, request and response types, limits
+│   │   ├── errors.ts         AppError codes that survive RPC, and their HTTP statuses
+│   │   ├── types.ts          RPC argument and pipeline types
 │   │   ├── stubs.ts          directory(env) and vault(env, vaultId) stub helpers
+│   │   ├── r2.ts             R2 keys under vaults/<vaultId>/, and prefix deletion
 │   │   └── location.ts       request.cf to a location hint
 │   └── web/                  React app, built by Vite, served as static assets
 └── test/
-    ├── unit/                 grounding, session, location
-    ├── integration/          Directory, Vault and Workflows inside workerd
+    ├── unit/                 grounding, sessions, tokens, chat client, template, pipelines
+    ├── integration/          routes, Directory, Vault and both Workflows inside workerd
+    ├── support/              the fixture resume, stand-in models, test signing keys
     └── evals/                resumes and job descriptions with planted fabrication traps
 ```
 
@@ -115,7 +132,12 @@ CREATE TABLE vaults (
   user_id    TEXT NOT NULL UNIQUE REFERENCES users (user_id),
   hint       TEXT NOT NULL,             -- the location hint used at creation
   state      TEXT NOT NULL,             -- creating | active | deleting | swept
+  swept_at   INTEGER,                   -- first R2 sweep; the rows go SWEEP_DELAY_MS later
   updated_at INTEGER NOT NULL
+);
+CREATE TABLE invites (
+  email      TEXT PRIMARY KEY,          -- lower case
+  created_at INTEGER NOT NULL
 );
 ```
 
@@ -123,14 +145,17 @@ CREATE TABLE vaults (
 // src/directory/directory.ts
 export class Directory extends DurableObject<Env> {
   /** Find or create the user and their vault. Safe to repeat. */
-  signIn(p: { provider: 'google'; subject: string; email: string; hint: LocationHint }):
+  signIn(p: { provider: 'google' | 'test'; subject: string; email: string; hint: LocationHint }):
     Promise<{ userId: string; vaultId: string }>;
 
   /** Mark the account for deletion; alarm() does the work. */
   deleteAccount(userId: string): Promise<void>;
 
-  /** Admin: page through vaults in ID order. */
+  /** Admin: page through vaults in ID order, and manage the beta invite list. */
   listVaults(p: { after?: string; limit: number }): Promise<VaultRow[]>;
+  addInvite(email: string): Promise<void>;
+  removeInvite(email: string): Promise<void>;
+  listInvites(): Promise<{ email: string; createdAt: number }[]>;
 
   /** Runs pending deletions and retries any that failed. */
   alarm(): Promise<void>;
@@ -141,7 +166,8 @@ export class Directory extends DurableObject<Env> {
 - It then calls `init(userId)` on `VAULT.get(id, { locationHint: hint })`. That first call creates the vault near the user, and the vault does not move after that.
 - `init` is safe to repeat, so a sign-in that finds a vault still `creating` calls it again, then marks it `active`.
 - Session cookies last seven days, so an active user reaches the Directory about once a week. Deletion and admin listing are its only other callers.
-- `/admin/vaults` calls `listVaults` and sits behind Cloudflare Access; the Worker also verifies the Access token on each call.
+- While `INVITE_ONLY` is `"true"`, a new Google identity needs an invite. Staging's test sign-in (`provider: 'test'`, behind the `TEST_SIGNIN_KEY` secret) skips the list so the end-to-end check can make fresh accounts.
+- `/admin/vaults` and `/admin/invites` call the Directory and sit behind Cloudflare Access; the Worker also verifies the Access token on each call.
 
 ## Data plane: the Vault
 
@@ -159,6 +185,7 @@ CREATE TABLE sources (
   id TEXT PRIMARY KEY, filename TEXT NOT NULL, r2_key TEXT NOT NULL,
   markdown TEXT,                              -- set by Distill's convert step
   state TEXT NOT NULL,                        -- queued | ready | failed
+  error TEXT,                                 -- a short message for the user; never career text
   run_id TEXT, created_at INTEGER NOT NULL
 );
 CREATE TABLE evidence (
@@ -171,6 +198,7 @@ CREATE TABLE roles (
   kind TEXT NOT NULL,                         -- job | education | project | volunteer
   org TEXT NOT NULL, title TEXT, start_date TEXT, end_date TEXT,
   evidence_id TEXT REFERENCES evidence (id),
+  source_id TEXT,                             -- the upload it came from
   state TEXT NOT NULL                         -- proposed | confirmed | rejected
 );
 CREATE TABLE facts (
@@ -180,6 +208,7 @@ CREATE TABLE facts (
   text TEXT NOT NULL,
   level TEXT,                                 -- contributed | implemented | led | owned | founded
   evidence_id TEXT REFERENCES evidence (id),  -- NULL when the user typed the fact
+  source_id TEXT,                             -- the upload it came from
   origin TEXT NOT NULL,                       -- extracted | user
   state TEXT NOT NULL,                        -- proposed | confirmed | rejected
   vector BLOB,                                -- bge-m3: 1,024 float32 values
@@ -196,10 +225,12 @@ CREATE TABLE resumes (
   application_id TEXT NOT NULL REFERENCES applications (id),
   state TEXT NOT NULL,                        -- running | ready | failed
   step TEXT,                                  -- last finished Tailor step, shown while polling
+  error TEXT,                                 -- a short message for the user when state is failed
   selection TEXT, report TEXT,                -- JSON
-  draft TEXT,                                 -- JSON lines before verify; never shown
-  body TEXT,                                  -- JSON verified lines; shown once ready
+  draft TEXT, verified TEXT,                  -- JSON lines before and after verify; never shown
+  body TEXT,                                  -- JSON resume built from verified lines; shown once ready
   version INTEGER NOT NULL DEFAULT 1,         -- bumped by editLine; part of the PDF's R2 key
+  quota_month TEXT,                           -- the month this run was counted against, for refunds
   run_id TEXT, created_at INTEGER NOT NULL
 );
 ```
@@ -217,39 +248,49 @@ export class Vault extends DurableObject<Env> {
   checkSession(who: Who): Promise<void>;                       // throws unless who matches; run before deletion
   signOutEverywhere(who: Who): Promise<void>;                  // bumps session_gen
 
-  // User calls: one per /api route
+  // User calls: one per /api route (types in src/shared/api.ts)
+  me(who: Who): Promise<Me>;                                   // profile and quota
   getProfile(who: Who): Promise<Profile>;
-  updateProfile(who: Who, p: Partial<Profile>): Promise<void>;
+  updateProfile(who: Who, p: Partial<Profile>): Promise<Profile>;
   addSource(who: Who, s: { filename: string; r2Key: string }): Promise<{ sourceId: string }>;
-  listSources(who: Who): Promise<Source[]>;
+  listSources(who: Who): Promise<SourceView[]>;
+  sourceFile(who: Who, sourceId: string): Promise<{ r2Key: string; filename: string }>;  // download the original
   listRoles(who: Who): Promise<RoleView[]>;
-  editRole(who: Who, id: string, patch: Partial<Role>): Promise<void>;
-  listFacts(who: Who, f?: { state?: FactState }): Promise<FactView[]>;           // each with its quote
+  addRole(who: Who, r: NewRole): Promise<{ roleId: string }>;                     // the user's own: confirmed, no quote
+  editRole(who: Who, id: string, patch: RolePatch): Promise<void>;
+  listFacts(who: Who, state?: ReviewState): Promise<FactView[]>;                 // each with its quote
   review(who: Who, r: { confirm: string[]; reject: string[] }): Promise<void>;   // role or fact IDs
   addFact(who: Who, f: NewFact): Promise<{ factId: string }>;                     // embeds before saving
-  editFact(who: Who, id: string, text: string): Promise<void>;                    // re-embeds
+  editFact(who: Who, id: string, patch: FactPatch): Promise<void>;                // new text (re-embeds), another role, or both
   addApplication(who: Who, jdText: string): Promise<{ applicationId: string }>;
+  listApplications(who: Who): Promise<ApplicationView[]>;
   tailor(who: Who, applicationId: string): Promise<{ resumeId: string }>;
   getResume(who: Who, id: string): Promise<ResumeView>;                           // body only once ready
   editLine(who: Who, resumeId: string, lineId: string, text: string): Promise<void>;
+  renderData(who: Who, resumeId: string): Promise<RenderData>;                    // for the PDF route
   exportAll(who: Who): Promise<VaultExport>;
 
   // Workflow calls: return small results, so Workflow state holds no career text
+  sourceInfo(sourceId: string): Promise<{ r2Key: string; filename: string }>;
   sourceText(sourceId: string): Promise<string>;
-  saveSource(sourceId: string, patch: { markdown?: string; state?: SourceState }): Promise<void>;
-  saveExtraction(sourceId: string, x: Extraction): Promise<{ kept: number; dropped: number }>;
+  saveSource(sourceId: string, patch: { markdown?: string; state?: SourceState; error?: string | null }): Promise<void>;
+  saveExtraction(sourceId: string, x: Extraction): Promise<{ roles: number; facts: number }>;
+  unembeddedFacts(sourceId: string): Promise<{ id: string; text: string }[]>;
   saveVectors(v: { factId: string; vector: number[] }[]): Promise<void>;
   tailorInput(resumeId: string): Promise<TailorInput>;
-  saveAnalysis(applicationId: string, requirements: Requirement[]): Promise<void>;
+  saveAnalysis(applicationId: string, a: Analysis): Promise<void>;
   searchFacts(queries: number[][], k: number): Promise<Candidate[]>;
-  saveStep(resumeId: string, step: TailorStep, patch: Partial<ResumeRow>): Promise<void>;
+  saveStep(resumeId: string, step: string, patch: ResumePatch): Promise<void>;
+  failResume(resumeId: string, error: string): Promise<void>;                    // refunds the quota
 }
 ```
 
 - Every method except `close` and `destroy` first checks that the vault is initialised and open. User calls also compare `who.userId` and `who.gen` with `meta`: a stale cookie gets HTTP 401, a destroyed vault HTTP 410.
+- Expected failures are `AppError`s with a code (`unauthenticated`, `forbidden`, `not_found`, `conflict`, `gone`, `invalid`, `too_large`, `quota`, `unavailable`). RPC keeps only an error's message, so the code leads the message (`"gone: …"`); the Worker maps it to an HTTP status and a JSON body `{ error, message }`, and a Workflow step turns a final code into a `NonRetryableError`.
 - Only `init` creates the schema. On wake, the constructor runs migrations under `blockConcurrencyWhile` only if `meta` exists, so a destroyed vault stays empty.
 - `searchFacts` ranks confirmed facts by cosine similarity from an in-memory cache of their vectors, dropped on any change to a confirmed fact. A few thousand vectors per user need no index service.
-- `addFact` and `editFact` embed the text before saving. An edited fact becomes `origin: 'user'`, the user's own claim, with the original quote kept beside it.
+- `addFact` and `editFact` embed the text before saving. An edited or moved fact becomes `origin: 'user'`, the user's own claim, with the original quote kept beside it. Roles the user adds start confirmed, like facts they type.
+- `listSources` and `tailor` check any source or resume still running after 30 minutes against its Workflow, and mark it failed if the run has stopped, so nothing shows as in progress forever.
 - `tailor` counts the quota and writes the `running` row before its first `await`; if `TAILOR.create()` throws, it marks the row `failed` and refunds the quota. A `running` row older than 30 minutes is checked with `TAILOR.get(id).status()` before it can block a new run.
 - Source and resume IDs come from `crypto.randomUUID()`, because they double as Workflow instance IDs, which must be unique across all vaults.
 - Workflow calls are idempotent: `saveExtraction` replaces earlier proposals from the same source in one transaction, so a retried step never duplicates facts.
@@ -312,7 +353,7 @@ Five flows cover v1, and only sign-in and deletion reach the Directory.
 
 **Upload**
 
-1. `POST /api/sources` streams the file into R2 under `vaults/<vid>/sources/`.
+1. `POST /api/sources` checks the type and size (PDF or DOCX, at most 10 MB) and writes the file to R2 under `vaults/<vid>/sources/`.
 2. `vault.addSource` records it and starts Distill. If the vault refuses, the Worker deletes the object.
 3. The app polls `GET /api/sources` until the source is `ready`, then opens fact review.
 
@@ -321,7 +362,7 @@ Five flows cover v1, and only sign-in and deletion reach the Directory.
 1. `POST /api/applications` saves the job description in the vault.
 2. `POST /api/applications/:id/resumes` calls `vault.tailor`, which checks the quota and starts Tailor.
 3. The app polls `GET /api/resumes/:id` every two seconds. It sees each finished step, and the lines only once the resume is `ready`.
-4. `GET /api/resumes/:id/pdf` renders through Browser Run and caches the PDF in R2 as `vaults/<vid>/exports/<resumeId>-<version>.pdf`. `editLine` bumps the version, so a render that raced an edit is never served as current.
+4. `GET /api/resumes/:id/pdf` renders through Browser Run and caches the PDF in R2 as `vaults/<vid>/exports/<resumeId>-<version>.pdf`. `editLine` bumps the version, so a render that raced an edit is never served as current. `GET /api/resumes/:id/preview` returns the same HTML for a print preview, under a CSP that blocks scripts and every outside resource.
 
 **Account deletion**
 
@@ -364,11 +405,19 @@ One `wrangler.jsonc` declares the whole system: two Durable Object classes, two 
   "ai": { "binding": "AI", "remote": true },
   "browser": { "binding": "BROWSER" },
   "vars": {
+    "DIRECTORY_HINT": "<location hint chosen at launch>",
+    "SWEEP_DELAY_MS": "3600000",               // second R2 sweep after a deletion
+    "INVITE_ONLY": "true",                     // "false" opens sign-up
+    "TAILOR_MONTHLY_LIMIT": "20",
+    "OIDC_CLIENT_ID": "<google-client-id>",
     "CF_ACCOUNT_ID": "<account-id>",
     "AI_GATEWAY_ID": "resumatic",
-    "DIRECTORY_HINT": "<location hint chosen at launch>",
-    "OIDC_CLIENT_ID": "<google-client-id>",
-    "SWEEP_DELAY_MS": "3600000"                // second R2 sweep after a deletion
+    "MODEL_EXTRACT": "anthropic/claude-haiku-5-5",
+    "MODEL_ANALYZE": "anthropic/claude-haiku-5-5",
+    "MODEL_WRITE": "anthropic/claude-sonnet-5-5",
+    "MODEL_JUDGE": "openai/gpt-5",             // a different family from the writer
+    "ACCESS_TEAM_DOMAIN": "https://<team>.cloudflareaccess.com",
+    "ACCESS_AUD": "<access-application-audience>"
   },
   "observability": { "logs": { "enabled": true } }
 }
@@ -379,6 +428,7 @@ One `wrangler.jsonc` declares the whole system: two Durable Object classes, two 
 | `SESSION_KEY` | `session.ts` | HMAC-SHA256 key for session cookies |
 | `OIDC_CLIENT_SECRET` | `oidc.ts` | Google code exchange |
 | `CF_AI_TOKEN` | `llm.ts` | Cloudflare API token with Workers AI Read, for the gateway's chat endpoint |
+| `TEST_SIGNIN_KEY` | `routes.ts` | Staging only: turns on `POST /auth/test-login` for the end-to-end check. Never set in production |
 
 - Set each secret with `wrangler secret put`; nothing secret sits in the config file.
 - Embeddings and the reranker use the `AI` binding with `{ gateway: { id: AI_GATEWAY_ID, collectLog: false } }`, so those calls leave no log entry holding career text.
@@ -397,10 +447,10 @@ M3's gate is the one that matters most: tailoring does not ship while any plante
 
 | Layer | What it proves | Tool | Runs |
 | --- | --- | --- | --- |
-| Unit | Grounding checks, cookie signing, location mapping | Vitest in Node | Every commit |
-| Integration | Sign-in reuses one vault; `/api/*` never calls the Directory; a destroyed vault refuses old cookies; Workflow steps are idempotent | `@cloudflare/vitest-plugin`, with recorded model responses | Every commit |
-| Evals | No planted fabrication reaches a resume: skills the job wants but the user lacks, inflated numbers, raised seniority, instructions hidden in a job description | Vitest against live models through AI Gateway | Every prompt or model change |
-| Staging | Deletion end to end, including Workflow termination and the second R2 sweep | The staging Worker | Before each release |
+| Unit | Grounding checks, cookie signing, token verification, the chat client, the template, the pipelines with stand-in models | Vitest in Node | Every commit |
+| Integration | Sign-in reuses one vault; sessions and sign-out everywhere; Google and Access tokens; both Workflows end to end with their grounding report; quota and one run at a time; PDF caching per version; deletion stops runs and erases R2 and the vault | `@cloudflare/vitest-plugin`, with stand-in models, renderer and Google | Every commit |
+| Evals | No planted fabrication reaches a resume: skills the job wants but the user lacks, inflated numbers, raised seniority, instructions hidden in a resume or a job description | Vitest against live models through AI Gateway (`npm run evals`) | Prompt, pipeline or grounding changes, and nightly |
+| Staging | Sign-in, upload, Distill, Tailor, PDF, export and deletion against the deployed Worker with the real models and Browser Run | `scripts/e2e-staging.mjs` | After every staging deploy |
 
 ## Deferred features
 

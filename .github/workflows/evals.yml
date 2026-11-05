@@ -1,0 +1,53 @@
+name: Evals
+
+# The no-fabrication evals call the real models, so they run when prompts, the pipelines or the
+# grounding checks change, every night, and on request. A change that lets a planted trap through fails.
+# Until CF_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID are set in the staging environment, the job only warns.
+on:
+  pull_request:
+    paths:
+      - "src/ai/**"
+      - "src/pipeline/**"
+      - "src/grounding/**"
+      - "test/evals/**"
+      - "wrangler.jsonc"
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CF_AI_TOKEN: ${{ secrets.CF_AI_TOKEN }}
+      AI_GATEWAY_ID: resumatic-staging
+    steps:
+      - name: Check credentials
+        id: creds
+        shell: bash
+        run: |
+          if [ -z "$CF_AI_TOKEN" ] || [ -z "$CF_ACCOUNT_ID" ]; then
+            echo "::warning::Evals skipped: set CF_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID in the staging environment to run them."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.creds.outputs.ready == 'true'
+        uses: actions/checkout@v6
+      - if: steps.creds.outputs.ready == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - if: steps.creds.outputs.ready == 'true'
+        run: npm ci
+      - if: steps.creds.outputs.ready == 'true'
+        run: npm run evals
+      - if: always() && steps.creds.outputs.ready == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: eval-report
+          path: eval-report.json
+          if-no-files-found: ignore

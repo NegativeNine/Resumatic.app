@@ -1,0 +1,8 @@
+# Copy to .dev.vars for local development. Never commit .dev.vars.
+SESSION_KEY=dev-only-session-key-change-me-0123456789abcdef
+# Turns on POST /auth/test-login locally. Staging also sets it; production never does.
+TEST_SIGNIN_KEY=dev-test-key
+# Google sign-in (OIDC_CLIENT_ID is a var in wrangler.jsonc).
+OIDC_CLIENT_SECRET=
+# Uploads and tailoring: an API token with Workers AI Read. CF_ACCOUNT_ID is a var in wrangler.jsonc.
+CF_AI_TOKEN=

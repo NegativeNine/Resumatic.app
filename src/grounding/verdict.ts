@@ -1,0 +1,47 @@
+import type { FactRecord } from "../shared/types";
+import { checkClaim, type CheckResult } from "./claims";
+
+export interface LineToCheck {
+  roleId: string | null;
+  text: string;
+  factIds: string[];
+}
+
+/**
+ * Checks a resume line: it must cite at least one fact, every cited fact must be in the
+ * selection and belong to the line's role (the summary may cite any role), and its numbers,
+ * names and scope must all be supported by the cited facts and their quotes.
+ */
+export function checkLine(line: LineToCheck, facts: ReadonlyMap<string, FactRecord>, selected: ReadonlySet<string>): CheckResult {
+  const problems: string[] = [];
+  if (line.factIds.length === 0) problems.push("cites no facts");
+  const cited: FactRecord[] = [];
+  for (const id of line.factIds) {
+    const fact = facts.get(id);
+    if (!fact || !selected.has(id)) {
+      problems.push("cites a fact outside the selection");
+      continue;
+    }
+    if (line.roleId !== null && fact.roleId !== null && fact.roleId !== line.roleId) {
+      problems.push("cites a fact from another role");
+      continue;
+    }
+    cited.push(fact);
+  }
+  if (problems.length) return { ok: false, problems };
+  return checkClaim(
+    line.text,
+    cited.map((f) => ({ text: f.text, quote: f.quote, level: f.level })),
+  );
+}
+
+/** The fallback for a line that failed twice: the first cited, selected fact of its role, or nothing. */
+export function fallbackFact(line: LineToCheck, facts: ReadonlyMap<string, FactRecord>, selected: ReadonlySet<string>): FactRecord | null {
+  for (const id of line.factIds) {
+    const fact = facts.get(id);
+    if (!fact || !selected.has(id)) continue;
+    if (line.roleId !== null && fact.roleId !== null && fact.roleId !== line.roleId) continue;
+    return fact;
+  }
+  return null;
+}
