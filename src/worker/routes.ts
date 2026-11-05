@@ -6,6 +6,7 @@ import { z } from "zod";
 import { renderPdf } from "../render/pdf";
 import { renderResumeHtml } from "../render/template";
 import {
+  DATE_PATTERN,
   FACT_KINDS,
   LEVELS,
   MAX_FACT_CHARS,
@@ -156,15 +157,25 @@ const ProfilePatch = z
   })
   .partial();
 
-const RolePatch = z
+const roleDate = z.string().regex(DATE_PATTERN, "use a year, or a year and month such as 2021-03").nullable();
+
+const NewRoleBody = z.object({
+  kind: z.enum(ROLE_KINDS as [RoleKind, ...RoleKind[]]),
+  org: z.string().trim().min(1).max(200),
+  title: z.string().trim().max(200).nullable(),
+  startDate: roleDate,
+  endDate: roleDate,
+});
+
+const RolePatch = NewRoleBody.partial();
+
+const FactPatchBody = z
   .object({
-    kind: z.enum(ROLE_KINDS as [RoleKind, ...RoleKind[]]),
-    org: z.string().min(1).max(200),
-    title: z.string().max(200).nullable(),
-    startDate: z.string().max(20).nullable(),
-    endDate: z.string().max(20).nullable(),
+    text: z.string().trim().min(1).max(MAX_FACT_CHARS),
+    roleId: z.string().max(64).nullable(),
   })
-  .partial();
+  .partial()
+  .refine((p) => p.text !== undefined || p.roleId !== undefined, "change the text, the role, or both");
 
 const NewFactBody = z.object({
   roleId: z.string().max(64).nullable(),
@@ -235,6 +246,8 @@ api.get("/sources/:id/file", async (c) => {
 
 api.get("/roles", async (c) => c.json({ roles: await myVault(c).listRoles(c.get("who")) }));
 
+api.post("/roles", JSON_LIMIT, async (c) => c.json(await myVault(c).addRole(c.get("who"), await jsonBody(c, NewRoleBody)), 201));
+
 api.patch("/roles/:id", JSON_LIMIT, async (c) => {
   await myVault(c).editRole(c.get("who"), c.req.param("id"), await jsonBody(c, RolePatch));
   return c.body(null, 204);
@@ -249,8 +262,7 @@ api.get("/facts", async (c) => {
 api.post("/facts", JSON_LIMIT, async (c) => c.json(await myVault(c).addFact(c.get("who"), await jsonBody(c, NewFactBody)), 201));
 
 api.patch("/facts/:id", JSON_LIMIT, async (c) => {
-  const { text } = await jsonBody(c, z.object({ text: z.string().trim().min(1).max(MAX_FACT_CHARS) }));
-  await myVault(c).editFact(c.get("who"), c.req.param("id"), text);
+  await myVault(c).editFact(c.get("who"), c.req.param("id"), await jsonBody(c, FactPatchBody));
   return c.body(null, 204);
 });
 
@@ -294,6 +306,18 @@ api.get("/resumes/:id/pdf", async (c) => {
     headers: {
       "content-type": "application/pdf",
       "content-disposition": `attachment; filename="${name}.pdf"`,
+      "cache-control": "private, no-store",
+    },
+  });
+});
+
+/** The HTML the PDF is printed from, for a print preview. It holds only escaped text, and the CSP keeps it inert. */
+api.get("/resumes/:id/preview", async (c) => {
+  const data = await myVault(c).renderData(c.get("who"), c.req.param("id"));
+  return new Response(renderResumeHtml(data), {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox",
       "cache-control": "private, no-store",
     },
   });

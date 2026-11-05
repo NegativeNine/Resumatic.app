@@ -57,6 +57,9 @@ export function ResumeSheet({ resume, body, reload }: { resume: ResumeView; body
           <a className="button primary" href={api.pdfUrl(resume.id)} download="resume.pdf">
             Download PDF
           </a>
+          <a className="button" href={api.previewUrl(resume.id)} target="_blank" rel="noopener">
+            Print preview
+          </a>
           {lineIds.length > 0 && (
             <button type="button" onClick={() => setOpen(allOpen ? new Set() : new Set(lineIds))}>
               {allOpen ? "Hide all evidence" : "Show all evidence"}

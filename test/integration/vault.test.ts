@@ -1,3 +1,4 @@
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setModels } from "../../src/ai/models";
@@ -128,6 +129,19 @@ describe("Distill", () => {
     expect((await user.json("/api/roles")).roles).toHaveLength(3);
   });
 
+  it("marks an upload failed when its run stopped without saying so", async () => {
+    const user = await signIn();
+    const vid = await vaultIdOf(user);
+    await runInDurableObject(vault(env, vid), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO sources (id, filename, r2_key, state, run_id, created_at) VALUES ('stuck', 'old.pdf', 'k', 'queued', 'no-such-run', ?)`,
+        Date.now() - 31 * 60 * 1000,
+      );
+    });
+    const [source] = (await user.json("/api/sources")).sources;
+    expect(source).toMatchObject({ id: "stuck", state: "failed", error: "Reading this file stopped unexpectedly." });
+  });
+
   it("records a failure the user can read when the file cannot be read", async () => {
     options.toMarkdownError = "no text could be read from this file";
     const user = await signIn();
@@ -184,6 +198,35 @@ describe("review", () => {
 
     expect((await user.send("PATCH", "/api/facts/does-not-exist", { text: "x" })).status).toBe(404);
     expect((await user.send("POST", "/api/facts", { roleId: null, kind: "accomplishment", text: "x".repeat(601), level: null })).status).toBe(422);
+  });
+
+  it("lets the user add a role their uploads missed, and move facts between roles", async () => {
+    const user = await signIn();
+    await waitForSource(user, await uploadResume(user));
+    const created = await user.send("POST", "/api/roles", { kind: "job", org: "Initech", title: "Staff Engineer", startDate: "2012", endDate: "2014-06" });
+    expect(created.status).toBe(201);
+    const { roleId } = (await created.json()) as { roleId: string };
+    const role = (await user.json("/api/roles")).roles.find((r: { id: string }) => r.id === roleId);
+    expect(role).toMatchObject({ org: "Initech", state: "confirmed", quote: null, sourceId: null });
+
+    const fact = (await user.json("/api/facts")).facts.find((f: { text: string }) => f.text === "Mentored 2 junior engineers");
+    expect((await user.send("PATCH", `/api/facts/${fact.id}`, { roleId })).status).toBe(204);
+    const moved = (await user.json("/api/facts")).facts.find((f: { id: string }) => f.id === fact.id);
+    expect(moved).toMatchObject({ roleId, origin: "user", text: fact.text, quote: fact.quote });
+
+    expect((await user.send("PATCH", `/api/facts/${fact.id}`, { roleId: null, text: "Mentored two junior engineers" })).status).toBe(204);
+    expect((await user.json("/api/facts")).facts.find((f: { id: string }) => f.id === fact.id)).toMatchObject({
+      roleId: null,
+      text: "Mentored two junior engineers",
+    });
+
+    // A rejected role cannot take facts; a patch must change something; dates are a year or a year and month.
+    const globex = (await user.json("/api/roles")).roles.find((r: { org: string }) => r.org === "Globex");
+    await user.send("POST", "/api/review", { confirm: [], reject: [globex.id] });
+    expect((await user.send("PATCH", `/api/facts/${fact.id}`, { roleId: globex.id })).status).toBe(422);
+    expect((await user.send("PATCH", `/api/facts/${fact.id}`, {})).status).toBe(422);
+    expect((await user.send("POST", "/api/roles", { kind: "job", org: "Hooli", title: null, startDate: "March 2020", endDate: null })).status).toBe(422);
+    expect((await user.send("POST", "/api/roles", { kind: "job", org: " ", title: null, startDate: null, endDate: null })).status).toBe(422);
   });
 
   it("edits a role's details", async () => {

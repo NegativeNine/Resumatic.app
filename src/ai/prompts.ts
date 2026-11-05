@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { FACT_KINDS, LEVELS, MAX_FACT_CHARS, MAX_LINE_CHARS, ROLE_KINDS, type FactKind, type Level, type RoleKind } from "../shared/api";
+import { DATE_PATTERN, FACT_KINDS, LEVELS, MAX_FACT_CHARS, MAX_LINE_CHARS, ROLE_KINDS, type FactKind, type Level, type RoleKind } from "../shared/api";
 import type { ChatMessage } from "./llm";
 
 // Prompts and their output contracts. A change here must pass the eval suite before it merges.
@@ -18,8 +18,8 @@ export const ExtractOut = z.object({
         kind: roleKind,
         org: z.string().min(1).max(200),
         title: z.string().max(200).nullable(),
-        startDate: z.string().max(20).nullable(),
-        endDate: z.string().max(20).nullable(),
+        startDate: z.string().regex(DATE_PATTERN).nullable(),
+        endDate: z.string().regex(DATE_PATTERN).nullable(),
         quote: z.string().min(1).max(800),
       }),
     )

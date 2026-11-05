@@ -1209,3 +1209,64 @@ select:focus-visible {
     transition: none;
   }
 }
+
+/* Adding roles and facts */
+
+.add-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.75rem;
+}
+
+.add-row > .add-fact:has(form) {
+  flex-basis: 100%;
+}
+
+/* Footer and the beta's privacy notice and terms */
+
+.site-footer {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 2.5rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+.site-footer nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+}
+
+.site-footer a {
+  color: var(--muted);
+}
+
+.legal {
+  max-width: 44rem;
+}
+
+.legal h1 {
+  margin-bottom: 0.25rem;
+}
+
+.legal h2 {
+  margin: 1.75rem 0 0.5rem;
+  font-size: 1.15rem;
+}
+
+.legal ul {
+  padding-left: 1.25rem;
+}
+
+.legal li + li {
+  margin-top: 0.4rem;
+}
+
+.legal .draft-note {
+  margin: 1rem 0 1.5rem;
+}
+
+.legal-page {
+  padding-top: 2rem;
+}

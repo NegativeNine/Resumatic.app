@@ -10,13 +10,15 @@ import { ActionError, Badge, Quote } from "./ui";
 
 interface Props {
   role: RoleView;
+  /** Every role, so a fact can be moved to another one. */
+  roles: RoleView[];
   facts: FactView[];
   filter: ReviewState;
   filenames: ReadonlyMap<string, string>;
   reload: Reload;
 }
 
-export function RoleGroup({ role, facts, filter, filenames, reload }: Props) {
+export function RoleGroup({ role, roles, facts, filter, filenames, reload }: Props) {
   const [editing, setEditing] = useState(false);
   const ref = useRef<HTMLElement>(null);
   const review = useReview(role.id, reload, ref);
@@ -53,7 +55,7 @@ export function RoleGroup({ role, facts, filter, filenames, reload }: Props) {
       )}
       <ActionError message={review.error} />
       {facts.length > 0 ? (
-        <FactList facts={facts} filenames={filenames} reload={reload} />
+        <FactList facts={facts} roles={roles} filenames={filenames} reload={reload} />
       ) : (
         <p className="meta group-empty">No {STATE_LABEL[filter].toLowerCase()} facts under this role.</p>
       )}

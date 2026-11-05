@@ -17,10 +17,11 @@
 //   GET    /api/sources                { sources: SourceView[] }
 //   GET    /api/sources/:id/file       the original upload, as an attachment
 //   GET    /api/roles                  { roles: RoleView[] }
+//   POST   /api/roles                  NewRole -> 201 { roleId }   (a role the uploads missed)
 //   PATCH  /api/roles/:id              RolePatch -> 204
 //   GET    /api/facts?state=           { facts: FactView[] }
 //   POST   /api/facts                  NewFact -> 201 { factId }
-//   PATCH  /api/facts/:id              { text } -> 204
+//   PATCH  /api/facts/:id              FactPatch -> 204          (new wording, another role, or both)
 //   POST   /api/review                 ReviewRequest -> 204   (role or fact IDs)
 //   POST   /api/applications           { jdText } -> 201 { applicationId }
 //   GET    /api/applications           { applications: ApplicationView[] }
@@ -28,6 +29,7 @@
 //   GET    /api/resumes/:id            ResumeView               (poll while state is "running")
 //   PATCH  /api/resumes/:id/lines/:lineId  { text } -> 204
 //   GET    /api/resumes/:id/pdf        application/pdf
+//   GET    /api/resumes/:id/preview    text/html: exactly what the PDF prints
 //   GET    /api/export                 application/json attachment: everything in the vault, with
 //                                       links to the original uploads
 //
@@ -51,6 +53,9 @@ export type FactOrigin = "extracted" | "user";
 export const ROLE_KINDS: readonly RoleKind[] = ["job", "education", "project", "volunteer"];
 export const FACT_KINDS: readonly FactKind[] = ["accomplishment", "skill", "credential"];
 export const LEVELS: readonly Level[] = ["contributed", "implemented", "led", "owned", "founded"];
+
+/** Role dates: a year, or a year and month. */
+export const DATE_PATTERN = /^\d{4}(-(0[1-9]|1[0-2]))?$/;
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 export const MAX_JD_CHARS = 20_000;
@@ -119,6 +124,21 @@ export interface FactView {
   /** The verbatim source quote that supports the fact; null for facts the user typed. */
   quote: string | null;
   sourceId: string | null;
+}
+
+/** A role the user adds. It is their own claim, so it starts confirmed and has no quote. */
+export interface NewRole {
+  kind: RoleKind;
+  org: string;
+  title: string | null;
+  startDate: string | null;
+  endDate: string | null;
+}
+
+/** At least one field. Either change makes the fact the user's own claim. */
+export interface FactPatch {
+  text?: string;
+  roleId?: string | null;
 }
 
 export interface NewFact {

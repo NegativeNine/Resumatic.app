@@ -2,7 +2,7 @@
 
 An agentic resume builder that tailors a resume to each job description using only experience the user has actually provided. It breaks everything a user uploads into small, source-backed facts, then builds every resume from those facts alone, with a verifier that blocks any claim the facts do not support. An opt-in recruiter marketplace, planned for later phases, lets verified recruiters meet candidates whose experience is backed by evidence.
 
-**Status: v1, Phase 1 built.** Sign-in, the Career Vault, Distill, Tailor with its grounding checks, PDF export, data export, account deletion, the monthly quota, the admin routes and the web app are in place and tested against stand-ins for Google, the models and Browser Run. What is left before the private beta is the staging setup below and a passing run of the evals against the real models. The [v1 codebase plan](docs/v1-codebase-plan.md) describes the design. The November 2026 review found the seeker product sound and reworked the marketplace; the marketplace's biggest remaining risks are commercial and legal, so it is gated on a paid pilot and on decisions by counsel.
+**Status: v1, Phase 1 built.** Sign-in, the Career Vault, Distill, Tailor with its grounding checks, PDF export, data export, account deletion, the monthly quota, the admin routes and the web app are in place and tested against stand-ins for Google, the models and Browser Run. What is left before the private beta is the staging setup below, a passing run of the evals against the real models, and legal review of the draft privacy notice and terms (`src/web/pages/LegalPage.tsx`). The [v1 codebase plan](docs/v1-codebase-plan.md) describes the design. The November 2026 review found the seeker product sound and reworked the marketplace; the marketplace's biggest remaining risks are commercial and legal, so it is gated on a paid pilot and on decisions by counsel.
 
 ## Documents
 
@@ -64,7 +64,9 @@ Every push to `main` runs the tests, builds with `CLOUDFLARE_ENV=staging`, deplo
 5. Put `/admin/*` behind a Cloudflare Access application and set `ACCESS_TEAM_DOMAIN` (for example `https://<team>.cloudflareaccess.com`) and `ACCESS_AUD` (the application's audience tag). The Worker verifies the Access token itself and refuses admin calls until both are set.
 6. In GitHub, add `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CF_AI_TOKEN` and `TEST_SIGNIN_KEY` as secrets of the repository's `staging` environment. The deploy token needs permission to edit Workers and R2.
 
-Sign-up is invite-only while `INVITE_ONLY` is `"true"`: add invites with `POST /admin/invites`. Test sign-ins skip the invite list; they exist only where `TEST_SIGNIN_KEY` is set, which must never include production.
+Until the Cloudflare secrets exist, CI skips the staging deploy and the evals with a warning instead of failing; once they are set, both run and gate as described above.
+
+Sign-up is invite-only while `INVITE_ONLY` is `"true"`: add invites with `POST /admin/invites`, then send the [invite email](docs/beta/invite-email.md). Test sign-ins skip the invite list; they exist only where `TEST_SIGNIN_KEY` is set, which must never include production. Before inviting anyone, make sure the support address in `src/web/config.ts` receives mail, and have counsel review the draft privacy notice and terms.
 
 ## Layout
 

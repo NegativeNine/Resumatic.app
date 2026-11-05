@@ -174,6 +174,28 @@ describe("Tailor", () => {
   });
 });
 
+describe("roles and facts the user adds", () => {
+  it("are printed like extracted ones", async () => {
+    const user = await signIn();
+    const { roleId } = (await (await user.send("POST", "/api/roles", { kind: "job", org: "Initech", title: "Staff Engineer", startDate: "2019-01", endDate: null })).json()) as {
+      roleId: string;
+    };
+    for (const text of ["Ran Kubernetes clusters for the payments team", "Built React dashboards for support agents"]) {
+      expect((await user.send("POST", "/api/facts", { roleId, kind: "accomplishment", text, level: "implemented" })).status).toBe(201);
+    }
+    const resume = await tailor(user, await newApplication(user));
+    expect(resume.state, resume.error).toBe("ready");
+    expect(resume.body.sections).toHaveLength(1);
+    expect(resume.body.sections[0]).toMatchObject({ org: "Initech", title: "Staff Engineer" });
+    expect(resume.body.sections[0].lines.map((l: { text: string }) => l.text).sort()).toEqual([
+      "Built React dashboards for support agents",
+      "Ran Kubernetes clusters for the payments team",
+    ]);
+    // A typed fact has no quote; the evidence panel shows the fact alone.
+    for (const line of resume.body.sections[0].lines) expect(resume.facts[line.factIds[0]]).toMatchObject({ quote: null });
+  });
+});
+
 describe("editing and PDF export", () => {
   it("marks edited lines, and renders each version of the resume once", async () => {
     const user = await readyUser();
@@ -208,6 +230,18 @@ describe("editing and PDF export", () => {
     expect((await user.send("PATCH", `/api/resumes/${resume.id}/lines/${line.id}`, { text: "" })).status).toBe(422);
   });
 
+  it("previews exactly what the PDF prints, as inert HTML", async () => {
+    const user = await readyUser();
+    const resume = await tailor(user, await newApplication(user));
+    const res = await user.fetch(`/api/resumes/${resume.id}/preview`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(res.headers.get("content-security-policy")).toMatch(/default-src 'none'.*sandbox/);
+    const html = await res.text();
+    await user.fetch(`/api/resumes/${resume.id}/pdf`);
+    expect(html).toBe(rendered[0]);
+  });
+
   it("escapes everything it prints", async () => {
     const user = await readyUser();
     await user.send("PUT", "/api/profile", { name: "<script>alert(1)</script>" });
@@ -224,6 +258,7 @@ describe("editing and PDF export", () => {
     const res = await startTailor(user, await newApplication(user));
     const { resumeId } = (await res.json()) as { resumeId: string };
     expect((await user.fetch(`/api/resumes/${resumeId}/pdf`)).status).toBe(409);
+    expect((await user.fetch(`/api/resumes/${resumeId}/preview`)).status).toBe(409);
     expect((await user.json(`/api/resumes/${resumeId}`)).body).toBeNull();
     release();
     await waitForResume(user, resumeId);

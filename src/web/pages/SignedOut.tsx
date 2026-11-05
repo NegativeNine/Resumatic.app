@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { api } from "../api";
+import { href } from "../router";
 
 export function SignedOut({ note, error }: { note: string | null; error: string | null }) {
   useEffect(() => {
@@ -28,7 +29,11 @@ export function SignedOut({ note, error }: { note: string | null; error: string 
         <a className="button primary large" href={api.loginUrl}>
           Sign in with Google
         </a>
-        <p className="fine-print">Private beta. You can download or delete your data at any time.</p>
+        <p className="fine-print">
+          Private beta, by invitation. You can download or delete your data at any time. By signing in you agree to
+          the <a href={href.terms}>beta terms</a>; the <a href={href.privacy}>privacy notice</a> explains how your data
+          is used.
+        </p>
       </div>
     </main>
   );

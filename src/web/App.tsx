@@ -6,6 +6,7 @@ import { ErrorNote, Loading, PageHeader } from "./components/ui";
 import { describeError, signInErrorMessage } from "./errors";
 import { AccountPage } from "./pages/AccountPage";
 import { ApplicationsPage } from "./pages/ApplicationsPage";
+import { LEGAL_TITLES, LegalPage } from "./pages/LegalPage";
 import { ResumePage } from "./pages/ResumePage";
 import { SignedOut } from "./pages/SignedOut";
 import { SourcesPage } from "./pages/SourcesPage";
@@ -75,7 +76,7 @@ export function App() {
       );
     case "signedOut":
       return (
-        <SignedOut
+        <SignedOutApp
           note={auth.note}
           error={auth.note === null && signInError !== null ? signInErrorMessage(signInError) : null}
         />
@@ -94,8 +95,26 @@ const TITLES: Record<Route["page"], string> = {
   applications: "Applications",
   resume: "Tailored resume",
   account: "Account",
+  privacy: LEGAL_TITLES.privacy,
+  terms: LEGAL_TITLES.terms,
   notFound: "Page not found",
 };
+
+/** Signed out, the privacy notice and terms are still readable; everything else is the sign-in page. */
+function SignedOutApp({ note, error }: { note: string | null; error: string | null }) {
+  const route = useRoute();
+  if (route.page === "privacy" || route.page === "terms") {
+    return (
+      <main className="page legal-page" id="main">
+        <p>
+          <a href="#/">← Back to sign in</a>
+        </p>
+        <LegalPage doc={route.page} />
+      </main>
+    );
+  }
+  return <SignedOut note={note} error={error} />;
+}
 
 function SignedInApp() {
   const route = useRoute();
@@ -116,6 +135,9 @@ function Page({ route }: { route: Route }) {
       return <ResumePage key={route.id} id={route.id} />;
     case "account":
       return <AccountPage />;
+    case "privacy":
+    case "terms":
+      return <LegalPage doc={route.page} />;
     case "notFound":
       return (
         <PageHeader title="Page not found">

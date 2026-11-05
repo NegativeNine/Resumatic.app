@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { feedbackHref } from "../config";
 import { formatMonth } from "../format";
 import { href, type Route } from "../router";
 import { useSession } from "../session";
@@ -61,7 +62,20 @@ export function Shell({ route, title, children }: { route: Route; title: string;
       <main className="page" id="main" ref={main} tabIndex={-1}>
         {children}
       </main>
+      <SiteFooter />
     </>
+  );
+}
+
+export function SiteFooter() {
+  return (
+    <footer className="site-footer">
+      <nav aria-label="About Resumatic">
+        <a href={href.privacy}>Privacy</a>
+        <a href={href.terms}>Terms</a>
+        <a href={feedbackHref}>Send feedback</a>
+      </nav>
+    </footer>
   );
 }
 

@@ -256,11 +256,12 @@ export class Vault extends DurableObject<Env> {
   listSources(who: Who): Promise<SourceView[]>;
   sourceFile(who: Who, sourceId: string): Promise<{ r2Key: string; filename: string }>;  // download the original
   listRoles(who: Who): Promise<RoleView[]>;
+  addRole(who: Who, r: NewRole): Promise<{ roleId: string }>;                     // the user's own: confirmed, no quote
   editRole(who: Who, id: string, patch: RolePatch): Promise<void>;
   listFacts(who: Who, state?: ReviewState): Promise<FactView[]>;                 // each with its quote
   review(who: Who, r: { confirm: string[]; reject: string[] }): Promise<void>;   // role or fact IDs
   addFact(who: Who, f: NewFact): Promise<{ factId: string }>;                     // embeds before saving
-  editFact(who: Who, id: string, text: string): Promise<void>;                    // re-embeds
+  editFact(who: Who, id: string, patch: FactPatch): Promise<void>;                // new text (re-embeds), another role, or both
   addApplication(who: Who, jdText: string): Promise<{ applicationId: string }>;
   listApplications(who: Who): Promise<ApplicationView[]>;
   tailor(who: Who, applicationId: string): Promise<{ resumeId: string }>;
@@ -288,7 +289,8 @@ export class Vault extends DurableObject<Env> {
 - Expected failures are `AppError`s with a code (`unauthenticated`, `forbidden`, `not_found`, `conflict`, `gone`, `invalid`, `too_large`, `quota`, `unavailable`). RPC keeps only an error's message, so the code leads the message (`"gone: …"`); the Worker maps it to an HTTP status and a JSON body `{ error, message }`, and a Workflow step turns a final code into a `NonRetryableError`.
 - Only `init` creates the schema. On wake, the constructor runs migrations under `blockConcurrencyWhile` only if `meta` exists, so a destroyed vault stays empty.
 - `searchFacts` ranks confirmed facts by cosine similarity from an in-memory cache of their vectors, dropped on any change to a confirmed fact. A few thousand vectors per user need no index service.
-- `addFact` and `editFact` embed the text before saving. An edited fact becomes `origin: 'user'`, the user's own claim, with the original quote kept beside it.
+- `addFact` and `editFact` embed the text before saving. An edited or moved fact becomes `origin: 'user'`, the user's own claim, with the original quote kept beside it. Roles the user adds start confirmed, like facts they type.
+- `listSources` and `tailor` check any source or resume still running after 30 minutes against its Workflow, and mark it failed if the run has stopped, so nothing shows as in progress forever.
 - `tailor` counts the quota and writes the `running` row before its first `await`; if `TAILOR.create()` throws, it marks the row `failed` and refunds the quota. A `running` row older than 30 minutes is checked with `TAILOR.get(id).status()` before it can block a new run.
 - Source and resume IDs come from `crypto.randomUUID()`, because they double as Workflow instance IDs, which must be unique across all vaults.
 - Workflow calls are idempotent: `saveExtraction` replaces earlier proposals from the same source in one transaction, so a retried step never duplicates facts.
@@ -360,7 +362,7 @@ Five flows cover v1, and only sign-in and deletion reach the Directory.
 1. `POST /api/applications` saves the job description in the vault.
 2. `POST /api/applications/:id/resumes` calls `vault.tailor`, which checks the quota and starts Tailor.
 3. The app polls `GET /api/resumes/:id` every two seconds. It sees each finished step, and the lines only once the resume is `ready`.
-4. `GET /api/resumes/:id/pdf` renders through Browser Run and caches the PDF in R2 as `vaults/<vid>/exports/<resumeId>-<version>.pdf`. `editLine` bumps the version, so a render that raced an edit is never served as current.
+4. `GET /api/resumes/:id/pdf` renders through Browser Run and caches the PDF in R2 as `vaults/<vid>/exports/<resumeId>-<version>.pdf`. `editLine` bumps the version, so a render that raced an edit is never served as current. `GET /api/resumes/:id/preview` returns the same HTML for a print preview, under a CSP that blocks scripts and every outside resource.
 
 **Account deletion**
 

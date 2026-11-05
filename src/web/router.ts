@@ -5,16 +5,20 @@ export type Route =
   | { page: "applications" }
   | { page: "resume"; id: string }
   | { page: "account" }
+  | { page: "privacy" }
+  | { page: "terms" }
   | { page: "notFound" };
 
 export const href = {
   sources: "#/sources",
   applications: "#/applications",
   account: "#/account",
+  privacy: "#/privacy",
+  terms: "#/terms",
   resume: (id: string) => `#/resumes/${encodeURIComponent(id)}`,
 };
 
-const PAGES = ["sources", "applications", "account"] as const;
+const PAGES = ["sources", "applications", "account", "privacy", "terms"] as const;
 
 export function parseRoute(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean);

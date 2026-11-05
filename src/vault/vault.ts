@@ -3,10 +3,12 @@ import { models } from "../ai/models";
 import type {
   ApplicationView,
   FactKind,
+  FactPatch,
   FactView,
   Level,
   Me,
   NewFact,
+  NewRole,
   Profile,
   Quota,
   ResumeBody,
@@ -283,6 +285,8 @@ export class Vault extends DurableObject<Env> {
 
   async listSources(who: Who): Promise<SourceView[]> {
     this.requireOwner(who);
+    await this.reconcileStaleSources();
+    this.requireOwner(who);
     return this.sql
       .exec<{ id: string; filename: string; state: string; error: string | null; created_at: number; proposed: number }>(
         `SELECT s.id, s.filename, s.state, s.error, s.created_at,
@@ -421,6 +425,22 @@ export class Vault extends DurableObject<Env> {
       .map(roleView);
   }
 
+  /** A role the user adds is their own claim, so it is confirmed at once and has no quote. */
+  async addRole(who: Who, r: NewRole): Promise<{ roleId: string }> {
+    this.requireOwner(who);
+    const id = crypto.randomUUID();
+    this.sql.exec(
+      `INSERT INTO roles (id, kind, org, title, start_date, end_date, state) VALUES (?, ?, ?, ?, ?, ?, 'confirmed')`,
+      id,
+      r.kind,
+      r.org,
+      r.title,
+      r.startDate,
+      r.endDate,
+    );
+    return { roleId: id };
+  }
+
   async editRole(who: Who, id: string, patch: RolePatch): Promise<void> {
     this.requireOwner(who);
     const role = this.sql.exec(`SELECT id FROM roles WHERE id = ?`, id).toArray()[0];
@@ -492,19 +512,24 @@ export class Vault extends DurableObject<Env> {
     return { factId: id };
   }
 
-  /** An edited fact becomes the user's own claim; its original quote stays beside it. */
-  async editFact(who: Who, id: string, text: string): Promise<void> {
+  /**
+   * Rewords a fact, moves it to another role (or to none), or both. Either change makes it the
+   * user's own claim; its original quote stays beside it.
+   */
+  async editFact(who: Who, id: string, patch: FactPatch): Promise<void> {
     this.requireOwner(who);
-    if (!this.sql.exec(`SELECT id FROM facts WHERE id = ?`, id).toArray()[0]) throw new AppError("not_found", "no such fact");
-    const vector = await this.embedOne(text);
+    const fact = this.sql.exec<{ text: string }>(`SELECT text FROM facts WHERE id = ?`, id).toArray()[0];
+    if (!fact) throw new AppError("not_found", "no such fact");
+    if (patch.roleId) this.requireUsableRole(patch.roleId);
+    const text = patch.text ?? fact.text;
+    const vector = patch.text !== undefined && patch.text !== fact.text ? await this.embedOne(text) : null;
     this.requireOwner(who);
-    this.sql.exec(
-      `UPDATE facts SET text = ?, origin = 'user', vector = ?, updated_at = ? WHERE id = ?`,
-      text,
-      packVector(vector),
-      Date.now(),
-      id,
-    );
+    if (patch.roleId) this.requireUsableRole(patch.roleId);
+    this.ctx.storage.transactionSync(() => {
+      if (vector) this.sql.exec(`UPDATE facts SET text = ?, vector = ? WHERE id = ?`, text, packVector(vector), id);
+      if (patch.roleId !== undefined) this.sql.exec(`UPDATE facts SET role_id = ? WHERE id = ?`, patch.roleId, id);
+      this.sql.exec(`UPDATE facts SET origin = 'user', updated_at = ? WHERE id = ?`, Date.now(), id);
+    });
     this.vectorCache = null;
   }
 
@@ -883,17 +908,38 @@ export class Vault extends DurableObject<Env> {
       )
       .toArray();
     for (const row of stale) {
-      let stopped = true;
-      try {
-        if (row.run_id) {
-          const status = await (await this.env.TAILOR.get(row.run_id)).status();
-          stopped = status.status === "errored" || status.status === "terminated" || status.status === "complete";
-        }
-      } catch {
-        stopped = true;
-      }
-      if (stopped) this.markResumeFailed(row.id, "Tailoring stopped unexpectedly. Try again.");
+      if (await runStopped(this.env.TAILOR, row.run_id)) this.markResumeFailed(row.id, "Tailoring stopped unexpectedly. Try again.");
     }
+  }
+
+  /** Likewise for uploads, so a source whose Distill run died never shows as reading forever. */
+  private async reconcileStaleSources(): Promise<void> {
+    const stale = this.sql
+      .exec<{ id: string; run_id: string | null }>(
+        `SELECT id, run_id FROM sources WHERE state = 'queued' AND created_at < ?`,
+        Date.now() - STALE_RUN_MS,
+      )
+      .toArray();
+    for (const row of stale) {
+      if (await runStopped(this.env.DISTILL, row.run_id)) {
+        this.sql.exec(
+          `UPDATE sources SET state = 'failed', error = ? WHERE id = ? AND state = 'queued'`,
+          "Reading this file stopped unexpectedly.",
+          row.id,
+        );
+      }
+    }
+  }
+}
+
+/** True when a Workflow run has finished, failed, been stopped, or cannot be found. */
+async function runStopped(workflow: Workflow, runId: string | null): Promise<boolean> {
+  if (!runId) return true;
+  try {
+    const { status } = await (await workflow.get(runId)).status();
+    return status === "errored" || status === "terminated" || status === "complete";
+  } catch {
+    return true;
   }
 }
 

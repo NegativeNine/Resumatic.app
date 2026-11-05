@@ -1,9 +1,11 @@
 import type {
   ApiErrorBody,
   ApplicationView,
+  FactPatch,
   FactView,
   Me,
   NewFact,
+  NewRole,
   Profile,
   ResumeView,
   ReviewRequest,
@@ -67,11 +69,12 @@ export const api = {
   sourceFileUrl: (sourceId: string) => `/api/sources/${encodeURIComponent(sourceId)}/file`,
 
   roles: () => request<{ roles: RoleView[] }>("GET", "/api/roles"),
+  addRole: (role: NewRole) => request<{ roleId: string }>("POST", "/api/roles", role),
   updateRole: (id: string, patch: RolePatch) => request<void>("PATCH", `/api/roles/${encodeURIComponent(id)}`, patch),
   facts: (state?: ReviewState) =>
     request<{ facts: FactView[] }>("GET", state ? `/api/facts?state=${state}` : "/api/facts"),
   addFact: (fact: NewFact) => request<{ factId: string }>("POST", "/api/facts", fact),
-  editFact: (id: string, text: string) => request<void>("PATCH", `/api/facts/${encodeURIComponent(id)}`, { text }),
+  editFact: (id: string, patch: FactPatch) => request<void>("PATCH", `/api/facts/${encodeURIComponent(id)}`, patch),
   review: (r: ReviewRequest) => request<void>("POST", "/api/review", r),
 
   addApplication: (jdText: string) => request<{ applicationId: string }>("POST", "/api/applications", { jdText }),
@@ -86,5 +89,6 @@ export const api = {
       { text },
     ),
   pdfUrl: (resumeId: string) => `/api/resumes/${encodeURIComponent(resumeId)}/pdf`,
+  previewUrl: (resumeId: string) => `/api/resumes/${encodeURIComponent(resumeId)}/preview`,
   exportUrl: "/api/export",
 };
