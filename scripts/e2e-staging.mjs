@@ -1,0 +1,160 @@
+#!/usr/bin/env node
+// End-to-end check against a deployed staging Worker, with the real models, Workflows and Browser Run.
+// It signs in through the staging-only test route, uploads a resume, confirms what was extracted,
+// tailors a resume, downloads the PDF and the export, and deletes the account.
+//
+//   STAGING_URL=https://resumatic-staging.<account>.workers.dev TEST_SIGNIN_KEY=... npm run e2e:staging
+
+const base = process.env.STAGING_URL?.replace(/\/+$/, "");
+const key = process.env.TEST_SIGNIN_KEY;
+if (!base || !key) {
+  console.error("Set STAGING_URL and TEST_SIGNIN_KEY.");
+  process.exit(2);
+}
+
+const RESUME = [
+  "Jane Doe",
+  "jane@example.com - Toronto",
+  "",
+  "EXPERIENCE",
+  "Acme Corp - Senior Software Engineer (2021-03 - Present)",
+  "- Led the migration of 40 services to Kubernetes, cutting deploy time by 60%",
+  "- Helped design the billing API used by 3 product teams",
+  "- Built a Go service that processes 2 million events per day",
+  "",
+  "Globex - Software Engineer (2018-06 - 2021-02)",
+  "- Implemented React dashboards for the sales team",
+  "- Mentored 2 junior engineers",
+  "",
+  "EDUCATION",
+  "State University - B.S. Computer Science (2014 - 2018)",
+  "",
+  "SKILLS",
+  "Go, TypeScript, Kubernetes, PostgreSQL",
+];
+
+const JOB = `Platform Engineer at Initrode. Run Kubernetes and deploy automation, build Go services that
+handle high event volumes, design internal APIs and mentor engineers. Rust experience is a plus.`;
+
+let cookie = "";
+const started = Date.now();
+
+function log(step, detail = "") {
+  console.log(`[${((Date.now() - started) / 1000).toFixed(1).padStart(6)}s] ${step}${detail ? `: ${detail}` : ""}`);
+}
+
+async function call(method, path, body, headers = {}) {
+  const init = { method, headers: { ...headers, ...(cookie ? { cookie } : {}) }, redirect: "manual" };
+  if (body instanceof FormData) init.body = body;
+  else if (body !== undefined) {
+    init.body = JSON.stringify(body);
+    init.headers["content-type"] = "application/json";
+  }
+  return fetch(base + path, init);
+}
+
+async function json(method, path, body, expected = 200) {
+  const res = await call(method, path, body);
+  const text = await res.text();
+  if (res.status !== expected) throw new Error(`${method} ${path}: expected ${expected}, got ${res.status} ${text.slice(0, 300)}`);
+  return text ? JSON.parse(text) : undefined;
+}
+
+async function until(what, fn, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await fn();
+    if (value) return value;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
+
+/** A one-page PDF with plain Helvetica text, which Workers AI can convert to Markdown. */
+function makePdf(lines) {
+  const esc = (s) => s.replace(/[\\()]/g, (c) => `\\${c}`);
+  const content = ["BT", "/F1 11 Tf", "15 TL", "60 740 Td", ...lines.map((l, i) => `${i ? "T* " : ""}(${esc(l)}) Tj`), "ET"].join("\n");
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+    `<< /Length ${Buffer.byteLength(content, "latin1")} >>\nstream\n${content}\nendstream`,
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [];
+  objects.forEach((obj, i) => {
+    offsets.push(Buffer.byteLength(pdf, "latin1"));
+    pdf += `${i + 1} 0 obj\n${obj}\nendobj\n`;
+  });
+  const xref = Buffer.byteLength(pdf, "latin1");
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  pdf += offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("");
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(pdf, "latin1");
+}
+
+async function main() {
+  const email = `e2e-${Date.now()}@resumatic.test`;
+  const login = await call("POST", "/auth/test-login", { email }, { "x-test-signin-key": key });
+  if (login.status !== 204) throw new Error(`test sign-in failed: ${login.status} ${await login.text()}`);
+  cookie = login.headers.getSetCookie().find((c) => c.startsWith("__Host-session="))?.split(";")[0] ?? "";
+  if (!cookie) throw new Error("no session cookie");
+  log("signed in", email);
+
+  await json("PUT", "/api/profile", { name: "Jane Doe", email: "jane@example.com", location: "Toronto" });
+
+  const form = new FormData();
+  form.set("file", new File([makePdf(RESUME)], "jane-doe.pdf", { type: "application/pdf" }));
+  const { sourceId } = await json("POST", "/api/sources", form, 201);
+  log("uploaded", sourceId);
+
+  const source = await until(
+    "Distill",
+    async () => (await json("GET", "/api/sources")).sources.find((s) => s.id === sourceId && s.state !== "queued"),
+    180_000,
+  );
+  if (source.state !== "ready") throw new Error(`Distill failed: ${source.error}`);
+  const { facts } = await json("GET", "/api/facts");
+  const { roles } = await json("GET", "/api/roles");
+  log("distilled", `${roles.length} roles, ${facts.length} facts`);
+  if (facts.length < 3) throw new Error("too few facts extracted");
+  if (facts.some((f) => !f.quote)) throw new Error("an extracted fact has no quote");
+  await json("POST", "/api/review", { confirm: [...facts.map((f) => f.id), ...roles.map((r) => r.id)], reject: [] }, 204);
+
+  const { applicationId } = await json("POST", "/api/applications", { jdText: JOB }, 201);
+  const { resumeId } = await json("POST", `/api/applications/${applicationId}/resumes`, undefined, 202);
+  log("tailoring", resumeId);
+  const resume = await until(
+    "Tailor",
+    async () => {
+      const r = await json("GET", `/api/resumes/${resumeId}`);
+      return r.state !== "running" && r;
+    },
+    300_000,
+  );
+  if (resume.state !== "ready") throw new Error(`Tailor failed: ${resume.error}`);
+  const lines = [resume.body.summary, ...resume.body.sections.flatMap((s) => s.lines)].filter(Boolean);
+  log("tailored", `${lines.length} lines; report ${JSON.stringify(resume.report)}`);
+  if (lines.length === 0) throw new Error("the resume has no lines");
+  for (const line of lines) if (!line.factIds.length) throw new Error(`line cites nothing: ${line.text}`);
+
+  const pdf = await call("GET", `/api/resumes/${resumeId}/pdf`);
+  const bytes = Buffer.from(await pdf.arrayBuffer());
+  if (pdf.status !== 200 || bytes.subarray(0, 5).toString() !== "%PDF-") throw new Error(`PDF download failed: ${pdf.status}`);
+  log("rendered PDF", `${bytes.length} bytes`);
+
+  const exported = await json("GET", "/api/export");
+  if (exported.facts.length !== facts.length) throw new Error("export is missing facts");
+  log("exported");
+
+  await json("DELETE", "/auth/account", undefined, 202);
+  await until("deletion", async () => [401, 410].includes((await call("GET", "/api/me")).status), 120_000);
+  log("deleted account");
+}
+
+main().catch(async (e) => {
+  console.error(`E2E FAILED: ${e.message}`);
+  if (cookie) await call("DELETE", "/auth/account").catch(() => {});
+  process.exit(1);
+});

@@ -1,0 +1,62 @@
+import { useId, useRef, useState } from "react";
+import type { FactView, ReviewState, RoleView } from "../../shared/api";
+import { formatDateRange, ROLE_KIND_LABEL, STATE_LABEL } from "../format";
+import type { Reload } from "../hooks";
+import { sourceLabel } from "../vault";
+import { FactList } from "./FactItem";
+import { ReviewButtons, useReview } from "./ReviewButtons";
+import { RoleForm } from "./RoleForm";
+import { ActionError, Badge, Quote } from "./ui";
+
+interface Props {
+  role: RoleView;
+  facts: FactView[];
+  filter: ReviewState;
+  filenames: ReadonlyMap<string, string>;
+  reload: Reload;
+}
+
+export function RoleGroup({ role, facts, filter, filenames, reload }: Props) {
+  const [editing, setEditing] = useState(false);
+  const ref = useRef<HTMLElement>(null);
+  const review = useReview(role.id, reload, ref);
+  const headingId = useId();
+  const details = [role.title, ROLE_KIND_LABEL[role.kind], formatDateRange(role.startDate, role.endDate)]
+    .filter(Boolean)
+    .join(" · ");
+
+  function closeEditor() {
+    setEditing(false);
+    ref.current?.focus();
+  }
+
+  return (
+    <section className="card group" ref={ref} tabIndex={-1} aria-labelledby={headingId}>
+      <div className="row-between">
+        <div>
+          <h3 id={headingId}>{role.org}</h3>
+          <p className="meta">{details}</p>
+        </div>
+        <Badge tone={role.state}>{STATE_LABEL[role.state]} role</Badge>
+      </div>
+      {role.quote && <Quote text={role.quote} caption={`From ${sourceLabel(filenames, role.sourceId)}`} />}
+      {editing ? (
+        <RoleForm role={role} reload={reload} onClose={closeEditor} />
+      ) : (
+        <ReviewButtons
+          state={role.state}
+          noun="role"
+          describedBy={headingId}
+          review={review}
+          onEdit={role.state === "rejected" ? undefined : () => setEditing(true)}
+        />
+      )}
+      <ActionError message={review.error} />
+      {facts.length > 0 ? (
+        <FactList facts={facts} filenames={filenames} reload={reload} />
+      ) : (
+        <p className="meta group-empty">No {STATE_LABEL[filter].toLowerCase()} facts under this role.</p>
+      )}
+    </section>
+  );
+}

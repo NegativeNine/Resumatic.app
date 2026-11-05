@@ -1,29 +1,137 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import type { Me } from "../shared/api";
+import { api, ApiError } from "./api";
+import { Shell } from "./components/Shell";
+import { ErrorNote, Loading, PageHeader } from "./components/ui";
+import { describeError, signInErrorMessage } from "./errors";
+import { AccountPage } from "./pages/AccountPage";
+import { ApplicationsPage } from "./pages/ApplicationsPage";
+import { ResumePage } from "./pages/ResumePage";
+import { SignedOut } from "./pages/SignedOut";
+import { SourcesPage } from "./pages/SourcesPage";
+import { href, useRoute, type Route } from "./router";
+import { ACCOUNT_DELETED_NOTE, SessionContext, sessionEndNote } from "./session";
+import "./styles.css";
 
-type ApiState = "checking" | "up" | "down";
+type Auth =
+  | { status: "loading" }
+  | { status: "unavailable"; message: string }
+  | { status: "signedOut"; note: string | null }
+  | { status: "signedIn"; me: Me };
 
-/** M0 shell: proves the app and the API are served together. */
+const signInError = takeSignInError();
+
 export function App() {
-  const [api, setApi] = useState<ApiState>("checking");
+  const [auth, setAuth] = useState<Auth>({ status: "loading" });
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/health")
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
-      .then((body: { ok?: boolean }) => !cancelled && setApi(body.ok ? "up" : "down"))
-      .catch(() => !cancelled && setApi("down"));
-    return () => {
-      cancelled = true;
-    };
+  const loadMe = useCallback(async () => {
+    try {
+      setAuth({ status: "signedIn", me: await api.me() });
+    } catch (e) {
+      const status = e instanceof ApiError ? e.status : 0;
+      if (status === 401) setAuth({ status: "signedOut", note: null });
+      else if (status === 410) setAuth({ status: "signedOut", note: ACCOUNT_DELETED_NOTE });
+      else setAuth({ status: "unavailable", message: describeError(e) });
+    }
   }, []);
 
-  return (
-    <main style={{ fontFamily: "system-ui, sans-serif", maxWidth: 640, margin: "4rem auto", padding: "0 1rem" }}>
-      <h1>Resumatic</h1>
-      <p>Resumes tailored to each job from facts you have confirmed, and nothing else.</p>
-      <p>
-        API: <strong>{api}</strong>
-      </p>
-    </main>
+  const endSession = useCallback((note: string | null) => setAuth({ status: "signedOut", note }), []);
+
+  const updateMe = useCallback(
+    (change: (me: Me) => Me) =>
+      setAuth((current) => (current.status === "signedIn" ? { status: "signedIn", me: change(current.me) } : current)),
+    [],
   );
+
+  const refreshMe = useCallback(async () => {
+    try {
+      const me = await api.me();
+      updateMe(() => me);
+    } catch (e) {
+      const note = sessionEndNote(e);
+      if (note) endSession(note);
+    }
+  }, [updateMe, endSession]);
+
+  useEffect(() => {
+    void loadMe();
+  }, [loadMe]);
+
+  switch (auth.status) {
+    case "loading":
+      return (
+        <main className="splash">
+          <Loading>Loading Resumatic…</Loading>
+        </main>
+      );
+    case "unavailable":
+      return (
+        <main className="splash">
+          <div className="welcome">
+            <h1>Resumatic</h1>
+            <ErrorNote message={`We couldn't load your account. ${auth.message}`} onRetry={loadMe} />
+          </div>
+        </main>
+      );
+    case "signedOut":
+      return (
+        <SignedOut
+          note={auth.note}
+          error={auth.note === null && signInError !== null ? signInErrorMessage(signInError) : null}
+        />
+      );
+    case "signedIn":
+      return (
+        <SessionContext value={{ me: auth.me, updateMe, refreshMe, endSession }}>
+          <SignedInApp />
+        </SessionContext>
+      );
+  }
+}
+
+const TITLES: Record<Route["page"], string> = {
+  sources: "Sources & facts",
+  applications: "Applications",
+  resume: "Tailored resume",
+  account: "Account",
+  notFound: "Page not found",
+};
+
+function SignedInApp() {
+  const route = useRoute();
+  return (
+    <Shell route={route} title={TITLES[route.page]}>
+      <Page route={route} />
+    </Shell>
+  );
+}
+
+function Page({ route }: { route: Route }) {
+  switch (route.page) {
+    case "sources":
+      return <SourcesPage />;
+    case "applications":
+      return <ApplicationsPage />;
+    case "resume":
+      return <ResumePage key={route.id} id={route.id} />;
+    case "account":
+      return <AccountPage />;
+    case "notFound":
+      return (
+        <PageHeader title="Page not found">
+          There's nothing at this address. Go to <a href={href.sources}>Sources & facts</a> or{" "}
+          <a href={href.applications}>Applications</a>.
+        </PageHeader>
+      );
+  }
+}
+
+/** Reads the sign-in callback's `?error=` code once, and removes it from the address bar. */
+function takeSignInError(): string | null {
+  const url = new URL(window.location.href);
+  const code = url.searchParams.get("error");
+  if (code === null) return null;
+  url.searchParams.delete("error");
+  window.history.replaceState(window.history.state, "", url);
+  return code;
 }

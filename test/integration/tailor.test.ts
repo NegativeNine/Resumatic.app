@@ -1,0 +1,231 @@
+import { env } from "cloudflare:workers";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { setModels } from "../../src/ai/models";
+import { setPdfRenderer } from "../../src/render/pdf";
+import { vaultPrefix } from "../../src/shared/r2";
+import {
+  JOB_DESCRIPTION,
+  RESUME,
+  fakeModels,
+  signIn,
+  waitForResume,
+  waitForSource,
+  type FakeModelOptions,
+  type User,
+} from "./support";
+
+let options: FakeModelOptions;
+let rendered: string[];
+
+beforeEach(() => {
+  options = { calls: {} };
+  rendered = [];
+  setModels(() => fakeModels(options));
+  setPdfRenderer(async (_env, html) => {
+    rendered.push(html);
+    return new TextEncoder().encode(`%PDF-1.7 fake ${rendered.length}`);
+  });
+});
+
+afterEach(() => {
+  setModels(null);
+  setPdfRenderer(null);
+});
+
+/** A user whose fixture resume has been read and every proposal confirmed. */
+async function readyUser(): Promise<User> {
+  const user = await signIn();
+  const res = await user.upload("jane-doe.pdf", RESUME);
+  const { sourceId } = (await res.json()) as { sourceId: string };
+  await waitForSource(user, sourceId);
+  const { facts } = await user.json("/api/facts");
+  const { roles } = await user.json("/api/roles");
+  const confirm = [...facts.map((f: { id: string }) => f.id), ...roles.map((r: { id: string }) => r.id)];
+  expect((await user.send("POST", "/api/review", { confirm, reject: [] })).status).toBe(204);
+  return user;
+}
+
+async function newApplication(user: User): Promise<string> {
+  const res = await user.send("POST", "/api/applications", { jdText: JOB_DESCRIPTION });
+  expect(res.status).toBe(201);
+  return ((await res.json()) as { applicationId: string }).applicationId;
+}
+
+async function bytesOf(res: Response): Promise<string> {
+  return new TextDecoder().decode(await res.arrayBuffer());
+}
+
+async function startTailor(user: User, applicationId: string): Promise<Response> {
+  return user.send("POST", `/api/applications/${applicationId}/resumes`);
+}
+
+async function tailor(user: User, applicationId: string): Promise<any> {
+  const res = await startTailor(user, applicationId);
+  expect(res.status, await res.clone().text()).toBe(202);
+  const { resumeId } = (await res.json()) as { resumeId: string };
+  return waitForResume(user, resumeId);
+}
+
+describe("Tailor", () => {
+  it("writes only verified lines, and reports what it repaired, replaced, dropped and could not cover", async () => {
+    options.summary = { text: "Led the migration of 40 services to Kubernetes and built a Go service", cites: ["Led the migration of 40 services to Kubernetes", "Built a Go service that processes 2 million events per day"] };
+    options.rewrites = {
+      // Fails the number check, then is repaired.
+      "Cut deploy time by 60% by migrating services to Kubernetes": "Cut deploy time by 75% by migrating services to Kubernetes",
+      // Passes the checks but not the judge, twice; replaced by the fact itself.
+      "Built a Go service that processes 2 million events per day": "Built a Go service that processes 2 million events per day for synergy",
+    };
+    options.repairs = {
+      "Cut deploy time by 75% by migrating services to Kubernetes": "Cut deploy time by 60% by moving services to Kubernetes",
+    };
+    options.judgeRejects = ["synergy"];
+    options.extraLines = [
+      // Cites a fact from another role: cannot be repaired or replaced, so it is dropped.
+      { under: "Led the migration of 40 services to Kubernetes", text: "Mentored 2 junior engineers on Kubernetes", cites: ["Mentored 2 junior engineers"] },
+      // Cites a fact that does not exist: discarded before verification.
+      { under: "Led the migration of 40 services to Kubernetes", text: "Won three industry awards", cites: ["Nothing like this"] },
+    ];
+
+    const user = await readyUser();
+    const applicationId = await newApplication(user);
+    const resume = await tailor(user, applicationId);
+
+    expect(resume.state, resume.error).toBe("ready");
+    expect(resume.report).toEqual({ kept: 5, repaired: 1, replaced: 1, dropped: 1, gaps: ["Rust systems programming"] });
+
+    const body = resume.body;
+    expect(body.summary).toMatchObject({ status: "kept", text: options.summary.text });
+    expect(body.sections.map((s: { org: string }) => s.org)).toEqual(["Acme Corp", "Globex", "State University"]);
+    const acme = body.sections[0].lines.map((l: { text: string; status: string }) => `${l.status}: ${l.text}`);
+    expect(acme.sort()).toEqual([
+      "kept: Helped design the billing API used by 3 product teams",
+      "kept: Led the migration of 40 services to Kubernetes",
+      "repaired: Cut deploy time by 60% by moving services to Kubernetes",
+      "replaced: Built a Go service that processes 2 million events per day",
+    ]);
+    expect(body.sections[2]).toMatchObject({ kind: "education", lines: [] });
+    expect(body.skills.sort()).toEqual(["Go", "Kubernetes", "PostgreSQL"]);
+
+    // Every printed line cites facts, and the view carries each fact's quote for the evidence panel.
+    const lines = [body.summary, ...body.sections.flatMap((s: { lines: unknown[] }) => s.lines)];
+    for (const line of lines) {
+      expect(line.factIds.length).toBeGreaterThan(0);
+      for (const id of line.factIds) expect(resume.facts[id]?.quote).toBeTruthy();
+    }
+    const text = JSON.stringify(body);
+    for (const invented of ["75%", "synergy", "Won three", "on Kubernetes\""]) expect(text).not.toContain(invented);
+
+    const { applications } = await user.json("/api/applications");
+    expect(applications[0]).toMatchObject({ id: applicationId, company: "Initrode", title: "Platform Engineer" });
+    expect((await user.json("/api/me")).quota.used).toBe(1);
+  });
+
+  it("fails clearly, and refunds the quota, when no facts are confirmed", async () => {
+    const user = await signIn();
+    const applicationId = await newApplication(user);
+    const resume = await tailor(user, applicationId);
+    expect(resume.state).toBe("failed");
+    expect(resume.error).toBe("Confirm some facts before tailoring a resume");
+    expect(resume.body).toBeNull();
+    expect((await user.json("/api/me")).quota.used).toBe(0);
+  });
+
+  it("runs one tailoring at a time per user", async () => {
+    let release!: () => void;
+    options.hold = new Promise<void>((r) => (release = r));
+    const user = await readyUser();
+    const applicationId = await newApplication(user);
+    const first = await startTailor(user, applicationId);
+    expect(first.status).toBe(202);
+    const second = await startTailor(user, applicationId);
+    expect(second.status).toBe(409);
+    release();
+    const { resumeId } = (await first.json()) as { resumeId: string };
+    expect((await waitForResume(user, resumeId)).state).toBe("ready");
+  });
+
+  it("enforces the monthly quota", async () => {
+    const user = await readyUser();
+    const applicationId = await newApplication(user);
+    for (let i = 0; i < 3; i++) expect((await tailor(user, applicationId)).state).toBe("ready");
+    const res = await startTailor(user, applicationId);
+    expect(res.status).toBe(429);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("quota");
+    expect(body.message).toMatch(/^you have used all 3 tailored resumes for this month; more on [A-Z][a-z]+ 1$/);
+    // The analysis is reused for later resumes of the same application.
+    expect(options.calls?.analyze).toBe(1);
+  });
+
+  it("names a job by the start of its description until it has been analyzed", async () => {
+    const user = await signIn();
+    await newApplication(user);
+    const [job] = (await user.json("/api/applications")).applications;
+    expect(job).toMatchObject({ company: null, title: null, resumes: [] });
+    expect(job.excerpt).toMatch(/^Platform Engineer at Initrode We are looking for .*…$/);
+    expect(job.excerpt.length).toBeLessThanOrEqual(101);
+  });
+
+  it("validates job descriptions", async () => {
+    const user = await signIn();
+    expect((await user.send("POST", "/api/applications", { jdText: "too short" })).status).toBe(422);
+    expect((await user.send("POST", "/api/applications", { jdText: "x".repeat(20_001) })).status).toBe(422);
+    expect((await user.send("POST", "/api/applications/nope/resumes")).status).toBe(404);
+  });
+});
+
+describe("editing and PDF export", () => {
+  it("marks edited lines, and renders each version of the resume once", async () => {
+    const user = await readyUser();
+    const resume = await tailor(user, await newApplication(user));
+    const line = resume.body.sections[0].lines[0];
+
+    const pdf = await user.fetch(`/api/resumes/${resume.id}/pdf`);
+    expect(pdf.status).toBe(200);
+    expect(pdf.headers.get("content-type")).toBe("application/pdf");
+    expect(pdf.headers.get("content-disposition")).toMatch(/^attachment; filename=".*\.pdf"$/);
+    expect(await bytesOf(pdf)).toBe("%PDF-1.7 fake 1");
+    expect(rendered[0]).toContain(line.text);
+
+    // Cached: same version, no second render.
+    expect(await bytesOf(await user.fetch(`/api/resumes/${resume.id}/pdf`))).toBe("%PDF-1.7 fake 1");
+    expect(rendered).toHaveLength(1);
+
+    const edited = "Led a 40-service migration to Kubernetes";
+    expect((await user.send("PATCH", `/api/resumes/${resume.id}/lines/${line.id}`, { text: edited })).status).toBe(204);
+    const after = await user.json(`/api/resumes/${resume.id}`);
+    expect(after.version).toBe(resume.version + 1);
+    expect(after.body.sections[0].lines[0]).toMatchObject({ text: edited, status: "edited" });
+
+    expect(await bytesOf(await user.fetch(`/api/resumes/${resume.id}/pdf`))).toBe("%PDF-1.7 fake 2");
+    expect(rendered[1]).toContain(edited);
+
+    const vid = JSON.parse(atob(user.cookie.slice("__Host-session=".length).split(".")[0]!.replace(/-/g, "+").replace(/_/g, "/"))).vid;
+    const pdfs = await env.FILES.list({ prefix: `${vaultPrefix(vid)}exports/` });
+    expect(pdfs.objects).toHaveLength(2);
+
+    expect((await user.send("PATCH", `/api/resumes/${resume.id}/lines/nope`, { text: "x" })).status).toBe(404);
+    expect((await user.send("PATCH", `/api/resumes/${resume.id}/lines/${line.id}`, { text: "" })).status).toBe(422);
+  });
+
+  it("escapes everything it prints", async () => {
+    const user = await readyUser();
+    await user.send("PUT", "/api/profile", { name: "<script>alert(1)</script>" });
+    const resume = await tailor(user, await newApplication(user));
+    await user.fetch(`/api/resumes/${resume.id}/pdf`);
+    expect(rendered[0]).not.toContain("<script>alert(1)</script>");
+    expect(rendered[0]).toContain("&lt;script&gt;");
+  });
+
+  it("does not render a resume that is not ready", async () => {
+    let release!: () => void;
+    options.hold = new Promise<void>((r) => (release = r));
+    const user = await readyUser();
+    const res = await startTailor(user, await newApplication(user));
+    const { resumeId } = (await res.json()) as { resumeId: string };
+    expect((await user.fetch(`/api/resumes/${resumeId}/pdf`)).status).toBe(409);
+    expect((await user.json(`/api/resumes/${resumeId}`)).body).toBeNull();
+    release();
+    await waitForResume(user, resumeId);
+  });
+});

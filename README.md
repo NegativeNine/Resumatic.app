@@ -2,7 +2,7 @@
 
 An agentic resume builder that tailors a resume to each job description using only experience the user has actually provided. It breaks everything a user uploads into small, source-backed facts, then builds every resume from those facts alone, with a verifier that blocks any claim the facts do not support. An opt-in recruiter marketplace, planned for later phases, lets verified recruiters meet candidates whose experience is backed by evidence.
 
-**Status: v1, milestone M0.** The project skeleton is in place: the React app and Worker, empty Directory and Vault Durable Objects, both Workflows, tests and CI. Next is M1, accounts and deletion, as set out in the [v1 codebase plan](docs/v1-codebase-plan.md). The November 2026 review found the seeker product sound and reworked the marketplace; the marketplace's biggest remaining risks are commercial and legal, so it is gated on a paid pilot and on decisions by counsel.
+**Status: v1, Phase 1 built.** Sign-in, the Career Vault, Distill, Tailor with its grounding checks, PDF export, data export, account deletion, the monthly quota, the admin routes and the web app are in place and tested against stand-ins for Google, the models and Browser Run. What is left before the private beta is the staging setup below and a passing run of the evals against the real models. The [v1 codebase plan](docs/v1-codebase-plan.md) describes the design. The November 2026 review found the seeker product sound and reworked the marketplace; the marketplace's biggest remaining risks are commercial and legal, so it is gated on a paid pilot and on decisions by counsel.
 
 ## Documents
 
@@ -27,28 +27,56 @@ Diagrams are in [docs/diagrams](docs/diagrams), rendered to SVG from the living 
 Requires Node 22.
 
 ```sh
-npm install         # also generates worker-configuration.d.ts with wrangler types
-npm run dev         # app and API on http://localhost:5173, no Cloudflare login needed
-npm test            # unit tests in Node, integration tests inside workerd
+npm install           # also generates worker-configuration.d.ts with wrangler types
+cp .dev.vars.example .dev.vars
+npm run dev           # app and API on http://localhost:5173
+npm test              # unit tests in Node, integration tests inside workerd
 npm run typecheck
 ```
 
-`npm run dev:remote` turns on remote bindings, which Workers AI needs from M2 on; run `npx wrangler login` first. The `.npmrc` sets `legacy-peer-deps`, because npm's resolver currently crashes on this dependency tree's peer set.
+Local dev needs no Cloudflare login, but uploads and tailoring call Workers AI and AI Gateway, which only run remotely: run `npx wrangler login`, set `CF_ACCOUNT_ID` and `CF_AI_TOKEN` in `.dev.vars`, and use `npm run dev:remote`. Google sign-in needs `OIDC_CLIENT_ID` (in `wrangler.jsonc`) and `OIDC_CLIENT_SECRET`; without them, sign in with the test route, which `.dev.vars.example` turns on:
 
-**Staging.** Every push to `main` runs the tests, builds with `CLOUDFLARE_ENV=staging`, deploys the `resumatic-staging` Worker and checks `/api/health` and the app. Before the first deploy:
+```sh
+curl -i -X POST http://localhost:5173/auth/test-login -H 'x-test-signin-key: dev-test-key' \
+  -H 'content-type: application/json' -d '{"email":"you@example.com"}'
+```
+
+The `.npmrc` sets `legacy-peer-deps`, because npm's resolver currently crashes on this dependency tree's peer set.
+
+## Tests
+
+| Command | What it checks | Needs |
+| --- | --- | --- |
+| `npm test` | Unit tests (grounding checks, sessions, tokens, the pipelines with stand-in models) in Node; integration tests (routes, sign-in, sessions, the Directory, the Vault, both Workflows end to end, PDF caching, deletion) inside workerd | Nothing |
+| `npm run evals` | The no-fabrication evals: resumes and job descriptions with planted traps, run through the real pipeline and models. Any trap in a finished resume fails the run; quality metrics go to `eval-report.json` | `CF_ACCOUNT_ID`, `CF_AI_TOKEN`, an AI Gateway named `resumatic-staging` |
+| `npm run e2e:staging` | A deployed staging Worker end to end: test sign-in, upload, Distill, review, Tailor, PDF, export, deletion | `STAGING_URL`, `TEST_SIGNIN_KEY` |
+
+Integration tests reach the Worker, Durable Objects and Workflows in one isolate, so `setModels()` and `setPdfRenderer()` swap in stand-ins, and outbound `fetch` is stubbed for Google and Cloudflare Access. CI runs `npm test` on every push, the evals on changes to prompts, pipelines or grounding and nightly, and the end-to-end check after every staging deploy.
+
+## Staging and production setup
+
+Every push to `main` runs the tests, builds with `CLOUDFLARE_ENV=staging`, deploys the `resumatic-staging` Worker, checks `/api/health` and the app, and runs the end-to-end check. Before the first deploy:
 
 1. Create the bucket: `npx wrangler r2 bucket create resumatic-files-staging`.
-2. In GitHub, add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` as secrets of the repository's `staging` environment. The token needs permission to edit Workers and R2 in that account.
+2. Create an AI Gateway named `resumatic-staging` (`resumatic` for production) and turn on Unified Billing for the third-party models named in `wrangler.jsonc`.
+3. Create a Google OAuth client with the redirect URI `https://<host>/auth/callback`, and put its client ID in `OIDC_CLIENT_ID` and your account ID in `CF_ACCOUNT_ID` in `wrangler.jsonc`.
+4. Set the Worker's secrets: `npx wrangler secret put <NAME> --env staging` for `SESSION_KEY` (32 or more random bytes), `OIDC_CLIENT_SECRET`, `CF_AI_TOKEN` (a token with Workers AI Read) and, on staging only, `TEST_SIGNIN_KEY`.
+5. Put `/admin/*` behind a Cloudflare Access application and set `ACCESS_TEAM_DOMAIN` (for example `https://<team>.cloudflareaccess.com`) and `ACCESS_AUD` (the application's audience tag). The Worker verifies the Access token itself and refuses admin calls until both are set.
+6. In GitHub, add `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CF_AI_TOKEN` and `TEST_SIGNIN_KEY` as secrets of the repository's `staging` environment. The deploy token needs permission to edit Workers and R2.
 
-## Planned layout
+Sign-up is invite-only while `INVITE_ONLY` is `"true"`: add invites with `POST /admin/invites`. Test sign-ins skip the invite list; they exist only where `TEST_SIGNIN_KEY` is set, which must never include production.
+
+## Layout
 
 v1 ships as one Worker, as set out in the [v1 codebase plan](docs/v1-codebase-plan.md):
 
-| Part | Owns |
-| --- | --- |
-| Worker | Static assets, the API, sign-in and session cookies |
-| `Directory` Durable Object | The control plane: identities, users and the directory of vaults |
-| `Vault` Durable Object, one per user | The data plane: a user's sources, quotes, facts, vectors, applications and resumes |
-| `DistillWorkflow`, `TailorWorkflow` | Fact extraction from uploads, and tailoring with fail-closed grounding checks |
+| Part | Owns | Code |
+| --- | --- | --- |
+| Worker | Static assets, the HTTP API, Google sign-in, session cookies, Access checks | `src/worker/` |
+| `Directory` Durable Object | The control plane: identities, users, invites and the directory of vaults; account deletion | `src/directory/` |
+| `Vault` Durable Object, one per user | The data plane: a user's profile, sources, quotes, facts, vectors, applications and resumes, and their quota | `src/vault/` |
+| `DistillWorkflow`, `TailorWorkflow` | Fact extraction from uploads, and tailoring with fail-closed grounding checks | `src/workflows/`, `src/pipeline/`, `src/grounding/`, `src/ai/` |
+| PDF rendering | One ATS-friendly template, rendered with Browser Run and cached per resume version | `src/render/` |
+| Web app | React screens for sources and fact review, applications and tailoring, resumes and account | `src/web/` |
 
-The technical architecture's four separately deployed Workers (`edge`, `vault`, `render`, `control`) describe the fuller system. The marketplace adds recruiter workspaces, index shards and intro threads (see the system design); the design review lists the Workers and interfaces the technical architecture still needs for it.
+The HTTP contract shared by the Worker and the web app is in `src/shared/api.ts`. The technical architecture's four separately deployed Workers (`edge`, `vault`, `render`, `control`) describe the fuller system. The marketplace adds recruiter workspaces, index shards and intro threads (see the system design); the design review lists the Workers and interfaces the technical architecture still needs for it.

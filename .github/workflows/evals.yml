@@ -1,0 +1,45 @@
+name: Evals
+
+# The no-fabrication evals call the real models, so they run when prompts, the pipelines or the
+# grounding checks change, every night, and on request. A change that lets a planted trap through fails.
+on:
+  pull_request:
+    paths:
+      - "src/ai/**"
+      - "src/pipeline/**"
+      - "src/grounding/**"
+      - "test/evals/**"
+      - "wrangler.jsonc"
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CF_AI_TOKEN: ${{ secrets.CF_AI_TOKEN }}
+      AI_GATEWAY_ID: resumatic-staging
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Check credentials
+        shell: bash
+        run: |
+          if [ -z "$CF_AI_TOKEN" ] || [ -z "$CF_ACCOUNT_ID" ]; then
+            echo "::error::CF_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID must be set in the staging environment to run the evals."
+            exit 1
+          fi
+      - run: npm run evals
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: eval-report
+          path: eval-report.json
+          if-no-files-found: ignore
