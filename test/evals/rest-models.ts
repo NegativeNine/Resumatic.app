@@ -73,26 +73,46 @@ async function workersAi<T>(
 ): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     // Clairic may make up to one internal extraction pass per requested field.
-    budget.reserve(model, JSON.stringify(body), 0, passes, passes);
-    const res = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${creds.accountId}/ai/run/${model}`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${creds.token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(60_000),
-      },
+    const attemptId = budget.reserve(
+      model,
+      JSON.stringify(body),
+      0,
+      passes,
+      passes,
     );
-    if (res.ok) {
-      const result = ((await res.json()) as { result: T }).result;
-      await onUsage(
-        reportUsage(route, model, (result as { usage?: unknown })?.usage),
+    let res: Response;
+    try {
+      res = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${creds.accountId}/ai/run/${model}`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${creds.token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(60_000),
+        },
       );
+    } catch (error) {
+      budget.failAttempt(attemptId);
+      throw error;
+    }
+    if (res.ok) {
+      let result: T;
+      try {
+        result = ((await res.json()) as { result: T }).result;
+      } catch (error) {
+        budget.failAttempt(attemptId);
+        throw error;
+      }
+      await onUsage({
+        ...reportUsage(route, model, (result as { usage?: unknown })?.usage),
+        attemptId,
+      });
       return result;
     }
+    budget.failAttempt(attemptId);
     if (attempt >= 2 || res.status < 500)
       throw new Error(`model request failed with HTTP ${res.status}`);
     await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
@@ -114,7 +134,8 @@ export function restModels(
     throw new Error("live_eval_ledger_required");
   const budget = sharedBudget ?? opts.budget ?? evalBudgetFromEnv();
   const onUsage: UsageObserver = async (usage) => {
-    await opts.onUsage?.(budget.observe(usage));
+    const observed = budget.observe(usage);
+    await opts.onUsage?.(observed);
   };
   return {
     complete: (route, messages, schema, callOpts) =>
@@ -127,9 +148,12 @@ export function restModels(
           temperature: ROUTE_TEMPERATURE[route],
           route,
           onUsage,
-          beforeAttempt: (model, input, maxOutputTokens) =>
+          onAttemptError: ({ attemptId }) => budget.failAttempt(attemptId),
+          beforeAttempt: (model, input, maxOutputTokens, attemptId) =>
             // Until verified live, cover the platform maximum of five retries.
-            budget.reserve(model, input, maxOutputTokens, 6, 6),
+            {
+              budget.reserve(model, input, maxOutputTokens, 6, 6, attemptId);
+            },
         },
         messages,
         schema,

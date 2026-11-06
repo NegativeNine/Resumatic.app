@@ -1,4 +1,8 @@
-import { reservePilotLedger } from "./budget-ledger.mjs";
+import {
+  reservePilotLedger,
+  settlePilotAttempt,
+  freezePilotLedger,
+} from "./budget-ledger.mjs";
 import { MODEL_PRICES, type Usage } from "../../src/ai/usage";
 
 export interface EvalBudgetConfig {
@@ -15,6 +19,11 @@ export class EvalBudget {
   measuredUsd = 0;
   unpricedCalls = 0;
   private readonly prices: Readonly<Record<string, readonly [number, number]>>;
+  private readonly attempts = new Map<
+    string,
+    { model: string; reservedMicros: number }
+  >();
+  private frozen = false;
   constructor(private readonly config: EvalBudgetConfig) {
     if (
       !Number.isFinite(config.usd) ||
@@ -39,7 +48,9 @@ export class EvalBudget {
     maxOutputTokens: number,
     passes = 1,
     attemptWeight = 1,
-  ): void {
+    attemptId = crypto.randomUUID(),
+  ): string {
+    if (this.frozen) throw new Error("live_eval_campaign_frozen");
     const price = this.prices[model];
     if (!price) throw new Error("live_eval_model_price_required");
     if (
@@ -75,6 +86,7 @@ export class EvalBudget {
         this.config.maxCalls,
         Math.max(1, Math.ceil(cost * 1_000_000)),
         attemptWeight,
+        attemptId,
       );
       this.calls = result.calls;
       this.reservedUsd = result.reservedUsd;
@@ -82,6 +94,11 @@ export class EvalBudget {
       this.calls += attemptWeight;
       this.reservedUsd += cost;
     }
+    this.attempts.set(attemptId, {
+      model,
+      reservedMicros: Math.max(1, Math.ceil(cost * 1_000_000)),
+    });
+    return attemptId;
   }
   observe(usage: Usage): Usage {
     const price = this.prices[usage.model];
@@ -92,10 +109,54 @@ export class EvalBudget {
         ? (usage.inputTokens * price[0] +
             (usage.outputTokens ?? 0) * price[1]) /
           1_000_000
-        : usage.costUsd;
+        : null;
+    if (usage.attemptId) {
+      const attempt = this.attempts.get(usage.attemptId);
+      if (!attempt || attempt.model !== usage.model) {
+        if (this.config.ledger) freezePilotLedger(this.config.ledger.file);
+        this.frozen = true;
+        throw new Error("live_eval_ledger_unavailable");
+      }
+      const actualMicros =
+        costUsd === null ||
+        !Number.isFinite(costUsd) ||
+        costUsd < 0 ||
+        !Number.isSafeInteger(Math.ceil(costUsd * 1_000_000))
+          ? null
+          : Math.ceil(costUsd * 1_000_000);
+      if (this.config.ledger)
+        settlePilotAttempt(
+          this.config.ledger.file,
+          this.config.ledger.suite,
+          usage.attemptId,
+          actualMicros,
+        );
+      this.attempts.delete(usage.attemptId);
+      if (actualMicros === null || actualMicros > attempt.reservedMicros) {
+        this.frozen = true;
+        throw new Error("live_eval_campaign_frozen");
+      }
+    } else if (this.config.ledger) {
+      freezePilotLedger(this.config.ledger.file);
+      this.frozen = true;
+      throw new Error("live_eval_ledger_unavailable");
+    }
     if (costUsd === null) this.unpricedCalls += 1;
     else this.measuredUsd += costUsd;
     return { ...usage, costUsd };
+  }
+  failAttempt(attemptId: string): void {
+    if (!this.attempts.has(attemptId))
+      throw new Error("live_eval_ledger_unavailable");
+    if (this.config.ledger)
+      settlePilotAttempt(
+        this.config.ledger.file,
+        this.config.ledger.suite,
+        attemptId,
+        null,
+      );
+    this.attempts.delete(attemptId);
+    this.frozen = true;
   }
 }
 

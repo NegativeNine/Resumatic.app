@@ -49,6 +49,10 @@ Stripe cleanup cancels future billing and expires pending payment links. It does
 
 ## Live model and staging checks
 
+Cloudflare catalog IDs are exact: the defaults use `anthropic/claude-haiku-5.5` and `anthropic/claude-sonnet-5.5`, not the hyphenated provider-native names. See Cloudflare's [Haiku](https://developers.cloudflare.com/ai/models/anthropic/claude-haiku-5.5/), [Sonnet](https://developers.cloudflare.com/ai/models/anthropic/claude-sonnet-5.5/) and [catalog lookup](https://developers.cloudflare.com/agents/models/ai-sdk/) documentation. The unified [chat completions endpoint](https://developers.cloudflare.com/ai-gateway/usage/rest-api/) accepts third-party models, but the Claude model pages show the native Messages request format; validate the actual gateway translation and JSON responses in the budgeted staging run. Local tests do not establish interoperability or schema compliance.
+
+The default judge `openai/gpt-5` is scheduled for removal on December 11, 2026, according to [OpenAI's deprecation notice](https://developers.openai.com/api/docs/deprecations/). Choose and evaluate a replacement before that date. OpenAI recommends GPT-5.6 Sol, but [Cloudflare lists it as Responses-only](https://developers.cloudflare.com/ai/models/openai/gpt-5.6-sol/), so replacing the model ID alone is not a supported migration for this chat-completions adapter.
+
 Model calls require explicit positive `EVAL_BUDGET_USD` and integer `EVAL_MAX_CALLS`. The Node model adapter reserves a conservative known-price bound before each HTTP attempt, including schema retries. Unknown prices require `EVAL_MODEL_PRICES` with input/output USD per million tokens. `CF_ACCOUNT_ID`, `CF_AI_TOKEN` and `AI_GATEWAY_ID` are also required. Missing configuration produces `pending` and no live calls.
 
 ```sh

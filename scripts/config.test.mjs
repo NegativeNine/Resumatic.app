@@ -22,6 +22,15 @@ test("production selects top-level configuration and staging its own bindings", 
   assert.equal((await readConfig("staging")).name, "resumatic-staging");
   await assert.rejects(() => readConfig("prod"));
 });
+test("default model routes use Cloudflare catalog IDs in both environments", async () => {
+  for (const environment of ["production", "staging"]) {
+    const { config } = await readConfig(environment);
+    assert.equal(config.vars.MODEL_EXTRACT, "anthropic/claude-haiku-5.5");
+    assert.equal(config.vars.MODEL_ANALYZE, "anthropic/claude-haiku-5.5");
+    assert.equal(config.vars.MODEL_WRITE, "anthropic/claude-sonnet-5.5");
+    assert.equal(config.vars.MODEL_JUDGE, "openai/gpt-5");
+  }
+});
 test("live checks cannot pass with credentials but no spend budget", () => {
   const env = {
     CF_ACCOUNT_ID: "account",

@@ -9,7 +9,81 @@ import { DatabaseSync } from "node:sqlite";
 import {
   createPilotLedger,
   reservePilotLedger,
+  settlePilotAttempt,
+  finishPilotSuite,
 } from "../test/extract-evals/budget-ledger.mjs";
+
+test("an overrun in another process freezes reservations across both suites", () =>
+  temporary(async (dir) => {
+    const ledger = createPilotLedger(dir, 10_000_000, 50);
+    reservePilotLedger(
+      ledger.file,
+      "extraction",
+      5_000_000,
+      25,
+      100,
+      1,
+      "attempt-one",
+    );
+    const moduleUrl = new URL(
+      "../test/extract-evals/budget-ledger.mjs",
+      import.meta.url,
+    ).href;
+    const code = `import { settlePilotAttempt } from ${JSON.stringify(moduleUrl)}; settlePilotAttempt(${JSON.stringify(ledger.file)}, "extraction", "attempt-one", 101);`;
+    const result = spawnSync(process.execPath, [
+      "--input-type=module",
+      "-e",
+      code,
+    ]);
+    assert.equal(result.status, 0, result.stderr.toString());
+    assert.throws(
+      () => reservePilotLedger(ledger.file, "tailoring", 5_000_000, 25, 1),
+      /live_eval_campaign_frozen/,
+    );
+    assert.throws(
+      () => reservePilotLedger(ledger.file, "extraction", 5_000_000, 25, 1),
+      /live_eval_campaign_frozen/,
+    );
+  }));
+
+test("unknown or unresolved attempts freeze the next suite", () =>
+  temporary(async (dir) => {
+    const ledger = createPilotLedger(dir, 10_000_000, 50);
+    reservePilotLedger(
+      ledger.file,
+      "extraction",
+      5_000_000,
+      25,
+      100,
+      1,
+      "attempt-two",
+    );
+    settlePilotAttempt(ledger.file, "extraction", "attempt-two", null);
+    assert.equal(finishPilotSuite(ledger.file, "extraction", true), false);
+    assert.throws(
+      () => reservePilotLedger(ledger.file, "tailoring", 5_000_000, 25, 1),
+      /live_eval_campaign_frozen/,
+    );
+  }));
+
+test("a crashed worker with an unsettled reservation freezes the next suite", () =>
+  temporary(async (dir) => {
+    const ledger = createPilotLedger(dir, 10_000_000, 50);
+    reservePilotLedger(
+      ledger.file,
+      "extraction",
+      5_000_000,
+      25,
+      100,
+      1,
+      "attempt-three",
+    );
+    assert.equal(finishPilotSuite(ledger.file, "extraction", true), false);
+    assert.throws(
+      () => reservePilotLedger(ledger.file, "tailoring", 5_000_000, 25, 1),
+      /live_eval_campaign_frozen/,
+    );
+  }));
 import { runFirstStagingEvals } from "./first-staging-evals.mjs";
 
 async function temporary(fn) {

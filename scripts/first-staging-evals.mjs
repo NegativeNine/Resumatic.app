@@ -14,7 +14,10 @@ import {
 import { homedir } from "node:os";
 import { readConfig } from "./lib/config.mjs";
 import { loadPrivateDataset } from "../test/extract-evals/private-dataset.mjs";
-import { createPilotLedger } from "../test/extract-evals/budget-ledger.mjs";
+import {
+  createPilotLedger,
+  finishPilotSuite,
+} from "../test/extract-evals/budget-ledger.mjs";
 
 const PROJECT = fileURLToPath(new URL("../", import.meta.url));
 const CASES = "scope and numbers|instructions hidden";
@@ -261,17 +264,21 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
     extractionPattern,
     selectedCases.map((c) => c.id),
   );
-  // Tailoring has its own fixed partition. It may proceed even if the extraction pilot
-  // hit its bound, but each suite can spend only its independently reserved share.
-  const tailoring = invoke(
-    "tailoring",
-    ledger.tailoring,
-    "test/evals/no-fabrication.eval.ts",
-    CASES,
-    ["scope and numbers", "instructions hidden"],
-  );
+  const safe = finishPilotSuite(ledger.file, "extraction", extraction);
+  const tailoring =
+    safe &&
+    invoke(
+      "tailoring",
+      ledger.tailoring,
+      "test/evals/no-fabrication.eval.ts",
+      CASES,
+      ["scope and numbers", "instructions hidden"],
+    );
+  const tailoringSafe =
+    safe && finishPilotSuite(ledger.file, "tailoring", tailoring);
   return {
-    status: extraction && tailoring ? "completed" : "incomplete",
+    status:
+      extraction && tailoring && tailoringSafe ? "completed" : "incomplete",
     promotionEligible: false,
     profile: "exploratory-pilot",
     extractionCases: 2,

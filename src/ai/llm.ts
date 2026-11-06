@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { modelAttempt, type ModelObservers } from "./usage";
+import { modelAttempt, type ModelAttempt, type ModelObservers } from "./usage";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -20,6 +20,7 @@ export interface ChatConfig extends ModelObservers {
     model: string,
     input: string,
     maxOutputTokens: number,
+    attemptId: string,
   ) => void;
   maxOutputTokens?: number;
 }
@@ -95,14 +96,17 @@ async function callOnce(
   const payload = {
     model: cfg.model,
     messages,
-    temperature: cfg.temperature,
+    ...(/^(?:anthropic\/claude-(?:haiku|sonnet)-(?:5\.5|5-5)|openai\/gpt-5(?:-\d{4}-\d{2}-\d{2})?)$/.test(
+      cfg.model,
+    )
+      ? {}
+      : { temperature: cfg.temperature }),
     max_tokens: maxOutputTokens,
     response_format: cfg.model.startsWith("@cf/")
       ? { type: "json_schema", json_schema: schema }
       : { type: "json_object" },
   };
   const bodyText = JSON.stringify(payload);
-  cfg.beforeAttempt?.(cfg.model, bodyText, maxOutputTokens);
   const body = await modelAttempt(
     {
       route: cfg.route,
@@ -110,7 +114,18 @@ async function callOnce(
       inputChars: bodyText.length,
       maxOutputTokens,
     },
-    cfg,
+    {
+      ...cfg,
+      async onAttemptStart(attempt: ModelAttempt) {
+        cfg.beforeAttempt?.(
+          cfg.model,
+          bodyText,
+          maxOutputTokens,
+          attempt.attemptId,
+        );
+        await cfg.onAttemptStart?.(attempt);
+      },
+    },
     async () => {
       const res = await fetcher(
         `https://api.cloudflare.com/client/v4/accounts/${cfg.accountId}/ai/v1/chat/completions`,

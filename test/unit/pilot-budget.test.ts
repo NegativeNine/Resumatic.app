@@ -84,3 +84,39 @@ it("reserves six upstream calls for a gateway request before dispatch", async ()
     vi.unstubAllGlobals();
   }
 });
+
+it.each(["overrun", "unknown", "failed"])(
+  "stops further requests after %s",
+  async (mode) => {
+    const { vi } = await import("vitest");
+    const { z } = await import("zod");
+    const { restModels } = await import("../evals/rest-models");
+    const budget = new EvalBudget({ usd: 10, maxCalls: 50 });
+    const fetcher = vi.fn(async () => {
+      if (mode === "failed") throw new Error("network failure");
+      return Response.json({
+        choices: [{ message: { content: '{"ok":true}' } }],
+        ...(mode === "overrun"
+          ? { usage: { prompt_tokens: 50_000_000, completion_tokens: 1 } }
+          : {}),
+      });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      const model = restModels(
+        { accountId: "example", token: "unused", gatewayId: "test" },
+        { MODEL_WRITE: "@cf/openai/gpt-oss-20b" },
+        { budget },
+      );
+      await expect(
+        model.complete("write", [], z.object({ ok: z.boolean() })),
+      ).rejects.toThrow();
+      await expect(
+        model.complete("write", [], z.object({ ok: z.boolean() })),
+      ).rejects.toThrow("live_eval_campaign_frozen");
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);
