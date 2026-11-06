@@ -1,14 +1,14 @@
-import { runDurableObjectAlarm } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { expect, it } from "vitest";
 import { directoryForSignIn } from "../../src/directory/routing";
+import { Directory } from "../../src/directory/directory";
 import { allDirectories, directory, directoryForUser } from "../../src/shared/stubs";
 import type { SignInInput } from "../../src/shared/types";
 import { eventually } from "../integration/support";
 
-// This opt-in diagnostic asserts the desired invariant. It currently fails:
-// an old, unregistered creation can create a second account after erasure.
-// It uses ephemeral local Durable Objects and never contacts a model provider.
+// Opt-in local diagnostic for an old creation held across deletion and replacement.
+// It uses ephemeral Durable Objects and never contacts a model provider.
 it("does not create two accounts when an old placement resumes after deletion", async () => {
   const nonce = crypto.randomUUID();
   const input: SignInInput = { provider: "google", subject: `subject-${nonce}`, email: `example-${nonce}@example.test`, hint: "enam", authEpoch: await directory(env).googleAuthEpoch() };
@@ -27,7 +27,9 @@ it("does not create two accounts when an old placement resumes after deletion", 
   const fresh = await directoryForSignIn(configured("1"), freshInput);
   const replacement = await fresh.directory.signIn(fresh.input);
   await directory(env).bindIdentityHome(input.provider, input.subject, replacement.userId, freshInput.authEpoch);
-  await held.directory.signIn(held.input);
+  await runInDurableObject(held.directory, async (instance) => {
+    await expect((instance as Directory).signIn(held.input)).rejects.toThrow("sign-in is stale");
+  });
   const locations = await Promise.all([...allDirectories(env)].map((d) => d.existingIdentity(input.provider, input.subject)));
   expect(locations.filter(Boolean), "a stale creation left two accounts for the same identity").toHaveLength(1);
 }, 30_000);

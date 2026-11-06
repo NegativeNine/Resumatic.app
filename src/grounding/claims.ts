@@ -1,6 +1,7 @@
 import type { Level } from "../shared/api";
 import { scaledNumbers } from "./scaled-numbers";
 import { numberQualifier } from "./number-qualifier";
+import { numberRanges } from "./number-ranges";
 
 // Deterministic checks that a claim says nothing its evidence does not: numbers, names and scope.
 // They are deliberately strict; the judge model catches what they cannot see.
@@ -14,6 +15,8 @@ export interface NumberToken {
   currency: "dollar" | "euro" | "sterling" | "conflicting" | null;
   raw: string;
   qualifier?: string | null;
+  /** A range is distinct from each of its endpoints and matches the same range only. */
+  rangeKey?: string | null;
   /** A number in an explicit date context, not an achievement count. */
   date: boolean;
   /** Date position where recognizable; first/second retain ambiguous numeric order. */
@@ -213,11 +216,28 @@ function dateComponents(text: string): { components: DateComponent[]; numericRan
 /** Every number in the text, with scale words applied and percentages flagged. */
 export function numbersIn(text: string): NumberToken[] {
   const out: NumberToken[] = [];
-  const scaled = scaledNumbers(text);
-  out.push(...scaled.map(({ token }) => token));
   const dates = dateComponents(text);
+  const ranges = numberRanges(text, dates.numericRanges);
+  const rangeScan = text.split("");
+  for (const { start, end } of ranges)
+    for (let i = start; i < end; i++) rangeScan[i] = " ";
+  const scaled = scaledNumbers(rangeScan.join(""));
+  out.push(...scaled.map(({ token }) => token));
+  out.push(...ranges.map(({ start, end, raw, key, valid }) => {
+    // An immediately negated range is not affirmative evidence. Keep the
+    // actual negator distinct; broader sentence-level entailment still needs
+    // the independent judge.
+    const before = text.slice(Math.max(0, start - 48), start);
+    const negation = /\b(not|never|no|without|except|excluding)\s*$/i.exec(before)?.[1]?.toLowerCase();
+    return {
+      value: valid ? 0 : Infinity, percent: false, multiplier: false, ordinal: false,
+      currency: null, raw, qualifier: negation ? `negated:${negation}` : numberQualifier(text, start, end),
+      rangeKey: key, date: false, datePart: null, dateKey: null,
+    };
+  }));
   const scaledMask = new Uint8Array(text.length);
   for (const { start, end } of scaled) scaledMask.fill(1, start, end);
+  for (const { start, end } of ranges) scaledMask.fill(1, start, end);
   const blocked: [number, number][] = [];
   const blockedMask = new Uint8Array(text.length);
   const overlapsMask = (mask: Uint8Array, start: number, end: number) => {
@@ -262,7 +282,7 @@ export function numbersIn(text: string): NumberToken[] {
   // In a dotted date a period separates components; the number scanner
   // otherwise interprets the year and month as a decimal. Preserve offsets.
   const scan = text.split("");
-  for (const { start, end } of scaled)
+  for (const { start, end } of [...scaled, ...ranges])
     for (let i = start; i < end; i++) scan[i] = " ";
   for (const [start, end] of blocked)
     for (let i = start; i < end; i++) scan[i] = " ";
@@ -302,7 +322,7 @@ export function numbersIn(text: string): NumberToken[] {
   }
   // Prevent the cardinal part of "twenty-first" being counted separately.
   const wordScan = text.split("");
-  for (const { start, end } of scaled)
+  for (const { start, end } of [...scaled, ...ranges])
     for (let i = start; i < end; i++) wordScan[i] = " ";
   for (const [start, end] of blocked)
     for (let i = start; i < end; i++) wordScan[i] = " ";
@@ -359,7 +379,7 @@ function sameNumber(a: NumberToken, b: NumberToken): boolean {
   if ((Number.isInteger(a.value) && !Number.isSafeInteger(a.value)) ||
       (Number.isInteger(b.value) && !Number.isSafeInteger(b.value))) return false;
   const dateSupported = a.dateKey === null || b.dateKey === a.dateKey || (b.dateKey !== null && b.dateKey.startsWith(`${a.dateKey}:`));
-  return a.currency !== "conflicting" && b.currency !== "conflicting" && a.percent === b.percent && a.multiplier === b.multiplier && a.ordinal === b.ordinal && a.currency === b.currency && (a.qualifier ?? null) === (b.qualifier ?? null) && a.date === b.date && a.datePart === b.datePart && dateSupported && a.value === b.value;
+  return a.currency !== "conflicting" && b.currency !== "conflicting" && a.percent === b.percent && a.multiplier === b.multiplier && a.ordinal === b.ordinal && a.currency === b.currency && (a.qualifier ?? null) === (b.qualifier ?? null) && (a.rangeKey ?? null) === (b.rangeKey ?? null) && a.date === b.date && a.datePart === b.datePart && dateSupported && a.value === b.value;
 }
 
 /** Numbers in the claim that no evidence number matches. */

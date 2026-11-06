@@ -63,6 +63,10 @@ export class Directory extends DurableObject<Env> {
         throw new AppError("unavailable", "sign-in coordinator requires review");
       if (this.isShard && !this.sql.exec(`SELECT key FROM meta WHERE key='shard_deletion_guard' AND value='1'`).toArray().length)
         throw new AppError("unavailable", "account deletion requires review");
+      if (this.isShard && !this.sql.exec(`SELECT key FROM meta WHERE key='shard_auth_floor_guard' AND value='1'`).toArray().length)
+        throw new AppError("unavailable", "sign-in coordinator requires review");
+      if (this.isGlobal && !this.sql.exec(`SELECT key FROM meta WHERE key='global_shard_release_v3_guard' AND value='1'`).toArray().length)
+        throw new AppError("unavailable", "account deletion requires review");
     });
   }
 
@@ -89,8 +93,16 @@ export class Directory extends DurableObject<Env> {
     return epoch;
   }
 
+  private readShardAuthFloor(): number {
+    const text = this.sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='shard_auth_floor'`).toArray()[0]?.value;
+    const floor = Number(text);
+    if (typeof text !== "string" || !/^(?:0|[1-9]\d*)$/.test(text) || !Number.isSafeInteger(floor))
+      throw new AppError("unavailable", "sign-in coordinator requires review");
+    return floor;
+  }
+
   /** The check and authorized writes share one non-interleaving SQL transaction. */
-  private globalGoogleWrite<T>(provider: string, epoch: number | undefined, action: () => T): T {
+  private googleWrite<T>(provider: string, epoch: number | undefined, action: () => T): T {
     return this.ctx.storage.transactionSync(() => {
       if (this.isGlobal && provider === "google") {
         const text = this.sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='global_auth_epoch'`).one().value;
@@ -98,6 +110,12 @@ export class Directory extends DurableObject<Env> {
           throw new AppError("conflict", "sign-in is stale; try again");
         this.sql.exec(`INSERT INTO global_auth_marker(slot,epoch) VALUES (1,?)`, epoch!);
         try { return action(); } finally { this.sql.exec(`DELETE FROM global_auth_marker WHERE slot=1`); }
+      }
+      if (this.isShard && provider === "google") {
+        if (!Number.isSafeInteger(epoch) || epoch! < this.readShardAuthFloor())
+          throw new AppError("conflict", "sign-in is stale; try again");
+        this.sql.exec(`INSERT INTO shard_auth_marker(slot,epoch) VALUES (1,?)`, epoch!);
+        try { return action(); } finally { this.sql.exec(`DELETE FROM shard_auth_marker WHERE slot=1`); }
       }
       return action();
     });
@@ -143,7 +161,7 @@ export class Directory extends DurableObject<Env> {
     if (p.authExpiryMs !== undefined) requireFreshAuth(p.authExpiryMs);
     // Existing identities also need the original authorization epoch: a
     // stale callback must not attach to a replacement account after erasure.
-    if (this.isGlobal && p.provider === "google") this.globalGoogleWrite(p.provider, p.authEpoch, () => {});
+    if ((this.isGlobal || this.isShard) && p.provider === "google") this.googleWrite(p.provider, p.authEpoch, () => {});
     const email = p.email.trim().toLowerCase();
     let row = this.findAccount(p.provider, p.subject);
     const attempt = p.placementAttempt;
@@ -186,7 +204,7 @@ export class Directory extends DurableObject<Env> {
           ? crypto.randomUUID()
           : shardedUserId(p.homeShard);
       const now = Date.now();
-      this.globalGoogleWrite(p.provider, p.authEpoch, () => {
+      this.googleWrite(p.provider, p.authEpoch, () => {
         this.sql.exec(
           `INSERT INTO users (user_id, email, state, created_at) VALUES (?, ?, 'active', ?)`,
           userId,
@@ -336,7 +354,7 @@ export class Directory extends DurableObject<Env> {
       if (!this.isInvited(email.trim().toLowerCase()))
         throw new AppError("forbidden", "this email has not been invited to the beta yet");
     }
-    return this.globalGoogleWrite(provider, authEpoch, () => {
+    return this.googleWrite(provider, authEpoch, () => {
       this.sql.exec(
         `INSERT OR IGNORE INTO identity_homes (provider,subject,shard) VALUES (?,?,?)`,
         provider,
@@ -404,7 +422,7 @@ export class Directory extends DurableObject<Env> {
     // The Worker may have sent this RPC while the OAuth state was fresh, but
     // it can be delayed in transit. Never mutate the home on an expired state.
     if (authExpiryMs !== undefined) requireFreshAuth(authExpiryMs);
-    return this.globalGoogleWrite(provider, authEpoch, () => {
+    return this.googleWrite(provider, authEpoch, () => {
       const home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null; placement_state: string }>(
         `SELECT shard,user_id,generation,placement_state FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
       ).toArray()[0];
@@ -530,6 +548,39 @@ export class Directory extends DurableObject<Env> {
       } finally {
         this.sql.exec(`DELETE FROM global_shard_home_release_marker WHERE provider='google' AND subject=? AND user_id=?`, subject, userId);
       }
+    });
+  }
+
+  /** Release and return a new epoch that the shard must install before erasing its identity. */
+  async forgetGoogleShardHomeV3(subject: string, shard: number, userId: string): Promise<number> {
+    const owner = /^s(\d{1,2}):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.exec(userId);
+    if (!this.isGlobal || !Number.isInteger(shard) || shard < 0 || shard > 15 || !owner || Number(owner[1]) !== shard)
+      throw new AppError("invalid", "invalid account placement");
+    return this.ctx.storage.transactionSync(() => {
+      const home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null }>(
+        `SELECT shard,user_id,generation FROM identity_homes WHERE provider='google' AND subject=?`, subject,
+      ).toArray()[0];
+      // A different or unbound home can represent an unresolved concurrent
+      // placement. Never certify this deletion while its ownership conflicts.
+      if (this.sql.exec(`SELECT user_id FROM identities WHERE provider='google' AND subject=?`, subject).toArray().length ||
+          home?.generation || (home && (home.user_id !== userId || home.shard !== shard)))
+        throw new AppError("unavailable", "account placement requires review");
+      const epoch = this.readGoogleAuthEpoch();
+      if (epoch >= Number.MAX_SAFE_INTEGER)
+        throw new AppError("unavailable", "sign-in coordinator requires review");
+      const next = epoch + 1;
+      this.sql.exec(`UPDATE meta SET value=? WHERE key='global_auth_epoch'`, String(next));
+      if (home && home.shard === shard && home.user_id === userId) {
+        this.sql.exec(`INSERT INTO global_shard_home_release_marker(provider,subject,user_id) VALUES ('google',?,?)`, subject, userId);
+        this.sql.exec(`INSERT INTO global_google_release_v3_marker(provider,subject,user_id) VALUES ('google',?,?)`, subject, userId);
+        try {
+          this.sql.exec(`DELETE FROM identity_homes WHERE provider='google' AND subject=? AND shard=? AND user_id=?`, subject, shard, userId);
+        } finally {
+          this.sql.exec(`DELETE FROM global_google_release_v3_marker WHERE provider='google' AND subject=? AND user_id=?`, subject, userId);
+          this.sql.exec(`DELETE FROM global_shard_home_release_marker WHERE provider='google' AND subject=? AND user_id=?`, subject, userId);
+        }
+      }
+      return next;
     });
   }
   async hasVault(vaultId: string): Promise<boolean> {
@@ -781,10 +832,10 @@ export class Directory extends DurableObject<Env> {
 
   /** Persist the release acknowledgement before any later deletion step. */
   private async releaseGoogleShardHome(userId: string, subject: string, shard: number): Promise<void> {
-    const row = this.sql.exec<{ state: string }>(
-      `SELECT state FROM shard_deletion_releases WHERE user_id=? AND provider='google' AND subject=?`, userId, subject,
+    const row = this.sql.exec<{ state: string; fence_epoch: number | null }>(
+      `SELECT state,fence_epoch FROM shard_deletion_releases WHERE user_id=? AND provider='google' AND subject=?`, userId, subject,
     ).toArray()[0];
-    if (row?.state === "acknowledged") return;
+    if (row?.state === "acknowledged" && Number.isSafeInteger(row.fence_epoch) && row.fence_epoch! > 0) return;
     if (!row) this.ctx.storage.transactionSync(() => {
       const current = this.sql.exec(`SELECT i.user_id FROM identities i JOIN users u ON u.user_id=i.user_id WHERE i.user_id=? AND i.provider='google' AND i.subject=? AND u.state='deleting'`, userId, subject).toArray();
       if (current.length !== 1) throw new AppError("gone", "account deletion changed");
@@ -792,8 +843,10 @@ export class Directory extends DurableObject<Env> {
     });
     // A lost reply can cause a second, conservative epoch bump. No career
     // content or permanent per-user receipt remains in the global Directory.
-    await directory(this.env).forgetGoogleShardHomeV2(subject, shard, userId);
-    this.sql.exec(`UPDATE shard_deletion_releases SET state='acknowledged' WHERE user_id=? AND provider='google' AND subject=? AND state='pending'`, userId, subject);
+    const epoch = await directory(this.env).forgetGoogleShardHomeV3(subject, shard, userId);
+    if (!Number.isSafeInteger(epoch) || epoch <= 0)
+      throw new AppError("unavailable", "account placement requires review");
+    this.sql.exec(`UPDATE shard_deletion_releases SET state='acknowledged',fence_epoch=MAX(COALESCE(fence_epoch,0),?) WHERE user_id=? AND provider='google' AND subject=?`, epoch, userId, subject);
   }
 
   /**
@@ -919,10 +972,17 @@ export class Directory extends DurableObject<Env> {
         this.ctx.storage.transactionSync(() => {
           // A newly observed Google identity must also have an acknowledged
           // release; never let a stale scan authorize its deletion.
-          if (this.isShard && this.sql.exec(`SELECT i.subject FROM identities i WHERE i.user_id=? AND i.provider='google' AND NOT EXISTS (SELECT 1 FROM shard_deletion_releases r WHERE r.user_id=i.user_id AND r.provider=i.provider AND r.subject=i.subject AND r.state='acknowledged')`, v.user_id).toArray().length)
+          if (this.isShard && this.sql.exec(`SELECT i.subject FROM identities i WHERE i.user_id=? AND i.provider='google' AND NOT EXISTS (SELECT 1 FROM shard_deletion_releases r WHERE r.user_id=i.user_id AND r.provider=i.provider AND r.subject=i.subject AND r.state='acknowledged' AND r.fence_epoch > 0)`, v.user_id).toArray().length)
             throw new AppError("unavailable", "account placement requires review");
-          if (this.isShard)
+          if (this.isShard) {
+            const rows = this.sql.exec<{ fence_epoch: number }>(`SELECT r.fence_epoch FROM identities i JOIN shard_deletion_releases r ON r.user_id=i.user_id AND r.provider=i.provider AND r.subject=i.subject WHERE i.user_id=? AND i.provider='google'`, v.user_id).toArray();
+            if (rows.some((row) => !Number.isSafeInteger(row.fence_epoch) || row.fence_epoch <= 0))
+              throw new AppError("unavailable", "account placement requires review");
+            const floor = Math.max(this.readShardAuthFloor(), ...rows.map((row) => row.fence_epoch));
+            this.sql.exec(`UPDATE meta SET value=? WHERE key='shard_auth_floor'`, String(floor));
             this.sql.exec(`INSERT INTO shard_identity_delete_marker(user_id) VALUES (?)`, v.user_id);
+            this.sql.exec(`INSERT INTO shard_google_delete_v3_marker(user_id) VALUES (?)`, v.user_id);
+          }
           try {
             this.billing.erase(v.user_id, v.stripe_customer ?? undefined);
             this.sql.exec(
@@ -939,7 +999,10 @@ export class Directory extends DurableObject<Env> {
             this.sql.exec(`DELETE FROM placement_finalizations WHERE user_id=?`, v.user_id);
             this.sql.exec(`DELETE FROM shard_deletion_releases WHERE user_id=?`, v.user_id);
           } finally {
-            if (this.isShard) this.sql.exec(`DELETE FROM shard_identity_delete_marker WHERE user_id=?`, v.user_id);
+            if (this.isShard) {
+              this.sql.exec(`DELETE FROM shard_google_delete_v3_marker WHERE user_id=?`, v.user_id);
+              this.sql.exec(`DELETE FROM shard_identity_delete_marker WHERE user_id=?`, v.user_id);
+            }
           }
         });
       } catch (e) {

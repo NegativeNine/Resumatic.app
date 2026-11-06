@@ -178,7 +178,7 @@ function ambiguousRoleDateLine(quote: string): boolean {
 }
 
 const SKILL_QUALIFIER =
-  /\b(?:no|not|never|without|lack(?:s|ed|ing)?|unfamiliar|inexperienced|learning|beginner|novice|limited)\b/i;
+  /(?<![\p{L}\p{M}\p{N}])(?:no|not|never|without|lack(?:s|ed|ing)?|unfamiliar|inexperienced|learning|beginner|novice|limited|sin|ning[uú]n(?:a|o|as|os)?|nunca|desconozco|kein(?:e|en|er|es|em)?|ohne|nicht|niemals|unerfahren|anf[aä]nger|sans|aucun(?:e|s|es)?|jamais)(?![\p{L}\p{M}\p{N}])/iu;
 
 /** A skill must appear as a complete item in a structured skills line. */
 function literalSkill(

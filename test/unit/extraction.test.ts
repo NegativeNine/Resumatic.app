@@ -286,6 +286,13 @@ describe("strategy verification", () => {
     ["No experience with:\n- Java", "Java"],
     ["No experience with:\nSkills: Java", "Java"],
     ["No experience with:\n## Skills\nJava", "Java"],
+    ["Skills: sin experiencia en Python, Java", "Java"],
+    ["Skills: ningún conocimiento de Python, Java", "Java"],
+    ["Skills: ohne Erfahrung mit Python, Java", "Java"],
+    ["Skills: keine Erfahrung mit Python, Java", "Java"],
+    ["Skills: sans expérience avec Python, Java", "Java"],
+    ["Sin experiencia:\n## Skills\nJava", "Java"],
+    ["Keine Erfahrung:\n## Skills\nJava", "Java"],
   ])("does not propose a skill from a negative source line or heading: %s", (markdown, quote) => {
     const start = markdown.indexOf(quote);
     const raw: RawExtraction = {
@@ -296,6 +303,14 @@ describe("strategy verification", () => {
       }],
     };
     expect(verifyExtraction(markdown, raw).extraction.facts).toEqual([]);
+  });
+  it("does not confuse a qualifier with part of a skill name", () => {
+    const markdown = "Skills: NoSQL, Java";
+    const raw: RawExtraction = {
+      roles: [],
+      facts: [{ roleKey: null, kind: "skill", level: null, text: "Java", quote: markdown }],
+    };
+    expect(verifyExtraction(markdown, raw).extraction.facts.map((fact) => fact.text)).toEqual(["Java"]);
   });
   it("drops explicit spans that disagree with quotes and known instruction text", () => {
     const markdown =

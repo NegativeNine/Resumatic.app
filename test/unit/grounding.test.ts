@@ -30,6 +30,62 @@ describe("quoteIsVerbatim", () => {
 });
 
 describe("numbers", () => {
+  it("matches same-line ranges only as ranges, never as unrelated endpoints", () => {
+    for (const value of ["5 to 10", "between 5 and 10", "5–10", "5-10", "5 — 10", "five to ten", "between five and ten", "5 to ten", "5% to 10%", "$5 to $10", "5 to 10 million"]) {
+      expect(unsupportedNumbers(`Managed ${value} people`, `Managed ${value} people`)).toEqual([]);
+      expect(unsupportedNumbers("Managed 5 people", `Managed ${value} people`)).not.toEqual([]);
+      expect(unsupportedNumbers("Managed 10 people", `Managed ${value} people`)).not.toEqual([]);
+      expect(unsupportedNumbers(`Managed ${value} people`, "Managed 5 and 10 people")).not.toEqual([]);
+    }
+    expect(unsupportedNumbers("Managed 5 to 10 people", "Managed 5 to 11 people")).not.toEqual([]);
+    expect(unsupportedNumbers("Managed 5 to 10 people", "Managed approximately 5 to 10 people")).not.toEqual([]);
+    expect(unsupportedNumbers("Managed 5 to 10 people", "Managed 5 to 10 percent")).not.toEqual([]);
+    for (const modifier of ["not", "never", "no", "without", "except", "excluding"]) {
+      expect(unsupportedNumbers("Managed 5 to 10 million people", `Managed ${modifier} 5 to 10 million people`)).not.toEqual([]);
+      expect(unsupportedNumbers(`Managed ${modifier} 5 to 10 million people`, "Managed 5 to 10 million people")).not.toEqual([]);
+      expect(unsupportedNumbers("Managed between 5 and 10 people", `Managed ${modifier} between 5 and 10 people`)).not.toEqual([]);
+      expect(unsupportedNumbers(`Managed ${modifier} between 5 and 10 people`, "Managed between 5 and 10 people")).not.toEqual([]);
+    }
+    expect(unsupportedNumbers("Managed 5 to 10 people", "Managed no more than 5 to 10 people")).not.toEqual([]);
+    expect(unsupportedNumbers("Managed no more than 5 to 10 people", "Managed 5 to 10 people")).not.toEqual([]);
+    expect(unsupportedNumbers("Lost -5 to -10%", "Lost -5 to -10%")).toEqual([]);
+    expect(unsupportedNumbers("Lost -5%", "Lost -5 to -10%")).not.toEqual([]);
+    expect(unsupportedNumbers("Lost -5%", "Lost 5 to 10%")).not.toEqual([]);
+    expect(unsupportedNumbers("Lost -10 to -5%", "Lost -10 to -5%")).toEqual([]);
+    expect(unsupportedNumbers("Lost -10%", "Lost -10 to -5%")).not.toEqual([]);
+    expect(unsupportedNumbers("Changed by -5%", "Changed by -5%")).toEqual([]);
+    expect(unsupportedNumbers("Managed 25 people", "Managed twenty-five people")).toEqual([]);
+    expect(unsupportedNumbers("Managed twenty five to thirty people", "Managed twenty five to thirty people")).toEqual([]);
+    for (const count of ["5", "20", "25", "30"])
+      expect(unsupportedNumbers(`Managed ${count} people`, "Managed twenty five to thirty people")).not.toEqual([]);
+    for (const [value, endpoints] of [
+      ["five hundred to six hundred", ["5", "100", "500", "600"]],
+      ["1.2 million to 3.4 million", ["1200000", "3400000"]],
+      ["five-hundred to 900", ["5", "100", "500", "900"]],
+      ["five hundred–six hundred", ["5", "100", "500", "600"]],
+      ["500 to a thousand", ["500", "1000"]],
+    ] as const) {
+      expect(unsupportedNumbers(`Managed ${value} people`, `Managed ${value} people`)).toEqual([]);
+      for (const count of endpoints)
+        expect(unsupportedNumbers(`Managed ${count} people`, `Managed ${value} people`)).not.toEqual([]);
+    }
+    expect(unsupportedNumbers("Managed 0.001 people", "Managed 1e-3 people")).toEqual([]);
+    expect(unsupportedNumbers("Saved $5", "Saved $5 to $10 million")).not.toEqual([]);
+    for (const source of ["5 to 10 millionfold", "five to ten hundredfold", "5 to 10٫5 million", "5 to 10/2 million", "5 to 10 millions", "five hundred to 10 five", "five hundred–5 five"]) {
+      expect(unsupportedNumbers("Managed 5 to 10 people", `Managed ${source} people`)).not.toEqual([]);
+      expect(unsupportedNumbers("Managed 5 people", `Managed ${source} people`)).not.toEqual([]);
+      expect(unsupportedNumbers("Managed 10 people", `Managed ${source} people`)).not.toEqual([]);
+      expect(unsupportedNumbers("Managed 1000000 people", `Managed ${source} people`)).not.toEqual([]);
+    }
+    for (const source of ["between 1/2 and 10", "between one half and ten", "half to 10", "5 to ½", "1/2–10", "5–½"]) {
+      expect(unsupportedNumbers("Managed 5 people", `Managed ${source} people`)).not.toEqual([]);
+      expect(unsupportedNumbers("Managed 10 people", `Managed ${source} people`)).not.toEqual([]);
+      expect(unsupportedNumbers(`Managed ${source} people`, `Managed ${source} people`)).not.toEqual([]);
+    }
+    expect(unsupportedNumbers("Managed 25 people", "Managed twenty–five people")).toEqual([]);
+    expect(unsupportedNumbers("Worked 2019–2021", "Worked 2019 to 2021")).toEqual([]);
+    expect(unsupportedNumbers("Worked 2021-03-01", "Worked 2021/03/01")).toEqual([]);
+  });
   it("treats written, numeric, and mixed scaled quantities as a single quantity", () => {
     for (const [source, expected] of [
       ["five hundred", "500"], ["one hundred and 5", "105"],

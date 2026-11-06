@@ -39,7 +39,15 @@ function priorVersion(fragment: string): number {
   return index;
 }
 
+function removeV3Migration(sql: SqlStorage): void {
+  for (const trigger of ["guard_shard_google_insert_v3", "guard_shard_google_delete_v3", "guard_global_google_release_v3"]) sql.exec(`DROP TRIGGER ${trigger}`);
+  for (const table of ["shard_auth_marker", "shard_google_delete_v3_marker", "global_google_release_v3_marker"]) sql.exec(`DROP TABLE ${table}`);
+  sql.exec(`ALTER TABLE shard_deletion_releases DROP COLUMN fence_epoch`);
+  sql.exec(`DELETE FROM meta WHERE key IN ('shard_auth_floor','shard_auth_floor_guard','global_shard_release_v3_guard')`);
+}
+
 function removeShardReleaseMigration(sql: SqlStorage): void {
+  removeV3Migration(sql);
   sql.exec(`DROP TABLE billing_delivery_retries`);
   sql.exec(`DROP INDEX billing_pending_by_time`);
   sql.exec(`ALTER TABLE billing_events DROP COLUMN next_attempt_at`);
@@ -55,11 +63,31 @@ function removeGlobalAuthMigration(sql: SqlStorage): void {
 }
 
 describe("atomic schema migrations", () => {
+  it.each(["global", "shard"] as const)("installs the %s V3 guard atomically and preserves old acknowledgements", async (mode) => {
+    const stub = env.DIRECTORY.getByName(`v3-migration-${crypto.randomUUID()}`);
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec(`INSERT INTO shard_deletion_releases(user_id,provider,subject,state) VALUES ('u','google','s','acknowledged')`);
+      removeV3Migration(sql);
+      const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((q) => q.includes("ADD COLUMN fence_epoch")));
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrateDirectory(failAtVersion(sql, previous + 1), tx, mode === "global", mode === "shard")).toThrow(/synthetic version-write interruption/);
+      expect(() => sql.exec(`SELECT fence_epoch FROM shard_deletion_releases`).toArray()).toThrow();
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name='shard_auth_marker'`).toArray()).toHaveLength(0);
+      expect(sql.exec<{value:string}>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(previous));
+      migrateDirectory(sql, tx, mode === "global", mode === "shard");
+      expect(sql.exec<{state:string;fence_epoch:number|null}>(`SELECT state,fence_epoch FROM shard_deletion_releases`).one()).toEqual({ state: "acknowledged", fence_epoch: null });
+      const guard = mode === "shard" ? "shard_auth_floor_guard" : "global_shard_release_v3_guard";
+      expect(sql.exec<{value:string}>(`SELECT value FROM meta WHERE key=?`, guard).one().value).toBe("1");
+    });
+  });
   it("rolls back billing delivery retry storage and its version together", async () => {
     const stub = env.DIRECTORY.getByName(`billing-delivery-migration-${crypto.randomUUID()}`);
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
       sql.exec(`INSERT INTO billing_accounts(user_id,customer_id,revision,delivered_revision) VALUES ('u1','cus_1',2,1)`);
+      removeV3Migration(sql);
       sql.exec(`DROP TABLE billing_delivery_retries`);
       const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((q) => q.includes("CREATE TABLE billing_delivery_retries")));
       expect(previous).toBeGreaterThan(0);
@@ -79,6 +107,7 @@ describe("atomic schema migrations", () => {
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
       sql.exec(`INSERT INTO billing_events(id,customer_id,state,created_at) VALUES ('evt_legacy','cus_legacy','pending',123)`);
+      removeV3Migration(sql);
       sql.exec(`DROP TABLE billing_delivery_retries`);
       sql.exec(`DROP INDEX billing_pending_by_time`);
       sql.exec(`ALTER TABLE billing_events DROP COLUMN next_attempt_at`);

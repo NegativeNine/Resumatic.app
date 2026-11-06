@@ -36,7 +36,7 @@ describe("sharded Google home release: adversarial ordering", () => {
     expect(afterOtherDelete).toBeGreaterThan(before);
     // This challenge is issued during the deletion, after the unrelated bump.
     const staleEpoch = afterOtherDelete;
-    await g.forgetGoogleShardHomeV2(subject, shard, userId);
+    await g.forgetGoogleShardHomeV3(subject, shard, userId);
     expect(await g.googleAuthEpoch()).toBeGreaterThan(staleEpoch);
     expect(await home(subject)).toBeNull();
     await runInDurableObject(g, async (instance) => {
@@ -47,28 +47,29 @@ describe("sharded Google home release: adversarial ordering", () => {
 
   it("does not remove a newer bound home when an old release is repeated", async () => {
     const { g, subject, userId, shard } = await boundHome();
-    await g.forgetGoogleShardHomeV2(subject, shard, userId);
+    await g.forgetGoogleShardHomeV3(subject, shard, userId);
     const newerUser = id(shard);
     const fresh = await g.googleAuthEpoch();
     await g.claimIdentityHome("google", subject, shard, subject, undefined, fresh);
     await g.bindIdentityHome("google", subject, newerUser, fresh);
     const beforeRepeat = await g.googleAuthEpoch();
-    await g.forgetGoogleShardHomeV2(subject, shard, userId);
+    await runInDurableObject(g, async (instance) => {
+      await expect(instance.forgetGoogleShardHomeV3(subject, shard, userId)).rejects.toThrow("account placement requires review");
+    });
     expect(await home(subject)).toEqual({ user_id: newerUser, shard });
-    // A lost ACK can cause another global epoch bump; it is an availability cost.
-    expect(await g.googleAuthEpoch()).toBeGreaterThan(beforeRepeat);
+    expect(await g.googleAuthEpoch()).toBe(beforeRepeat);
   });
 
   it("advances on an absent home but fails closed on an unbound claim", async () => {
     const { g, subject, userId, shard } = await boundHome();
-    await g.forgetGoogleShardHomeV2(subject, shard, userId);
+    await g.forgetGoogleShardHomeV3(subject, shard, userId);
     const beforeMissing = await g.googleAuthEpoch();
-    await g.forgetGoogleShardHomeV2(subject, shard, userId);
+    await g.forgetGoogleShardHomeV3(subject, shard, userId);
     expect(await g.googleAuthEpoch()).toBeGreaterThan(beforeMissing);
     const fresh = await g.googleAuthEpoch();
     await g.claimIdentityHome("google", subject, shard, subject, undefined, fresh);
     await runInDurableObject(g, async (instance) => {
-      await expect(instance.forgetGoogleShardHomeV2(subject, shard, userId))
+      await expect(instance.forgetGoogleShardHomeV3(subject, shard, userId))
         .rejects.toThrow("account placement requires review");
     });
     expect(await home(subject)).toEqual({ user_id: null, shard });
@@ -80,13 +81,13 @@ describe("sharded Google home release: adversarial ordering", () => {
     await runInDurableObject(g, (instance, state) => {
       const sql = state.storage.sql;
       expect(() => sql.exec(`DELETE FROM identity_homes WHERE provider='google' AND subject=?`, subject))
-        .toThrow(/shard_deletion_barrier_required/);
+        .toThrow(/(?:shard_deletion_barrier_required|shard_auth_floor_required)/);
       expect(sql.exec(`SELECT * FROM global_shard_home_release_marker`).toArray()).toHaveLength(0);
       return expect(instance.forgetIdentityHome("google", subject, shard, userId))
-        .rejects.toThrow(/shard_deletion_barrier_required/);
+        .rejects.toThrow(/(?:shard_deletion_barrier_required|shard_auth_floor_required)/);
     });
     expect(await home(subject)).toEqual({ user_id: userId, shard });
-    await g.forgetGoogleShardHomeV2(subject, shard, userId);
+    await g.forgetGoogleShardHomeV3(subject, shard, userId);
     expect(await home(subject)).toBeNull();
   });
 
@@ -101,11 +102,12 @@ describe("sharded Google home release: adversarial ordering", () => {
     const shard = directoryForUser(env, account.userId);
     await shard.deleteAccount(account.userId, account.vaultId);
 
-    const original = Directory.prototype.forgetGoogleShardHomeV2;
+    const original = Directory.prototype.forgetGoogleShardHomeV3;
     let calls = 0;
-    const spy = vi.spyOn(Directory.prototype, "forgetGoogleShardHomeV2").mockImplementation(async function (this: Directory, ...args) {
-      await original.call(this, ...args);
+    const spy = vi.spyOn(Directory.prototype, "forgetGoogleShardHomeV3").mockImplementation(async function (this: Directory, ...args) {
+      const result = await original.call(this, ...args);
       if (++calls === 1) throw new Error("synthetic lost acknowledgement");
+      return result;
     });
     try {
       await runDurableObjectAlarm(shard);
@@ -134,13 +136,13 @@ describe("sharded Google home release: adversarial ordering", () => {
       const sql = state.storage.sql;
       sql.exec(`CREATE TRIGGER adversarial_release_failure BEFORE DELETE ON identity_homes WHEN OLD.provider='google' BEGIN SELECT RAISE(ABORT,'synthetic release failure'); END`);
       try {
-        await expect(instance.forgetGoogleShardHomeV2(subject, shard, userId)).rejects.toThrow("synthetic release failure");
+        await expect(instance.forgetGoogleShardHomeV3(subject, shard, userId)).rejects.toThrow("synthetic release failure");
         expect(sql.exec(`SELECT * FROM global_shard_home_release_marker`).toArray()).toHaveLength(0);
       } finally { sql.exec(`DROP TRIGGER adversarial_release_failure`); }
     });
     expect(await g.googleAuthEpoch()).toBe(before);
     expect(await home(subject)).toEqual({ user_id: userId, shard });
-    await g.forgetGoogleShardHomeV2(subject, shard, userId);
+    await g.forgetGoogleShardHomeV3(subject, shard, userId);
     expect(await g.googleAuthEpoch()).toBe(before + 1);
     expect(await home(subject)).toBeNull();
   });
@@ -157,7 +159,7 @@ describe("sharded Google home release: adversarial ordering", () => {
     await shard.deleteAccount(account.userId, account.vaultId);
     await runInDurableObject(shard, (_instance, state) => {
       expect(() => state.storage.sql.exec(`DELETE FROM identities WHERE provider='google' AND subject=?`, subject))
-        .toThrow(/shard_deletion_barrier_required/);
+        .toThrow(/(?:shard_deletion_barrier_required|shard_auth_floor_required)/);
       state.storage.sql.exec(`CREATE TRIGGER adversarial_user_delete BEFORE DELETE ON users BEGIN SELECT RAISE(ABORT,'synthetic local failure'); END`);
     });
     try {
@@ -210,13 +212,14 @@ describe("sharded Google home release: adversarial ordering", () => {
     let entered!: () => void, release!: () => void;
     const ready = new Promise<void>((resolve) => { entered = resolve; });
     const gate = new Promise<void>((resolve) => { release = resolve; });
-    const original = Directory.prototype.forgetGoogleShardHomeV2;
-    const spy = vi.spyOn(Directory.prototype, "forgetGoogleShardHomeV2").mockImplementation(async function (this: Directory, ...args) {
+    const original = Directory.prototype.forgetGoogleShardHomeV3;
+    const spy = vi.spyOn(Directory.prototype, "forgetGoogleShardHomeV3").mockImplementation(async function (this: Directory, ...args) {
       // Keep a subsequent alarm from acknowledging the added test identity.
       if (args[0] === addedSubject) throw new Error("synthetic release unavailable");
-      await original.call(this, ...args);
+      const result = await original.call(this, ...args);
       entered();
       await gate;
+      return result;
     });
     try {
       await runInDurableObject(shard, async (instance, state) => {
@@ -225,7 +228,10 @@ describe("sharded Google home release: adversarial ordering", () => {
           await Promise.race([ready, new Promise((_, reject) => setTimeout(() => reject(new Error("release not reached")), 5000))]);
           // Direct SQL models a later implementation or administrative change;
           // the current HTTP API does not offer this account-linking operation.
-          state.storage.sql.exec(`INSERT INTO identities(provider,subject,user_id) VALUES ('google',?,?)`, addedSubject, account.userId);
+          state.storage.sql.exec(`INSERT INTO shard_auth_marker(slot,epoch) VALUES (1,?)`, p.authEpoch);
+          try {
+            state.storage.sql.exec(`INSERT INTO identities(provider,subject,user_id) VALUES ('google',?,?)`, addedSubject, account.userId);
+          } finally { state.storage.sql.exec(`DELETE FROM shard_auth_marker WHERE slot=1`); }
           release();
           await running;
           const identities = state.storage.sql.exec<{subject: string}>(`SELECT subject FROM identities WHERE user_id=? ORDER BY subject`, account.userId).toArray();

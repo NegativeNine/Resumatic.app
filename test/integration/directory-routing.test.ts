@@ -152,9 +152,9 @@ describe("Directory placement in Durable Objects", () => {
     await global.claimIdentityHome(p.provider, p.subject, shard, p.email, undefined, p.authEpoch);
     await global.bindIdentityHome(p.provider, p.subject, oldUser, p.authEpoch);
     await runInDurableObject(global, async (instance) => {
-      await expect((instance as Directory).forgetIdentityHome(p.provider, p.subject, shard, oldUser)).rejects.toThrow("shard_deletion_barrier_required");
+      await expect((instance as Directory).forgetIdentityHome(p.provider, p.subject, shard, oldUser)).rejects.toThrow(/(?:shard_deletion_barrier_required|shard_auth_floor_required)/);
     });
-    await global.forgetGoogleShardHomeV2(p.subject, shard, oldUser);
+    await global.forgetGoogleShardHomeV3(p.subject, shard, oldUser);
     const freshEpoch = await global.googleAuthEpoch();
     await global.claimIdentityHome(p.provider, p.subject, shard, p.email, undefined, freshEpoch);
     // An unbound new claim cannot safely be identified as the deleted user.

@@ -1,14 +1,15 @@
-import { runDurableObjectAlarm } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { expect, it } from "vitest";
 import { directoryForSignIn, settleRoutedPlacement } from "../../src/directory/routing";
+import { Directory } from "../../src/directory/directory";
 import { allDirectories, directory, directoryByName, directoryForUser } from "../../src/shared/stubs";
 import { identityShard } from "../../src/shared/operations";
 import type { SignInInput } from "../../src/shared/types";
 import { eventually } from "../integration/support";
 
-// These opt-in diagnostics assert desired invariants and currently fail.
-// They use synthetic local Durable Objects and no external provider calls.
+// Opt-in diagnostics using local Durable Objects and no external provider calls.
+// The first still fails: it supplies no observable pre-deletion authorization.
 it("does not recreate a deleted synthetic account when a pre-deletion epoch read arrives late", async () => {
   const email = `placement-${crypto.randomUUID()}@placement.invalid`;
   const input: SignInInput = { provider: "test", subject: email, email, hint: "enam" };
@@ -47,7 +48,9 @@ it("does not create an account using an invite check completed before deletion r
   await home.deleteAccount(account.userId, account.vaultId);
   await runDurableObjectAlarm(home);
   await eventually(async () => !(await home.existingIdentity(input.provider, input.subject)), "invited identity erasure");
-  await held.directory.signIn(held.input);
+  await runInDurableObject(held.directory, async (instance) => {
+    await expect((instance as Directory).signIn(held.input)).rejects.toThrow("sign-in is stale");
+  });
   const locations = await Promise.all([...allDirectories(env)].map((d) => d.existingIdentity(input.provider, input.subject)));
   expect(locations.filter(Boolean), "a stale invite authorization recreated the deleted account").toHaveLength(0);
 }, 30_000);

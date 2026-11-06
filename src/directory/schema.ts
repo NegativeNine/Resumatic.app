@@ -103,6 +103,26 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
   ],
   BILLING_DEFERRED_MIGRATIONS,
   BILLING_DELIVERY_RETRY_MIGRATIONS,
+  [
+    `ALTER TABLE shard_deletion_releases ADD COLUMN fence_epoch INTEGER`,
+    `CREATE TABLE shard_auth_marker (slot INTEGER PRIMARY KEY CHECK(slot=1), epoch INTEGER NOT NULL)`,
+    `CREATE TABLE shard_google_delete_v3_marker (user_id TEXT PRIMARY KEY)`,
+    `CREATE TABLE global_google_release_v3_marker (provider TEXT NOT NULL, subject TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY(provider,subject,user_id))`,
+    `CREATE TRIGGER guard_shard_google_insert_v3 BEFORE INSERT ON identities
+     WHEN NEW.provider='google' AND EXISTS(SELECT 1 FROM meta WHERE key='shard_auth_floor_guard' AND value='1')
+       AND NOT EXISTS(SELECT 1 FROM shard_auth_marker WHERE slot=1 AND epoch >= CAST((SELECT value FROM meta WHERE key='shard_auth_floor') AS INTEGER))
+     BEGIN SELECT RAISE(ABORT, 'shard_auth_required'); END`,
+    `CREATE TRIGGER guard_shard_google_delete_v3 BEFORE DELETE ON identities
+     WHEN OLD.provider='google' AND EXISTS(SELECT 1 FROM meta WHERE key='shard_auth_floor_guard' AND value='1')
+       AND NOT EXISTS(SELECT 1 FROM shard_google_delete_v3_marker m JOIN shard_deletion_releases r ON r.user_id=m.user_id
+         WHERE m.user_id=OLD.user_id AND r.provider=OLD.provider AND r.subject=OLD.subject AND r.state='acknowledged'
+           AND r.fence_epoch IS NOT NULL AND r.fence_epoch <= CAST((SELECT value FROM meta WHERE key='shard_auth_floor') AS INTEGER))
+     BEGIN SELECT RAISE(ABORT, 'shard_auth_floor_required'); END`,
+    `CREATE TRIGGER guard_global_google_release_v3 BEFORE DELETE ON identity_homes
+     WHEN OLD.provider='google' AND OLD.shard IS NOT NULL AND EXISTS(SELECT 1 FROM meta WHERE key='global_shard_release_v3_guard' AND value='1')
+       AND NOT EXISTS(SELECT 1 FROM global_google_release_v3_marker WHERE provider=OLD.provider AND subject=OLD.subject AND user_id=OLD.user_id)
+     BEGIN SELECT RAISE(ABORT, 'shard_auth_floor_required'); END`,
+  ],
 ];
 
 export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T, global = false, shard = false): void {
@@ -128,6 +148,12 @@ export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) 
       }
       if (shard && next === 9)
         sql.exec(`INSERT INTO meta(key,value) VALUES ('shard_deletion_guard','1')`);
+      if (next === 12 && shard) {
+        sql.exec(`INSERT INTO meta(key,value) VALUES ('shard_auth_floor','0')`);
+        sql.exec(`INSERT INTO meta(key,value) VALUES ('shard_auth_floor_guard','1')`);
+      }
+      if (next === 12 && global)
+        sql.exec(`INSERT INTO meta(key,value) VALUES ('global_shard_release_v3_guard','1')`);
       sql.exec(
         `INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
         String(next),
