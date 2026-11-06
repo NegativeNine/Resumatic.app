@@ -822,7 +822,7 @@ api.get("/resumes/:id/pdf", async (c) => {
   // from new output for this same immutable version; old versions keep keys.
   const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
   const key = pdfKey(c.get("session").vid, resumeId, data.version, hasUnknownEndDates);
-  const pdf = await cachedExport(myVault(c), c.env.FILES, c.get("who"), key,
+  const pdf = await cachedExport(() => myVault(c), c.env.FILES, c.get("who"), key,
     () => renderPdf(c.env, renderResumeHtml(data)));
   const name = fileName(
     [data.profile.name, data.company].filter(Boolean).join(" ") || "resume",
@@ -959,7 +959,7 @@ api.get("/resumes/:id/docx", async (c) => {
   );
   const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
   const key = docxKey(c.get("session").vid, c.req.param("id"), data.version, hasUnknownEndDates);
-  const bytes = await cachedExport(myVault(c), c.env.FILES, c.get("who"), key,
+  const bytes = await cachedExport(() => myVault(c), c.env.FILES, c.get("who"), key,
     async () => renderDocx(data));
   return new Response(bytes, {
     headers: {

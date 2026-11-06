@@ -127,6 +127,55 @@ describe("pilot cost reservations", () => {
     );
     expect(budget.calls).toBe(0);
   });
+  it("rejects a priced output when the request has no output bound", () => {
+    const budget = new EvalBudget({
+      usd: 1,
+      maxCalls: 2,
+      prices: { "fake/model": [1, 1] },
+    });
+    expect(() => budget.reserve("fake/model", "input", 0)).toThrow(
+      "live_eval_cost_bound_invalid",
+    );
+    expect(budget.calls).toBe(0);
+    expect(budget.reservedUsd).toBe(0);
+    expect(budget.reserve("fake/model", "input", 10)).toBeTruthy();
+  });
+  it("still reserves input-only models when the reviewed output rate is zero", () => {
+    const model = "@cf/baai/bge-m3";
+    const budget = new EvalBudget({ usd: 1, maxCalls: 2, prices: { [model]: [0.012, 0] } });
+    expect(budget.reserve(model, "input", 0)).toBeTruthy();
+    expect(budget.calls).toBe(1);
+  });
+  it("does not dispatch an input-only REST call with a positive output-price override", async () => {
+    const { vi } = await import("vitest");
+    const { restModels } = await import("../evals/rest-models");
+    const model = "@cf/baai/bge-m3";
+    const budget = new EvalBudget({ usd: 1, maxCalls: 2, prices: { [model]: [0.012, 1] } });
+    const pilot = { reserve: vi.fn(), settle: vi.fn(), freeze: vi.fn() };
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      const models = restModels(
+        { accountId: "example", token: "unused", gatewayId: "test" },
+        {},
+        { budget, pilot },
+      );
+      await expect(models.embed(["synthetic"])).rejects.toThrow("live_eval_cost_bound_invalid");
+      expect(budget.calls).toBe(0);
+      expect(pilot.reserve).not.toHaveBeenCalled();
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it.each([[1, -1], [1, Number.NaN], [1, Number.POSITIVE_INFINITY]])(
+    "rejects malformed output price overrides before a reservation (%s, %s)",
+    (inputPrice, outputPrice) => {
+      expect(() => new EvalBudget({
+        usd: 1, maxCalls: 1, prices: { "fake/model": [inputPrice, outputPrice] },
+      })).toThrow("live_eval_price_invalid");
+    },
+  );
   it("rejects a zero input rate even when a generative output rate is configured", async () => {
     const { vi } = await import("vitest");
     const { z } = await import("zod");

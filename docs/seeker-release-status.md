@@ -29,6 +29,8 @@ Coach-share creation reads the selected facts, roles and resume versions and cre
 
 New PDF and DOCX cache entries use owner-checked Vault SQLite storage with per-item and aggregate limits, bounded chunks and eviction. Oversized exports are served without caching; replacements regenerate caches rather than transferring them. These local safeguards need staging validation, and SQLite point-in-time recovery retention still needs review.
 
+Export fallback obtains a fresh Vault stub after a cache RPC error, including when an older Vault lacks the cache methods, before checking the session. It does not retry a failed cache write or session check. Upload reservation rechecks the session and refreshes the durable intent after alarm scheduling; closure, sign-out, expiry or concurrent completion during that await prevents the covered R2 put. A write can still be dispatched after the reservation RPC returns, so this is not an erasure fence.
+
 After each paginated R2 sweep, the code checks a fresh first page and retries if any object is visible or the listing is incomplete. This catches some objects missed during a changing listing, but confirms emptiness only at that point in time; an earlier unresolved write can still arrive later.
 
 Maintenance transfer and import now check the Vault lifecycle as well as the deployment fence, including after asynchronous hashing and storage reads. Transfer pages consume rows incrementally before applying the page-size limit. These checks stop the covered operations from resuming after target closure; independent source closure and an R2 put dispatched before closure still need a safe resolution.

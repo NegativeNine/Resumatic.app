@@ -83,7 +83,10 @@ export class EvalBudget {
       attemptWeight < 1 ||
       attemptWeight > 100 ||
       price[0] <= 0 ||
-      (maxOutputTokens > 0 && price[1] <= 0)
+      (maxOutputTokens > 0 && price[1] <= 0) ||
+      // Zero is the input-only sentinel, not a provider output limit. If the
+      // reviewed table prices output, it cannot bound this request's spend.
+      (maxOutputTokens === 0 && price[1] > 0)
     )
       throw new Error("live_eval_cost_bound_invalid");
     // Includes the serialized payload, schema and messages; four tokens per UTF-8

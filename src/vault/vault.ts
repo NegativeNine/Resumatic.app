@@ -611,7 +611,13 @@ export class Vault extends DurableObject<Env> {
     const reservation = store.reserve(input);
     const next = store.nextAlarm();
     if (next !== null) await this.scheduleRunAlarm(next);
-    return reservation;
+    // Alarm scheduling yields: the vault may have closed or the session may
+    // have been revoked before the Worker is allowed to dispatch its put.
+    this.requireOwner(who);
+    // The intent may also have expired or completed during that yield. Return
+    // its current durable state so the Worker neither writes an expired key
+    // nor repeats a put after another retry already committed the source.
+    return { ...reservation, intent: store.reserve(input).intent };
   }
   expiredUploadForCleanup(who: Who, input: UploadDescriptor): boolean {
     this.requireOwner(who);
