@@ -284,6 +284,19 @@ describe("private extraction evaluation evidence", () => {
       );
     }
   });
+  it.each([
+    { start: null, end: null, current: true },
+    { start: "2021", end: "2024", current: true },
+    { start: "2021", end: null, current: false },
+  ])("rejects contradictory or invalid current-role labels", (dates) => {
+    const { root, manifest } = dataset();
+    const entry = manifest.cases[0]!;
+    const gold = JSON.parse(readFileSync(join(root, entry.gold.path), "utf8"));
+    Object.assign(gold.roles[0], dates);
+    entry.gold = put(root, entry.gold.path, JSON.stringify(gold));
+    put(root, "manifest.json", JSON.stringify(manifest));
+    expect(() => loadPrivateDataset(root)).toThrow(/^private_dataset_invalid$/);
+  });
   it("rejects open permissions, path traversal and symlink escapes into the repository", () => {
     const { root, manifest } = dataset();
     chmodSync(join(root, manifest.cases[0]!.markdown.path), 0o644);
@@ -334,7 +347,7 @@ describe("private extraction evaluation evidence", () => {
     expect(report.winner).toBe("llm:default");
     expect(report.results[0]).toMatchObject({
       status: "eligible",
-      metrics: { precision: 1, recall: 1, reviewedFacts: 90 },
+      metrics: { precision: 1, recall: 1, roleRecall: 1, dateAccuracy: null, reviewedFacts: 90 },
     });
     expect(JSON.stringify(report)).not.toContain("Example Organisation");
     expect(JSON.stringify(report)).not.toContain("Built synthetic");

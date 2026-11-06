@@ -101,6 +101,7 @@ export const CASES: ExtractionCase[] = Array.from(
             title,
             start: "2021-03",
             end: null,
+            current: true as const,
             header: span(header),
           },
           ...(education ? [{

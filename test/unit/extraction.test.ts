@@ -572,8 +572,31 @@ describe("segmentation and evaluation", () => {
     prediction.roles[0]!.startDate = "2022";
     expect(scoreCase(prediction, testCase.gold, testCase.markdown)).toMatchObject({
       roleRecall: 0,
-      dateAccuracy: 0,
+      dateAccuracy: 0.5,
       recall: 1,
+    });
+  });
+  it("distinguishes explicitly current roles from roles whose end date is unknown", () => {
+    const testCase = CASES[0]!;
+    const prediction = verifyExtraction(testCase.markdown, oraclePrediction(testCase)).extraction;
+    expect(scoreCase(prediction, testCase.gold, testCase.markdown)).toMatchObject({
+      roleRecall: 1, dateAccuracy: 1, roleMatched: 1, roleExpected: 1, dateCorrect: 2, dateCount: 2,
+    });
+    prediction.roles[0]!.endDate = "2024";
+    expect(scoreCase(prediction, testCase.gold, testCase.markdown)).toMatchObject({
+      roleRecall: 0, dateAccuracy: 0.5, roleMatched: 0, roleExpected: 1, dateCorrect: 1, dateCount: 2,
+    });
+    const unknownEnd = {
+      ...testCase.gold,
+      roles: testCase.gold.roles.map(({ current: _current, ...role }) => role),
+    };
+    expect(scoreCase(prediction, unknownEnd, testCase.markdown)).toMatchObject({
+      roleRecall: 1, dateAccuracy: 1,
+    });
+    prediction.roles[0]!.endDate = null;
+    prediction.roles[0]!.startDate = null;
+    expect(scoreCase(prediction, testCase.gold, testCase.markdown)).toMatchObject({
+      roleRecall: 0, dateAccuracy: 0,
     });
   });
   it("matches repeated employers one-to-one by overlapping headers rather than prediction order", () => {

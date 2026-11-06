@@ -8,6 +8,9 @@ const SUPPORTED = new Set([
   "certifications.csv",
 ]);
 const MAX_EXPANDED = 20 * 1024 * 1024;
+const MAX_CSV_COLUMNS = 256;
+const MAX_CSV_CELLS = 100_000;
+const MAX_CSV_ROWS = 10_000;
 
 /** Parse RFC4180 cells without interpreting formulas or markup. */
 export function parseCsv(text: string): string[][] {
@@ -17,6 +20,21 @@ export function parseCsv(text: string): string[][] {
   let cell = "";
   let quoted = false;
   let closed = false;
+  let cells = 0;
+  const pushCell = () => {
+    if (row.length >= MAX_CSV_COLUMNS || ++cells > MAX_CSV_CELLS)
+      throw new AppError("too_large", "the data export contains too many cells");
+    row.push(cell);
+    cell = "";
+  };
+  const pushRow = () => {
+    if (row.some(Boolean)) {
+      if (rows.length >= MAX_CSV_ROWS)
+        throw new AppError("too_large", "the data export contains too many rows");
+      rows.push(row);
+    }
+    row = [];
+  };
   for (let i = 0; i < text.length; i++) {
     const c = text[i]!;
     if (c === '"') {
@@ -29,15 +47,12 @@ export function parseCsv(text: string): string[][] {
       } else if (cell.length === 0) quoted = true;
       else throw new AppError("invalid", "invalid CSV quotation");
     } else if (c === "," && !quoted) {
-      row.push(cell);
-      cell = "";
+      pushCell();
       closed = false;
     } else if ((c === "\n" || c === "\r") && !quoted) {
       if (c === "\r" && text[i + 1] === "\n") i++;
-      row.push(cell);
-      if (row.some(Boolean)) rows.push(row);
-      row = [];
-      cell = "";
+      pushCell();
+      pushRow();
       closed = false;
     } else {
       if (closed)
@@ -47,12 +62,14 @@ export function parseCsv(text: string): string[][] {
         );
       cell += c;
     }
-    if (cell.length > 60_000 || rows.length > 10_000)
+    if (cell.length > 60_000)
       throw new AppError("too_large", "the data export contains too much text");
   }
   if (quoted) throw new AppError("invalid", "incomplete CSV quotation");
-  row.push(cell);
-  if (row.some(Boolean)) rows.push(row);
+  if (row.length || cell.length || closed) {
+    pushCell();
+    pushRow();
+  }
   if (rows[0]?.[0]) rows[0][0] = rows[0][0].replace(/^\uFEFF/, "");
   return rows;
 }
@@ -112,6 +129,8 @@ export function linkedInDocument(
   let markdown = "";
   const mapped: LinkedInRow[] = [];
   const append = (text: string): [number, number] => {
+    if (markdown.length + (markdown ? 2 : 0) + text.length > 60_000)
+      throw new AppError("too_large", "the career export is too long; import fewer records");
     if (markdown) markdown += "\n\n";
     const start = markdown.length;
     markdown += text;

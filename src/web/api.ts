@@ -46,7 +46,11 @@ async function request<T>(
   body?: unknown,
   idempotencyKey?: string,
 ): Promise<T> {
-  const init: RequestInit = { method, credentials: "same-origin", headers: {} };
+  const init: RequestInit & { credentials: "same-origin" } = {
+    method,
+    credentials: "same-origin",
+    headers: {},
+  };
   if (idempotencyKey)
     (init.headers as Record<string, string>)["idempotency-key"] =
       idempotencyKey;
@@ -96,6 +100,21 @@ async function generate<T>(path: string, body?: unknown): Promise<T> {
   }
 }
 
+// The caller keeps a key for retries of one upload action; a new action gets a new key.
+async function uploadSource(
+  file: File,
+  requestKey: string = crypto.randomUUID(),
+): Promise<{ sourceId: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  return request<{ sourceId: string }>(
+    "POST",
+    "/api/sources",
+    form,
+    requestKey,
+  );
+}
+
 const versionQuery = (version?: number) =>
   version === undefined ? "" : `?version=${version}`;
 
@@ -112,11 +131,7 @@ export const api = {
   signOutEverywhere: () =>
     request<void>("POST", "/api/account/sign-out-everywhere"),
 
-  uploadSource: (file: File) => {
-    const form = new FormData();
-    form.append("file", file);
-    return request<{ sourceId: string }>("POST", "/api/sources", form);
-  },
+  uploadSource,
   sources: () => request<{ sources: SourceView[] }>("GET", "/api/sources"),
   sourceText: (sourceId: string) =>
     request<{ markdown: string; revisionId: string }>(

@@ -437,6 +437,8 @@ export function assessPromotion(root, runId, auditPath) {
           failureRate: records.length ? failures / records.length : null,
           precision,
           recall,
+          roleRecall: sum("roleExpected") ? sum("roleMatched") / sum("roleExpected") : null,
+          dateAccuracy: sum("dateCount") ? sum("dateCorrect") / sum("dateCount") : null,
           skillPrecision: sum("skillProposed") ? sum("skillMatched") / sum("skillProposed") : (sum("skillExpected") ? 0 : null),
           skillRecall: sum("skillExpected") ? sum("skillMatched") / sum("skillExpected") : null,
           skillsF1: sum("skillProposed") + sum("skillExpected")

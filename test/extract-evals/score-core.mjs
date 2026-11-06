@@ -52,6 +52,14 @@ export function scoreVerified(pred, gold, markdown) {
         if (observed !== expected) metadataCorrect = false;
       }
     }
+    // A null end alone is ambiguous: it can mean unknown or ongoing. Count
+    // ongoing status only when the gold explicitly identifies a current role.
+    if (match.current === true) {
+      const current = role.startDate !== null && role.endDate === null;
+      dateCount++;
+      dateCorrect += Number(current);
+      if (!current) metadataCorrect = false;
+    }
     if (metadataCorrect) correctRoles++;
   }
   // Skills retain the whole source line as evidence, while the gold span is
@@ -146,6 +154,10 @@ export function scoreVerified(pred, gold, markdown) {
     evidenceCoverageRecall: ratio(covered, gold.facts.length),
     roleRecall: ratio(correctRoles, gold.roles.length),
     dateAccuracy: ratio(dateCorrect, dateCount),
+    roleMatched: correctRoles,
+    roleExpected: gold.roles.length,
+    dateCorrect,
+    dateCount,
     assignment: ratio(assigned, spanP.size),
     levelAccuracy: ratio(correctLevel, levelCount),
     inflation,

@@ -13,11 +13,7 @@ const LIMIT = formatBytes(MAX_UPLOAD_BYTES);
 function problemWith(file: File): string | null {
   const name = file.name.toLowerCase();
   const supported =
-    name.endsWith(".pdf") ||
-    name.endsWith(".docx") ||
-    name.endsWith(".zip") ||
-    file.type === "application/pdf" ||
-    file.type === DOCX_TYPE;
+    name.endsWith(".pdf") || name.endsWith(".docx") || name.endsWith(".zip");
   if (!supported)
     return `"${file.name}" isn't a PDF, Word (.docx), or LinkedIn data export (.zip). Choose one of those formats.`;
   if (file.size > MAX_UPLOAD_BYTES)
@@ -32,8 +28,10 @@ export function Uploader({ onUploaded }: { onUploaded: Reload }) {
   const [uploading, setUploading] = useState<string | null>(null);
   const [uploaded, setUploaded] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [retry, setRetry] = useState<{ file: File; key: string } | null>(null);
 
-  async function upload(file: File) {
+  async function upload(file: File, key: string = crypto.randomUUID()) {
+    setRetry(null);
     setUploaded(null);
     const problem = problemWith(file);
     if (problem) {
@@ -43,7 +41,7 @@ export function Uploader({ onUploaded }: { onUploaded: Reload }) {
     setUploading(file.name);
     const ok = await run(
       async () => {
-        await api.uploadSource(file);
+        await api.uploadSource(file, key);
         await onUploaded();
       },
       {
@@ -52,6 +50,7 @@ export function Uploader({ onUploaded }: { onUploaded: Reload }) {
     );
     setUploading(null);
     if (ok) setUploaded(file.name);
+    else setRetry({ file, key });
   }
 
   function drop(e: DragEvent<HTMLDivElement>) {
@@ -108,6 +107,16 @@ export function Uploader({ onUploaded }: { onUploaded: Reload }) {
         </p>
       )}
       <ActionError message={error} />
+      {retry && (
+        <button
+          type="button"
+          className="small"
+          disabled={pending}
+          onClick={() => void upload(retry.file, retry.key)}
+        >
+          Retry upload
+        </button>
+      )}
     </div>
   );
 }

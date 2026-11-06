@@ -34,6 +34,8 @@ Each case has a separate, nonempty structured JSON attestation. A consent file c
 
 `gold` is JSON with `roles`, `facts`, and `traps` arrays as defined in `score.ts`. Its IDs must be opaque strings of at least eight characters. Spans are zero-based, half-open UTF-16 offsets into that case's **actual frozen converted Markdown**, not the original synthetic reference text. Facts may reference an existing role ID or null. Both labelers and the adjudicator must review the actual conversion and any ambiguities before the manifest says `adjudicated: true`. PDF metadata must be disabled for the conversion.
 
+When a role is explicitly ongoing, label it with `current: true`, a known `start`, and `end: null`. The scorer then checks that the predicted role actually renders as current. Leave `current` absent when an end date is unknown; an absent end alone is not evidence of an ongoing role. A role cannot be labeled current and have a dated end.
+
 Label each skill as its own `skill` fact, with its span covering the exact skill name rather than the full list. The scorer compares the proposed skill text with that literal span and requires the span to lie within the proposal's source evidence; it also reports skills precision, recall and F1. The broader evidence line is retained for qualifier checks. Missing skill labels distort overall precision and recall, so reviewers must label every in-scope skill.
 
 ## Run and audit

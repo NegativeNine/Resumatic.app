@@ -25,6 +25,17 @@ describe("LinkedIn career data import", () => {
       "incomplete CSV",
     );
   });
+  it("bounds columns, total cells, and rows before allocating an oversized CSV", () => {
+    const wide = Array(256).fill("x").join(",");
+    expect(parseCsv(wide)[0]).toHaveLength(256);
+    expect(() => parseCsv(`${wide},x`)).toThrow("too many cells");
+    expect(parseCsv("x\n".repeat(10_000))).toHaveLength(10_000);
+    expect(() => parseCsv(`${"x\n".repeat(10_000)}x`)).toThrow("too many rows");
+    const twoHundred = Array(200).fill("x").join(",");
+    const atCellLimit = `${twoHundred}\n`.repeat(500);
+    expect(parseCsv(atCellLimit)).toHaveLength(500);
+    expect(() => parseCsv(`${atCellLimit}x`)).toThrow("too many cells");
+  });
   it("only extracts supported career files and retains their exact cell text", () => {
     const zip = zipSync({
       "export/Positions.csv": strToU8(
@@ -66,6 +77,10 @@ describe("LinkedIn career data import", () => {
     expect(() => linkedInMarkdown(zip)).toThrow(
       "expanded archive is too large",
     );
+  });
+  it("rejects an oversized source as it is assembled", () => {
+    const zip = zipSync({ "Skills.csv": strToU8(`Name\n${"x".repeat(59_999)}`) });
+    expect(() => linkedInMarkdown(zip)).toThrow("career export is too long");
   });
 });
 

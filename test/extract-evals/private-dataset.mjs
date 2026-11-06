@@ -42,6 +42,7 @@ const Gold = z
               .string()
               .regex(/^\d{4}(?:-(?:0[1-9]|1[0-2]))?$/)
               .nullable(),
+            current: z.literal(true).optional(),
             header: Span,
           })
           .strict(),
@@ -254,7 +255,8 @@ function validateGold(gold, markdown) {
     return fail();
   const roles = new Set(gold.roles.map((x) => x.id));
   if (
-    gold.roles.some((r) => !validSpan(r.header, markdown)) ||
+    gold.roles.some((r) => !validSpan(r.header, markdown) ||
+      (r.current === true && (r.start === null || r.end !== null))) ||
     gold.facts.some(
       (f) =>
         !validSpan(f.span, markdown) || (f.role !== null && !roles.has(f.role)) ||

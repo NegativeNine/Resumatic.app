@@ -11,6 +11,8 @@ export interface Gold {
     title: string | null;
     start: string | null;
     end: string | null;
+    /** True only when evidence explicitly states that the role is ongoing. */
+    current?: true;
     header: Span;
   }[];
   facts: {
@@ -35,6 +37,10 @@ export interface CaseScore {
   evidenceCoverageRecall: number;
   roleRecall: number;
   dateAccuracy: number;
+  roleMatched: number;
+  roleExpected: number;
+  dateCorrect: number;
+  dateCount: number;
   assignment: number;
   levelAccuracy: number;
   inflation: number;
