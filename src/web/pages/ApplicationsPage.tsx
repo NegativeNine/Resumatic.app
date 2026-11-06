@@ -1,4 +1,5 @@
 import { useId, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import {
   APPLICATION_STATUSES,
   MAX_JD_CHARS,
@@ -35,13 +36,50 @@ export function ApplicationsPage() {
   );
   const [status, setStatus] = useState<ApplicationStatus | "all">("all");
   const [view, setView] = useState<"list" | "board">("list");
+  const [openWorkspaces, setOpenWorkspaces] = useState<ReadonlySet<string>>(() => new Set());
   const filterId = useId();
+  const statusOf = (application: ApplicationView) => application.status ?? "saved";
   const visible =
     status === "all"
       ? applications
       : applications.filter(
-          (application) => (application.status ?? "saved") === status,
+          (application) => statusOf(application) === status || openWorkspaces.has(application.id),
         );
+  const visibleIds = new Set(visible.map((application) => application.id));
+  const extraWorkspace = status !== "all" && visible.some((application) => statusOf(application) !== status);
+  const columns = APPLICATION_STATUSES.filter(
+    (value) => status === "all" || status === value || visible.some((application) => statusOf(application) === value),
+  );
+  function toggleWorkspace(id: string) {
+    setOpenWorkspaces((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  // Keep one keyed parent for cards in both views. Moving a card to a new
+  // board column or changing the filter must not unmount an open workspace.
+  const content: ReactNode[] = [];
+  if (view === "board") for (const [index, value] of columns.entries()) {
+    content.push(<li className="application-column-heading" role="presentation" key={`column:${value}`} style={{ gridColumn: index + 1, gridRow: 1 }}>
+      <h3 id={`${filterId}-column-${value}`}>{APPLICATION_LABELS[value]}</h3>
+      {!visible.some((application) => statusOf(application) === value) && <p className="meta">No applications.</p>}
+    </li>);
+  }
+  for (const application of applications) {
+    const appStatus = statusOf(application);
+    content.push(<ApplicationCard
+      key={`application:${application.id}`}
+      application={application}
+      onSaved={list.reload}
+      compact={view === "board"}
+      hidden={!visibleIds.has(application.id)}
+      open={openWorkspaces.has(application.id)}
+      onToggleWorkspace={() => toggleWorkspace(application.id)}
+      columnLabel={view === "board" && visibleIds.has(application.id) ? `${filterId}-column-${appStatus}` : undefined}
+      style={view === "board" && visibleIds.has(application.id) ? { gridColumn: columns.indexOf(appStatus) + 1 } : undefined}
+    />);
+  }
 
   return (
     <>
@@ -112,54 +150,24 @@ export function ApplicationsPage() {
         {!list.data && !list.error && (
           <Loading>Loading your applications…</Loading>
         )}
+        {extraWorkspace && <p className="hint" role="status">Open workspaces remain visible even when their status does not match the filter.</p>}
         {list.data &&
           (applications.length === 0 ? (
             <p className="empty">
               No applications yet. Paste a job description above to start your
               first one.
             </p>
-          ) : visible.length === 0 ? (
-            <p className="empty">No applications have this status yet.</p>
-          ) : view === "board" ? (
-            <div
-              className="application-board"
-              role="region"
-              aria-label="Applications by status"
-              tabIndex={0}
-            >
-              {APPLICATION_STATUSES.filter(
-                (value) => status === "all" || status === value,
-              ).map((value) => (
-                <section className="application-column" key={value}>
-                  <h3>{APPLICATION_LABELS[value]}</h3>
-                  <ul className="plain-list">
-                    {visible
-                      .filter((a) => (a.status ?? "saved") === value)
-                      .map((application) => (
-                        <ApplicationCard
-                          key={application.id}
-                          application={application}
-                          onSaved={list.reload}
-                          compact
-                        />
-                      ))}
-                  </ul>
-                  {!visible.some((a) => (a.status ?? "saved") === value) && (
-                    <p className="meta">No applications.</p>
-                  )}
-                </section>
-              ))}
-            </div>
           ) : (
-            <ul className="plain-list">
-              {visible.map((application) => (
-                <ApplicationCard
-                  key={application.id}
-                  application={application}
-                  onSaved={list.reload}
-                />
-              ))}
-            </ul>
+            <>
+              {visible.length === 0 && <p className="empty">No applications have this status yet.</p>}
+              <div hidden={visible.length === 0} className={view === "board" ? "application-board-scroller" : undefined} role={view === "board" ? "region" : undefined}
+                aria-label={view === "board" ? "Applications by status" : undefined} tabIndex={view === "board" ? 0 : undefined}>
+                <ul className={`plain-list${view === "board" ? " application-board" : ""}`}
+                  style={view === "board" ? { "--application-columns": columns.length } as CSSProperties : undefined}>
+                  {content}
+                </ul>
+              </div>
+            </>
           ))}
       </section>
     </>
@@ -240,10 +248,20 @@ function ApplicationCard({
   application,
   onSaved,
   compact = false,
+  hidden,
+  open,
+  onToggleWorkspace,
+  columnLabel,
+  style,
 }: {
   application: ApplicationView;
   onSaved: Reload;
   compact?: boolean;
+  hidden: boolean;
+  open: boolean;
+  onToggleWorkspace: () => void;
+  columnLabel?: string;
+  style?: CSSProperties;
 }) {
   const { tailor, pending, error } = useTailor();
   const headingId = useId();
@@ -251,11 +269,11 @@ function ApplicationCard({
     (a, b) => b.createdAt - a.createdAt,
   );
   const unnamed = !application.title && !application.company;
-  const [open, setOpen] = useState(false);
   const Heading = compact ? "h4" : "h3";
 
   return (
-    <li className="card application">
+    <li className="card application" hidden={hidden} style={style}
+      aria-labelledby={columnLabel ? `${columnLabel} ${headingId}` : headingId}>
       <div className="row-between">
         <div>
           <Heading id={headingId}>{jobName(application)}</Heading>
@@ -305,7 +323,7 @@ function ApplicationCard({
           className="small"
           aria-expanded={open}
           aria-controls={`${headingId}-workspace`}
-          onClick={() => setOpen(!open)}
+          onClick={onToggleWorkspace}
         >
           {open ? "Close workspace" : "Track & prepare"}
         </button>

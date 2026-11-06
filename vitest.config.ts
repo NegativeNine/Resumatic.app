@@ -79,6 +79,9 @@ export default defineConfig({
             ...(process.env.RESUMATIC_EXPORT_STREAM_STRESS === "1"
               ? ["test/diagnostics/export-stream.stress.ts"]
               : []),
+            ...(process.env.RESUMATIC_ARCHIVE_STREAM_STRESS === "1"
+              ? ["test/diagnostics/archive-stream.stress.ts"]
+              : []),
           ],
           testTimeout: 30_000,
         },

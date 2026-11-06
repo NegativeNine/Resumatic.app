@@ -1,6 +1,7 @@
 import type { InterviewAnswer } from "../shared/interview";
 import { reviewViewStream } from "./review-stream";
-import { exportJsonStream } from "./export-stream";
+import { exportJsonChunks, exportJsonStream } from "./export-stream";
+import { MAX_ARCHIVE_BYTES } from "../render/archive";
 import {
   refinementCacheKey,
   cacheRefinement,
@@ -3275,6 +3276,48 @@ export class Vault extends DurableObject<Env> {
       return { id: row.id, filename: row.filename, origin: row.origin, key: row.r2_key };
     });
     return { data, files };
+  }
+
+  /** Capture both archive metadata and JSON in one transaction, then stream them together. */
+  async exportArchiveStream(who: Who): Promise<Response> {
+    const { data, files } = this.ctx.storage.transactionSync(() => this.exportArchiveSnapshot(who));
+    if (files.length > 128)
+      throw new AppError("too_large", "too many files for one archive; download the originals individually");
+    const manifestFiles = files.map((file, index) => {
+      if (!/^[A-Za-z0-9_-]{1,100}$/.test(file.id))
+        throw new AppError("unavailable", "a source identifier cannot be exported");
+      const extension = file.origin === "ocr" ? "json" : file.filename.split(".").pop()?.toLowerCase();
+      const safeExtension = extension && ["pdf", "docx", "zip", "json"].includes(extension) ? extension : "bin";
+      const path = `sources/${file.id}.${safeExtension}`;
+      if (data.sources[index]?.id !== file.id) throw new AppError("unavailable", "the source snapshot is incomplete");
+      data.sources[index]!.file = path;
+      return { id: file.id, key: file.key, path, origin: file.origin };
+    });
+    const encoder = new TextEncoder();
+    let jsonBytes = 0;
+    for (const chunk of exportJsonChunks(data)) {
+      jsonBytes += encoder.encode(chunk).byteLength;
+      if (jsonBytes > MAX_ARCHIVE_BYTES)
+        throw new AppError("too_large", "the export exceeds the archive size limit; download the originals individually");
+    }
+    const manifest = encoder.encode(JSON.stringify({ exportedAt: data.exportedAt, jsonBytes, files: manifestFiles }));
+    if (manifest.byteLength > 1024 * 1024) throw new AppError("too_large", "archive metadata is too large");
+    const prefix = new Uint8Array(4 + manifest.byteLength);
+    new DataView(prefix.buffer).setUint32(0, manifest.byteLength, false);
+    prefix.set(manifest, 4);
+    const reader = exportJsonStream(data).getReader();
+    let prefixSent = false;
+    return new Response(new ReadableStream({
+      type: "bytes",
+      async pull(controller) {
+        if (!prefixSent) { prefixSent = true; controller.enqueue(prefix); return; }
+        try {
+          const next = await reader.read();
+          if (next.done) controller.close(); else controller.enqueue(next.value);
+        } catch (error) { controller.error(error); }
+      },
+      cancel: (reason) => reader.cancel(reason),
+    }, { highWaterMark: 0 }), { headers: { "content-type": "application/octet-stream", "cache-control": "private, no-store" } });
   }
 
   private exportSnapshot(who: Who): VaultExport {
