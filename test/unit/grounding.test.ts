@@ -128,6 +128,38 @@ describe("numbers", () => {
     expect(unsupportedNumbers("Saved $1e309", "saved $1e309")).toEqual(["$1e309"]);
     expect(unsupportedNumbers("Improved by 1e-400%", "improved by 0%")).toEqual(["1e-400%"]);
   });
+
+  it("checks ordinal ranks without reusing counts or dates", () => {
+    expect(checkClaim("Ranked first", [{ text: "Ranked among competitors" }]).ok).toBe(false);
+    expect(unsupportedNumbers("Ranked first", "Ranked 1st")).toEqual([]);
+    expect(unsupportedNumbers("Ranked 1st", "Ranked first")).toEqual([]);
+    expect(checkClaim("Ranked 1st", [{ text: "Ranked first" }]).ok).toBe(true);
+    expect(unsupportedNumbers("Ranked first", "Processed one request")).toEqual(["first"]);
+    expect(unsupportedNumbers("Processed one request", "Ranked first")).toEqual(["one"]);
+    expect(unsupportedNumbers("Ranked twenty-first", "Ranked 21st")).toEqual([]);
+    expect(unsupportedNumbers("Ranked twenty first", "Ranked 21st")).toEqual([]);
+    expect(unsupportedNumbers("Ranked twenty-first", "Ranked 20th and 1st")).toEqual(["twenty-first"]);
+    expect(unsupportedNumbers("Ranked twenty-first", "Ranked 22nd")).toEqual(["twenty-first"]);
+    expect(unsupportedNumbers("Ranked first", "Joined March first, 2021")).toEqual(["first"]);
+    expect(unsupportedNumbers("Joined March first, 2021", "Joined 2021-03-01")).toEqual([]);
+    // Numeric month tokens are not inferred from written month names; this
+    // remains a conservative mismatch in the existing date checker.
+    expect(unsupportedNumbers("Joined 2021-03-01", "Joined first March 2021")).toEqual(["03"]);
+    expect(unsupportedNumbers("Joined March second, 2021", "Joined March first, 2021")).toEqual(["2021", "second"]);
+  });
+
+  it("avoids treating common non-rank uses as ordinal claims", () => {
+    expect(unsupportedNumbers("Reduced latency by one second", "Reduced latency by one second")).toEqual([]);
+    expect(unsupportedNumbers("Ranked second", "Reduced latency by one second")).toEqual(["second"]);
+    expect(unsupportedNumbers("Won a second award", "Won an award")).toEqual(["second"]);
+    expect(unsupportedNumbers("Delivered first aid", "Delivered aid")).toEqual([]);
+    expect(unsupportedNumbers("Delivered first-class support", "Delivered support")).toEqual([]);
+    expect(unsupportedNumbers("Delivered first hand support", "Delivered support")).toEqual([]);
+    expect(unsupportedNumbers("Provided service second to none", "Provided service")).toEqual([]);
+    expect(unsupportedNumbers("Ranked first", "Ranked second to none")).toEqual(["first"]);
+    expect(unsupportedNumbers("caféfirst", "worked in a café")).toEqual([]);
+    expect(unsupportedNumbers("Ranked firsté", "Ranked first")).toEqual([]);
+  });
 });
 
 describe("names", () => {

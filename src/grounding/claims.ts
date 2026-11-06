@@ -7,6 +7,8 @@ export interface NumberToken {
   value: number;
   percent: boolean;
   multiplier: boolean;
+  /** Ordinal rank or sequence (e.g. fifth), distinct from a count of five. */
+  ordinal: boolean;
   currency: "dollar" | "euro" | "sterling" | "conflicting" | null;
   raw: string;
   /** A number in an explicit date context, not an achievement count. */
@@ -45,6 +47,32 @@ const SCALES: Record<string, number> = {
   bn: 1e9,
   billion: 1e9,
 };
+
+const ORDINAL_UNITS: Record<string, number> = {
+  first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6,
+  seventh: 7, eighth: 8, ninth: 9, tenth: 10, eleventh: 11,
+  twelfth: 12, thirteenth: 13, fourteenth: 14, fifteenth: 15,
+  sixteenth: 16, seventeenth: 17, eighteenth: 18, nineteenth: 19,
+  twentieth: 20, thirtieth: 30, fortieth: 40, fiftieth: 50,
+  sixtieth: 60, seventieth: 70, eightieth: 80, ninetieth: 90,
+};
+const ORDINAL_TENS: Record<string, number> = {
+  twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60,
+  seventy: 70, eighty: 80, ninety: 90,
+};
+const ORDINAL_UNIT_PATTERN = Object.keys(ORDINAL_UNITS).join("|");
+const ORDINAL_TENS_PATTERN = Object.keys(ORDINAL_TENS).join("|");
+const ORDINAL_WORD_PATTERN = `(?:(?:${ORDINAL_TENS_PATTERN})[\\s-]+(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth)|${ORDINAL_UNIT_PATTERN})`;
+const ORDINAL = new RegExp(`(?<![\\p{L}\\p{N}_])(?:\\d+(?:st|nd|rd|th)|${ORDINAL_WORD_PATTERN})(?![\\p{L}\\p{N}_])`, "giu");
+
+function ordinalValue(text: string): number {
+  const lower = text.toLowerCase();
+  if (/^\d/.test(lower)) return Number.parseInt(lower, 10);
+  const parts = lower.split(/[\s-]+/);
+  return parts.length === 1
+    ? ORDINAL_UNITS[parts[0]!]!
+    : ORDINAL_TENS[parts[0]!]! + ORDINAL_UNITS[parts[1]!]!;
+}
 
 const NUMBER = /(?<![\w.])(?:([+\-−])\s*)?(?:([$€£]|USD\b|EUR\b|GBP\b)\s*)?([+\-−])?((?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?|\.\d+)(?:e[+\-]?\d+)?)(?:\s?(%|percent\b|per cent\b|x\b|×|times\b|-?fold\b|k\b|thousand\b|mm\b|m\b|million\b|bn\b|b\b|billion\b))?(?:\s?(dollars?|euros?|pounds?\s+sterling|USD|EUR|GBP)\b)?(?![\w])/gi;
 const WORD_NUMBER = /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozen|twenty|hundred)(?=\b|fold\b)(?:\s*(%|percent\b|per cent\b|x\b|×|times\b|-?fold\b))?(?:\s*(dollars?|euros?|pounds?\s+sterling|USD|EUR|GBP)\b)?/gi;
@@ -105,6 +133,21 @@ function dateComponents(text: string): { components: DateComponent[]; numericRan
   }
   const month = "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
   const monthNumber = (name: string) => pad(String(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(name.slice(0, 3).toLowerCase()) + 1));
+  // Written ordinal days must remain dates, not evidence for an unrelated rank.
+  for (const match of text.matchAll(new RegExp(`\\b(${month})\\.?\\s+(${ORDINAL_WORD_PATTERN})(?:,\\s*|\\s+)((?:19|20)\\d{2})\\b`, "gi"))) {
+    const day = ordinalValue(match[2]!);
+    if (day < 1 || day > 31) continue;
+    const key = `iso:${match[3]}:${monthNumber(match[1]!)}:${pad(String(day))}`;
+    mark(match.index + match[0].indexOf(match[2]!), match[2]!, "day", key);
+    mark(match.index + match[0].lastIndexOf(match[3]!), match[3]!, "year", key);
+  }
+  for (const match of text.matchAll(new RegExp(`\\b(${ORDINAL_WORD_PATTERN})\\s+(${month})\\.?\\s+((?:19|20)\\d{2})\\b`, "gi"))) {
+    const day = ordinalValue(match[1]!);
+    if (day < 1 || day > 31) continue;
+    const key = `iso:${match[3]}:${monthNumber(match[2]!)}:${pad(String(day))}`;
+    mark(match.index, match[1]!, "day", key);
+    mark(match.index + match[0].lastIndexOf(match[3]!), match[3]!, "year", key);
+  }
   for (const match of text.matchAll(new RegExp(`\\b(${month})\\.?\\s+(\\d{1,2})(st|nd|rd|th)?(?:,\\s*|\\s+)((?:19|20)\\d{2})\\b`, "gi"))) {
     const day = match.index + match[0].indexOf(match[2]!);
     const year = match.index + match[0].lastIndexOf(match[4]!);
@@ -133,6 +176,20 @@ export function numbersIn(text: string): NumberToken[] {
   // Mark every component of an explicit ISO-style date, including its month
   // and day. Otherwise those values can be reused as unrelated counts.
   const dates = dateComponents(text);
+  const ordinals = [...text.matchAll(ORDINAL)].filter((match) => {
+    const following = text.slice(match.index + match[0].length);
+    // Common idioms do not assert a literal position in a sequence.
+    if (match[0].toLowerCase() === "first" && /^(?:\s+aid\b|[-\s]+(?:class|hand)\b)/i.test(following)) return false;
+    if (match[0].toLowerCase() === "second" && /^\s+to\s+none\b/i.test(following)) return false;
+    // "one second" is a duration, while "a second award" is ordinal.
+    // Restrict the latter exception to common duration contexts.
+    if (match[0].toLowerCase() !== "second") return true;
+    const before = text.slice(0, match.index);
+    if (/(?:\bone\s+|\d+\s+)$/i.test(before)) return false;
+    if (/\b(?:a|per|each|every)\s+$/i.test(before) &&
+        /^(?:\s*$|\s*[,.;:!?]|\s+(?:of|before|after|later|earlier|long|faster|slower|delay|latency|wait)\b)/i.test(following)) return false;
+    return true;
+  });
   // In a dotted date a period separates components; the number scanner
   // otherwise interprets the year and month as a decimal. Preserve offsets.
   const scan = text.split("");
@@ -161,9 +218,13 @@ export function numbersIn(text: string): NumberToken[] {
     // Conflicting units cannot be treated as any supported quantity.
     const currency = prefixCurrency && suffixCurrency && prefixCurrency !== suffixCurrency ? "conflicting" : prefixCurrency ?? suffixCurrency;
     const datePart = component?.part ?? (isDateYear(text, digitIndex, digits) ? "year" : null);
-    out.push({ value, percent, multiplier: isMultiplier(unit), currency, raw: text.slice(match.index, match.index + match[0].length).trim(), date: datePart !== null, datePart, dateKey: component?.key ?? null });
+    out.push({ value, percent, multiplier: isMultiplier(unit), ordinal: false, currency, raw: text.slice(match.index, match.index + match[0].length).trim(), date: datePart !== null, datePart, dateKey: component?.key ?? null });
   }
-  for (const match of text.matchAll(WORD_NUMBER)) {
+  // Prevent the cardinal part of "twenty-first" being counted separately.
+  const wordScan = text.split("");
+  for (const match of ordinals)
+    for (let i = match.index; i < match.index + match[0].length; i++) wordScan[i] = " ";
+  for (const match of wordScan.join("").matchAll(WORD_NUMBER)) {
     const magnitude = NUMBER_WORDS[match[1]!.toLowerCase()];
     if (magnitude === undefined) continue;
     const value = /\b(?:minus|negative)\s+(?:(?:[$€£]|USD|EUR|GBP)\s*)?$/i.test(text.slice(0, match.index)) ? -magnitude : magnitude;
@@ -172,7 +233,15 @@ export function numbersIn(text: string): NumberToken[] {
     const prefixCurrency = currencyOf(prefix);
     const suffixCurrency = currencyOf(match[3]);
     const currency = prefixCurrency && suffixCurrency && prefixCurrency !== suffixCurrency ? "conflicting" : prefixCurrency ?? suffixCurrency;
-    out.push({ value, percent: unit === "%" || unit === "percent" || unit === "per cent", multiplier: isMultiplier(unit), currency, raw: match[0].trim(), date: false, datePart: null, dateKey: null });
+    out.push({ value, percent: unit === "%" || unit === "percent" || unit === "per cent", multiplier: isMultiplier(unit), ordinal: false, currency, raw: match[0].trim(), date: false, datePart: null, dateKey: null });
+  }
+  for (const match of ordinals) {
+    const component = dates.components.find((item) => item.start === match.index && item.part === "day");
+    // Numeric ordinal date days were already included in the numeric scan.
+    if (component && /^\d/.test(match[0])) continue;
+    out.push({ value: ordinalValue(match[0]), percent: false, multiplier: false,
+      ordinal: !component, currency: null, raw: match[0], date: !!component,
+      datePart: component ? "day" : null, dateKey: component?.key ?? null });
   }
   return out;
 }
@@ -182,7 +251,7 @@ function sameNumber(a: NumberToken, b: NumberToken): boolean {
   if ((Number.isInteger(a.value) && !Number.isSafeInteger(a.value)) ||
       (Number.isInteger(b.value) && !Number.isSafeInteger(b.value))) return false;
   const dateSupported = a.dateKey === null || b.dateKey === a.dateKey || (b.dateKey !== null && b.dateKey.startsWith(`${a.dateKey}:`));
-  return a.currency !== "conflicting" && b.currency !== "conflicting" && a.percent === b.percent && a.multiplier === b.multiplier && a.currency === b.currency && a.date === b.date && a.datePart === b.datePart && dateSupported && Math.abs(a.value - b.value) <= 2 * Number.EPSILON * Math.max(1, Math.abs(a.value), Math.abs(b.value));
+  return a.currency !== "conflicting" && b.currency !== "conflicting" && a.percent === b.percent && a.multiplier === b.multiplier && a.ordinal === b.ordinal && a.currency === b.currency && a.date === b.date && a.datePart === b.datePart && dateSupported && Math.abs(a.value - b.value) <= 2 * Number.EPSILON * Math.max(1, Math.abs(a.value), Math.abs(b.value));
 }
 
 /** Numbers in the claim that no evidence number matches. */
@@ -208,7 +277,7 @@ export function namesIn(text: string): string[] {
     const startsSentence = sentenceStart;
     sentenceStart = /[.!?:;]$/.test(rawWord);
     if (!word || NOT_NAMES.has(word.toLowerCase())) continue;
-    if (/^[$€£]?[\d.,]+(%|k|m|mm|b|bn)?$/i.test(word)) continue;
+    if (/^[$€£]?[\d.,]+(%|k|m|mm|b|bn|st|nd|rd|th)?$/i.test(word)) continue;
     const technical = /[A-Za-z]/.test(word) && (/\d/.test(word) || /[+#]/.test(word) || /\w\.\w/.test(word));
     const acronym = /^[A-Z][A-Z0-9&]{1,}s?$/.test(word);
     const capitalised = /^[A-Z]/.test(word) && !startsSentence;

@@ -78,6 +78,11 @@ export async function validate({
       (config.vars?.TEST_SIGNIN_KEY || env.TEST_SIGNIN_KEY)
     )
       missing.push("PRODUCTION_TEST_SIGNIN_KEY_FORBIDDEN");
+    // Open registration lets a creation dispatched before deletion recreate
+    // the global account after erasure. This rollout guard limits exposure;
+    // invite-only mode does not settle stale calls or prove deletion safe.
+    if (environment === "production" && config.vars?.INVITE_ONLY !== "true")
+      missing.push("PUBLIC_REGISTRATION_ROLLOUT_UNVERIFIED");
     if (
       !(Number(config.vars?.DAILY_SPEND_CAP_USD) > 0) ||
       !Number.isFinite(Number(config.vars?.DAILY_SPEND_CAP_USD))

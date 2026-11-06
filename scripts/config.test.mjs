@@ -23,13 +23,32 @@ test("production secrets cannot shadow reviewed variables or activate guarded se
     if (name !== "TEST_SIGNIN_KEY") assert.equal(validEvaluationSecretNames([{ name }]), false);
   }
   assert.equal(validEvaluationSecretNames([{ name: "TEST_SIGNIN_KEY" }]), true);
-  for (const name of ["DAILY_SPEND_CAP_USD", "ACCESS_AUD", "FUTURE_SETTING", "ALLOW_TEST_SIGNIN", "RESTORE_FENCE_IDS", "R2_CACHE_FENCE_ENABLED", "PLACEMENT_FENCE_ENABLED", "DIRECTORY_SHARDS", "MCP_ENABLED", "APP_ORIGIN", "PILOT_SHARED_BUDGET", "MODEL_PRICES_JSON", "UNKNOWN_SECRET"]) {
+  for (const name of ["DAILY_SPEND_CAP_USD", "ACCESS_AUD", "FUTURE_SETTING", "ALLOW_TEST_SIGNIN", "RESTORE_FENCE_IDS", "R2_CACHE_FENCE_ENABLED", "PLACEMENT_FENCE_ENABLED", "DIRECTORY_SHARDS", "INVITE_ONLY", "MCP_ENABLED", "APP_ORIGIN", "PILOT_SHARED_BUDGET", "MODEL_PRICES_JSON", "UNKNOWN_SECRET"]) {
     assert.equal(validProductionSecretNames([{ name }], vars), false, name);
   }
   assert.equal(validProductionSecretNames({}, vars), false);
   assert.equal(validProductionSecretNames([{}], vars), false);
   assert.equal(validProductionSecretNames([], undefined), false);
   assert.equal(validProductionSecretNames([], []), false);
+});
+
+test("production preflight requires explicit invite-only registration until deletion races are resolved", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "public-registration-config-"));
+  try {
+    const path = join(dir, "wrangler.jsonc");
+    const config = { name: "example", vars: {}, env: { staging: { vars: { INVITE_ONLY: "false" } } } };
+    for (const value of [undefined, "false", "", "TRUE", true, null, "other"]) {
+      if (value === undefined) delete config.vars.INVITE_ONLY;
+      else config.vars.INVITE_ONLY = value;
+      await writeFile(path, JSON.stringify(config));
+      const report = await validate({ environment: "production", purpose: "deploy", configPath: path, env: {} });
+      assert.ok(report.missing.includes("PUBLIC_REGISTRATION_ROLLOUT_UNVERIFIED"), String(value));
+    }
+    config.vars.INVITE_ONLY = "true";
+    await writeFile(path, JSON.stringify(config));
+    assert.ok(!(await validate({ environment: "production", purpose: "deploy", configPath: path, env: {} })).missing.includes("PUBLIC_REGISTRATION_ROLLOUT_UNVERIFIED"));
+    assert.ok(!(await validate({ environment: "staging", purpose: "deploy", configPath: path, env: {} })).missing.includes("PUBLIC_REGISTRATION_ROLLOUT_UNVERIFIED"));
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
 test("experimental cache-write fencing cannot be enabled in production configuration", async () => {
