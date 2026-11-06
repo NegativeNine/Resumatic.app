@@ -62,6 +62,7 @@ export class EvalBudget {
       !Number.isSafeInteger(attemptWeight) ||
       attemptWeight < 1 ||
       attemptWeight > 100 ||
+      price[0] <= 0 ||
       (maxOutputTokens > 0 && price[1] <= 0)
     )
       throw new Error("live_eval_cost_bound_invalid");

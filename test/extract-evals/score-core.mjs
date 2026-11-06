@@ -7,7 +7,8 @@ const iou = (a, b) => {
     ? Math.max(0, Math.min(a[1], b[1]) - Math.max(a[0], b[0])) / union
     : 0;
 };
-export function scoreVerified(pred, gold) {
+export function scoreVerified(pred, gold, markdown) {
+  if (typeof markdown !== "string") throw new Error("missing_source_for_scoring");
   const roleMap = new Map(),
     usedRoles = new Set(),
     usedPredictedRoles = new Set();
@@ -53,10 +54,20 @@ export function scoreVerified(pred, gold) {
     }
     if (metadataCorrect) correctRoles++;
   }
+  // Skills retain the whole source line as evidence, while the gold span is
+  // the individual skill. Compare the literal skill value and its containment
+  // in that evidence; IoU against the whole line would mark correct skills wrong.
+  const skillMatch = (p, g) =>
+    p.kind === "skill" && g.kind === "skill" &&
+    p.span[0] <= g.span[0] && p.span[1] >= g.span[1] &&
+    normalized(p.text) === normalized(markdown.slice(...g.span)) &&
+    normalized(p.text).length > 0;
   const candidates = [];
   pred.facts.forEach((p, pi) =>
     gold.facts.forEach((g, gi) => {
-      const overlap = iou(p.span, g.span);
+      const overlap = p.kind === "skill" && g.kind === "skill"
+        ? Number(skillMatch(p, g))
+        : iou(p.span, g.span);
       if (p.kind === g.kind && overlap >= 0.5)
         candidates.push({ p: pi, g: gi, overlap });
     }),
@@ -80,7 +91,8 @@ export function scoreVerified(pred, gold) {
     matchedG = new Set();
   let correctLevel = 0,
     levelCount = 0,
-    inflation = 0;
+    inflation = 0,
+    matchedSkills = 0;
   for (const pair of candidates) {
     if (!correctRole(pair) || matchedP.has(pair.p) || matchedG.has(pair.g))
       continue;
@@ -88,6 +100,7 @@ export function scoreVerified(pred, gold) {
     matchedG.add(pair.g);
     const p = pred.facts[pair.p],
       g = gold.facts[pair.g];
+    if (g.kind === "skill") matchedSkills++;
     if (g.level !== null) {
       levelCount++;
       correctLevel += Number(p.level === g.level);
@@ -97,24 +110,37 @@ export function scoreVerified(pred, gold) {
   const covered = gold.facts.filter((g) =>
     pred.facts.some(
       (p) =>
-        p.kind === g.kind &&
-        Math.max(
+        p.kind === g.kind && (g.kind === "skill"
+        ? skillMatch(p, g)
+        : Math.max(
           0,
           Math.min(p.span[1], g.span[1]) - Math.max(p.span[0], g.span[0]),
         ) /
           (g.span[1] - g.span[0]) >=
-          0.5,
+          0.5),
     ),
   ).length;
+  const skillProposed = pred.facts.filter((f) => f.kind === "skill").length,
+    skillExpected = gold.facts.filter((f) => f.kind === "skill").length;
   const matched = matchedP.size,
     precision = ratio(matched, pred.facts.length),
-    recall = ratio(matched, gold.facts.length);
+    recall = ratio(matched, gold.facts.length),
+    skillPrecision = ratio(matchedSkills, skillProposed),
+    skillRecall = ratio(matchedSkills, skillExpected);
   const trapLeaks = [...pred.roles, ...pred.facts].filter((item) =>
     gold.traps.some((trap) => iou(item.span, trap.span) > 0),
   ).length;
   return {
     precision,
     recall,
+    skillPrecision,
+    skillRecall,
+    skillMatched: matchedSkills,
+    skillProposed,
+    skillExpected,
+    skillsF1: skillPrecision + skillRecall
+      ? (2 * skillPrecision * skillRecall) / (skillPrecision + skillRecall)
+      : 0,
     f1:
       precision + recall ? (2 * precision * recall) / (precision + recall) : 0,
     evidenceCoverageRecall: ratio(covered, gold.facts.length),

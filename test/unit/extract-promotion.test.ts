@@ -207,7 +207,7 @@ function snapshot(root: string, mutate: (data: any) => void = () => {}) {
         ms: 500,
         prediction,
         judgeVerdicts: selected.map(() => "supported"),
-        score: scoreCase(prediction, c.gold),
+        score: scoreCase(prediction, c.gold, c.markdown),
         unsupportedClaims: 0,
         usage: [{ costUsd: 0.001 }],
         candidateKeys: selected.map((f) => f.key),
@@ -458,7 +458,7 @@ describe("private extraction evaluation evidence", () => {
       data.candidates.push(...updated);
       row.candidateKeys = updated.map((c: any) => c.key);
       row.judgeVerdicts = updated.map(() => "supported");
-      row.score = scoreCase(row.prediction, item.gold);
+      row.score = scoreCase(row.prediction, item.gold, item.markdown);
     });
     saveAudit(root, { ...audit, snapshotSha256: "0".repeat(64) });
     expect(() => assessPromotion(root, written.runId, "audit.json")).toThrow(

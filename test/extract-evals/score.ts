@@ -26,6 +26,12 @@ export interface CaseScore {
   precision: number;
   recall: number;
   f1: number;
+  skillPrecision: number;
+  skillRecall: number;
+  skillsF1: number;
+  skillMatched: number;
+  skillProposed: number;
+  skillExpected: number;
   evidenceCoverageRecall: number;
   roleRecall: number;
   dateAccuracy: number;
@@ -39,6 +45,6 @@ export interface CaseScore {
   expected: number;
 }
 /** Precision/recall require correct role; assignment is measured separately. */
-export function scoreCase(pred: VerifiedExtraction, gold: Gold): CaseScore {
-  return scoreVerified(pred, gold);
+export function scoreCase(pred: VerifiedExtraction, gold: Gold, markdown: string): CaseScore {
+  return scoreVerified(pred, gold, markdown);
 }

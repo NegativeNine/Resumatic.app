@@ -5,6 +5,8 @@ import { allDirectories, vault } from "../shared/stubs";
 import { operationalMetrics } from "./metrics";
 import { oauthUserGrantCount } from "./mcp";
 import { AppError } from "../shared/errors";
+import { isMissingWorkflowInstance } from "../shared/workflow-errors";
+import { nextR2Cursor } from "../shared/r2";
 import {
   TRANSFER_TABLES,
   type TransferManifest,
@@ -140,10 +142,11 @@ maintenance.post("/deletion-audits/:id", async (c) => {
   const probe = await vault(c.env, vid).deletionProbe();
   let r2Objects = 0;
   let cursor: string | undefined;
+  const seen = new Set<string>();
   do {
     const page = await c.env.FILES.list({ prefix: `vaults/${vid}/`, cursor });
     r2Objects += page.objects.length;
-    cursor = page.truncated ? page.cursor : undefined;
+    cursor = nextR2Cursor(page, seen);
   } while (cursor);
   let activeRuns: number | null = 0;
   for (const [binding, ids] of [
@@ -157,16 +160,7 @@ maintenance.post("/deletion-audits/:id", async (c) => {
         await (await binding.get(run)).status();
         if (activeRuns !== null) activeRuns++;
       } catch (error) {
-        if (
-          !(error instanceof Error && error.message === "instance.not_found") &&
-          !(
-            typeof error === "object" &&
-            error !== null &&
-            "code" in error &&
-            [10200, 10404].includes(Number(error.code))
-          )
-        )
-          activeRuns = null;
+        if (!isMissingWorkflowInstance(error)) activeRuns = null;
       }
     }
   }

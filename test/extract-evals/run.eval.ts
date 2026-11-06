@@ -204,7 +204,7 @@ describe.sequential("extraction evaluation", () => {
                 process.env.EVAL_BUDGET_LEDGER_SUITE === "extraction" &&
                 Boolean(process.env.EVAL_BUDGET_LEDGER),
             );
-            const score = scoreCase(extraction, testCase.gold);
+            const score = scoreCase(extraction, testCase.gold, testCase.markdown);
             const verdicts = models
               ? await judgeFacts(models, extraction.facts)
               : [];

@@ -11,10 +11,23 @@ export function pdfKey(vaultId: string, resumeId: string, version: number): stri
   return `${vaultPrefix(vaultId)}exports/${resumeId}-${version}.pdf`;
 }
 
+/** A malformed or repeated continuation cannot prove a prefix was fully scanned. */
+export function nextR2Cursor(
+  page: { truncated: boolean; cursor?: string },
+  seen: Set<string>,
+): string | undefined {
+  if (page.truncated === false) return undefined;
+  if (page.truncated !== true || typeof page.cursor !== "string" || !page.cursor || seen.has(page.cursor))
+    throw new Error("r2_incomplete_pagination");
+  seen.add(page.cursor);
+  return page.cursor;
+}
+
 /** Deletes every object under a prefix. Returns how many were deleted. Safe to repeat. */
 export async function deletePrefix(bucket: R2Bucket, prefix: string): Promise<number> {
   let deleted = 0;
   let cursor: string | undefined;
+  const seen = new Set<string>();
   do {
     const page = await bucket.list({ prefix, cursor, limit: 1000 });
     const keys = page.objects.map((o) => o.key);
@@ -22,7 +35,7 @@ export async function deletePrefix(bucket: R2Bucket, prefix: string): Promise<nu
       await bucket.delete(keys);
       deleted += keys.length;
     }
-    cursor = page.truncated ? page.cursor : undefined;
+    cursor = nextR2Cursor(page, seen);
   } while (cursor);
   return deleted;
 }

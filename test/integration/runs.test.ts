@@ -381,9 +381,20 @@ describe("deletion workflow failures", () => {
     const workflow = {
       get: vi
         .fn()
-        .mockRejectedValue(new AppError("not_found", "no such instance")),
+        .mockRejectedValue(new Error("instance.not_found")),
     } as unknown as Workflow;
     await expect(stopRuns(workflow, ["run"])).resolves.toBeUndefined();
+  });
+
+  it.each([
+    Object.assign(new Error("workflow.not_found"), { code: 10200 }),
+    Object.assign(new Error("instance.not_found"), { code: 10200 }),
+    Object.assign(new Error("missing resource"), { status: 404 }),
+    new AppError("not_found", "no such workflow"),
+    { code: 10404 },
+  ])("preserves inventory on a non-instance or ambiguous absence", async (failure) => {
+    const workflow = { get: vi.fn().mockRejectedValue(failure) } as unknown as Workflow;
+    await expect(stopRuns(workflow, ["run"])).rejects.toBe(failure);
   });
 
   it("rechecks a termination race but propagates genuine termination failure", async () => {

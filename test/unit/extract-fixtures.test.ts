@@ -24,6 +24,26 @@ const escape = (value: string) =>
   );
 
 describe("synthetic source document fixtures", () => {
+  it("includes varied occupations, additional education, languages, and individually labeled skills", () => {
+    expect(new Set(CASES.map((c) => c.gold.roles[0]!.title)).size).toBeGreaterThanOrEqual(8);
+    expect(new Set(CASES.map((c) => c.meta.language))).toEqual(new Set(["en", "es", "de"]));
+    expect(CASES.filter((c) => c.gold.roles.some((r) => r.kind === "education")).length).toBeGreaterThanOrEqual(4);
+    for (const c of CASES) {
+      const skills = c.gold.facts.filter((f) => f.kind === "skill");
+      expect(skills).toHaveLength(2);
+      const listStart = c.markdown.indexOf("Skills: ");
+      const newline = c.markdown.indexOf("\n", listStart);
+      const listEnd = newline < 0 ? c.markdown.length : newline;
+      expect(listStart).toBeGreaterThanOrEqual(0);
+      for (const skill of skills) {
+        const text = c.markdown.slice(...skill.span);
+        expect(text).toBeTruthy();
+        expect(text).not.toMatch(/[,\r\n]/);
+        expect(skill.span[0]).toBeGreaterThan(listStart + "Skills: ".length - 1);
+        expect(skill.span[1]).toBeLessThanOrEqual(listEnd);
+      }
+    }
+  });
   it("reproduces every checked-in byte and marks conversion and promotion pending", () => {
     const generated = makeFixtures();
     expect(generated).toHaveLength(41);

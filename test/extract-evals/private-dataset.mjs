@@ -257,7 +257,8 @@ function validateGold(gold, markdown) {
     gold.roles.some((r) => !validSpan(r.header, markdown)) ||
     gold.facts.some(
       (f) =>
-        !validSpan(f.span, markdown) || (f.role !== null && !roles.has(f.role)),
+        !validSpan(f.span, markdown) || (f.role !== null && !roles.has(f.role)) ||
+        (f.kind === "skill" && (!markdown.slice(...f.span).trim() || /[\r\n]/.test(markdown.slice(...f.span)))),
     ) ||
     gold.traps.some((t) => !validSpan(t.span, markdown))
   )

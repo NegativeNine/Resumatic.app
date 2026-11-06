@@ -4,6 +4,29 @@ import { describe, expect, it, vi } from "vitest";
 import { vault } from "../../src/shared/stubs";
 
 describe("cancellation alarm failure", () => {
+  it("keeps cancellation pending if the Workflow resource itself is missing", async () => {
+    const id = env.VAULT.newUniqueId().toString();
+    const stub = vault(env, id);
+    const who = { userId: "cancel-workflow-missing", gen: 1 };
+    await stub.init(who.userId);
+    await runInDurableObject(stub, async (instance) => {
+      const local = (instance as unknown as { env: Env }).env;
+      const original = local.TAILOR;
+      local.TAILOR = {
+        async create() { return {}; },
+        async get() { throw Object.assign(new Error("workflow.not_found"), { code: 10200 }); },
+      } as unknown as Workflow;
+      try {
+        const { applicationId } = await instance.addApplication(who, "An engineering role with a detailed job description.");
+        const { runId } = await instance.tailor(who, applicationId);
+        await instance.cancelRun(who, runId);
+        await instance.alarm();
+        expect(await instance.runInfo(who, runId)).toMatchObject({ state: "cancel_requested", creditState: "reserved" });
+        expect((await instance.me(who)).quota.reserved).toBe(1);
+      } finally { local.TAILOR = original; }
+    });
+  });
+
   it("retains the reservation after an alarm error and rearms when cancellation is retried", async () => {
     const id = env.VAULT.newUniqueId().toString();
     const stub = vault(env, id);

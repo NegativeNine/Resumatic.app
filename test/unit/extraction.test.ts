@@ -515,6 +515,20 @@ describe("Clairic boundaries", () => {
 });
 
 describe("segmentation and evaluation", () => {
+  it("scores individual skills against their literal spans within shared line evidence", () => {
+    const testCase = CASES[0]!;
+    const prediction = verifyExtraction(testCase.markdown, oraclePrediction(testCase)).extraction;
+    const score = scoreCase(prediction, testCase.gold, testCase.markdown);
+    expect(score).toMatchObject({ precision: 1, recall: 1, skillPrecision: 1, skillRecall: 1, skillsF1: 1 });
+    const skill = prediction.facts.find((f) => f.kind === "skill" && f.text === "Go")!;
+    skill.text = "Rust";
+    const altered = scoreCase(prediction, testCase.gold, testCase.markdown);
+    expect(altered).toMatchObject({ skillPrecision: 0.5, skillRecall: 0.5, skillsF1: 0.5 });
+    expect(altered.recall).toBe(0.75);
+    skill.text = "Go";
+    skill.span = prediction.facts.find((f) => f.kind === "accomplishment")!.span;
+    expect(scoreCase(prediction, testCase.gold, testCase.markdown).skillsF1).toBe(0.5);
+  });
   it("preserves line offsets and rejects invalid model labels", () => {
     const markdown = "# Acme\r\n- Built 12 services\n";
     const units = segment(markdown);
@@ -536,10 +550,10 @@ describe("segmentation and evaluation", () => {
       oraclePrediction(testCase),
     ).extraction;
     prediction.roles[0]!.span = prediction.facts[0]!.span;
-    expect(scoreCase(prediction, testCase.gold)).toMatchObject({
+    expect(scoreCase(prediction, testCase.gold, testCase.markdown)).toMatchObject({
       roleRecall: 0,
-      recall: 0,
-      assignment: 0,
+      recall: 0.5,
+      assignment: 0.5,
     });
   });
   it("requires the known title and dates for role recall, while measuring dates independently", () => {
@@ -549,14 +563,14 @@ describe("segmentation and evaluation", () => {
       oraclePrediction(testCase),
     ).extraction;
     prediction.roles[0]!.title = "Incorrect title";
-    expect(scoreCase(prediction, testCase.gold)).toMatchObject({
+    expect(scoreCase(prediction, testCase.gold, testCase.markdown)).toMatchObject({
       roleRecall: 0,
       dateAccuracy: 1,
       recall: 1,
     });
     prediction.roles[0]!.title = testCase.gold.roles[0]!.title;
     prediction.roles[0]!.startDate = "2022";
-    expect(scoreCase(prediction, testCase.gold)).toMatchObject({
+    expect(scoreCase(prediction, testCase.gold, testCase.markdown)).toMatchObject({
       roleRecall: 0,
       dateAccuracy: 0,
       recall: 1,
@@ -588,7 +602,7 @@ describe("segmentation and evaluation", () => {
       span: duplicateGold.header,
     });
     prediction.facts[0]!.roleKey = "r2";
-    expect(scoreCase(prediction, gold)).toMatchObject({
+    expect(scoreCase(prediction, gold, testCase.markdown)).toMatchObject({
       roleRecall: 1,
       recall: 1,
       assignment: 1,
@@ -601,11 +615,11 @@ describe("segmentation and evaluation", () => {
       oraclePrediction(testCase),
     ).extraction;
     prediction.facts[0]!.roleKey = null;
-    const score = scoreCase(prediction, testCase.gold);
-    expect(score.recall).toBe(0.5);
-    expect(score.precision).toBe(0.5);
+    const score = scoreCase(prediction, testCase.gold, testCase.markdown);
+    expect(score.recall).toBe(0.75);
+    expect(score.precision).toBe(0.75);
     expect(score.reviewCost).toBe(4);
-    expect(score.assignment).toBe(0.5);
+    expect(score.assignment).toBe(0.75);
   });
   it("does not let a wrong-role prediction consume a correctly assigned match", () => {
     const testCase = CASES[0]!;
@@ -615,17 +629,17 @@ describe("segmentation and evaluation", () => {
     ).extraction;
     const correct = prediction.facts[0]!;
     prediction.facts.unshift({ ...correct, roleKey: null });
-    const score = scoreCase(prediction, testCase.gold);
+    const score = scoreCase(prediction, testCase.gold, testCase.markdown);
     expect(score.recall).toBe(1);
-    expect(score.precision).toBeCloseTo(2 / 3);
-    expect(score.assignment).toBe(0.5);
+    expect(score.precision).toBeCloseTo(4 / 5);
+    expect(score.assignment).toBe(0.75);
   });
   it("matches agreement one-to-one", () => {
     const testCase = CASES[0]!;
     const a = oraclePrediction(testCase);
     const b = oraclePrediction(testCase);
     a.facts.push({ ...a.facts[0]! });
-    expect(agree(a, b)).toMatchObject({ both: [0, 1], onlyA: [2], onlyB: [] });
+    expect(agree(a, b)).toMatchObject({ both: [0, 1, 2, 3], onlyA: [4], onlyB: [] });
   });
   it("fails entailment closed on duplicate and missing verdicts", async () => {
     const models = {
@@ -752,7 +766,7 @@ describe("model usage and spending guard", () => {
       prices: { "fake/model": [0, 1] },
     });
     expect(() => budget.reserve("fake/model", "input", 0)).toThrow(
-      "live_eval_budget_exhausted",
+      "live_eval_cost_bound_invalid",
     );
   });
   it("never starts an unpriced or unaffordable request", () => {

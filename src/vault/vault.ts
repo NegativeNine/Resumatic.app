@@ -38,6 +38,7 @@ import type {
 } from "../shared/api";
 import { MAX_LINE_CHARS } from "../shared/api";
 import { AppError } from "../shared/errors";
+import { isMissingWorkflowInstance } from "../shared/workflow-errors";
 import type {
   Analysis,
   Candidate,
@@ -2622,7 +2623,7 @@ export class Vault extends DurableObject<Env> {
           await instance.terminate();
         await instance.delete();
       } catch (error) {
-        if (!isMissingWorkflow(error)) throw error;
+        if (!isMissingWorkflowInstance(error)) throw error;
       }
       this.runs.requestCancel(run.id);
       this.runs.cancel(run.id);
@@ -3488,7 +3489,7 @@ export class Vault extends DurableObject<Env> {
         }
       } catch (error) {
         // The platform's explicit not-found result is the only safe reason to create again.
-        if (isMissingWorkflow(error) && run.state === "starting") {
+        if (isMissingWorkflowInstance(error) && run.state === "starting") {
           // The run may have been cancelled while get()/status() was pending.
           if (this.runs.get(run.id)?.state !== "starting") continue;
           if (this.hasUnsettledDispatch(run.id)) {
@@ -3506,7 +3507,7 @@ export class Vault extends DurableObject<Env> {
             this.runs.noteUncertain(run.id, "dispatch_uncertain");
             await this.redispatchUncertain(run.id);
           }
-        } else if (isMissingWorkflow(error) && run.state === "cancel_requested" && !this.hasUnsettledDispatch(run.id))
+        } else if (isMissingWorkflowInstance(error) && run.state === "cancel_requested" && !this.hasUnsettledDispatch(run.id))
           this.finishCancelledRun(run);
         else if (!this.dispatchUncertain(run.id))
           this.runs.noteUncertain(run.id, "status_uncertain");
@@ -3793,7 +3794,7 @@ async function runStopped(
       status === "errored" || status === "terminated" || status === "complete"
     );
   } catch (error) {
-    return isMissingWorkflow(error);
+    return isMissingWorkflowInstance(error);
   }
 }
 
@@ -3816,17 +3817,6 @@ async function runStopped(
     p.settleModelAttempt,
     p.reserveModelAttempt,
     p.setPlan,
-  );
-}
-
-function isMissingWorkflow(error: unknown): boolean {
-  if (error instanceof Error && error.message === "instance.not_found")
-    return true;
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    [10200, 10404].includes(Number(error.code))
   );
 }
 

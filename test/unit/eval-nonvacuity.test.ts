@@ -19,7 +19,7 @@ describe("evaluation non-vacuity", () => {
       .not.toThrow();
     const gold = CASES[0]!.gold;
     expect(() => requirePilotExtraction(extraction, gold, false)).not.toThrow();
-    expect(scoreCase(extraction, gold).recall).toBe(0);
+    expect(scoreCase(extraction, gold, CASES[0]!.markdown).recall).toBe(0);
     expect(() => requirePilotExtraction(extraction, gold, true))
       .toThrow("eval_no_roles");
     const withRolesOnly = await extractFacts(fakeModels(), RESUME);

@@ -315,7 +315,11 @@ async function judge(
   const out = await models.complete("judge", judgePrompt(items), JudgeOut);
   for (const v of out.verdicts) {
     const line = aliases.get(v.id.trim());
-    if (line)
+    if (line && result.has(line.id)) {
+      // Conflicting or repeated answers are ambiguous even if the last says
+      // supported. Neither ordering nor another duplicate can make them safe.
+      result.set(line.id, { ok: false, reason: "the judge gave duplicate verdicts" });
+    } else if (line)
       result.set(line.id, {
         ok: v.verdict === "supported",
         reason: v.reason || v.verdict,

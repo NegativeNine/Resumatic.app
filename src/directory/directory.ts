@@ -4,7 +4,8 @@ import { cleanupBillingCustomer, type BillingEvent } from "../worker/billing";
 import { directory } from "../shared/stubs";
 import { requireMaintenanceFence, shardedUserId } from "../shared/operations";
 import { DurableObject } from "cloudflare:workers";
-import { AppError, errorCode } from "../shared/errors";
+import { AppError } from "../shared/errors";
+import { isMissingWorkflowInstance } from "../shared/workflow-errors";
 import { deletePrefix, vaultPrefix } from "../shared/r2";
 import type { SignInInput, VaultRow } from "../shared/types";
 import { migrateDirectory } from "./schema";
@@ -757,28 +758,7 @@ export async function stopRuns(
       }
       await instance.delete();
     } catch (error) {
-      if (!missingWorkflow(error)) throw error;
+      if (!isMissingWorkflowInstance(error)) throw error;
     }
   }
-}
-
-function missingWorkflow(error: unknown): boolean {
-  if (errorCode(error) === "not_found") return true;
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "status" in error &&
-    error.status === 404
-  )
-    return true;
-  if (error instanceof Error && error.message === "instance.not_found")
-    return true;
-  // Workflows bindings may expose absence only as a platform error message.
-  // Deliberately do not classify generic errors, timeouts or permission failures.
-  return (
-    error instanceof Error &&
-    /^(?:Error: )?(?:Workflow )?instance(?: with (?:ID|id))? [^\n]{1,120} (?:not found|does not exist)\.?$/i.test(
-      error.message,
-    )
-  );
 }

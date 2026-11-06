@@ -169,6 +169,56 @@ describe("verifyDraft", () => {
     expect(verified.lines[0]!.text).toBe("Built the billing API used by 3 teams");
   });
 
+  it.each([
+    ["unsupported", "supported"],
+    ["supported", "unsupported"],
+    ["supported", "supported"],
+  ] as const)("does not keep a line with duplicate judge verdicts (%s, %s)", async (first, second) => {
+    const base = fakeModels();
+    const ambiguous: Models = {
+      ...base,
+      complete: async (route, messages, schema) => {
+        if (route === "judge") return schema.parse({ verdicts: [
+          { id: "L1", verdict: first, reason: "" },
+          { id: " L1 ", verdict: second, reason: "" },
+          { id: "L1", verdict: "supported", reason: "" },
+          { id: "L2", verdict: "supported", reason: "" },
+        ] });
+        if (route === "repair") throw new Error("repair unavailable");
+        return base.complete(route, messages, schema);
+      },
+    };
+    const verified = await verifyDraft(ambiguous, { lines: [
+      line("1", "r1", "Built the billing API for 3 teams", ["a"]),
+      line("2", "r2", "Mentored 2 engineers", ["c"]),
+    ] }, selection, facts);
+    expect(verified.lines.map((item) => [item.id, item.status, item.text])).toEqual([
+      ["1", "replaced", facts[0]!.text],
+      ["2", "kept", facts[2]!.text],
+    ]);
+  });
+
+  it("fails closed on duplicate verdicts for a repaired line", async () => {
+    const base = fakeModels();
+    let judgeCalls = 0;
+    const ambiguous: Models = {
+      ...base,
+      complete: async (route, messages, schema) => {
+        if (route !== "judge") return base.complete(route, messages, schema);
+        judgeCalls++;
+        return schema.parse({ verdicts: judgeCalls === 1
+          ? [{ id: "L1", verdict: "unsupported", reason: "check" }]
+          : [{ id: "L1", verdict: "unsupported", reason: "check" }, { id: "L1", verdict: "supported", reason: "" }],
+        });
+      },
+    };
+    const verified = await verifyDraft(ambiguous, { lines: [
+      line("1", "r1", "Built the billing API for 3 teams", ["a"]),
+    ] }, selection, facts);
+    expect(judgeCalls).toBe(2);
+    expect(verified.lines.map((item) => [item.status, item.text])).toEqual([["replaced", facts[0]!.text]]);
+  });
+
   it("does not print an unattached fact under an employer even after repair or fallback", async () => {
     const loose: FactRecord = {
       id: "loose",

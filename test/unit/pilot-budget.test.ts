@@ -42,6 +42,32 @@ describe("pilot cost reservations", () => {
     );
     expect(budget.calls).toBe(0);
   });
+  it("rejects a zero input rate even when a generative output rate is configured", async () => {
+    const { vi } = await import("vitest");
+    const { z } = await import("zod");
+    const { restModels } = await import("../evals/rest-models");
+    const modelId = "fake/model";
+    const budget = new EvalBudget({
+      usd: 10,
+      maxCalls: 50,
+      prices: { [modelId]: [0, 1] },
+    });
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      const models = restModels(
+        { accountId: "example", token: "unused", gatewayId: "test" },
+        { MODEL_WRITE: modelId },
+        { budget },
+      );
+      await expect(models.complete("write", [], z.object({ ok: z.boolean() })))
+        .rejects.toThrow("live_eval_cost_bound_invalid");
+      expect(budget.calls).toBe(0);
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 it("charges a conservative attempt weight before dispatch and refuses an oversized weight", () => {

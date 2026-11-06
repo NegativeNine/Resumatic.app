@@ -264,7 +264,7 @@ export function assessPromotion(root, runId, auditPath) {
             )
           )
             throw new Error();
-          const recomputed = scoreVerified(row.prediction, source.gold);
+          const recomputed = scoreVerified(row.prediction, source.gold, source.markdown);
           for (const key of [
             "matched",
             "proposed",
@@ -437,6 +437,11 @@ export function assessPromotion(root, runId, auditPath) {
           failureRate: records.length ? failures / records.length : null,
           precision,
           recall,
+          skillPrecision: sum("skillProposed") ? sum("skillMatched") / sum("skillProposed") : (sum("skillExpected") ? 0 : null),
+          skillRecall: sum("skillExpected") ? sum("skillMatched") / sum("skillExpected") : null,
+          skillsF1: sum("skillProposed") + sum("skillExpected")
+            ? 2 * sum("skillMatched") / (sum("skillProposed") + sum("skillExpected"))
+            : null,
           trapLeaks: sum("trapLeaks"),
           reviewCost: successes.length
             ? sum("reviewCost") / successes.length

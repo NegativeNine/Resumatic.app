@@ -2,6 +2,8 @@
 
 These files are reproducibly generated, synthetic source documents. They are **not** model-conversion recordings and must not be used to claim extractor promotion or conversion quality. Each of the 20 synthetic reference cases has a DOCX and an untagged PDF. Four PDFs use two columns; a separate five-page PDF is an unlabeled stress input. The PDF generator uses standard fonts and explicitly transliterates its text to ASCII; the DOCX preserves the Unicode source text.
 
+The references include several occupations, English, Spanish and German text, some education sections, and individually labeled skills. They are still short, generated examples rather than a representative or independently labeled corpus; the five-page stress input has no gold labels.
+
 Regenerate with Node 22:
 
 ```sh
