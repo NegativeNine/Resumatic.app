@@ -20,6 +20,7 @@ export function RoleForm({ role, reload, onClose, onAdded }: Props) {
   const [title, setTitle] = useState(role?.title ?? "");
   const [start, setStart] = useState(role?.startDate ?? "");
   const [end, setEnd] = useState(role?.endDate ?? "");
+  const [baseRevision] = useState(role?.revision ?? 1);
   const { run, pending, error } = useAction();
   const id = useId();
 
@@ -33,7 +34,11 @@ export function RoleForm({ role, reload, onClose, onAdded }: Props) {
     };
     let added: string | null = null;
     const ok = await run(async () => {
-      if (role) await api.updateRole(role.id, fields);
+      if (role)
+        await api.updateRole(role.id, {
+          ...fields,
+          expectedRevision: baseRevision,
+        });
       else added = (await api.addRole(fields)).roleId;
       await reload();
     });
@@ -53,19 +58,36 @@ export function RoleForm({ role, reload, onClose, onAdded }: Props) {
     >
       {!role && (
         <p className="meta">
-          Add a job, degree, project or volunteer role your uploads missed. It's your own claim, so it has no source
-          quote, and it's confirmed straight away.
+          Add a job, degree, project or volunteer role your uploads missed. It's
+          your own claim, so it has no source quote, and it's confirmed straight
+          away.
         </p>
       )}
       <div className="field-grid">
         <Field id={`${id}-org`} label="Organization">
-          <input id={`${id}-org`} type="text" value={org} onChange={(e) => setOrg(e.target.value)} required autoFocus />
+          <input
+            id={`${id}-org`}
+            type="text"
+            value={org}
+            onChange={(e) => setOrg(e.target.value)}
+            required
+            autoFocus
+          />
         </Field>
         <Field id={`${id}-title`} label="Title (optional)">
-          <input id={`${id}-title`} type="text" value={title} onChange={(e) => setTitle(e.target.value)} />
+          <input
+            id={`${id}-title`}
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+          />
         </Field>
         <Field id={`${id}-kind`} label="Kind">
-          <select id={`${id}-kind`} value={kind} onChange={(e) => setKind(e.target.value as RoleKind)}>
+          <select
+            id={`${id}-kind`}
+            value={kind}
+            onChange={(e) => setKind(e.target.value as RoleKind)}
+          >
             {ROLE_KINDS.map((k) => (
               <option key={k} value={k}>
                 {ROLE_KIND_LABEL[k]}
@@ -95,13 +117,23 @@ export function RoleForm({ role, reload, onClose, onAdded }: Props) {
         </Field>
       </div>
       <p className="hint" id={`${id}-dates`}>
-        Use year and month, such as 2021-03. Leave the end date empty if you're still there.
+        Use year and month, such as 2021-03. Leave the end date empty if you're
+        still there.
       </p>
       <div className="actions">
-        <button type="submit" className="primary small" disabled={pending || !org.trim()}>
+        <button
+          type="submit"
+          className="primary small"
+          disabled={pending || !org.trim()}
+        >
           {pending ? "Saving…" : role ? "Save role" : "Add role"}
         </button>
-        <button type="button" className="small" onClick={onClose} disabled={pending}>
+        <button
+          type="button"
+          className="small"
+          onClick={onClose}
+          disabled={pending}
+        >
           Cancel
         </button>
       </div>

@@ -3,12 +3,26 @@ import type { WorkflowStepConfig } from "cloudflare:workers";
 import { errorCode, errorDetail } from "../shared/errors";
 
 /** Quick steps that touch the vault or R2. */
-export const STEP: WorkflowStepConfig = { retries: { limit: 3, delay: "2 seconds", backoff: "exponential" }, timeout: "1 minute" };
+export const STEP: WorkflowStepConfig = {
+  retries: { limit: 3, delay: "2 seconds", backoff: "exponential" },
+  timeout: "1 minute",
+};
 
 /** Steps that call models. */
-export const MODEL_STEP: WorkflowStepConfig = { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" };
+export const MODEL_STEP: WorkflowStepConfig = {
+  retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
+  timeout: "5 minutes",
+};
 
-const FINAL = new Set(["gone", "not_found", "forbidden", "invalid", "too_large", "quota"]);
+const FINAL = new Set([
+  "gone",
+  "not_found",
+  "forbidden",
+  "invalid",
+  "conflict",
+  "too_large",
+  "quota",
+]);
 
 /** Runs a step body, turning errors that a retry cannot fix (a deleted vault, bad input) into non-retryable ones. */
 export function once<T>(body: () => Promise<T>): () => Promise<T> {
@@ -17,7 +31,8 @@ export function once<T>(body: () => Promise<T>): () => Promise<T> {
       return await body();
     } catch (e) {
       const code = errorCode(e);
-      if (code && FINAL.has(code)) throw new NonRetryableError(`${code}: ${errorDetail(e)}`);
+      if (code && FINAL.has(code))
+        throw new NonRetryableError(`${code}: ${errorDetail(e)}`);
       throw e;
     }
   };

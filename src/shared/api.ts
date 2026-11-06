@@ -50,9 +50,24 @@ export type ResumeState = "running" | "ready" | "failed";
 export type LineStatus = "kept" | "repaired" | "replaced" | "edited";
 export type FactOrigin = "extracted" | "user";
 
-export const ROLE_KINDS: readonly RoleKind[] = ["job", "education", "project", "volunteer"];
-export const FACT_KINDS: readonly FactKind[] = ["accomplishment", "skill", "credential"];
-export const LEVELS: readonly Level[] = ["contributed", "implemented", "led", "owned", "founded"];
+export const ROLE_KINDS: readonly RoleKind[] = [
+  "job",
+  "education",
+  "project",
+  "volunteer",
+];
+export const FACT_KINDS: readonly FactKind[] = [
+  "accomplishment",
+  "skill",
+  "credential",
+];
+export const LEVELS: readonly Level[] = [
+  "contributed",
+  "implemented",
+  "led",
+  "owned",
+  "founded",
+];
 
 /** Role dates: a year, or a year and month. */
 export const DATE_PATTERN = /^\d{4}(-(0[1-9]|1[0-2]))?$/;
@@ -63,6 +78,7 @@ export const MAX_FACT_CHARS = 600;
 export const MAX_LINE_CHARS = 300;
 
 export interface Profile {
+  revision?: number;
   name: string;
   email: string;
   phone: string;
@@ -71,6 +87,8 @@ export interface Profile {
 }
 
 export interface Quota {
+  reserved?: number;
+  periodEnd?: number;
   used: number;
   limit: number;
   /** Calendar month the count applies to, as "YYYY-MM" in UTC. */
@@ -78,12 +96,16 @@ export interface Quota {
 }
 
 export interface Me {
+  capabilities?: { ocr: boolean; connectedApps: boolean };
   userId: string;
   profile: Profile;
   quota: Quota;
 }
 
 export interface SourceView {
+  conversionWarnings?: ("little-text" | "short-lines" | "no-structure")[];
+  origin?: "upload" | "ocr";
+  extractor?: string | null;
   id: string;
   filename: string;
   state: SourceState;
@@ -94,6 +116,8 @@ export interface SourceView {
 }
 
 export interface RoleView {
+  revision?: number;
+  span?: [number, number] | null;
   id: string;
   kind: RoleKind;
   org: string;
@@ -106,6 +130,7 @@ export interface RoleView {
 }
 
 export interface RolePatch {
+  expectedRevision?: number;
   kind?: RoleKind;
   org?: string;
   title?: string | null;
@@ -114,6 +139,11 @@ export interface RolePatch {
 }
 
 export interface FactView {
+  evidenceOrigin?: "upload" | "ocr";
+  confidence?: number | null;
+  reviewReasons?: string[];
+  revision?: number;
+  span?: [number, number] | null;
   id: string;
   roleId: string | null;
   kind: FactKind;
@@ -137,6 +167,7 @@ export interface NewRole {
 
 /** At least one field. Either change makes the fact the user's own claim. */
 export interface FactPatch {
+  expectedRevision?: number;
   text?: string;
   roleId?: string | null;
 }
@@ -149,11 +180,16 @@ export interface NewFact {
 }
 
 export interface ReviewRequest {
+  expectedRevisions?: Record<string, number>;
   confirm: string[];
   reject: string[];
 }
 
 export interface ApplicationView {
+  revision?: number;
+  status?: ApplicationStatus;
+  appliedAt?: string | null;
+  notes?: string;
   id: string;
   /** From Tailor's analyze step; null until the first resume for this job has been started. */
   company: string | null;
@@ -197,6 +233,7 @@ export interface ResumeReport {
 }
 
 export interface ResumeView {
+  provenance?: "snapshot" | "legacy";
   id: string;
   applicationId: string;
   state: ResumeState;
@@ -216,3 +253,12 @@ export interface ApiErrorBody {
   error: string;
   message: string;
 }
+
+export const APPLICATION_STATUSES = [
+  "saved",
+  "applied",
+  "interview",
+  "offer",
+  "closed",
+] as const;
+export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number];

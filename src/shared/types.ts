@@ -1,8 +1,16 @@
-import type { FactKind, Level, LineStatus, ResumeBody, ResumeReport, RoleKind } from "./api";
+import type {
+  FactKind,
+  Level,
+  LineStatus,
+  ResumeBody,
+  ResumeReport,
+  RoleKind,
+} from "./api";
 import type { LocationHint } from "./location";
 
 /** The caller, taken from a verified session cookie. Every user call to a vault carries it. */
 export interface Who {
+  epoch?: string;
   userId: string;
   gen: number;
 }
@@ -12,6 +20,10 @@ export interface SignInInput {
   subject: string;
   email: string;
   hint: LocationHint;
+  /** Internal placement metadata supplied only by the Directory routing helper. */
+  homeShard?: number;
+  /** The global Directory has already authorized this new account's invite. */
+  inviteAuthorized?: boolean;
 }
 
 export interface VaultRow {
@@ -26,6 +38,8 @@ export interface VaultRow {
 // ---- Distill ----
 
 export interface ExtractedRole {
+  span?: [number, number];
+  confidence?: number | null;
   /** A label the model gives the role so facts can point at it. */
   key: string;
   kind: RoleKind;
@@ -37,6 +51,9 @@ export interface ExtractedRole {
 }
 
 export interface ExtractedFact {
+  reviewReasons?: string[];
+  span?: [number, number];
+  confidence?: number | null;
   roleKey: string | null;
   kind: FactKind;
   text: string;
@@ -52,6 +69,8 @@ export interface Extraction {
 // ---- Tailor ----
 
 export interface FactRecord {
+  revision?: number;
+  origin?: "extracted" | "user";
   id: string;
   roleId: string | null;
   kind: FactKind;
@@ -61,6 +80,7 @@ export interface FactRecord {
 }
 
 export interface RoleRecord {
+  revision?: number;
   id: string;
   kind: RoleKind;
   org: string;

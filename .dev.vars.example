@@ -6,3 +6,6 @@ TEST_SIGNIN_KEY=dev-test-key
 OIDC_CLIENT_SECRET=
 # Uploads and tailoring: an API token with Workers AI Read. CF_ACCOUNT_ID is a var in wrangler.jsonc.
 CF_AI_TOKEN=
+
+# Enable the local-only test sign-in route. Never set in production.
+ALLOW_TEST_SIGNIN=true

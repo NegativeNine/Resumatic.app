@@ -2,12 +2,15 @@
 
 An agentic resume builder that tailors a resume to each job description using only experience the user has actually provided. It breaks everything a user uploads into small, source-backed facts, then builds every resume from those facts alone, with a verifier that blocks any claim the facts do not support. An opt-in recruiter marketplace, planned for later phases, lets verified recruiters meet candidates whose experience is backed by evidence.
 
-**Status: v1, Phase 1 built.** Sign-in, the Career Vault, Distill, Tailor with its grounding checks, PDF export, data export, account deletion, the monthly quota, the admin routes and the web app are in place and tested against stand-ins for Google, the models and Browser Run. What is left before the private beta is the staging setup below, a passing run of the evals against the real models, and legal review of the draft privacy notice and terms (`src/web/pages/LegalPage.tsx`). The [v1 codebase plan](docs/v1-codebase-plan.md) describes the design. The November 2026 review found the seeker product sound and reworked the marketplace; the marketplace's biggest remaining risks are commercial and legal, so it is gated on a paid pilot and on decisions by counsel.
+**Status: job seeker roadmap implemented and locally verified.** The application now includes extraction strategies and evaluation tools, immutable resume versions, gap questions, refinement, cover letters, interview preparation, DOCX and LinkedIn import, quotas and billing, coach snapshots, connected apps, live progress, and maintenance operations. See the [release status](docs/seeker-release-status.md), [operations runbook](docs/seeker-operations.md), and [threat model](docs/seeker-threat-model.md). Real-service validation, model promotion, latency targets and release approval remain pending. Regional residency and recruiter/marketplace work are outside this implementation.
 
 ## Documents
 
 | Document | What it covers |
 | --- | --- |
+| [Seeker release status](docs/seeker-release-status.md) | Implemented features, local evidence, and live acceptance still required |
+| [Seeker operations](docs/seeker-operations.md) | Deployment, budgets, billing, deletion audits, transfers, and operational controls |
+| [Seeker threat model](docs/seeker-threat-model.md) | Trust boundaries, controls, and external security checks |
 | [v1 codebase plan](docs/v1-codebase-plan.md) | The simplified first release: one Worker, a Directory Durable Object as the control plane and one Vault per user as the data plane, mapped step by step to Cloudflare's control and data plane pattern; repository layout, schemas, pipelines, key flows, configuration, tests and build order |
 | [System design](docs/system-design.md) | Product scope, the control-plane and data-plane architecture on Cloudflare, the Career Vault, the Distill and Tailor pipelines, the no-fabrication guarantee, the recruiter marketplace, data model, security, reliability and cost, operations, delivery phases, open questions |
 | [Technical architecture](docs/technical-architecture.md) | Deployable Workers and their bindings, interfaces, model input and output contracts, runtime view, data and security architecture, environments, observability, testing, and the architecture decision log. It covers the seeker product; the marketplace additions it still needs are listed in the design review |
@@ -17,7 +20,7 @@ Diagrams are in [docs/diagrams](docs/diagrams), rendered to SVG from the living 
 
 ## The design in brief
 
-- **One isolated database per user.** Each user's career data lives in their own Durable Object, the Career Vault, with its own SQLite database. D1 is the control plane: accounts, billing and the directory of vaults, never on the request path for career data. v1 replaces D1 with a Directory Durable Object, following Cloudflare's control and data plane pattern. EU users' vaults are pinned to the EU.
+- **One isolated database per user.** Each user's career data lives in their own Durable Object, the Career Vault, with its own SQLite database. Directory Durable Objects hold accounts, billing and the directory of vaults, and stay outside the request path for career data.
 - **Grounded generation.** Employers, titles, dates and degrees are rendered from records by code. Models write only bullet and summary text, every claim must cite stored facts, and deterministic checks plus an independent judge fail closed to the user's own words.
 - **Gaps become questions, not content.** A job requirement with no supporting evidence produces a question for the user, never an invented bullet.
 - **A consent-first marketplace.** Candidates who opt in appear to verified recruiters as pseudonymous, evidence-backed cards. Recruiters pay when a candidate accepts an introduction; seekers never pay to be seen, and their data is never sold.
@@ -34,7 +37,7 @@ npm test              # unit tests in Node, integration tests inside workerd
 npm run typecheck
 ```
 
-Local dev needs no Cloudflare login, but uploads and tailoring call Workers AI and AI Gateway, which only run remotely: run `npx wrangler login`, set `CF_ACCOUNT_ID` and `CF_AI_TOKEN` in `.dev.vars`, and use `npm run dev:remote`. Google sign-in needs `OIDC_CLIENT_ID` (in `wrangler.jsonc`) and `OIDC_CLIENT_SECRET`; without them, sign in with the test route, which `.dev.vars.example` turns on:
+Local dev needs no Cloudflare login, but uploads and tailoring call Workers AI and AI Gateway, which only run remotely: run `npx wrangler login`, set `CF_ACCOUNT_ID` and `CF_AI_TOKEN` in `.dev.vars`, configure positive model spend limits as described in the operations runbook, and use `npm run dev:remote`. Google sign-in needs `OIDC_CLIENT_ID` (in `wrangler.jsonc`) and `OIDC_CLIENT_SECRET`; without them, sign in with the test route, which `.dev.vars.example` turns on:
 
 ```sh
 curl -i -X POST http://localhost:5173/auth/test-login -H 'x-test-signin-key: dev-test-key' \
@@ -48,10 +51,13 @@ The `.npmrc` sets `legacy-peer-deps`, because npm's resolver currently crashes o
 | Command | What it checks | Needs |
 | --- | --- | --- |
 | `npm test` | Unit tests (grounding checks, sessions, tokens, the pipelines with stand-in models) in Node; integration tests (routes, sign-in, sessions, the Directory, the Vault, both Workflows end to end, PDF caching, deletion) inside workerd | Nothing |
-| `npm run evals` | The no-fabrication evals: resumes and job descriptions with planted traps, run through the real pipeline and models. Any trap in a finished resume fails the run; quality metrics go to `eval-report.json` | `CF_ACCOUNT_ID`, `CF_AI_TOKEN`, an AI Gateway named `resumatic-staging` |
+| `npm run eval:extract` | Offline extraction harness with synthetic fixtures; reports are not eligible for promotion | Nothing; `--live` requires explicit budgets |
+| `npm run eval:seeded` | Offline seeded fabrication controls; live mode is budget-gated | Nothing by default |
+| `npm run test:scripts` | Deployment and maintenance script behavior without external writes | Nothing |
+| `npm run evals` | The no-fabrication evals: resumes and job descriptions with planted traps, run through the real pipeline and models. Any trap in a finished resume fails the run; quality metrics go to `eval-report.json` | `CF_ACCOUNT_ID`, `CF_AI_TOKEN`, `AI_GATEWAY_ID`, explicit eval budget and call cap |
 | `npm run e2e:staging` | A deployed staging Worker end to end: test sign-in, upload, Distill, review, Tailor, PDF, export, deletion | `STAGING_URL`, `TEST_SIGNIN_KEY` |
 
-Integration tests reach the Worker, Durable Objects and Workflows in one isolate, so `setModels()` and `setPdfRenderer()` swap in stand-ins, and outbound `fetch` is stubbed for Google and Cloudflare Access. CI runs `npm test` on every push, the evals on changes to prompts, pipelines or grounding and nightly, and the end-to-end check after every staging deploy.
+Integration tests reach the Worker, Durable Objects and Workflows in one isolate, so `setModels()` and `setPdfRenderer()` swap in stand-ins, and outbound `fetch` is stubbed for Google and Cloudflare Access. CI runs `npm test` on every push, offline regression checks on every change. Live evaluations and staging deployment require explicit enablement, credentials and spend budgets.
 
 ## Staging and production setup
 

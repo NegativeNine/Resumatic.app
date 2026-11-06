@@ -2,15 +2,24 @@
   "compilerOptions": {
     "tsBuildInfoFile": "../node_modules/.tmp/tsconfig.test.tsbuildinfo",
     "target": "ES2024",
-    "lib": ["ES2024"],
+    "lib": [
+      "ES2024"
+    ],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "types": ["@cloudflare/vitest-plugin/types"],
+    "types": [
+      "@cloudflare/vitest-plugin/types",
+      "node"
+    ],
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["./**/*.ts", "../worker-configuration.d.ts", "../src/env.d.ts"]
+  "include": [
+    "./**/*.ts",
+    "../worker-configuration.d.ts",
+    "../src/env.d.ts"
+  ]
 }

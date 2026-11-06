@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { VAULT_CHANGED } from "./live";
 import { describeError, type ErrorWords } from "./errors";
 import { sessionEndNote, useSession } from "./session";
 
@@ -18,7 +19,10 @@ export interface Resource<T> {
  * so callers can move focus or close editors against the updated page. `load` should not depend
  * on changing props: give the component a `key` instead.
  */
-export function useResource<T>(load: () => Promise<T>, pollWhile?: (data: T) => boolean): Resource<T> {
+export function useResource<T>(
+  load: () => Promise<T>,
+  pollWhile?: (data: T) => boolean,
+): Resource<T> {
   const { endSession } = useSession();
   const [data, setData] = useState<T>();
   const [error, setError] = useState<string | null>(null);
@@ -31,7 +35,9 @@ export function useResource<T>(load: () => Promise<T>, pollWhile?: (data: T) => 
     for (const resolve of renderWaiters.current.splice(0)) resolve();
   });
 
-  const reload = useCallback(async function fetchLatest(): Promise<T | undefined> {
+  const reload = useCallback(async function fetchLatest(): Promise<
+    T | undefined
+  > {
     const r = requests.current;
     const seq = ++r.seq;
     window.clearTimeout(r.timer);
@@ -40,7 +46,8 @@ export function useResource<T>(load: () => Promise<T>, pollWhile?: (data: T) => 
       if (seq !== r.seq) return undefined;
       setData(next);
       setError(null);
-      if (latest.current.pollWhile?.(next)) r.timer = window.setTimeout(fetchLatest, POLL_MS);
+      if (latest.current.pollWhile?.(next))
+        r.timer = window.setTimeout(fetchLatest, POLL_MS);
       await new Promise<void>((resolve) => renderWaiters.current.push(resolve));
       return next;
     } catch (e) {
@@ -56,7 +63,12 @@ export function useResource<T>(load: () => Promise<T>, pollWhile?: (data: T) => 
     const r = requests.current;
     const waiters = renderWaiters.current;
     void reload();
+    const onChange = () => {
+      void reload();
+    };
+    window.addEventListener(VAULT_CHANGED, onChange);
     return () => {
+      window.removeEventListener(VAULT_CHANGED, onChange);
       r.seq++;
       window.clearTimeout(r.timer);
       for (const resolve of waiters.splice(0)) resolve();

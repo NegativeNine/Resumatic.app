@@ -1,4 +1,4 @@
-import puppeteer from "@cloudflare/puppeteer";
+import { AppError } from "../shared/errors";
 
 type Renderer = (env: Env, html: string) => Promise<Uint8Array>;
 
@@ -12,13 +12,23 @@ export function setPdfRenderer(renderer: Renderer | null): void {
 /** Renders HTML to a Letter-size PDF with Browser Run. */
 export async function renderPdf(env: Env, html: string): Promise<Uint8Array> {
   if (override) return override(env, html);
-  const browser = await puppeteer.launch(env.BROWSER);
-  try {
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "load" });
-    const pdf = await page.pdf({ format: "letter", printBackground: true, preferCSSPageSize: true });
-    return new Uint8Array(pdf);
-  } finally {
-    await browser.close();
+  const response = await env.BROWSER.quickAction("pdf", {
+    html,
+    pdfOptions: {
+      format: "letter",
+      printBackground: true,
+      preferCSSPageSize: true,
+    },
+    rejectRequestPattern: [".*"],
+  });
+  if (
+    !response.ok ||
+    !response.headers.get("content-type")?.includes("application/pdf")
+  ) {
+    throw new AppError(
+      "unavailable",
+      "the PDF renderer is unavailable; try again",
+    );
   }
+  return new Uint8Array(await response.arrayBuffer());
 }

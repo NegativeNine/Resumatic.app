@@ -1,5 +1,9 @@
 import { useId, useRef, useState } from "react";
-import { MAX_LINE_CHARS, type ResumeLine, type ResumeView } from "../../shared/api";
+import {
+  MAX_LINE_CHARS,
+  type ResumeLine,
+  type ResumeView,
+} from "../../shared/api";
 import { api } from "../api";
 import { count, LINE_STATUS_HINT, LINE_STATUS_LABEL } from "../format";
 import { useAction, type Reload } from "../hooks";
@@ -14,14 +18,27 @@ interface Props {
   expanded: boolean;
   onToggle: (lineId: string) => void;
   reload: Reload;
+  expectedVersion?: number;
+  readOnly?: boolean;
 }
 
 /** One resume line, with its status and, on request, the facts and quotes it cites. */
-export function LineItem({ resumeId, line, facts, expanded, onToggle, reload }: Props) {
+export function LineItem({
+  resumeId,
+  line,
+  facts,
+  expanded,
+  onToggle,
+  reload,
+  expectedVersion,
+  readOnly = false,
+}: Props) {
   const [editing, setEditing] = useState(false);
   const ref = useRef<HTMLLIElement>(null);
   const id = useId();
-  const cited: CitedFact[] = line.factIds.flatMap((factId) => (facts[factId] ? [{ id: factId, ...facts[factId] }] : []));
+  const cited: CitedFact[] = line.factIds.flatMap((factId) =>
+    facts[factId] ? [{ id: factId, ...facts[factId] }] : [],
+  );
 
   function closeEditor() {
     setEditing(false);
@@ -31,7 +48,13 @@ export function LineItem({ resumeId, line, facts, expanded, onToggle, reload }: 
   return (
     <li className="line" ref={ref} tabIndex={-1}>
       {editing ? (
-        <LineEditor resumeId={resumeId} line={line} reload={reload} onClose={closeEditor} />
+        <LineEditor
+          resumeId={resumeId}
+          line={line}
+          reload={reload}
+          onClose={closeEditor}
+          expectedVersion={expectedVersion}
+        />
       ) : (
         <p className="line-text" id={`${id}-text`}>
           {line.text}
@@ -49,10 +72,17 @@ export function LineItem({ resumeId, line, facts, expanded, onToggle, reload }: 
           aria-describedby={editing ? undefined : `${id}-text`}
           onClick={() => onToggle(line.id)}
         >
-          {expanded ? "Hide evidence" : `Show evidence (${count(cited.length, "fact")})`}
+          {expanded
+            ? "Hide evidence"
+            : `Show evidence (${count(cited.length, "fact")})`}
         </button>
-        {!editing && (
-          <button type="button" className="link-button" aria-describedby={`${id}-text`} onClick={() => setEditing(true)}>
+        {!editing && !readOnly && (
+          <button
+            type="button"
+            className="link-button"
+            aria-describedby={`${id}-text`}
+            onClick={() => setEditing(true)}
+          >
             Edit line
           </button>
         )}
@@ -65,7 +95,8 @@ export function LineItem({ resumeId, line, facts, expanded, onToggle, reload }: 
 }
 
 function Evidence({ facts }: { facts: CitedFact[] }) {
-  if (facts.length === 0) return <p className="meta">This line doesn't cite any facts.</p>;
+  if (facts.length === 0)
+    return <p className="meta">This line doesn't cite any facts.</p>;
   return (
     <ul className="plain-list">
       {facts.map((fact) => (
@@ -83,7 +114,19 @@ function Evidence({ facts }: { facts: CitedFact[] }) {
   );
 }
 
-function LineEditor({ resumeId, line, reload, onClose }: { resumeId: string; line: ResumeLine; reload: Reload; onClose: () => void }) {
+function LineEditor({
+  resumeId,
+  line,
+  reload,
+  onClose,
+  expectedVersion,
+}: {
+  resumeId: string;
+  line: ResumeLine;
+  reload: Reload;
+  onClose: () => void;
+  expectedVersion?: number;
+}) {
   const [text, setText] = useState(line.text);
   const { run, pending, error } = useAction();
   const id = useId();
@@ -91,7 +134,7 @@ function LineEditor({ resumeId, line, reload, onClose }: { resumeId: string; lin
 
   async function save() {
     const ok = await run(async () => {
-      await api.editLine(resumeId, line.id, trimmed);
+      await api.editLine(resumeId, line.id, trimmed, expectedVersion);
       await reload();
     });
     if (ok) onClose();
@@ -114,19 +157,34 @@ function LineEditor({ resumeId, line, reload, onClose }: { resumeId: string; lin
         aria-describedby={`${id}-note ${id}-count`}
         autoFocus
       />
-      <CharCount id={`${id}-count`} length={trimmed.length} max={MAX_LINE_CHARS} />
+      <CharCount
+        id={`${id}-count`}
+        length={trimmed.length}
+        max={MAX_LINE_CHARS}
+      />
       <p className="hint" id={`${id}-note`}>
-        Your wording replaces the checked line, and the line is marked Edited. Keep it true to the facts it cites.
+        Your wording replaces the checked line, and the line is marked Edited.
+        Keep it true to the facts it cites.
       </p>
       <div className="actions">
         <button
           type="submit"
           className="primary small"
-          disabled={pending || !trimmed || trimmed.length > MAX_LINE_CHARS || trimmed === line.text}
+          disabled={
+            pending ||
+            !trimmed ||
+            trimmed.length > MAX_LINE_CHARS ||
+            trimmed === line.text
+          }
         >
           {pending ? "Saving…" : "Save line"}
         </button>
-        <button type="button" className="small" onClick={onClose} disabled={pending}>
+        <button
+          type="button"
+          className="small"
+          onClick={onClose}
+          disabled={pending}
+        >
           Cancel
         </button>
       </div>

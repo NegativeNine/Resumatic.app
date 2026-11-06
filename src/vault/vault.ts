@@ -1,5 +1,12 @@
+import { ExtractionFeedback } from "./extraction-feedback";
+import { conversionQuality } from "../pipeline/extract/quality";
+import { retryable } from "cloudflare:durable-objects";
 import { DurableObject } from "cloudflare:workers";
-import { models } from "../ai/models";
+import { runModels } from "../workflows/models";
+import { base64url, sha256 } from "../worker/crypto";
+import { extractorFor } from "../pipeline/extract";
+import { McpGrantStore } from "./mcp-grants";
+import type { McpClaims, McpScope, McpGrant, NewMcpGrant } from "../shared/mcp";
 import type {
   ApplicationView,
   FactKind,
@@ -38,7 +45,31 @@ import type {
   VerifiedDraft,
   Who,
 } from "../shared/types";
-import { createSchema, hasSchema, migrate } from "./schema";
+import { UploadStore, type UploadDescriptor } from "./uploads";
+import { VaultOperations, ReembedStore } from "./operations";
+import {
+  requireMaintenanceFence,
+  type TransferManifest,
+  type TransferPage,
+  type TransferTable,
+} from "../shared/operations";
+import { vault as vaultStub } from "../shared/stubs";
+import { createSchema, hasSchema, migrate, SCHEMA_VERSION } from "./schema";
+import { SnapshotStore, type ResumeVersion } from "./snapshots";
+import { RunStore } from "./runs";
+import { ShareStore } from "./shares";
+import { billingConfig } from "../shared/billing";
+import { stripeClient, type Entitlement } from "../worker/billing";
+import { CheckoutCoordinator } from "./checkout";
+import type { QuotaBucket } from "../shared/runs";
+import type {
+  DocumentInput,
+  DocumentPlan,
+  DocumentDraft,
+  DocumentResult,
+} from "../pipeline/documents";
+import type { NewDocument, DocumentView } from "../shared/documents";
+import { freeQuotaBucket, type RunRecord } from "../shared/runs";
 import { packVector, toUnit, topMatches, unpackVector } from "./search";
 
 /** A running Tailor row older than this is checked against the Workflow before it blocks a new run. */
@@ -49,6 +80,9 @@ const MAX_QUEUED_SOURCES = 3;
 const MAX_SOURCES = 50;
 
 type SourceRow = {
+  origin: "upload" | "ocr";
+  extractor: string | null;
+  parent_source_id: string | null;
   id: string;
   filename: string;
   r2_key: string;
@@ -59,6 +93,9 @@ type SourceRow = {
   created_at: number;
 };
 type RoleRow = {
+  revision: number;
+  start: number | null;
+  end: number | null;
   id: string;
   kind: string;
   org: string;
@@ -70,6 +107,12 @@ type RoleRow = {
   quote: string | null;
 };
 type FactRow = {
+  evidence_origin?: "upload" | "ocr";
+  confidence?: number | null;
+  review_reasons?: string;
+  revision: number;
+  start: number | null;
+  end: number | null;
   id: string;
   role_id: string | null;
   kind: string;
@@ -81,6 +124,7 @@ type FactRow = {
   quote: string | null;
 };
 type ResumeRow = {
+  run_analysis: string | null;
   id: string;
   application_id: string;
   state: string;
@@ -97,6 +141,10 @@ type ResumeRow = {
   created_at: number;
 };
 type ApplicationRow = {
+  revision: number;
+  status: import("../shared/api").ApplicationStatus;
+  applied_at: string | null;
+  notes: string;
   id: string;
   company: string | null;
   title: string | null;
@@ -115,21 +163,83 @@ export interface ResumePatch {
 }
 
 export interface VaultExport {
+  generationInputs: Record<string, string | number | null>[];
+  generationItems: Record<string, string | number | null>[];
+  documentRequests: Record<string, string | number | null>[];
+  format: number;
+  sourceRevisions: Record<string, string | number | null>[];
+  evidence: Record<string, string | number | null>[];
+  resumeVersions: {
+    resume_id: string;
+    version: number;
+    data: ResumeVersion;
+    created_at: number;
+  }[];
+  documents: Record<string, string | number | null>[];
+  documentVersions: {
+    document_id: string;
+    version: number;
+    data: {
+      result: DocumentResult;
+      facts: Record<string, { text: string; quote: string | null }>;
+      profile: Profile;
+    };
+    created_at: number;
+  }[];
+  runs: Record<string, string | number | null>[];
+  providerUsage: Record<string, string | number | null>[];
+  quotaPeriods: Record<string, string | number | null>[];
+  shares: import("../shared/sharing").ShareGrant[];
+  connectedApps: Omit<McpGrant, "oauthGrantId">[];
+  billing: Entitlement | null;
   exportedAt: string;
   profile: Profile;
   /** `file` is the download path of the original upload. */
-  sources: { id: string; filename: string; state: string; createdAt: number; markdown: string | null; file: string }[];
+  sources: {
+    id: string;
+    filename: string;
+    state: string;
+    createdAt: number;
+    markdown: string | null;
+    file: string;
+  }[];
   roles: RoleView[];
   facts: FactView[];
-  applications: { id: string; company: string | null; title: string | null; jobDescription: string; createdAt: number }[];
-  resumes: { id: string; applicationId: string; state: string; createdAt: number; body: ResumeBody | null; report: ResumeReport | null }[];
+  applications: {
+    id: string;
+    company: string | null;
+    title: string | null;
+    jobDescription: string;
+    createdAt: number;
+  }[];
+  resumes: {
+    id: string;
+    applicationId: string;
+    state: string;
+    createdAt: number;
+    body: ResumeBody | null;
+    report: ResumeReport | null;
+  }[];
 }
 
 export function monthOf(ms: number): string {
   return new Date(ms).toISOString().slice(0, 7);
 }
 
-const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const MONTH_NAMES = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
 
 /** The day a quota month's count resets, such as "December 1" for "2026-11". */
 export function resetDay(month: string): string {
@@ -155,12 +265,22 @@ export class Vault extends DurableObject<Env> {
       if (hasSchema(this.sql)) {
         migrate(this.sql);
         this.initialised = true;
+        if (!this.meta("embedding_model"))
+          this.setMeta("embedding_model", "@cf/baai/bge-m3");
       }
     });
   }
 
   private get sql(): SqlStorage {
     return this.ctx.storage.sql;
+  }
+
+  private get runs(): RunStore {
+    return new RunStore(this.sql, (fn) => this.ctx.storage.transactionSync(fn));
+  }
+
+  private get snapshots(): SnapshotStore {
+    return new SnapshotStore(this.sql);
   }
 
   private get vaultId(): string {
@@ -176,11 +296,17 @@ export class Vault extends DurableObject<Env> {
       this.initialised = true;
     }
     const owner = this.meta("user_id");
-    if (owner && owner !== userId) throw new AppError("conflict", "vault belongs to another user");
+    if (owner && owner !== userId)
+      throw new AppError("conflict", "vault belongs to another user");
     if (owner) return;
     this.ctx.storage.transactionSync(() => {
       this.setMeta("user_id", userId);
       this.setMeta("session_gen", "1");
+      this.setMeta("security_epoch", "legacy");
+      this.setMeta(
+        "embedding_model",
+        this.env.EMBEDDING_MODEL ?? "@cf/baai/bge-m3",
+      );
       this.setMeta("state", "open");
       this.setMeta("quota_month", monthOf(Date.now()));
       this.setMeta("quota_used", "0");
@@ -189,18 +315,32 @@ export class Vault extends DurableObject<Env> {
   }
 
   /** Refuses new work and lists the runs to stop. Safe to repeat, and safe on an empty vault. */
-  async close(): Promise<{ distill: string[]; tailor: string[] }> {
+  async close(): Promise<{
+    distill: string[];
+    tailor: string[];
+    other?: { kind: string; id: string }[];
+  }> {
     if (this.gone || !this.initialised) return { distill: [], tailor: [] };
     this.setMeta("state", "closing");
     const distill = this.sql
-      .exec<{ run_id: string }>(`SELECT run_id FROM sources WHERE state = 'queued' AND run_id IS NOT NULL`)
+      .exec<{ run_id: string }>(
+        `SELECT run_id FROM sources WHERE run_id IS NOT NULL UNION SELECT id AS run_id FROM runs WHERE kind = 'distill'`,
+      )
       .toArray()
       .map((r) => r.run_id);
     const tailor = this.sql
-      .exec<{ run_id: string }>(`SELECT run_id FROM resumes WHERE state = 'running' AND run_id IS NOT NULL`)
+      .exec<{ run_id: string }>(
+        `SELECT run_id FROM resumes WHERE run_id IS NOT NULL UNION SELECT id AS run_id FROM runs WHERE kind = 'tailor'`,
+      )
       .toArray()
       .map((r) => r.run_id);
-    return { distill, tailor };
+    const other = this.sql
+      .exec<{ kind: string; id: string }>(
+        `SELECT kind,id FROM runs WHERE kind NOT IN ('distill','tailor','embed')`,
+      )
+      .toArray();
+    for (const ws of this.ctx.getWebSockets()) ws.close(1008, "Account closed");
+    return other.length ? { distill, tailor, other } : { distill, tailor };
   }
 
   async destroy(): Promise<void> {
@@ -213,10 +353,14 @@ export class Vault extends DurableObject<Env> {
 
   // ---------------------------------------------------------------- sessions
 
-  async openSession(userId: string): Promise<{ gen: number }> {
+  async openSession(userId: string): Promise<{ gen: number; epoch: string }> {
     this.requireOpen();
-    if (this.meta("user_id") !== userId) throw new AppError("forbidden", "not this user's vault");
-    return { gen: Number(this.meta("session_gen")) };
+    if (this.meta("user_id") !== userId)
+      throw new AppError("forbidden", "not this user's vault");
+    return {
+      gen: Number(this.meta("session_gen")),
+      epoch: this.meta("security_epoch") ?? "legacy",
+    };
   }
 
   async checkSession(who: Who): Promise<void> {
@@ -226,13 +370,83 @@ export class Vault extends DurableObject<Env> {
   async signOutEverywhere(who: Who): Promise<void> {
     this.requireOwner(who);
     this.setMeta("session_gen", String(Number(this.meta("session_gen")) + 1));
+    for (const ws of this.ctx.getWebSockets()) ws.close(1008, "Session ended");
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket")
+      return new Response(null, { status: 426 });
+    let who: Who & { exp: number };
+    try {
+      who = JSON.parse(request.headers.get("x-vault-session") ?? "");
+    } catch {
+      return new Response(null, { status: 401 });
+    }
+    this.requireOwner(who);
+    if (!Number.isFinite(who.exp) || who.exp <= Date.now())
+      throw new AppError("unauthenticated", "session expired");
+    if (this.ctx.getWebSockets().length >= 8)
+      throw new AppError("quota", "too many live connections");
+    const pair = new WebSocketPair();
+    this.ctx.acceptWebSocket(pair[1]);
+    pair[1].serializeAttachment(who);
+    this.ctx.setWebSocketAutoResponse(
+      new WebSocketRequestResponsePair("ping", "pong"),
+    );
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+  async webSocketMessage(
+    ws: WebSocket,
+    _message: string | ArrayBuffer,
+  ): Promise<void> {
+    try {
+      const who = ws.deserializeAttachment() as Who & { exp: number };
+      this.requireOwner(who);
+      if (who.exp <= Date.now()) throw new Error();
+    } catch {
+      ws.close(1008, "Session ended");
+    }
+  }
+  async webSocketClose(ws: WebSocket, code: number): Promise<void> {
+    ws.close(code);
+  }
+  async webSocketError(ws: WebSocket): Promise<void> {
+    ws.close(1011, "Reconnect");
+  }
+  private broadcast(
+    type: "source" | "resume" | "document" | "run",
+    id: string,
+  ): void {
+    const frame = JSON.stringify([{ type, id }]);
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        const who = ws.deserializeAttachment() as Who & { exp: number };
+        this.requireOwner(who);
+        if (who.exp <= Date.now()) throw new Error();
+        ws.send(frame);
+      } catch {
+        try {
+          ws.close(1008, "Session ended");
+        } catch {
+          /* Closed peer. */
+        }
+      }
+    }
   }
 
   // ---------------------------------------------------------------- profile
 
   async me(who: Who): Promise<Me> {
     this.requireOwner(who);
-    return { userId: who.userId, profile: this.readProfile(), quota: this.quota() };
+    return {
+      userId: who.userId,
+      profile: this.readProfile(),
+      quota: this.quota(),
+      capabilities: {
+        ocr: !!this.env.MODEL_TRANSCRIBE,
+        connectedApps: this.env.MCP_ENABLED === "true",
+      },
+    };
   }
 
   async getProfile(who: Who): Promise<Profile> {
@@ -244,7 +458,7 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     const next = { ...this.readProfile(), ...patch };
     this.sql.exec(
-      `UPDATE profile SET name = ?, email = ?, phone = ?, location = ?, links = ? WHERE id = 1`,
+      `UPDATE profile SET name = ?, email = ?, phone = ?, location = ?, links = ?, revision = revision + 1 WHERE id = 1`,
       next.name,
       next.email,
       next.phone,
@@ -256,30 +470,143 @@ export class Vault extends DurableObject<Env> {
 
   // ---------------------------------------------------------------- sources (user)
 
-  async addSource(who: Who, s: { filename: string; r2Key: string }): Promise<{ sourceId: string }> {
+  private get extractionFeedbackStore(): ExtractionFeedback {
+    return new ExtractionFeedback(this.sql);
+  }
+  async extractionFeedback() {
+    this.requireOpen();
+    return this.extractionFeedbackStore.list();
+  }
+
+  private get uploads(): UploadStore {
+    return new UploadStore(
+      this.sql,
+      (fn) => this.ctx.storage.transactionSync(fn),
+      {
+        vaultId: this.vaultId,
+        maxSources: MAX_SOURCES,
+        maxQueued: MAX_QUEUED_SOURCES,
+      },
+    );
+  }
+  async reserveUpload(who: Who, input: UploadDescriptor) {
     this.requireOwner(who);
+    const reservation = this.uploads.reserve(input);
+    const next = this.uploads.nextAlarm();
+    if (next !== null) {
+      const alarm = await this.ctx.storage.getAlarm();
+      if (alarm === null || alarm > next) await this.ctx.storage.setAlarm(next);
+    }
+    return reservation;
+  }
+  async completeUpload(
+    who: Who,
+    input: UploadDescriptor,
+  ): Promise<{ sourceId: string }> {
+    this.requireOwner(who);
+    const extractor = extractorFor(this.env, this.vaultId).id.replace(
+      /llm:default$/,
+      `llm:${this.env.MODEL_EXTRACT}`,
+    );
+    const result = this.uploads.complete(input, (intent) => {
+      const id = intent.sourceId;
+      this.runs.begin(
+        {
+          id,
+          kind: "distill",
+          targetId: id,
+          requestKey: `source:${input.requestKey}`,
+          inputDigest: input.descriptorDigest,
+          steps: ["convert", "extract", "embed"],
+        },
+        () => {
+          this.sql.exec(
+            `INSERT INTO sources (id,filename,r2_key,state,run_id,created_at,origin,parent_source_id,extractor) VALUES (?,?,?,'queued',?,?,?,?,?)`,
+            id,
+            intent.filename,
+            intent.r2Key,
+            id,
+            intent.createdAt,
+            intent.origin,
+            intent.parentSourceId,
+            extractor,
+          );
+          this.extractionFeedbackStore.start(id, intent.createdAt);
+        },
+      );
+    });
+    if (!result.replay)
+      await this.dispatchRun(this.runs.get(result.intent.sourceId)!);
+    return { sourceId: result.intent.sourceId };
+  }
+
+  async addSource(
+    who: Who,
+    s: {
+      filename: string;
+      r2Key: string;
+      origin?: "upload" | "ocr";
+      parentSourceId?: string;
+      requestKey?: string;
+    },
+  ): Promise<{ sourceId: string }> {
+    this.requireOwner(who);
+    const prior = s.requestKey
+      ? this.runs.findRequest(`source:${s.requestKey}`)
+      : null;
+    if (prior) {
+      if (prior.inputDigest !== s.r2Key)
+        throw new AppError("conflict", "upload request changed");
+      return { sourceId: prior.targetId };
+    }
+    if (!s.r2Key.startsWith(`vaults/${this.vaultId}/sources/`))
+      throw new AppError("invalid", "invalid upload path");
+    if (s.parentSourceId) this.sourceRow(s.parentSourceId);
     const counts = this.sql
       .exec<{ total: number; queued: number }>(
         `SELECT COUNT(*) AS total, COALESCE(SUM(state = 'queued'), 0) AS queued FROM sources`,
       )
       .one();
-    if (counts.queued >= MAX_QUEUED_SOURCES) throw new AppError("conflict", "wait for your other uploads to finish reading");
-    if (counts.total >= MAX_SOURCES) throw new AppError("quota", `you can keep at most ${MAX_SOURCES} uploads`);
+    if (counts.queued >= MAX_QUEUED_SOURCES)
+      throw new AppError(
+        "conflict",
+        "wait for your other uploads to finish reading",
+      );
+    if (counts.total >= MAX_SOURCES)
+      throw new AppError(
+        "quota",
+        `you can keep at most ${MAX_SOURCES} uploads`,
+      );
     const id = crypto.randomUUID();
-    this.sql.exec(
-      `INSERT INTO sources (id, filename, r2_key, state, run_id, created_at) VALUES (?, ?, ?, 'queued', ?, ?)`,
-      id,
-      s.filename,
-      s.r2Key,
-      id,
-      Date.now(),
+    const extractor = extractorFor(this.env, this.vaultId).id.replace(
+      /llm:default$/,
+      `llm:${this.env.MODEL_EXTRACT}`,
     );
-    try {
-      await this.env.DISTILL.create({ id, params: { vaultId: this.vaultId, sourceId: id } });
-    } catch {
-      this.sql.exec(`DELETE FROM sources WHERE id = ?`, id);
-      throw new AppError("unavailable", "could not start reading the file; try again");
-    }
+    this.runs.begin(
+      {
+        id,
+        kind: "distill",
+        targetId: id,
+        requestKey: `source:${s.requestKey ?? id}`,
+        inputDigest: s.r2Key,
+        steps: ["convert", "extract", "embed"],
+      },
+      () => {
+        this.sql.exec(
+          `INSERT INTO sources (id, filename, r2_key, state, run_id, created_at, origin, parent_source_id, extractor) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
+          id,
+          s.filename,
+          s.r2Key,
+          id,
+          Date.now(),
+          s.origin ?? "upload",
+          s.parentSourceId ?? null,
+          extractor,
+        );
+        this.extractionFeedbackStore.start(id, this.sourceRow(id).created_at);
+      },
+    );
+    await this.dispatchRun(this.runs.get(id)!);
     return { sourceId: id };
   }
 
@@ -288,8 +615,18 @@ export class Vault extends DurableObject<Env> {
     await this.reconcileStaleSources();
     this.requireOwner(who);
     return this.sql
-      .exec<{ id: string; filename: string; state: string; error: string | null; created_at: number; proposed: number }>(
-        `SELECT s.id, s.filename, s.state, s.error, s.created_at,
+      .exec<{
+        id: string;
+        filename: string;
+        state: string;
+        error: string | null;
+        created_at: number;
+        proposed: number;
+        origin: "upload" | "ocr";
+        extractor: string | null;
+        markdown: string | null;
+      }>(
+        `SELECT s.id, s.filename, s.state, s.error, s.created_at, s.origin, s.extractor, s.markdown,
            (SELECT COUNT(*) FROM facts f WHERE f.source_id = s.id AND f.state = 'proposed') AS proposed
          FROM sources s ORDER BY s.created_at DESC`,
       )
@@ -301,11 +638,22 @@ export class Vault extends DurableObject<Env> {
         error: r.error,
         createdAt: r.created_at,
         proposed: r.proposed,
+        origin: r.origin,
+        extractor: r.extractor,
+        conversionWarnings:
+          r.markdown !== null &&
+          r.origin === "upload" &&
+          /\.pdf$/i.test(r.filename)
+            ? conversionQuality(r.markdown).reasons
+            : [],
       }));
   }
 
   /** Where the user's original upload is stored, for downloading it again. */
-  async sourceFile(who: Who, sourceId: string): Promise<{ r2Key: string; filename: string }> {
+  async sourceFile(
+    who: Who,
+    sourceId: string,
+  ): Promise<{ r2Key: string; filename: string }> {
     this.requireOwner(who);
     const row = this.sourceRow(sourceId);
     return { r2Key: row.r2_key, filename: row.filename };
@@ -313,38 +661,178 @@ export class Vault extends DurableObject<Env> {
 
   // ---------------------------------------------------------------- sources (Distill)
 
-  async sourceInfo(sourceId: string): Promise<{ r2Key: string; filename: string }> {
+  async sourceInfo(sourceId: string): Promise<{
+    r2Key: string;
+    filename: string;
+    createdAt: number;
+    origin: "upload" | "ocr";
+  }> {
     this.requireOpen();
     const row = this.sourceRow(sourceId);
-    return { r2Key: row.r2_key, filename: row.filename };
+    return {
+      r2Key: row.r2_key,
+      filename: row.filename,
+      createdAt: row.created_at,
+      origin: row.origin,
+    };
+  }
+
+  async sourceProgress(
+    sourceId: string,
+    runId: string,
+  ): Promise<{
+    convertedChars: number | null;
+    extraction: { roles: number; facts: number; dropped: number } | null;
+    extractor: string;
+  }> {
+    this.requireOpen();
+    const source = this.sourceRow(sourceId);
+    if (source.run_id !== runId)
+      throw new AppError("conflict", "this attempt was superseded");
+    const run = this.runs.get(runId);
+    if (run && !["starting", "running", "succeeded"].includes(run.state))
+      throw new AppError("conflict", "this run stopped");
+    const extractor =
+      source.extractor ??
+      extractorFor(this.env, this.vaultId).id.replace(
+        /llm:default$/,
+        `llm:${this.env.MODEL_EXTRACT}`,
+      );
+    if (!source.extractor)
+      this.sql.exec(
+        `UPDATE sources SET extractor = ? WHERE id = ?`,
+        extractor,
+        sourceId,
+      );
+    const extraction =
+      this.sql
+        .exec<{ roles: number; facts: number; dropped: number }>(
+          `SELECT roles,facts,dropped FROM extraction_commits WHERE source_id = ?`,
+          sourceId,
+        )
+        .toArray()[0] ?? null;
+    return {
+      convertedChars: source.markdown?.length ?? null,
+      extraction,
+      extractor,
+    };
+  }
+
+  async sourceEvidence(who: Who, sourceId: string) {
+    this.requireOwner(who);
+    const source = this.sourceRow(sourceId);
+    if (source.markdown === null)
+      throw new AppError("conflict", "this source has not been read yet");
+    return {
+      markdown: source.markdown,
+      revisionId: `${sourceId}:1`,
+      origin: source.origin,
+    };
   }
 
   async sourceText(sourceId: string): Promise<string> {
     this.requireOpen();
     const row = this.sourceRow(sourceId);
-    if (row.markdown === null) throw new AppError("invalid", "source has not been converted yet");
+    if (row.markdown === null)
+      throw new AppError("invalid", "source has not been converted yet");
     return row.markdown;
   }
 
   async saveSource(
     sourceId: string,
     patch: { markdown?: string; state?: SourceState; error?: string | null },
+    runId?: string,
   ): Promise<void> {
     this.requireOpen();
-    this.sourceRow(sourceId);
-    if (patch.markdown !== undefined) this.sql.exec(`UPDATE sources SET markdown = ? WHERE id = ?`, patch.markdown, sourceId);
-    if (patch.state !== undefined) this.sql.exec(`UPDATE sources SET state = ? WHERE id = ?`, patch.state, sourceId);
-    if (patch.error !== undefined) this.sql.exec(`UPDATE sources SET error = ? WHERE id = ?`, patch.error, sourceId);
+    const source = this.sourceRow(sourceId);
+    if (runId && source.run_id !== runId)
+      throw new AppError("conflict", "this attempt was superseded");
+    const id = source.run_id ?? sourceId;
+    const write = () => {
+      if (patch.markdown !== undefined && source.markdown === null) {
+        this.sql.exec(
+          `INSERT INTO source_revisions (id, source_id, markdown, created_at) VALUES (?, ?, ?, ?)`,
+          `${sourceId}:1`,
+          sourceId,
+          patch.markdown,
+          Date.now(),
+        );
+        this.sql.exec(
+          `UPDATE sources SET markdown = ? WHERE id = ?`,
+          patch.markdown,
+          sourceId,
+        );
+      }
+      if (patch.state !== undefined)
+        this.sql.exec(
+          `UPDATE sources SET state = ? WHERE id = ?`,
+          patch.state,
+          sourceId,
+        );
+      if (patch.error !== undefined)
+        this.sql.exec(
+          `UPDATE sources SET error = ? WHERE id = ?`,
+          patch.error,
+          sourceId,
+        );
+    };
+    if (this.runs.get(id)) {
+      if (patch.state === "failed") {
+        const run = this.runs.get(id)!;
+        if (["starting", "running"].includes(run.state))
+          this.ctx.storage.transactionSync(() => {
+            this.runs.fail(id, "extraction_failed");
+            write();
+          });
+      } else if (patch.state === "ready") {
+        if (this.runs.finish(id, write).applied) this.recordRunTotal(id);
+      } else if (patch.markdown !== undefined)
+        this.runs.commitStep(id, "convert", write);
+    } else this.ctx.storage.transactionSync(write);
+    this.broadcast("source", sourceId);
+  }
+
+  async completeSourceStep(
+    sourceId: string,
+    step: string,
+    runId: string,
+  ): Promise<void> {
+    this.requireOpen();
+    if (this.sourceRow(sourceId).run_id !== runId)
+      throw new AppError("conflict", "this attempt was superseded");
+    if (this.runs.get(runId)) this.runs.commitStep(runId, step, () => {});
   }
 
   /** Saves proposed roles and facts. A retried step replaces its own earlier proposals. */
-  async saveExtraction(sourceId: string, x: Extraction): Promise<{ roles: number; facts: number }> {
+  async saveExtraction(
+    sourceId: string,
+    x: Extraction,
+    runId?: string,
+    extractor?: string,
+    dropped = 0,
+  ): Promise<{ roles: number; facts: number }> {
     this.requireOpen();
-    this.sourceRow(sourceId);
+    const source = this.sourceRow(sourceId);
+    if (runId && source.run_id !== runId)
+      throw new AppError("conflict", "this attempt was superseded");
+    const committed = this.sql
+      .exec<{ roles: number; facts: number }>(
+        `SELECT roles, facts FROM extraction_commits WHERE source_id = ?`,
+        sourceId,
+      )
+      .toArray()[0];
+    if (committed) return committed;
+    if (runId) this.runs.claim(runId);
     const now = Date.now();
     this.ctx.storage.transactionSync(() => {
-      this.sql.exec(`DELETE FROM facts WHERE source_id = ? AND state = 'proposed' AND origin = 'extracted'`, sourceId);
-      this.sql.exec(`DELETE FROM roles WHERE source_id = ? AND state = 'proposed'`, sourceId);
+      this.sql.exec(
+        `DELETE FROM facts WHERE source_id = ? AND state = 'proposed' AND origin = 'extracted'`,
+        sourceId,
+      );
+      this.sql.exec(
+        `DELETE FROM roles WHERE source_id = ? AND state = 'proposed'`,
+        sourceId,
+      );
       this.sql.exec(
         `DELETE FROM evidence WHERE source_id = ?
            AND id NOT IN (SELECT evidence_id FROM facts WHERE evidence_id IS NOT NULL)
@@ -352,12 +840,33 @@ export class Vault extends DurableObject<Env> {
         sourceId,
       );
       const evidence = new Map<string, string>();
-      const evidenceFor = (quote: string): string => {
-        const known = evidence.get(quote);
+      const evidenceFor = (quote: string, span?: [number, number]): string => {
+        const key = JSON.stringify([quote, span]);
+        const known = evidence.get(key);
         if (known) return known;
         const id = crypto.randomUUID();
-        this.sql.exec(`INSERT INTO evidence (id, source_id, quote) VALUES (?, ?, ?)`, id, sourceId, quote);
-        evidence.set(quote, id);
+        const markdown = this.sourceRow(sourceId).markdown ?? "";
+        const located =
+          span ??
+          (markdown.includes(quote)
+            ? [markdown.indexOf(quote), markdown.indexOf(quote) + quote.length]
+            : null);
+        if (
+          !located ||
+          !quote ||
+          markdown.slice(located[0], located[1]) !== quote
+        )
+          throw new AppError("invalid", "evidence does not match its source");
+        this.sql.exec(
+          `INSERT INTO evidence (id, source_id, quote, start, end, source_revision_id) VALUES (?, ?, ?, ?, ?, ?)`,
+          id,
+          sourceId,
+          quote,
+          located?.[0] ?? null,
+          located?.[1] ?? null,
+          `${sourceId}:1`,
+        );
+        evidence.set(key, id);
         return id;
       };
       const roleIds = new Map<string, string>();
@@ -372,41 +881,81 @@ export class Vault extends DurableObject<Env> {
           r.title,
           r.startDate,
           r.endDate,
-          evidenceFor(r.quote),
+          evidenceFor(r.quote, r.span),
           sourceId,
         );
         roleIds.set(r.key, id);
       }
       for (const f of x.facts) {
         this.sql.exec(
-          `INSERT INTO facts (id, role_id, kind, text, level, evidence_id, source_id, origin, state, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'extracted', 'proposed', ?)`,
+          `INSERT INTO facts (id, role_id, kind, text, level, evidence_id, source_id, origin, state, updated_at, confidence, review_reasons)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'extracted', 'proposed', ?, ?, ?)`,
           crypto.randomUUID(),
           f.roleKey ? (roleIds.get(f.roleKey) ?? null) : null,
           f.kind,
           f.text,
           f.level,
-          evidenceFor(f.quote),
+          evidenceFor(f.quote, f.span),
           sourceId,
           now,
+          f.confidence ?? null,
+          JSON.stringify(f.reviewReasons ?? []),
         );
       }
+      this.extractionFeedbackStore.proposals(sourceId);
+      if (extractor)
+        this.sql.exec(
+          `UPDATE sources SET extractor = ? WHERE id = ?`,
+          extractor,
+          sourceId,
+        );
+      this.sql.exec(
+        `INSERT INTO extraction_commits (source_id, roles, facts, dropped) VALUES (?, ?, ?, ?)`,
+        sourceId,
+        x.roles.length,
+        x.facts.length,
+        dropped,
+      );
     });
     this.vectorCache = null;
     return { roles: x.roles.length, facts: x.facts.length };
   }
 
-  async unembeddedFacts(sourceId: string): Promise<{ id: string; text: string }[]> {
+  async unembeddedFacts(
+    sourceId: string,
+  ): Promise<{ id: string; text: string; revision: number }[]> {
     this.requireOpen();
     return this.sql
-      .exec<{ id: string; text: string }>(`SELECT id, text FROM facts WHERE source_id = ? AND vector IS NULL`, sourceId)
+      .exec<{ id: string; text: string; revision: number }>(
+        `SELECT id, text, revision FROM facts WHERE source_id = ? AND vector IS NULL`,
+        sourceId,
+      )
       .toArray();
   }
 
-  async saveVectors(vectors: { factId: string; vector: number[] }[]): Promise<void> {
+  async saveVectors(
+    vectors: { factId: string; vector: number[]; revision?: number }[],
+    expectedModel?: string,
+  ): Promise<void> {
     this.requireOpen();
+    if (expectedModel && expectedModel !== this.activeEmbeddingModel())
+      throw new AppError("conflict", "the search index changed; try again");
     this.ctx.storage.transactionSync(() => {
-      for (const v of vectors) this.sql.exec(`UPDATE facts SET vector = ? WHERE id = ?`, packVector(v.vector), v.factId);
+      for (const v of vectors) {
+        if (v.revision !== undefined)
+          this.sql.exec(
+            `UPDATE facts SET vector = ? WHERE id = ? AND revision = ?`,
+            packVector(v.vector),
+            v.factId,
+            v.revision,
+          );
+        else
+          this.sql.exec(
+            `UPDATE facts SET vector = ? WHERE id = ?`,
+            packVector(v.vector),
+            v.factId,
+          );
+      }
     });
     this.vectorCache = null;
   }
@@ -417,7 +966,7 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     return this.sql
       .exec<RoleRow>(
-        `SELECT r.id, r.kind, r.org, r.title, r.start_date, r.end_date, r.state, r.source_id, e.quote
+        `SELECT r.id, r.kind, r.org, r.title, r.start_date, r.end_date, r.state, r.source_id, r.revision, e.quote, e.start, e.end
          FROM roles r LEFT JOIN evidence e ON e.id = r.evidence_id
          ORDER BY COALESCE(r.end_date, '9999') DESC, r.start_date DESC`,
       )
@@ -443,15 +992,37 @@ export class Vault extends DurableObject<Env> {
 
   async editRole(who: Who, id: string, patch: RolePatch): Promise<void> {
     this.requireOwner(who);
-    const role = this.sql.exec(`SELECT id FROM roles WHERE id = ?`, id).toArray()[0];
+    const role = this.sql
+      .exec<{ id: string; revision: number }>(
+        `SELECT id, revision FROM roles WHERE id = ?`,
+        id,
+      )
+      .toArray()[0];
     if (!role) throw new AppError("not_found", "no such role");
+    if (
+      patch.expectedRevision !== undefined &&
+      patch.expectedRevision !== role.revision
+    )
+      throw new AppError(
+        "conflict",
+        "this role changed; refresh and try again",
+      );
     const fields: [string, string | null][] = [];
     if (patch.kind !== undefined) fields.push(["kind", patch.kind]);
     if (patch.org !== undefined) fields.push(["org", patch.org]);
     if (patch.title !== undefined) fields.push(["title", patch.title]);
-    if (patch.startDate !== undefined) fields.push(["start_date", patch.startDate]);
+    if (patch.startDate !== undefined)
+      fields.push(["start_date", patch.startDate]);
     if (patch.endDate !== undefined) fields.push(["end_date", patch.endDate]);
-    for (const [column, value] of fields) this.sql.exec(`UPDATE roles SET ${column} = ? WHERE id = ?`, value, id);
+    this.ctx.storage.transactionSync(() => {
+      for (const [column, value] of fields)
+        this.sql.exec(`UPDATE roles SET ${column} = ? WHERE id = ?`, value, id);
+      if (fields.length)
+        this.sql.exec(
+          `UPDATE roles SET revision = revision + 1 WHERE id = ?`,
+          id,
+        );
+    });
   }
 
   async listFacts(who: Who, state?: ReviewState): Promise<FactView[]> {
@@ -460,8 +1031,8 @@ export class Vault extends DurableObject<Env> {
     const params = state ? [state] : [];
     return this.sql
       .exec<FactRow>(
-        `SELECT f.id, f.role_id, f.kind, f.text, f.level, f.origin, f.state, f.source_id, e.quote
-         FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id ${where}
+        `SELECT f.id, f.role_id, f.kind, f.text, f.level, f.origin, f.state, f.source_id, f.revision, f.confidence, f.review_reasons, e.quote, e.start, e.end, s.origin AS evidence_origin
+         FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id LEFT JOIN sources s ON s.id = f.source_id ${where}
          ORDER BY f.updated_at DESC`,
         ...params,
       )
@@ -473,18 +1044,52 @@ export class Vault extends DurableObject<Env> {
   async review(who: Who, r: ReviewRequest): Promise<void> {
     this.requireOwner(who);
     this.ctx.storage.transactionSync(() => {
+      for (const [id, expected] of Object.entries(r.expectedRevisions ?? {})) {
+        const current = this.sql
+          .exec<{ revision: number }>(
+            `SELECT revision FROM facts WHERE id = ? UNION ALL SELECT revision FROM roles WHERE id = ?`,
+            id,
+            id,
+          )
+          .toArray()[0];
+        if (!current || current.revision !== expected)
+          throw new AppError(
+            "conflict",
+            "experience changed; refresh and review again",
+          );
+      }
       for (const id of r.confirm) {
-        this.sql.exec(`UPDATE roles SET state = 'confirmed' WHERE id = ?`, id);
-        this.sql.exec(`UPDATE facts SET state = 'confirmed', updated_at = ? WHERE id = ?`, Date.now(), id);
+        this.extractionFeedbackStore.review(id, "confirmed", Date.now());
         this.sql.exec(
-          `UPDATE roles SET state = 'confirmed' WHERE id = (SELECT role_id FROM facts WHERE id = ?) AND state = 'proposed'`,
+          `UPDATE roles SET state = 'confirmed', revision = revision + 1 WHERE id = ? AND state <> 'confirmed'`,
+          id,
+        );
+        this.sql.exec(
+          `UPDATE facts SET state = 'confirmed', revision = revision + 1, updated_at = ? WHERE id = ? AND state <> 'confirmed'`,
+          Date.now(),
+          id,
+        );
+        this.sql.exec(
+          `UPDATE roles SET state = 'confirmed', revision = revision + 1 WHERE id = (SELECT role_id FROM facts WHERE id = ?) AND state = 'proposed'`,
           id,
         );
       }
       for (const id of r.reject) {
-        this.sql.exec(`UPDATE roles SET state = 'rejected' WHERE id = ?`, id);
-        this.sql.exec(`UPDATE facts SET state = 'rejected' WHERE role_id = ? AND state = 'proposed'`, id);
-        this.sql.exec(`UPDATE facts SET state = 'rejected', updated_at = ? WHERE id = ?`, Date.now(), id);
+        this.extractionFeedbackStore.rejectRole(id, Date.now());
+        this.extractionFeedbackStore.review(id, "rejected", Date.now());
+        this.sql.exec(
+          `UPDATE roles SET state = 'rejected', revision = revision + 1 WHERE id = ? AND state <> 'rejected'`,
+          id,
+        );
+        this.sql.exec(
+          `UPDATE facts SET state = 'rejected', revision = revision + 1 WHERE role_id = ? AND state = 'proposed'`,
+          id,
+        );
+        this.sql.exec(
+          `UPDATE facts SET state = 'rejected', revision = revision + 1, updated_at = ? WHERE id = ? AND state <> 'rejected'`,
+          Date.now(),
+          id,
+        );
       }
     });
     this.vectorCache = null;
@@ -496,18 +1101,23 @@ export class Vault extends DurableObject<Env> {
     if (f.roleId) this.requireUsableRole(f.roleId);
     const vector = await this.embedOne(f.text);
     this.requireOwner(who);
+    if (f.roleId) this.requireUsableRole(f.roleId);
     const id = crypto.randomUUID();
-    this.sql.exec(
-      `INSERT INTO facts (id, role_id, kind, text, level, origin, state, vector, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'user', 'confirmed', ?, ?)`,
-      id,
-      f.roleId,
-      f.kind,
-      f.text,
-      f.level,
-      packVector(vector),
-      Date.now(),
-    );
+    this.ctx.storage.transactionSync(() => {
+      const now = Date.now();
+      this.sql.exec(
+        `INSERT INTO facts (id, role_id, kind, text, level, origin, state, vector, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'user', 'confirmed', ?, ?)`,
+        id,
+        f.roleId,
+        f.kind,
+        f.text,
+        f.level,
+        packVector(vector),
+        now,
+      );
+      this.extractionFeedbackStore.manual(id, now);
+    });
     this.vectorCache = null;
     return { factId: id };
   }
@@ -518,49 +1128,118 @@ export class Vault extends DurableObject<Env> {
    */
   async editFact(who: Who, id: string, patch: FactPatch): Promise<void> {
     this.requireOwner(who);
-    const fact = this.sql.exec<{ text: string }>(`SELECT text FROM facts WHERE id = ?`, id).toArray()[0];
+    const fact = this.sql
+      .exec<{ text: string; revision: number; role_id: string | null }>(
+        `SELECT text, revision, role_id FROM facts WHERE id = ?`,
+        id,
+      )
+      .toArray()[0];
     if (!fact) throw new AppError("not_found", "no such fact");
+    if (
+      patch.expectedRevision !== undefined &&
+      patch.expectedRevision !== fact.revision
+    )
+      throw new AppError(
+        "conflict",
+        "this fact changed; refresh and try again",
+      );
     if (patch.roleId) this.requireUsableRole(patch.roleId);
     const text = patch.text ?? fact.text;
-    const vector = patch.text !== undefined && patch.text !== fact.text ? await this.embedOne(text) : null;
+    const vector =
+      patch.text !== undefined && patch.text !== fact.text
+        ? await this.embedOne(text)
+        : null;
     this.requireOwner(who);
     if (patch.roleId) this.requireUsableRole(patch.roleId);
     this.ctx.storage.transactionSync(() => {
-      if (vector) this.sql.exec(`UPDATE facts SET text = ?, vector = ? WHERE id = ?`, text, packVector(vector), id);
-      if (patch.roleId !== undefined) this.sql.exec(`UPDATE facts SET role_id = ? WHERE id = ?`, patch.roleId, id);
-      this.sql.exec(`UPDATE facts SET origin = 'user', updated_at = ? WHERE id = ?`, Date.now(), id);
+      const current = this.sql
+        .exec<{ revision: number }>(
+          `SELECT revision FROM facts WHERE id = ?`,
+          id,
+        )
+        .toArray()[0];
+      if (!current || current.revision !== fact.revision)
+        throw new AppError(
+          "conflict",
+          "this fact changed while saving; refresh and try again",
+        );
+      const roleId = patch.roleId === undefined ? fact.role_id : patch.roleId;
+      if (text !== fact.text || roleId !== fact.role_id)
+        this.extractionFeedbackStore.edit(id, Date.now());
+      if (roleId) this.requireUsableRole(roleId);
+      if (vector)
+        this.sql.exec(
+          `UPDATE facts SET text = ?, vector = ? WHERE id = ?`,
+          text,
+          packVector(vector),
+          id,
+        );
+      if (patch.roleId !== undefined)
+        this.sql.exec(
+          `UPDATE facts SET role_id = ? WHERE id = ?`,
+          patch.roleId,
+          id,
+        );
+      this.sql.exec(
+        `UPDATE facts SET origin = 'user', revision = revision + 1, updated_at = ? WHERE id = ?`,
+        Date.now(),
+        id,
+      );
     });
     this.vectorCache = null;
   }
 
   // ---------------------------------------------------------------- applications and tailoring (user)
 
-  async addApplication(who: Who, jdText: string): Promise<{ applicationId: string }> {
+  async addApplication(
+    who: Who,
+    jdText: string,
+  ): Promise<{ applicationId: string }> {
     this.requireOwner(who);
     const id = crypto.randomUUID();
-    this.sql.exec(`INSERT INTO applications (id, jd_text, created_at) VALUES (?, ?, ?)`, id, jdText, Date.now());
+    this.sql.exec(
+      `INSERT INTO applications (id, jd_text, created_at) VALUES (?, ?, ?)`,
+      id,
+      jdText,
+      Date.now(),
+    );
     return { applicationId: id };
   }
 
   async listApplications(who: Who): Promise<ApplicationView[]> {
     this.requireOwner(who);
     const resumes = this.sql
-      .exec<{ id: string; application_id: string; state: string; created_at: number }>(
+      .exec<{
+        id: string;
+        application_id: string;
+        state: string;
+        created_at: number;
+      }>(
         `SELECT id, application_id, state, created_at FROM resumes ORDER BY created_at DESC`,
       )
       .toArray();
     return this.sql
-      .exec<ApplicationRow>(`SELECT id, company, title, jd_text, requirements, created_at FROM applications ORDER BY created_at DESC`)
+      .exec<ApplicationRow>(
+        `SELECT * FROM applications ORDER BY created_at DESC`,
+      )
       .toArray()
       .map((a) => ({
         id: a.id,
+        revision: a.revision,
+        status: a.status,
+        appliedAt: a.applied_at,
+        notes: a.notes,
         company: a.company,
         title: a.title,
         excerpt: excerptOf(a.jd_text),
         createdAt: a.created_at,
         resumes: resumes
           .filter((r) => r.application_id === a.id)
-          .map((r) => ({ id: r.id, state: r.state as ResumeState, createdAt: r.created_at })),
+          .map((r) => ({
+            id: r.id,
+            state: r.state as ResumeState,
+            createdAt: r.created_at,
+          })),
       }));
   }
 
@@ -568,125 +1247,222 @@ export class Vault extends DurableObject<Env> {
    * Starts a Tailor run. The quota is counted and the running row written before the first
    * await, so two starts cannot both pass the one-run rule; a failed start is refunded.
    */
-  async tailor(who: Who, applicationId: string): Promise<{ resumeId: string }> {
+  async tailor(
+    who: Who,
+    applicationId: string,
+    requestKey = crypto.randomUUID(),
+  ): Promise<{ resumeId: string; runId: string }> {
     this.requireOwner(who);
-    if (!this.sql.exec(`SELECT id FROM applications WHERE id = ?`, applicationId).toArray()[0]) {
-      throw new AppError("not_found", "no such application");
+    const app = this.sql
+      .exec<ApplicationRow>(
+        `SELECT * FROM applications WHERE id = ?`,
+        applicationId,
+      )
+      .toArray()[0];
+    if (!app) throw new AppError("not_found", "no such application");
+    const key = `tailor:${requestKey}`;
+    const previous = this.runs.findRequest(key);
+    if (previous) {
+      if (previous.inputDigest !== applicationId)
+        throw new AppError(
+          "conflict",
+          "request key was used for another application",
+        );
+      return { resumeId: previous.targetId, runId: previous.id };
     }
     await this.reconcileStaleRuns();
     this.requireOwner(who);
-    if (this.sql.exec(`SELECT id FROM resumes WHERE state = 'running'`).toArray().length > 0) {
-      throw new AppError("conflict", "a resume is already being tailored; wait for it to finish");
+    if (
+      this.runs
+        .listPending()
+        .some((r) => ["tailor", "refine", "letter", "prep"].includes(r.kind))
+    ) {
+      throw new AppError(
+        "conflict",
+        "a document is already being generated; wait for it to finish",
+      );
     }
     const quota = this.quota();
-    if (quota.used >= quota.limit) {
-      throw new AppError("quota", `you have used all ${quota.limit} tailored resumes for this month; more on ${resetDay(quota.month)}`);
-    }
-    const id = crypto.randomUUID();
-    this.ctx.storage.transactionSync(() => {
-      this.setMeta("quota_month", quota.month);
-      this.setMeta("quota_used", String(quota.used + 1));
-      this.sql.exec(
-        `INSERT INTO resumes (id, application_id, state, quota_month, run_id, created_at) VALUES (?, ?, 'running', ?, ?, ?)`,
-        id,
-        applicationId,
-        quota.month,
-        id,
-        Date.now(),
+    if (quota.used + (quota.reserved ?? 0) >= quota.limit)
+      throw new AppError(
+        "quota",
+        `you have used all ${quota.limit} tailored resumes for this month; more on ${resetDay(quota.month)}`,
       );
-    });
-    try {
-      await this.env.TAILOR.create({ id, params: { vaultId: this.vaultId, resumeId: id } });
-    } catch {
-      this.markResumeFailed(id, "Could not start tailoring. Try again.");
-      throw new AppError("unavailable", "could not start tailoring; try again");
-    }
-    return { resumeId: id };
+    const id = crypto.randomUUID();
+    this.runs.begin(
+      {
+        id,
+        kind: "tailor",
+        targetId: id,
+        requestKey: key,
+        inputDigest: applicationId,
+        steps: ["analyze", "select", "write", "verify"],
+        quota: this.quotaBucket(),
+      },
+      () => {
+        this.sql.exec(
+          `INSERT INTO resumes (id, application_id, state, quota_month, run_id, created_at) VALUES (?, ?, 'running', ?, ?, ?)`,
+          id,
+          applicationId,
+          quota.month,
+          id,
+          Date.now(),
+        );
+        this.snapshots.capture(
+          id,
+          {
+            applicationId,
+            jdText: app.jd_text,
+            analysis: app.requirements
+              ? {
+                  company: app.company,
+                  title: app.title,
+                  requirements: JSON.parse(app.requirements),
+                }
+              : null,
+            profile: this.readProfile(),
+            embeddingModel: this.activeEmbeddingModel(),
+          },
+          this.usableFacts(),
+          this.confirmedRoles(),
+          this.vectors(),
+        );
+      },
+    );
+    await this.dispatchRun(this.runs.get(id)!);
+    return { resumeId: id, runId: id };
   }
 
-  async getResume(who: Who, id: string): Promise<ResumeView> {
+  async getResume(who: Who, id: string, version?: number): Promise<ResumeView> {
     this.requireOwner(who);
     const row = this.resumeRow(id);
     const ready = row.state === "ready";
-    const body = ready && row.body ? (JSON.parse(row.body) as ResumeBody) : null;
-    const facts: ResumeView["facts"] = {};
-    if (body) {
-      const ids = new Set<string>();
-      for (const line of [...(body.summary ? [body.summary] : []), ...body.sections.flatMap((s) => s.lines)]) {
-        for (const factId of line.factIds) ids.add(factId);
-      }
-      for (const f of this.factsById([...ids])) facts[f.id] = { text: f.text, quote: f.quote };
-    }
+    const saved = ready ? this.resumeVersion(row, version) : null;
     return {
       id: row.id,
       applicationId: row.application_id,
       state: row.state as ResumeState,
       step: row.step,
       error: row.error,
-      version: row.version,
+      version: version ?? row.version,
       createdAt: row.created_at,
-      body,
-      report: ready && row.report ? (JSON.parse(row.report) as ResumeReport) : null,
-      facts,
+      body: saved?.render.body ?? null,
+      report: saved?.report ?? null,
+      facts: saved?.facts ?? {},
+      provenance: saved?.provenance,
     };
+  }
+
+  async resumeVersions(who: Who, id: string) {
+    this.requireOwner(who);
+    const row = this.resumeRow(id);
+    if (row.state === "ready") this.resumeVersion(row);
+    return this.snapshots.versions(id);
   }
 
   /** A user edit is the user's own claim; the PDF cache key changes with the version. */
-  async editLine(who: Who, resumeId: string, lineId: string, text: string): Promise<void> {
+  async editLine(
+    who: Who,
+    resumeId: string,
+    lineId: string,
+    text: string,
+    expectedVersion?: number,
+  ): Promise<void> {
     this.requireOwner(who);
     const row = this.resumeRow(resumeId);
-    if (row.state !== "ready" || !row.body) throw new AppError("conflict", "the resume is not ready yet");
+    if (row.state !== "ready" || !row.body)
+      throw new AppError("conflict", "the resume is not ready yet");
+    if (expectedVersion !== undefined && expectedVersion !== row.version)
+      throw new AppError(
+        "conflict",
+        "the document changed; refresh before editing",
+      );
     const trimmed = text.trim();
-    if (!trimmed || trimmed.length > MAX_LINE_CHARS) throw new AppError("invalid", `a line must be 1 to ${MAX_LINE_CHARS} characters`);
-    const body = JSON.parse(row.body) as ResumeBody;
-    const line = [...(body.summary ? [body.summary] : []), ...body.sections.flatMap((s) => s.lines)].find((l) => l.id === lineId);
+    if (!trimmed || trimmed.length > MAX_LINE_CHARS)
+      throw new AppError(
+        "invalid",
+        `a line must be 1 to ${MAX_LINE_CHARS} characters`,
+      );
+    const saved = this.resumeVersion(row);
+    const line = [
+      ...(saved.render.body.summary ? [saved.render.body.summary] : []),
+      ...saved.render.body.sections.flatMap((s) => s.lines),
+    ].find((l) => l.id === lineId);
     if (!line) throw new AppError("not_found", "no such line");
+    if (line.text === trimmed) return;
     line.text = trimmed;
     line.status = "edited";
-    this.sql.exec(`UPDATE resumes SET body = ?, version = version + 1 WHERE id = ?`, JSON.stringify(body), resumeId);
+    line.factIds = [];
+    saved.render.version = row.version + 1;
+    this.ctx.storage.transactionSync(() => {
+      this.snapshots.save(resumeId, saved.render.version, saved);
+      this.sql.exec(
+        `UPDATE resumes SET body = ?, version = ? WHERE id = ?`,
+        JSON.stringify(saved.render.body),
+        saved.render.version,
+        resumeId,
+      );
+    });
   }
 
-  async renderData(who: Who, resumeId: string): Promise<RenderData> {
+  async renderData(
+    who: Who,
+    resumeId: string,
+    version?: number,
+  ): Promise<RenderData> {
     this.requireOwner(who);
     const row = this.resumeRow(resumeId);
-    if (row.state !== "ready" || !row.body) throw new AppError("conflict", "the resume is not ready yet");
-    const app = this.sql
-      .exec<{ company: string | null; title: string | null }>(`SELECT company, title FROM applications WHERE id = ?`, row.application_id)
-      .toArray()[0];
-    return {
-      profile: this.readProfile(),
-      body: JSON.parse(row.body) as ResumeBody,
-      version: row.version,
-      company: app?.company ?? null,
-      title: app?.title ?? null,
-    };
+    if (row.state !== "ready" || !row.body)
+      throw new AppError("conflict", "the resume is not ready yet");
+    return this.resumeVersion(row, version).render;
   }
 
   // ---------------------------------------------------------------- tailoring (Tailor Workflow)
 
-  async tailorInput(resumeId: string): Promise<TailorInput> {
+  async tailorInput(resumeId: string, runId?: string): Promise<TailorInput> {
     this.requireOpen();
     const row = this.resumeRow(resumeId);
-    const app = this.sql
-      .exec<ApplicationRow>(`SELECT * FROM applications WHERE id = ?`, row.application_id)
-      .toArray()[0];
-    if (!app) throw new AppError("not_found", "no such application");
+    if (runId && row.run_id !== runId)
+      throw new AppError("conflict", "this attempt was superseded");
+    const id = row.run_id ?? resumeId;
+    const run = this.runs.get(id);
+    if (
+      run &&
+      run.state !== "running" &&
+      run.state !== "starting" &&
+      run.state !== "succeeded"
+    )
+      throw new AppError("conflict", "this run no longer accepts work");
+    const input = this.snapshots.metadata(id);
+    if (!input)
+      throw new AppError(
+        "conflict",
+        "this older run has no saved inputs; generate it again",
+      );
     return {
-      applicationId: app.id,
-      jdText: app.jd_text,
-      analysis: app.requirements
-        ? { company: app.company, title: app.title, requirements: JSON.parse(app.requirements) as string[] }
-        : null,
+      applicationId: input.applicationId,
+      jdText: input.jdText,
+      analysis: parseOrNull<Analysis>(row.run_analysis) ?? input.analysis,
       selection: parseOrNull<Selection>(row.selection),
       draft: parseOrNull<Draft>(row.draft),
       verified: parseOrNull<VerifiedDraft>(row.verified),
-      facts: this.usableFacts(),
-      roles: this.confirmedRoles(),
+      facts: this.snapshots.items<FactRecord>(id, "fact"),
+      roles: this.snapshots.items<RoleRecord>(id, "role"),
     };
   }
 
-  async saveAnalysis(applicationId: string, a: Analysis): Promise<void> {
+  async saveAnalysis(
+    applicationId: string,
+    a: Analysis,
+    resumeId?: string,
+  ): Promise<void> {
     this.requireOpen();
+    if (resumeId)
+      this.sql.exec(
+        `UPDATE resumes SET run_analysis = ? WHERE id = ? AND state = 'running'`,
+        JSON.stringify(a),
+        resumeId,
+      );
     this.sql.exec(
       `UPDATE applications SET company = ?, title = ?, requirements = ? WHERE id = ?`,
       a.company,
@@ -697,29 +1473,578 @@ export class Vault extends DurableObject<Env> {
   }
 
   /** For each query vector, the k closest usable confirmed facts. */
-  async searchFacts(queries: number[][], k: number): Promise<Candidate[]> {
+  async searchFacts(
+    queries: number[][],
+    k: number,
+    runId?: string,
+  ): Promise<Candidate[]> {
     this.requireOpen();
-    return topMatches(queries, this.vectors(), k);
+    return runId
+      ? this.snapshots.search(runId, queries, k)
+      : topMatches(queries, this.vectors(), k);
   }
 
-  async saveStep(resumeId: string, step: string, patch: ResumePatch): Promise<void> {
+  async saveStep(
+    resumeId: string,
+    step: string,
+    patch: ResumePatch,
+    runId?: string,
+  ): Promise<void> {
     this.requireOpen();
-    this.resumeRow(resumeId);
-    const updates: [string, string][] = [["step", step]];
-    if (patch.selection) updates.push(["selection", JSON.stringify(patch.selection)]);
-    if (patch.draft) updates.push(["draft", JSON.stringify(patch.draft)]);
-    if (patch.verified) updates.push(["verified", JSON.stringify(patch.verified)]);
-    if (patch.body) updates.push(["body", JSON.stringify(patch.body)]);
-    if (patch.report) updates.push(["report", JSON.stringify(patch.report)]);
-    if (patch.state) updates.push(["state", patch.state]);
-    this.ctx.storage.transactionSync(() => {
-      for (const [column, value] of updates) this.sql.exec(`UPDATE resumes SET ${column} = ? WHERE id = ?`, value, resumeId);
+    const row = this.resumeRow(resumeId);
+    if (runId && row.run_id !== runId)
+      throw new AppError("conflict", "this attempt was superseded");
+    const id = row.run_id ?? resumeId;
+    const write = () => {
+      if (row.state !== "running")
+        throw new AppError(
+          "conflict",
+          "this resume no longer accepts workflow writes",
+        );
+      const updates: [string, string][] = [["step", step]];
+      if (patch.selection)
+        updates.push(["selection", JSON.stringify(patch.selection)]);
+      if (patch.draft) updates.push(["draft", JSON.stringify(patch.draft)]);
+      if (patch.verified)
+        updates.push(["verified", JSON.stringify(patch.verified)]);
+      if (patch.body) updates.push(["body", JSON.stringify(patch.body)]);
+      if (patch.report) updates.push(["report", JSON.stringify(patch.report)]);
+      if (patch.state) updates.push(["state", patch.state]);
+      if (patch.state === "ready" && patch.body) {
+        this.snapshots.assertCurrent(id, patch.body);
+        const input = this.snapshots.metadata(id)!;
+        const facts = Object.fromEntries(
+          this.snapshots
+            .items<FactRecord>(id, "fact")
+            .map((f) => [f.id, { text: f.text, quote: f.quote }]),
+        );
+        const analysis =
+          parseOrNull<Analysis>(row.run_analysis) ?? input.analysis;
+        this.snapshots.save(resumeId, row.version, {
+          render: {
+            profile: input.profile,
+            body: patch.body,
+            version: row.version,
+            company: analysis?.company ?? null,
+            title: analysis?.title ?? null,
+          },
+          report: patch.report ?? null,
+          facts,
+          provenance: "snapshot",
+        });
+      }
+      for (const [column, value] of updates)
+        this.sql.exec(
+          `UPDATE resumes SET ${column} = ? WHERE id = ?`,
+          value,
+          resumeId,
+        );
+    };
+    if (this.runs.get(id)) {
+      if (patch.state === "ready") {
+        if (this.runs.finish(id, write).applied) this.recordRunTotal(id);
+      } else this.runs.commitStep(id, step, write);
+    } else this.ctx.storage.transactionSync(write);
+    this.broadcast("resume", resumeId);
+  }
+
+  async failResume(
+    resumeId: string,
+    error: string,
+    runId?: string,
+  ): Promise<void> {
+    if (this.gone || !this.initialised) return;
+    if (runId && this.resumeRow(resumeId).run_id !== runId) return;
+    this.markResumeFailed(resumeId, error);
+  }
+
+  private get mcpGrants(): McpGrantStore {
+    return new McpGrantStore(this.sql, {
+      authorizeOwner: (who) => this.requireOwner(who),
+      requireOpen: () => this.requireOpen(),
+      currentEpoch: () => this.meta("security_epoch") ?? "legacy",
+    });
+  }
+  async mcpIdentity(who: Who) {
+    this.requireOwner(who);
+    return { epoch: this.meta("security_epoch") ?? "legacy" };
+  }
+  async createMcpGrant(who: Who, input: NewMcpGrant) {
+    return this.mcpGrants.create(who, input);
+  }
+  async bindMcpGrant(claims: McpClaims, remoteId: string) {
+    if (claims.vid !== this.vaultId)
+      throw new AppError("forbidden", "wrong account");
+    this.mcpGrants.bind(claims, remoteId);
+  }
+  async listMcpGrants(who: Who) {
+    return this.mcpGrants.list(who);
+  }
+  async revokeMcpGrant(who: Who, id: string) {
+    return this.mcpGrants.revoke(who, id);
+  }
+  async authorizeMcp(claims: McpClaims, scope: McpScope) {
+    if (claims.vid !== this.vaultId)
+      throw new AppError("forbidden", "wrong account");
+    return this.mcpGrants.authorize(claims, scope);
+  }
+  async mcpFacts(claims: McpClaims, input: { query?: string; limit?: number }) {
+    await this.authorizeMcp(claims, "vault:read");
+    const words = (input.query ?? "")
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+    return this.usableFacts()
+      .filter((f) => words.every((w) => f.text.toLowerCase().includes(w)))
+      .slice(0, Math.min(100, Math.max(1, input.limit ?? 50)))
+      .map((f) => ({
+        id: f.id,
+        roleId: f.roleId,
+        kind: f.kind,
+        text: f.text,
+        level: f.level,
+      }));
+  }
+  async mcpResume(claims: McpClaims, id: string, version?: number) {
+    const who = await this.authorizeMcp(claims, "vault:read");
+    const resume = await this.getResume(who, id, version);
+    if (resume.state !== "ready")
+      throw new AppError("conflict", "the resume is not ready");
+    return {
+      id: resume.id,
+      version: resume.version,
+      body: resume.body,
+      provenance: resume.provenance,
+    };
+  }
+  async mcpTailor(
+    claims: McpClaims,
+    applicationId: string,
+    requestKey: string,
+  ) {
+    return this.tailor(
+      await this.authorizeMcp(claims, "vault:generate"),
+      applicationId,
+      `mcp_${claims.grantId}_${requestKey}`,
+    );
+  }
+
+  private get shares(): ShareStore {
+    return new ShareStore(this.sql, {
+      authorizeOwner: (who) => this.requireOwner(who),
+      requireOpen: () => this.requireOpen(),
+      currentEpoch: () => this.meta("security_epoch") ?? "legacy",
     });
   }
 
-  async failResume(resumeId: string, error: string): Promise<void> {
-    if (this.gone || !this.initialised) return;
-    this.markResumeFailed(resumeId, error);
+  async createShare(
+    who: Who,
+    selection: {
+      factIds: string[];
+      resumes: { id: string; version: number }[];
+      expiresAt?: number;
+    },
+  ) {
+    this.requireOwner(who);
+    const facts = (await this.listFacts(who, "confirmed")).filter((f) =>
+      selection.factIds.includes(f.id),
+    );
+    if (facts.length !== selection.factIds.length)
+      throw new AppError("invalid", "select confirmed facts from your vault");
+    const roles = await this.listRoles(who);
+    const resumes = selection.resumes.map(({ id, version }) => ({
+      id,
+      ...this.resumeVersion(this.resumeRow(id), version),
+    }));
+    const grant = this.ctx.storage.transactionSync(() => {
+      for (const fact of facts) {
+        const row = this.sql
+          .exec<{ revision: number; state: string }>(
+            `SELECT revision,state FROM facts WHERE id = ?`,
+            fact.id,
+          )
+          .one();
+        if (row.revision !== fact.revision || row.state !== "confirmed")
+          throw new AppError(
+            "conflict",
+            "a selected fact changed; refresh and try again",
+          );
+      }
+      return this.shares.create(
+        who,
+        { facts, roles, resumes },
+        selection.expiresAt,
+      );
+    });
+    const alarm = await this.ctx.storage.getAlarm();
+    if (alarm === null || alarm > grant.expiresAt)
+      await this.ctx.storage.setAlarm(grant.expiresAt);
+    return grant;
+  }
+  async listShares(who: Who) {
+    return this.shares.list(who);
+  }
+  async revokeShare(who: Who, id: string) {
+    this.shares.revoke(who, id);
+  }
+  async readShare(claims: { grantId: string; epoch: string }) {
+    return this.shares.read(claims);
+  }
+
+  async updateApplication(
+    who: Who,
+    id: string,
+    patch: {
+      status?: import("../shared/api").ApplicationStatus;
+      appliedAt?: string | null;
+      notes?: string;
+      expectedRevision?: number;
+    },
+  ): Promise<void> {
+    this.requireOwner(who);
+    const row = this.sql
+      .exec<ApplicationRow>(`SELECT * FROM applications WHERE id = ?`, id)
+      .toArray()[0];
+    if (!row) throw new AppError("not_found", "no such application");
+    if (
+      patch.expectedRevision !== undefined &&
+      row.revision !== patch.expectedRevision
+    )
+      throw new AppError(
+        "conflict",
+        "the application changed; refresh and try again",
+      );
+    this.sql.exec(
+      `UPDATE applications SET status = ?, applied_at = ?, notes = ?, revision = revision + 1 WHERE id = ?`,
+      patch.status ?? row.status,
+      patch.appliedAt === undefined ? row.applied_at : patch.appliedAt,
+      patch.notes ?? row.notes,
+      id,
+    );
+  }
+
+  async startDocument(
+    who: Who,
+    applicationId: string,
+    options: NewDocument,
+    requestKey: string,
+  ): Promise<{ documentId: string; runId: string }> {
+    const digest = base64url(
+      await sha256(JSON.stringify([applicationId, options])),
+    );
+    this.requireOwner(who);
+    const app = this.sql
+      .exec<ApplicationRow>(
+        `SELECT * FROM applications WHERE id = ?`,
+        applicationId,
+      )
+      .toArray()[0];
+    if (!app) throw new AppError("not_found", "no such application");
+    const key = `document:${requestKey}`;
+    const existing = this.runs.findRequest(key);
+    if (existing) {
+      if (existing.inputDigest !== digest)
+        throw new AppError(
+          "conflict",
+          "request key already used with other input",
+        );
+      return { documentId: existing.id, runId: existing.id };
+    }
+    if (
+      this.runs
+        .listPending()
+        .some((r) =>
+          ["tailor", "refine", "letter", "prep", "questions"].includes(r.kind),
+        )
+    )
+      throw new AppError("conflict", "wait for the current document to finish");
+    let base: ResumeVersion | undefined;
+    if (options.kind === "refine") {
+      if (!options.resumeId)
+        throw new AppError("invalid", "choose a resume to refine");
+      const resume = this.resumeRow(options.resumeId);
+      if (resume.application_id !== applicationId || resume.state !== "ready")
+        throw new AppError(
+          "invalid",
+          "the resume is not ready for this application",
+        );
+      if (
+        options.expectedVersion !== undefined &&
+        options.expectedVersion !== resume.version
+      )
+        throw new AppError(
+          "conflict",
+          "the resume changed; refresh before refining",
+        );
+      options = { ...options, expectedVersion: resume.version };
+      base = this.resumeVersion(resume);
+    }
+    const id = crypto.randomUUID();
+    this.quota();
+    this.runs.begin(
+      {
+        id,
+        kind: options.kind,
+        targetId: id,
+        requestKey: key,
+        inputDigest: digest,
+        steps: ["plan", "write", "verify"],
+        ...(options.kind !== "questions" ? { quota: this.quotaBucket() } : {}),
+      },
+      () => {
+        this.sql.exec(
+          `INSERT INTO documents (id, application_id, kind, state, created_at) VALUES (?, ?, ?, 'running', ?)`,
+          id,
+          applicationId,
+          options.kind,
+          Date.now(),
+        );
+        this.sql.exec(
+          `INSERT INTO document_requests (run_id, application_id, kind, options) VALUES (?, ?, ?, ?)`,
+          id,
+          applicationId,
+          options.kind,
+          JSON.stringify({ ...options, base: base?.render.body }),
+        );
+        this.snapshots.capture(
+          id,
+          {
+            applicationId,
+            jdText: app.jd_text,
+            analysis: app.requirements
+              ? {
+                  company: app.company,
+                  title: app.title,
+                  requirements: JSON.parse(app.requirements),
+                }
+              : null,
+            profile: base?.render.profile ?? this.readProfile(),
+            embeddingModel: this.activeEmbeddingModel(),
+          },
+          this.usableFacts(),
+          this.confirmedRoles(),
+          this.vectors(),
+        );
+      },
+    );
+    await this.dispatchRun(this.runs.get(id)!);
+    return { documentId: id, runId: id };
+  }
+
+  async documentInput(runId: string): Promise<
+    DocumentInput & {
+      plan?: DocumentPlan;
+      draft?: DocumentDraft;
+      result?: DocumentResult;
+    }
+  > {
+    this.requireOpen();
+    const run = this.runs.get(runId);
+    if (!run || !["starting", "running", "succeeded"].includes(run.state))
+      throw new AppError("conflict", "this run no longer accepts work");
+    const row = this.sql
+      .exec<{
+        options: string;
+        plan: string | null;
+        draft: string | null;
+        result: string | null;
+      }>(`SELECT * FROM document_requests WHERE run_id = ?`, runId)
+      .toArray()[0];
+    const input = this.snapshots.metadata(runId);
+    if (!row || !input)
+      throw new AppError("not_found", "no such document request");
+    return {
+      ...JSON.parse(row.options),
+      jdText: input.jdText,
+      analysis: input.analysis,
+      facts: this.snapshots.items<FactRecord>(runId, "fact"),
+      roles: this.snapshots.items<RoleRecord>(runId, "role"),
+      plan: row.plan ? JSON.parse(row.plan) : undefined,
+      draft: row.draft ? JSON.parse(row.draft) : undefined,
+      result: row.result ? JSON.parse(row.result) : undefined,
+    };
+  }
+
+  async saveDocumentStep(
+    runId: string,
+    step: string,
+    patch: {
+      plan?: DocumentPlan;
+      draft?: DocumentDraft;
+      result?: DocumentResult;
+    },
+  ): Promise<void> {
+    this.requireOpen();
+    this.runs.commitStep(runId, step, () => {
+      for (const field of ["plan", "draft", "result"] as const)
+        if (patch[field] !== undefined)
+          this.sql.exec(
+            `UPDATE document_requests SET ${field} = ? WHERE run_id = ?`,
+            JSON.stringify(patch[field]),
+            runId,
+          );
+    });
+  }
+
+  async finishDocument(runId: string, result: DocumentResult): Promise<void> {
+    this.requireOpen();
+    const options = JSON.parse(
+      this.sql
+        .exec<{ options: string }>(
+          `SELECT options FROM document_requests WHERE run_id = ?`,
+          runId,
+        )
+        .one().options,
+    ) as NewDocument & { base?: ResumeBody };
+    const unchanged =
+      options.kind === "refine" &&
+      !!result.body &&
+      JSON.stringify(options.base) === JSON.stringify(result.body);
+    const completed = this.runs.finish(
+      runId,
+      () => {
+        const input = this.snapshots.metadata(runId)!;
+        const roles = this.snapshots.items<RoleRecord>(runId, "role");
+        const checkBody: ResumeBody = result.body ?? {
+          summary: null,
+          skills: [],
+          sections: roles
+            .filter((r) => result.units.some((u) => u.roleId === r.id))
+            .map((r) => ({
+              ...r,
+              roleId: r.id,
+              lines: result.units
+                .filter((u) => u.roleId === r.id)
+                .map((u) => ({ ...u, status: u.status ?? "kept" })),
+            })),
+        };
+        if (!result.body) {
+          const global = result.units.filter((u) => u.roleId === null);
+          if (global.length)
+            checkBody.summary = {
+              id: "global",
+              text: "",
+              factIds: global.flatMap((u) => u.factIds),
+              status: "kept",
+            };
+        }
+        this.snapshots.assertCurrent(runId, checkBody);
+        const facts = Object.fromEntries(
+          this.snapshots
+            .items<FactRecord>(runId, "fact")
+            .map((f) => [f.id, { text: f.text, quote: f.quote }]),
+        );
+        if (
+          options.kind === "refine" &&
+          result.body &&
+          options.resumeId &&
+          !unchanged
+        ) {
+          const row = this.resumeRow(options.resumeId);
+          if (row.version !== options.expectedVersion)
+            throw new AppError(
+              "conflict",
+              "the resume changed while refining; try again",
+            );
+          const base = this.resumeVersion(row);
+          const version = row.version + 1;
+          this.snapshots.save(row.id, version, {
+            ...base,
+            render: { ...base.render, body: result.body, version },
+            report: result.report,
+            facts,
+            provenance: "snapshot",
+          });
+          this.sql.exec(
+            `UPDATE resumes SET body = ?, report = ?, version = ? WHERE id = ?`,
+            JSON.stringify(result.body),
+            JSON.stringify(result.report),
+            version,
+            row.id,
+          );
+        }
+        this.sql.exec(
+          `INSERT INTO document_versions (document_id, version, data, created_at) VALUES (?, 1, ?, ?)`,
+          runId,
+          JSON.stringify({ result, facts, profile: input.profile }),
+          Date.now(),
+        );
+        this.sql.exec(
+          `UPDATE documents SET state = 'ready', result = ? WHERE id = ?`,
+          JSON.stringify(result),
+          runId,
+        );
+      },
+      !unchanged,
+    );
+    if (completed.applied) this.recordRunTotal(runId);
+    this.broadcast("document", runId);
+    if (options.resumeId) this.broadcast("resume", options.resumeId);
+  }
+
+  async failDocument(runId: string, message: string): Promise<void> {
+    this.requireOpen();
+    const run = this.runs.get(runId);
+    if (!run || ["succeeded", "cancelled", "failed"].includes(run.state))
+      return;
+    this.ctx.storage.transactionSync(() => {
+      this.runs.fail(runId, "generation_failed");
+      this.sql.exec(
+        `UPDATE documents SET state = 'failed', error = ? WHERE id = ?`,
+        message,
+        runId,
+      );
+    });
+  }
+
+  async listDocuments(
+    who: Who,
+    applicationId: string,
+  ): Promise<DocumentView[]> {
+    this.requireOwner(who);
+    const ids = this.sql
+      .exec<{ id: string }>(
+        `SELECT id FROM documents WHERE application_id = ? ORDER BY created_at DESC`,
+        applicationId,
+      )
+      .toArray();
+    return Promise.all(ids.map(({ id }) => this.getDocument(who, id)));
+  }
+
+  async getDocument(who: Who, id: string): Promise<DocumentView> {
+    this.requireOwner(who);
+    const row = this.sql
+      .exec<{
+        id: string;
+        application_id: string;
+        kind: DocumentView["kind"];
+        state: DocumentView["state"];
+        version: number;
+        created_at: number;
+        error: string | null;
+        result: string | null;
+      }>(`SELECT * FROM documents WHERE id = ?`, id)
+      .toArray()[0];
+    if (!row) throw new AppError("not_found", "no such document");
+    const version = this.sql
+      .exec<{ data: string }>(
+        `SELECT data FROM document_versions WHERE document_id = ? AND version = ?`,
+        id,
+        row.version,
+      )
+      .toArray()[0];
+    const data = version ? JSON.parse(version.data) : null;
+    return {
+      id,
+      applicationId: row.application_id,
+      kind: row.kind,
+      state: row.state,
+      version: row.version,
+      createdAt: row.created_at,
+      error: row.error,
+      result: data?.result ?? null,
+      facts: data?.facts ?? {},
+    };
   }
 
   // ---------------------------------------------------------------- export
@@ -727,6 +2052,71 @@ export class Vault extends DurableObject<Env> {
   async exportAll(who: Who): Promise<VaultExport> {
     this.requireOwner(who);
     return {
+      format: 2,
+      generationInputs: this.sql
+        .exec<Record<string, string | number | null>>(
+          `SELECT * FROM generation_inputs`,
+        )
+        .toArray(),
+      generationItems: this.sql
+        .exec<Record<string, string | number | null>>(
+          `SELECT run_id,kind,item_id,data FROM generation_input_items`,
+        )
+        .toArray(),
+      documentRequests: this.sql
+        .exec<Record<string, string | number | null>>(
+          `SELECT * FROM document_requests`,
+        )
+        .toArray(),
+      sourceRevisions: this.sql
+        .exec<Record<string, string | number | null>>(
+          `SELECT * FROM source_revisions`,
+        )
+        .toArray(),
+      evidence: this.sql
+        .exec<Record<string, string | number | null>>(`SELECT * FROM evidence`)
+        .toArray(),
+      resumeVersions: this.sql
+        .exec<{
+          resume_id: string;
+          version: number;
+          data: string;
+          created_at: number;
+        }>(`SELECT * FROM resume_versions ORDER BY resume_id,version`)
+        .toArray()
+        .map((r) => ({ ...r, data: JSON.parse(r.data) })),
+      documents: this.sql
+        .exec<Record<string, string | number | null>>(`SELECT * FROM documents`)
+        .toArray(),
+      documentVersions: this.sql
+        .exec<{
+          document_id: string;
+          version: number;
+          data: string;
+          created_at: number;
+        }>(`SELECT * FROM document_versions ORDER BY document_id,version`)
+        .toArray()
+        .map((r) => ({ ...r, data: JSON.parse(r.data) })),
+      runs: this.sql
+        .exec<Record<string, string | number | null>>(`SELECT * FROM runs`)
+        .toArray(),
+      providerUsage: this.sql
+        .exec<Record<string, string | number | null>>(
+          `SELECT * FROM model_attempts`,
+        )
+        .toArray(),
+      quotaPeriods: this.sql
+        .exec<Record<string, string | number | null>>(
+          `SELECT * FROM quota_buckets`,
+        )
+        .toArray(),
+      shares: this.shares.export(who),
+      connectedApps: this.mcpGrants
+        .list(who)
+        .map(({ oauthGrantId: _remote, ...grant }) => grant),
+      billing: this.meta("entitlement")
+        ? JSON.parse(this.meta("entitlement")!)
+        : null,
       exportedAt: new Date().toISOString(),
       profile: this.readProfile(),
       sources: this.sql
@@ -738,6 +2128,9 @@ export class Vault extends DurableObject<Env> {
           state: s.state,
           createdAt: s.created_at,
           markdown: s.markdown,
+          origin: s.origin,
+          extractor: s.extractor,
+          parentSourceId: s.parent_source_id,
           file: `/api/sources/${s.id}/file`,
         })),
       roles: await this.listRoles(who),
@@ -745,7 +2138,16 @@ export class Vault extends DurableObject<Env> {
       applications: this.sql
         .exec<ApplicationRow>(`SELECT * FROM applications ORDER BY created_at`)
         .toArray()
-        .map((a) => ({ id: a.id, company: a.company, title: a.title, jobDescription: a.jd_text, createdAt: a.created_at })),
+        .map((a) => ({
+          id: a.id,
+          company: a.company,
+          title: a.title,
+          jobDescription: a.jd_text,
+          createdAt: a.created_at,
+          status: a.status,
+          appliedAt: a.applied_at,
+          notes: a.notes,
+        })),
       resumes: this.sql
         .exec<ResumeRow>(`SELECT * FROM resumes ORDER BY created_at`)
         .toArray()
@@ -760,22 +2162,311 @@ export class Vault extends DurableObject<Env> {
     };
   }
 
+  private activeEmbeddingModel(): string {
+    return this.meta("embedding_model") ?? "@cf/baai/bge-m3";
+  }
+  async embeddingModel(runId?: string): Promise<string> {
+    this.requireOpen();
+    const input = runId ? this.snapshots.metadata(runId) : null;
+    return input
+      ? (input.embeddingModel ?? "@cf/baai/bge-m3")
+      : this.activeEmbeddingModel();
+  }
+  private get reembeddings(): ReembedStore {
+    return new ReembedStore(this.sql, (fn) =>
+      this.ctx.storage.transactionSync(fn),
+    );
+  }
+  async startReembed(
+    model: string,
+    dimensions: number,
+    requestKey = crypto.randomUUID(),
+  ): Promise<{ runId: string }> {
+    this.requireOpen();
+    if (model !== (this.env.EMBEDDING_MODEL ?? "@cf/baai/bge-m3"))
+      throw new AppError(
+        "invalid",
+        "configure the target embedding model before rebuilding",
+      );
+    const prior = this.runs.findRequest(`reembed:${requestKey}`);
+    if (prior) {
+      if (prior.inputDigest !== `${model}:${dimensions}`)
+        throw new AppError("conflict", "rebuild request changed");
+      return { runId: prior.id };
+    }
+    const id = crypto.randomUUID();
+    this.ctx.storage.transactionSync(() => {
+      this.reembeddings.begin(id, model, dimensions);
+      this.runs.begin({
+        id,
+        kind: "reembed",
+        targetId: id,
+        requestKey: `reembed:${requestKey}`,
+        inputDigest: `${model}:${dimensions}`,
+        steps: [],
+      });
+    });
+    await this.dispatchRun(this.runs.get(id)!);
+    return { runId: id };
+  }
+  async reembedStatus(id: string) {
+    this.requireOpen();
+    return this.reembeddings.status(id);
+  }
+  async reembedBatch(id: string) {
+    this.requireOpen();
+    this.runs.claim(id);
+    return {
+      model: this.reembeddings.status(id).model,
+      items: this.reembeddings.nextBatch(id),
+    };
+  }
+  async saveReembedBatch(
+    id: string,
+    items: { id: string; revision: number; vector: number[] }[],
+  ) {
+    this.requireOpen();
+    this.runs.claim(id);
+    return this.reembeddings.saveBatch(id, items);
+  }
+  async finishReembed(id: string) {
+    this.requireOpen();
+    this.runs.finish(id, () => {
+      this.reembeddings.activate(id);
+    });
+    this.vectorCache = null;
+  }
+  async failReembed(id: string) {
+    this.requireOpen();
+    const run = this.runs.get(id);
+    if (!run || !["starting", "running"].includes(run.state)) return;
+    this.ctx.storage.transactionSync(() => {
+      this.reembeddings.cancel(id);
+      this.runs.fail(id, "embedding_rebuild_failed");
+    });
+  }
+
+  private get operations(): VaultOperations {
+    if (!this.initialised || this.gone)
+      throw new AppError("gone", "this vault is unavailable");
+    return new VaultOperations(
+      this.sql,
+      (fn) => this.ctx.storage.transactionSync(fn),
+      {
+        vaultId: this.vaultId,
+        userId: this.meta("user_id")!,
+        schemaVersion: SCHEMA_VERSION,
+        requireMaintenanceFence: () =>
+          requireMaintenanceFence(this.vaultId, this.env.RESTORE_FENCE_IDS),
+      },
+    );
+  }
+  async transferManifest(operationId: string) {
+    await this.prepareMaintenance();
+    return this.operations.beginExport(operationId);
+  }
+  async transferPage(
+    operationId: string,
+    table: TransferTable,
+    after = 0,
+    limit = 50,
+  ) {
+    return this.operations.exportPage(operationId, table, after, limit);
+  }
+  async importManifest(manifest: TransferManifest) {
+    return this.operations.beginImport(manifest);
+  }
+  async importPage(page: TransferPage) {
+    return this.operations.importPage(page);
+  }
+  async prepareMaintenance(): Promise<void> {
+    requireMaintenanceFence(this.vaultId, this.env.RESTORE_FENCE_IDS);
+    for (const run of this.runs.listPending()) {
+      if (run.kind === "embed")
+        throw new AppError(
+          "conflict",
+          "wait for the in-flight fact save to settle before maintenance",
+        );
+      const binding =
+        run.kind === "distill"
+          ? this.env.DISTILL
+          : run.kind === "tailor"
+            ? this.env.TAILOR
+            : run.kind === "reembed"
+              ? this.env.REEMBED
+              : this.env.DOCUMENTS;
+      try {
+        const instance = await binding.get(run.id);
+        const status = await instance.status();
+        if (!["complete", "terminated", "errored"].includes(status.status))
+          await instance.terminate();
+        await instance.delete();
+      } catch (error) {
+        if (!isMissingWorkflow(error)) throw error;
+      }
+      this.runs.requestCancel(run.id);
+      this.runs.cancel(run.id);
+      if (run.kind === "reembed") {
+        try {
+          this.reembeddings.cancel(run.id);
+        } catch {
+          /* Already finished generation. */
+        }
+      }
+    }
+    for (const ws of this.ctx.getWebSockets()) ws.close(1008, "Maintenance");
+  }
+  async controlCheckpoint() {
+    requireMaintenanceFence(this.vaultId, this.env.RESTORE_FENCE_IDS);
+    if (this.runs.listPending().length)
+      throw new AppError(
+        "conflict",
+        "work must be stopped before transferring",
+      );
+    const control = {
+      ownerId: this.meta("user_id")!,
+      meta: this.sql
+        .exec<{ key: string; value: string }>(
+          `SELECT key,value FROM meta WHERE key IN ('stripe_customer','billing_customer_requested','billing_customer_requested_at','entitlement','entitlement_revision','checkout_intent','quota_month','quota_used')`,
+        )
+        .toArray(),
+      quota: this.sql
+        .exec<Record<string, string | number | null>>(
+          `SELECT * FROM quota_buckets`,
+        )
+        .toArray(),
+      runs: this.sql
+        .exec<Record<string, string | number | null>>(`SELECT * FROM runs`)
+        .toArray(),
+      attempts: this.sql
+        .exec<Record<string, string | number | null>>(
+          `SELECT * FROM model_attempts`,
+        )
+        .toArray(),
+    };
+    if (
+      new TextEncoder().encode(JSON.stringify(control)).byteLength >
+      8 * 1024 * 1024
+    )
+      throw new AppError(
+        "too_large",
+        "control state needs a paginated maintenance export",
+      );
+    return control;
+  }
+  async finishImport(operationId: string, sourceVaultId: string) {
+    requireMaintenanceFence(sourceVaultId, this.env.RESTORE_FENCE_IDS);
+    requireMaintenanceFence(this.vaultId, this.env.RESTORE_FENCE_IDS);
+    const operation = this.sql
+      .exec<{ manifest: string }>(
+        `SELECT manifest FROM vault_operations WHERE id = ? AND kind = 'import'`,
+        operationId,
+      )
+      .toArray()[0];
+    if (
+      !operation ||
+      JSON.parse(operation.manifest).sourceVaultId !== sourceVaultId
+    )
+      throw new AppError("conflict", "wrong source vault");
+    const source = vaultStub(this.env, sourceVaultId);
+    const control = await source.controlCheckpoint();
+    if (control.ownerId !== this.meta("user_id"))
+      throw new AppError("forbidden", "wrong account");
+    // Only original sources need copying; immutable output caches are regenerated on demand.
+    for (const row of this.sql
+      .exec<{ r2_key: string }>(`SELECT r2_key FROM sources`)
+      .toArray()) {
+      const original =
+        `vaults/${sourceVaultId}/` +
+        row.r2_key.slice(`vaults/${this.vaultId}/`.length);
+      const object = await this.env.FILES.get(original);
+      if (!object) throw new AppError("conflict", "a source file is missing");
+      const bytes = await object.arrayBuffer();
+      const digest = await crypto.subtle.digest("SHA-256", bytes);
+      await this.env.FILES.put(row.r2_key, bytes, {
+        sha256: digest,
+        httpMetadata: object.httpMetadata,
+        customMetadata: object.customMetadata,
+      });
+      const check = await this.env.FILES.head(row.r2_key);
+      if (
+        !check ||
+        check.size !== bytes.byteLength ||
+        !check.checksums.sha256 ||
+        base64url(check.checksums.sha256) !== base64url(digest)
+      )
+        throw new AppError(
+          "unavailable",
+          "a source file did not verify after copying",
+        );
+    }
+    return this.operations.finishImport(
+      operationId,
+      crypto.randomUUID(),
+      () => {
+        for (const [table, rows] of [
+          ["quota_buckets", control.quota],
+          ["runs", control.runs],
+          ["model_attempts", control.attempts],
+        ] as const) {
+          for (const row of rows) {
+            const columns = Object.keys(row);
+            if (columns.some((c) => !/^[a-z_]+$/.test(c)))
+              throw new AppError("invalid", "invalid control column");
+            this.sql.exec(
+              `INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`,
+              ...columns.map((c) => row[c]!),
+            );
+          }
+        }
+        for (const { key, value } of control.meta) this.setMeta(key, value);
+      },
+    );
+  }
+  async activateImport(operationId: string, ownerId: string): Promise<void> {
+    requireMaintenanceFence(this.vaultId, this.env.RESTORE_FENCE_IDS);
+    if (
+      this.meta("user_id") !== ownerId ||
+      this.operations.importStatus(operationId).state !== "ready"
+    )
+      throw new AppError("conflict", "replacement is not ready");
+    this.setMeta("state", "open");
+  }
+
   // ---------------------------------------------------------------- helpers
 
   private requireOpen(): void {
-    if (this.gone || !this.initialised) throw new AppError("gone", "this vault no longer exists");
-    if (this.meta("state") !== "open") throw new AppError("gone", "this account is being deleted");
+    if (
+      (this.env.RESTORE_FENCE_IDS ?? "")
+        .split(",")
+        .map((v) => v.trim())
+        .includes(this.vaultId)
+    )
+      throw new AppError(
+        "unavailable",
+        "this account is temporarily unavailable during maintenance",
+      );
+    if (this.gone || !this.initialised)
+      throw new AppError("gone", "this vault no longer exists");
+    if (this.meta("state") !== "open")
+      throw new AppError("gone", "this account is being deleted");
   }
 
   private requireOwner(who: Who): void {
     this.requireOpen();
-    if (who.userId !== this.meta("user_id")) throw new AppError("forbidden", "not this user's vault");
-    if (who.gen !== Number(this.meta("session_gen"))) throw new AppError("unauthenticated", "this session was signed out");
+    if (who.userId !== this.meta("user_id"))
+      throw new AppError("forbidden", "not this user's vault");
+    if ((who.epoch ?? "legacy") !== (this.meta("security_epoch") ?? "legacy"))
+      throw new AppError("unauthenticated", "this session is no longer valid");
+    if (who.gen !== Number(this.meta("session_gen")))
+      throw new AppError("unauthenticated", "this session was signed out");
   }
 
   private meta(key: string): string | null {
     if (!this.initialised) return null;
-    const row = this.sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key = ?`, key).toArray()[0];
+    const row = this.sql
+      .exec<{ value: string }>(`SELECT value FROM meta WHERE key = ?`, key)
+      .toArray()[0];
     return row ? row.value : null;
   }
 
@@ -787,71 +2478,649 @@ export class Vault extends DurableObject<Env> {
     );
   }
 
+  private quotaBucket(): QuotaBucket {
+    const cfg = billingConfig(this.env);
+    const plan = this.meta("entitlement")
+      ? (JSON.parse(this.meta("entitlement")!) as Entitlement)
+      : null;
+    if (
+      plan?.validUntil &&
+      plan.validUntil > Date.now() &&
+      plan.planId !== "free"
+    ) {
+      const startAt = Number(plan.bucket.split(":").at(-1)) * 1000;
+      return {
+        key: plan.bucket,
+        startAt,
+        endAt: plan.validUntil,
+        limit: plan.generationLimit,
+      };
+    }
+    const configured =
+      cfg?.free.generationLimit ?? Number(this.env.TAILOR_MONTHLY_LIMIT);
+    return freeQuotaBucket(
+      Date.now(),
+      Number.isSafeInteger(configured) && configured >= 0
+        ? configured
+        : DEFAULT_TAILOR_LIMIT,
+    );
+  }
+
   private quota(): Quota {
     const month = monthOf(Date.now());
-    const used = this.meta("quota_month") === month ? Number(this.meta("quota_used") ?? 0) : 0;
-    const limit = Number(this.env.TAILOR_MONTHLY_LIMIT) || DEFAULT_TAILOR_LIMIT;
-    return { used, limit, month };
+    const bucket = this.quotaBucket();
+    if (!this.runs.quota(bucket.key)) {
+      this.runs.setBucket(bucket);
+      const legacy =
+        bucket.key.startsWith("free:") && this.meta("quota_month") === month
+          ? Number(this.meta("quota_used") ?? 0)
+          : 0;
+      if (legacy)
+        this.sql.exec(
+          `UPDATE quota_buckets SET used = ? WHERE bucket_key = ?`,
+          legacy,
+          bucket.key,
+        );
+    }
+    const balance = this.runs.setBucket(bucket);
+    return {
+      used: balance.used,
+      reserved: balance.reserved,
+      limit: balance.limit,
+      month,
+      periodEnd: balance.endAt,
+    };
+  }
+
+  async setPlan(revision: number, plan: Entitlement): Promise<void> {
+    this.requireOpen();
+    if (!Number.isSafeInteger(revision) || revision < 1)
+      throw new AppError("invalid", "invalid entitlement revision");
+    if (revision <= Number(this.meta("entitlement_revision") ?? 0)) return;
+    this.ctx.storage.transactionSync(() => {
+      this.setMeta("entitlement", JSON.stringify(plan));
+      this.setMeta("entitlement_revision", String(revision));
+      this.runs.setBucket(this.quotaBucket());
+    });
+  }
+  async billingInfo(who: Who) {
+    this.requireOwner(who);
+    const cfg = billingConfig(this.env);
+    const current = this.meta("entitlement");
+    return {
+      enabled: !!cfg,
+      plans:
+        cfg?.paid.map(({ id, generationLimit }) => ({ id, generationLimit })) ??
+        [],
+      current: current ? (JSON.parse(current) as Entitlement) : null,
+    };
+  }
+  private checkoutCoordinator(who: Who): CheckoutCoordinator {
+    this.requireOwner(who);
+    const cfg = billingConfig(this.env);
+    if (!cfg) throw new AppError("unavailable", "billing is not configured");
+    return new CheckoutCoordinator(who.userId, stripeClient(cfg), {
+      readIntent: () => this.meta("checkout_intent"),
+      writeIntent: (value) => this.setMeta("checkout_intent", value),
+      clearIntent: () => {
+        this.sql.exec(`DELETE FROM meta WHERE key = 'checkout_intent'`);
+      },
+      customerId: () => this.meta("stripe_customer"),
+      setCustomer: (id) => {
+        if (!this.gone) this.setMeta("stripe_customer", id);
+      },
+      markCustomerRequested: () => {
+        if (this.meta("billing_customer_requested") !== "1") {
+          this.setMeta("billing_customer_requested_at", String(Date.now()));
+          this.setMeta("billing_customer_requested", "1");
+        }
+      },
+      requireOwner: () => this.requireOwner(who),
+    });
+  }
+
+  async billingCheckout(
+    who: Who,
+    planId: string,
+    _requestKey: string,
+  ): Promise<{ url: string }> {
+    this.requireOwner(who);
+    const cfg = billingConfig(this.env);
+    if (!cfg) throw new AppError("unavailable", "billing is not configured");
+    if (!cfg.paid.some((plan) => plan.id === planId))
+      throw new AppError("invalid", "unknown plan");
+    return this.checkoutCoordinator(who).open(planId);
+  }
+
+  async billingCancelCheckout(who: Who): Promise<void> {
+    await this.checkoutCoordinator(who).cancel();
+  }
+  async billingCustomerForDeletion(): Promise<string | null> {
+    if (!this.initialised || this.gone) return null;
+    const customer = this.meta("stripe_customer");
+    if (customer) return customer;
+    if (this.meta("billing_customer_requested") !== "1") return null;
+    const requestedAt = Number(this.meta("billing_customer_requested_at"));
+    if (
+      !Number.isFinite(requestedAt) ||
+      requestedAt <= 0 ||
+      Date.now() - requestedAt >= 23 * 60 * 60 * 1000
+    )
+      throw new AppError(
+        "unavailable",
+        "billing customer confirmation requires operator reconciliation",
+      );
+    const cfg = billingConfig({ ...this.env, BILLING_ENABLED: "true" });
+    if (!cfg)
+      throw new AppError("unavailable", "billing cleanup is not configured");
+    const created = await stripeClient(cfg).createCustomer(
+      this.meta("user_id")!,
+      `customer:${this.meta("user_id")}`,
+    );
+    if (!this.gone) this.setMeta("stripe_customer", created.id);
+    return created.id;
+  }
+  async recoverBillingCustomer(customerId: string): Promise<void> {
+    if (!this.initialised || this.gone)
+      throw new AppError("gone", "account is unavailable");
+    const userId = this.meta("user_id")!;
+    const existing = this.meta("stripe_customer");
+    if (existing && existing !== customerId)
+      throw new AppError(
+        "conflict",
+        "a different billing customer is already recorded",
+      );
+    const cfg = billingConfig({ ...this.env, BILLING_ENABLED: "true" });
+    if (!cfg)
+      throw new AppError("unavailable", "billing cleanup is not configured");
+    const customer = await stripeClient(cfg).customer(customerId);
+    if (customer.id !== customerId || customer.metadata.account_uid !== userId)
+      throw new AppError(
+        "forbidden",
+        "billing customer does not belong to this account",
+      );
+    if (!this.initialised || this.gone || this.meta("user_id") !== userId)
+      throw new AppError("gone", "account is unavailable");
+    const current = this.meta("stripe_customer");
+    if (current && current !== customerId)
+      throw new AppError(
+        "conflict",
+        "a different billing customer is already recorded",
+      );
+    this.setMeta("stripe_customer", customerId);
+  }
+  async billingPortal(who: Who, key: string) {
+    this.requireOwner(who);
+    const cfg = billingConfig(this.env);
+    const customer = this.meta("stripe_customer");
+    if (!cfg || !customer)
+      throw new AppError("unavailable", "no billing account is available");
+    const result = await stripeClient(cfg).portal(
+      customer,
+      `portal:${who.userId}:${key}`,
+    );
+    this.requireOwner(who);
+    return { url: result.url };
+  }
+
+  private resumeVersion(row: ResumeRow, version = row.version): ResumeVersion {
+    const saved = this.snapshots.read(row.id, version);
+    if (saved) return saved;
+    if (version !== row.version || !row.body)
+      throw new AppError("not_found", "no such document version");
+    const app = this.sql
+      .exec<ApplicationRow>(
+        `SELECT * FROM applications WHERE id = ?`,
+        row.application_id,
+      )
+      .toArray()[0];
+    const legacy: ResumeVersion = {
+      render: {
+        profile: this.readProfile(),
+        body: JSON.parse(row.body),
+        version,
+        company: app?.company ?? null,
+        title: app?.title ?? null,
+      },
+      report: parseOrNull<ResumeReport>(row.report),
+      facts: {},
+      provenance: "legacy",
+    };
+    this.snapshots.save(row.id, version, legacy);
+    return legacy;
+  }
+
+  /** Set once before the synthetic staging account makes any model calls. */
+  async freezeModelBudget(
+    who: Who,
+    maxCostMicros: number,
+    maxCalls: number,
+  ): Promise<void> {
+    this.requireOwner(who);
+    if (
+      !this.env.TEST_SIGNIN_KEY ||
+      this.env.ALLOW_TEST_SIGNIN !== "true" ||
+      !Number.isSafeInteger(maxCostMicros) ||
+      maxCostMicros < 1 ||
+      !Number.isSafeInteger(maxCalls) ||
+      maxCalls < 1
+    )
+      throw new AppError("invalid", "invalid test model budget");
+    this.ctx.storage.transactionSync(() => {
+      const encoded = JSON.stringify({ maxCostMicros, maxCalls });
+      const existing = this.meta("test_model_budget");
+      if (existing) {
+        if (existing !== encoded)
+          throw new AppError(
+            "conflict",
+            "the test model budget is already fixed",
+          );
+        return;
+      }
+      if (
+        this.sql.exec(`SELECT id FROM model_attempts LIMIT 1`).toArray().length
+      )
+        throw new AppError("conflict", "model calls already started");
+      this.setMeta("test_model_budget", encoded);
+    });
+  }
+
+  async reserveModelAttempt(
+    runId: string,
+    step: string,
+    attempt: import("../ai/usage").ModelAttempt,
+    maxCostMicros: number,
+    dailyCapMicros: number,
+  ): Promise<void> {
+    this.requireOpen();
+    this.runs.reserveAttempt(
+      {
+        id: attempt.attemptId,
+        runId,
+        step,
+        attempt: 1,
+        model: attempt.model,
+        maxCostMicros,
+      },
+      dailyCapMicros,
+      this.meta("test_model_budget")
+        ? JSON.parse(this.meta("test_model_budget")!)
+        : undefined,
+    );
+  }
+  async settleModelAttempt(
+    id: string,
+    costMicros: number | null,
+    inputTokens: number | null,
+    outputTokens: number | null,
+  ): Promise<void> {
+    this.requireOpen();
+    if (costMicros === null) this.runs.markAttemptUnknown(id);
+    else
+      this.runs.settleAttempt(
+        id,
+        costMicros,
+        inputTokens !== null && outputTokens !== null
+          ? { inputTokens, outputTokens }
+          : undefined,
+      );
+  }
+
+  async claimRun(runId: string): Promise<void> {
+    this.requireOpen();
+    if (this.runs.get(runId)) this.runs.claim(runId);
+  }
+
+  async deletionProbe(): Promise<{ rows: number }> {
+    if (!this.initialised || !hasSchema(this.sql)) return { rows: 0 };
+    const tables = this.sql
+      .exec<{ name: string }>(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`,
+      )
+      .toArray();
+    let rows = 0;
+    for (const { name } of tables) {
+      if (/^[a-z_]+$/.test(name))
+        rows += this.sql
+          .exec<{ n: number }>(`SELECT COUNT(*) AS n FROM "${name}"`)
+          .one().n;
+    }
+    return { rows };
+  }
+  async adminRuns() {
+    this.requireOpen();
+    return this.runs.list();
+  }
+
+  async retryRun(
+    who: Who,
+    id: string,
+    key: string,
+  ): Promise<{ runId: string; targetId: string }> {
+    this.requireOwner(who);
+    const run = this.runs.get(id);
+    if (!run || !["failed", "cancelled"].includes(run.state))
+      throw new AppError("conflict", "only stopped work can be retried");
+    if (run.kind === "tailor") {
+      const result = await this.tailor(
+        who,
+        this.resumeRow(run.targetId).application_id,
+        key,
+      );
+      return { runId: result.runId, targetId: result.resumeId };
+    }
+    if (["refine", "letter", "prep", "questions"].includes(run.kind)) {
+      const row = this.sql
+        .exec<{ application_id: string; options: string }>(
+          `SELECT application_id,options FROM document_requests WHERE run_id=?`,
+          id,
+        )
+        .one();
+      const options = JSON.parse(row.options) as NewDocument;
+      const result = await this.startDocument(
+        who,
+        row.application_id,
+        {
+          kind: options.kind,
+          instruction: options.instruction,
+          resumeId: options.resumeId,
+          expectedVersion: options.expectedVersion,
+          lineIds: options.lineIds,
+        },
+        key,
+      );
+      return { runId: result.runId, targetId: result.documentId };
+    }
+    if (run.kind !== "distill")
+      throw new AppError(
+        "invalid",
+        "start a new maintenance operation instead",
+      );
+    const requestKey = `retry:${id}:${key}`;
+    const prior = this.runs.findRequest(requestKey);
+    if (prior) return { runId: prior.id, targetId: prior.targetId };
+    const source = this.sourceRow(run.targetId);
+    if (source.run_id !== id)
+      throw new AppError("conflict", "this source already has a newer run");
+    if (
+      this.sql
+        .exec<{ n: number }>(
+          `SELECT COUNT(*) AS n FROM sources WHERE state='queued'`,
+        )
+        .one().n >= MAX_QUEUED_SOURCES
+    )
+      throw new AppError("conflict", "wait for other uploads to finish");
+    const next = crypto.randomUUID();
+    this.runs.begin(
+      {
+        id: next,
+        kind: "distill",
+        targetId: source.id,
+        requestKey,
+        inputDigest: id,
+        steps: ["convert", "extract", "embed"],
+      },
+      () => {
+        this.sql.exec(
+          `UPDATE sources SET state='queued',error=NULL,run_id=? WHERE id=?`,
+          next,
+          source.id,
+        );
+      },
+    );
+    await this.dispatchRun(this.runs.get(next)!);
+    return { runId: next, targetId: source.id };
+  }
+  async adminRetry(id: string, key: string) {
+    this.requireOpen();
+    return this.retryRun(
+      {
+        userId: this.meta("user_id")!,
+        gen: Number(this.meta("session_gen")),
+        epoch: this.meta("security_epoch") ?? "legacy",
+      },
+      id,
+      key,
+    );
+  }
+
+  async listRuns(who: Who) {
+    this.requireOwner(who);
+    return this.runs.list();
+  }
+
+  async runInfo(who: Who, runId: string) {
+    this.requireOwner(who);
+    const run = this.runs.get(runId);
+    if (!run) throw new AppError("not_found", "no such run");
+    return run;
+  }
+
+  private async dispatchRun(run: RunRecord): Promise<void> {
+    try {
+      if (run.kind === "tailor")
+        await this.env.TAILOR.create({
+          id: run.id,
+          params: { vaultId: this.vaultId, resumeId: run.targetId },
+        });
+      else if (run.kind === "reembed")
+        await this.env.REEMBED.create({
+          id: run.id,
+          params: { vaultId: this.vaultId, runId: run.id },
+        });
+      else if (run.kind === "distill")
+        await this.env.DISTILL.create({
+          id: run.id,
+          params: { vaultId: this.vaultId, sourceId: run.targetId },
+        });
+      else
+        await this.env.DOCUMENTS.create({
+          id: run.id,
+          params: { vaultId: this.vaultId, runId: run.id },
+        });
+    } catch {
+      this.runs.noteUncertain(run.id, "dispatch_uncertain");
+    }
+    if (this.runs.listPending().length)
+      await this.ctx.storage.setAlarm(Date.now() + 60_000);
+  }
+
+  async alarm(): Promise<void> {
+    if (!this.initialised || this.meta("state") !== "open") return;
+    this.shares.purgeExpired();
+    this.mcpGrants.purgeExpired();
+    for (const intent of this.uploads.cleanupCandidates()) {
+      await this.env.FILES.delete(intent.r2Key);
+      this.uploads.markCleaned(intent.requestKey, intent.r2Key);
+    }
+    for (const run of this.runs.listPending()) {
+      if (run.kind === "embed") {
+        if (Date.now() - run.createdAt > 600_000)
+          this.runs.fail(run.id, "embedding_interrupted");
+        continue;
+      }
+      const binding =
+        run.kind === "tailor"
+          ? this.env.TAILOR
+          : run.kind === "distill"
+            ? this.env.DISTILL
+            : run.kind === "reembed"
+              ? this.env.REEMBED
+              : this.env.DOCUMENTS;
+      if (!binding) continue;
+      try {
+        const instance = await binding.get(run.id);
+        const { status } = await instance.status();
+        if (run.state === "cancel_requested") {
+          if (!["complete", "errored", "terminated"].includes(status))
+            await instance.terminate();
+          this.finishCancelledRun(run);
+        } else if (["complete", "errored", "terminated"].includes(status)) {
+          if (run.kind === "tailor")
+            this.markResumeFailed(
+              run.targetId,
+              "Generation stopped. Try again.",
+            );
+          else if (run.kind === "reembed") await this.failReembed(run.id);
+          else if (run.kind !== "distill")
+            await this.failDocument(run.id, "Generation stopped. Try again.");
+          else {
+            this.runs.fail(run.id, "execution_failed");
+            this.sql.exec(
+              `UPDATE sources SET state = 'failed', error = 'Reading stopped. Try again.' WHERE id = ?`,
+              run.targetId,
+            );
+          }
+        }
+      } catch (error) {
+        // The platform's explicit not-found result is the only safe reason to create again.
+        if (isMissingWorkflow(error) && run.state === "starting")
+          await this.dispatchRun(run);
+        else if (isMissingWorkflow(error) && run.state === "cancel_requested")
+          this.finishCancelledRun(run);
+        else this.runs.noteUncertain(run.id, "status_uncertain");
+      }
+    }
+    const expiry = this.sql
+      .exec<{ at: number | null }>(
+        `SELECT MIN(expires_at) AS at FROM share_grants`,
+      )
+      .one().at;
+    const candidates = [
+      this.runs.listPending().length ? Date.now() + 60_000 : null,
+      expiry,
+      this.uploads.nextAlarm(),
+    ].filter((n): n is number => n !== null);
+    if (candidates.length)
+      await this.ctx.storage.setAlarm(
+        Math.max(Date.now() + 1000, Math.min(...candidates)),
+      );
+  }
+
+  private finishCancelledRun(run: RunRecord): void {
+    this.ctx.storage.transactionSync(() => {
+      this.runs.cancel(run.id);
+      if (run.kind === "reembed") {
+        this.reembeddings.cancel(run.id);
+        return;
+      }
+      const table =
+        run.kind === "distill"
+          ? "sources"
+          : run.kind === "tailor"
+            ? "resumes"
+            : "documents";
+      this.sql.exec(
+        `UPDATE ${table} SET state = 'failed', error = 'Cancelled.' WHERE id = ? AND state IN ('queued','running')`,
+        run.targetId,
+      );
+    });
+  }
+
+  async cancelRun(who: Who, id: string): Promise<void> {
+    this.requireOwner(who);
+    this.runs.requestCancel(id);
+    await this.ctx.storage.setAlarm(Date.now());
+    this.broadcast("run", id);
   }
 
   private readProfile(): Profile {
     const row = this.sql
-      .exec<{ name: string; email: string; phone: string; location: string; links: string }>(
-        `SELECT name, email, phone, location, links FROM profile WHERE id = 1`,
+      .exec<{
+        revision: number;
+        name: string;
+        email: string;
+        phone: string;
+        location: string;
+        links: string;
+      }>(
+        `SELECT revision, name, email, phone, location, links FROM profile WHERE id = 1`,
       )
       .toArray()[0];
-    if (!row) return { name: "", email: "", phone: "", location: "", links: [] };
-    return { name: row.name, email: row.email, phone: row.phone, location: row.location, links: JSON.parse(row.links) as string[] };
+    if (!row)
+      return { name: "", email: "", phone: "", location: "", links: [] };
+    return {
+      revision: row.revision,
+      name: row.name,
+      email: row.email,
+      phone: row.phone,
+      location: row.location,
+      links: JSON.parse(row.links) as string[],
+    };
   }
 
   private sourceRow(id: string): SourceRow {
-    const row = this.sql.exec<SourceRow>(`SELECT * FROM sources WHERE id = ?`, id).toArray()[0];
+    const row = this.sql
+      .exec<SourceRow>(`SELECT * FROM sources WHERE id = ?`, id)
+      .toArray()[0];
     if (!row) throw new AppError("not_found", "no such source");
     return row;
   }
 
   private resumeRow(id: string): ResumeRow {
-    const row = this.sql.exec<ResumeRow>(`SELECT * FROM resumes WHERE id = ?`, id).toArray()[0];
+    const row = this.sql
+      .exec<ResumeRow>(`SELECT * FROM resumes WHERE id = ?`, id)
+      .toArray()[0];
     if (!row) throw new AppError("not_found", "no such resume");
     return row;
   }
 
   /** A fact without a vector could never be selected, so a failed embedding fails the edit. */
   private async embedOne(text: string): Promise<number[]> {
+    const embeddingModel = this.activeEmbeddingModel();
+    const id = crypto.randomUUID();
+    this.runs.begin({
+      id,
+      kind: "embed",
+      targetId: id,
+      requestKey: `embed:${id}`,
+      inputDigest: id,
+      steps: ["embed"],
+    });
+    this.runs.claim(id);
+    await this.ctx.storage.setAlarm(Date.now() + 60_000);
     let vector: number[] | undefined;
     try {
-      [vector] = await models(this.env).embed([text]);
+      [vector] = await runModels(this.env, this.vaultId, id, "embed").embed(
+        [text],
+        { model: embeddingModel },
+      );
+      if (embeddingModel !== this.activeEmbeddingModel())
+        throw new AppError("conflict", "the search index changed; try again");
+      if (!vector?.length) throw new Error("embedding_empty");
+      this.requireOpen();
+      this.runs.commitStep(id, "embed", () => {});
+      this.runs.finish(id, () => {});
     } catch {
-      throw new AppError("unavailable", "could not save that fact right now; try again");
+      if (this.initialised && !this.gone)
+        this.runs.fail(id, "embedding_failed");
+      throw new AppError(
+        "unavailable",
+        "could not save that fact right now; try again",
+      );
     }
-    if (!vector?.length) throw new AppError("unavailable", "could not save that fact right now; try again");
+    if (!vector?.length)
+      throw new AppError(
+        "unavailable",
+        "could not save that fact right now; try again",
+      );
     return vector;
   }
 
   private requireUsableRole(roleId: string): void {
-    const role = this.sql.exec<{ state: string }>(`SELECT state FROM roles WHERE id = ?`, roleId).toArray()[0];
+    const role = this.sql
+      .exec<{ state: string }>(`SELECT state FROM roles WHERE id = ?`, roleId)
+      .toArray()[0];
     if (!role) throw new AppError("not_found", "no such role");
-    if (role.state === "rejected") throw new AppError("invalid", "that role was rejected");
-  }
-
-  private factsById(ids: string[]): FactRecord[] {
-    if (ids.length === 0) return [];
-    return this.sql
-      .exec<FactRow>(
-        `SELECT f.id, f.role_id, f.kind, f.text, f.level, f.origin, f.state, f.source_id, e.quote
-         FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id
-         WHERE f.id IN (${ids.map(() => "?").join(",")})`,
-        ...ids,
-      )
-      .toArray()
-      .map(factRecord);
+    if (role.state === "rejected")
+      throw new AppError("invalid", "that role was rejected");
   }
 
   /** Confirmed facts whose role is confirmed, or that belong to no role. */
   private usableFacts(): FactRecord[] {
     return this.sql
       .exec<FactRow>(
-        `SELECT f.id, f.role_id, f.kind, f.text, f.level, f.origin, f.state, f.source_id, e.quote
+        `SELECT f.id, f.role_id, f.kind, f.text, f.level, f.origin, f.state, f.source_id, f.revision, e.quote, e.start, e.end
          FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id LEFT JOIN roles r ON r.id = f.role_id
          WHERE f.state = 'confirmed' AND (f.role_id IS NULL OR r.state = 'confirmed')`,
       )
@@ -862,11 +3131,12 @@ export class Vault extends DurableObject<Env> {
   private confirmedRoles(): RoleRecord[] {
     return this.sql
       .exec<RoleRow>(
-        `SELECT id, kind, org, title, start_date, end_date, state, source_id, NULL AS quote FROM roles WHERE state = 'confirmed'`,
+        `SELECT id, revision, kind, org, title, start_date, end_date, state, source_id, NULL AS quote FROM roles WHERE state = 'confirmed'`,
       )
       .toArray()
       .map((r) => ({
         id: r.id,
+        revision: r.revision,
         kind: r.kind as RoleKind,
         org: r.org,
         title: r.title,
@@ -880,21 +3150,51 @@ export class Vault extends DurableObject<Env> {
     const usable = new Set(this.usableFacts().map((f) => f.id));
     const cache = new Map<string, Float32Array>();
     for (const row of this.sql
-      .exec<{ id: string; vector: ArrayBuffer }>(`SELECT id, vector FROM facts WHERE state = 'confirmed' AND vector IS NOT NULL`)
+      .exec<{ id: string; vector: ArrayBuffer }>(
+        `SELECT id, vector FROM facts WHERE state = 'confirmed' AND vector IS NOT NULL`,
+      )
       .toArray()) {
-      if (usable.has(row.id)) cache.set(row.id, toUnit(unpackVector(row.vector)));
+      if (usable.has(row.id))
+        cache.set(row.id, toUnit(unpackVector(row.vector)));
     }
     this.vectorCache = cache;
     return cache;
   }
 
+  private recordRunTotal(id: string): void {
+    const run = this.runs.get(id);
+    if (!run) return;
+    this.env.METRICS?.writeDataPoint({
+      indexes: [this.vaultId],
+      blobs: [
+        run.kind,
+        "run_total",
+        run.kind,
+        "",
+        run.state === "succeeded" ? "ok" : "failed",
+      ],
+      doubles: [Date.now() - run.createdAt, 0, 0, 0],
+    });
+  }
+
   private markResumeFailed(resumeId: string, error: string): void {
-    const row = this.sql.exec<ResumeRow>(`SELECT * FROM resumes WHERE id = ?`, resumeId).toArray()[0];
+    const row = this.sql
+      .exec<ResumeRow>(`SELECT * FROM resumes WHERE id = ?`, resumeId)
+      .toArray()[0];
     if (!row || row.state !== "running") return;
     this.ctx.storage.transactionSync(() => {
-      this.sql.exec(`UPDATE resumes SET state = 'failed', error = ? WHERE id = ?`, error, resumeId);
+      if (row.run_id && this.runs.get(row.run_id))
+        this.runs.fail(row.run_id, "generation_failed");
+      this.sql.exec(
+        `UPDATE resumes SET state = 'failed', error = ? WHERE id = ?`,
+        error,
+        resumeId,
+      );
       if (row.quota_month && row.quota_month === this.meta("quota_month")) {
-        this.setMeta("quota_used", String(Math.max(0, Number(this.meta("quota_used") ?? 0) - 1)));
+        this.setMeta(
+          "quota_used",
+          String(Math.max(0, Number(this.meta("quota_used") ?? 0) - 1)),
+        );
       }
     });
   }
@@ -908,7 +3208,11 @@ export class Vault extends DurableObject<Env> {
       )
       .toArray();
     for (const row of stale) {
-      if (await runStopped(this.env.TAILOR, row.run_id)) this.markResumeFailed(row.id, "Tailoring stopped unexpectedly. Try again.");
+      if (await runStopped(this.env.TAILOR, row.run_id))
+        this.markResumeFailed(
+          row.id,
+          "Tailoring stopped unexpectedly. Try again.",
+        );
     }
   }
 
@@ -933,20 +3237,59 @@ export class Vault extends DurableObject<Env> {
 }
 
 /** True when a Workflow run has finished, failed, been stopped, or cannot be found. */
-async function runStopped(workflow: Workflow, runId: string | null): Promise<boolean> {
+async function runStopped(
+  workflow: Workflow,
+  runId: string | null,
+): Promise<boolean> {
   if (!runId) return true;
   try {
     const { status } = await (await workflow.get(runId)).status();
-    return status === "errored" || status === "terminated" || status === "complete";
-  } catch {
-    return true;
+    return (
+      status === "errored" || status === "terminated" || status === "complete"
+    );
+  } catch (error) {
+    return isMissingWorkflow(error);
   }
+}
+
+{
+  const p = Vault.prototype;
+  retryable(
+    p.sourceInfo,
+    p.sourceText,
+    p.sourceProgress,
+    p.tailorInput,
+    p.documentInput,
+    p.saveSource,
+    p.saveExtraction,
+    p.saveVectors,
+    p.saveStep,
+    p.saveDocumentStep,
+    p.finishDocument,
+    p.claimRun,
+    p.settleModelAttempt,
+    p.reserveModelAttempt,
+    p.setPlan,
+  );
+}
+
+function isMissingWorkflow(error: unknown): boolean {
+  if (error instanceof Error && error.message === "instance.not_found")
+    return true;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    [10200, 10404].includes(Number(error.code))
+  );
 }
 
 /** The start of a job description, for naming the job before Tailor has read it. */
 function excerptOf(jdText: string): string {
   const flat = jdText.replace(/\s+/g, " ").trim();
-  return flat.length > 100 ? `${flat.slice(0, 100).replace(/\s+\S*$/, "")}…` : flat;
+  return flat.length > 100
+    ? `${flat.slice(0, 100).replace(/\s+\S*$/, "")}…`
+    : flat;
 }
 
 function parseOrNull<T>(json: string | null): T | null {
@@ -956,6 +3299,8 @@ function parseOrNull<T>(json: string | null): T | null {
 function roleView(r: RoleRow): RoleView {
   return {
     id: r.id,
+    revision: r.revision,
+    span: r.start != null && r.end != null ? [r.start, r.end] : null,
     kind: r.kind as RoleKind,
     org: r.org,
     title: r.title,
@@ -970,6 +3315,8 @@ function roleView(r: RoleRow): RoleView {
 function factView(f: FactRow): FactView {
   return {
     id: f.id,
+    revision: f.revision,
+    span: f.start != null && f.end != null ? [f.start, f.end] : null,
     roleId: f.role_id,
     kind: f.kind as FactKind,
     text: f.text,
@@ -978,9 +3325,21 @@ function factView(f: FactRow): FactView {
     state: f.state as ReviewState,
     quote: f.quote,
     sourceId: f.source_id,
+    evidenceOrigin: f.evidence_origin,
+    confidence: f.confidence ?? null,
+    reviewReasons: f.review_reasons ? JSON.parse(f.review_reasons) : [],
   };
 }
 
 function factRecord(f: FactRow): FactRecord {
-  return { id: f.id, roleId: f.role_id, kind: f.kind as FactKind, text: f.text, level: f.level as Level | null, quote: f.quote };
+  return {
+    id: f.id,
+    revision: f.revision,
+    origin: f.origin as FactRecord["origin"],
+    roleId: f.role_id,
+    kind: f.kind as FactKind,
+    text: f.text,
+    level: f.level as Level | null,
+    quote: f.origin === "user" ? null : f.quote,
+  };
 }

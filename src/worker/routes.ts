@@ -3,10 +3,25 @@ import { bodyLimit } from "hono/body-limit";
 import { getCookie } from "hono/cookie";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
+import { rateLimitRequest, httpRoute } from "./limits";
+import { OcrImagesSchema, validateTranscriptionInput } from "../ai/transcribe";
+import { revokeOAuthGrant } from "./mcp";
+import { uploadDescriptorDigest } from "../vault/uploads";
 import { renderPdf } from "../render/pdf";
+import { billingConfig } from "../shared/billing";
+import { verifyStripe, parseStripeEvent, stripeClient } from "./billing";
+import {
+  createShareToken,
+  readShareToken,
+  createShareSession,
+  shareLink,
+  SHARE_COOKIE,
+} from "./shares";
+import { renderDocx, textDocx } from "../render/docx";
 import { renderResumeHtml } from "../render/template";
 import {
   DATE_PATTERN,
+  APPLICATION_STATUSES,
   FACT_KINDS,
   LEVELS,
   MAX_FACT_CHARS,
@@ -22,12 +37,26 @@ import {
 import { AppError, errorCode, errorDetail, httpStatus } from "../shared/errors";
 import { hintFor, type CfLocation } from "../shared/location";
 import { pdfKey, sourceKey } from "../shared/r2";
-import { directory, vault } from "../shared/stubs";
+import { directoryForSignIn } from "../directory/routing";
+import { maintenance } from "./maintenance";
+import {
+  directory,
+  directoryForUser,
+  allDirectories,
+  vault,
+} from "../shared/stubs";
 import type { SignInInput, Who } from "../shared/types";
 import { verifyAccess } from "./access";
 import { sameSecret } from "./crypto";
 import { beginLogin, clearOidcCookie, finishLogin, OIDC_COOKIE } from "./oidc";
-import { clearSessionCookie, createSession, readSession, SESSION_COOKIE, sessionCookie, type Session } from "./session";
+import {
+  clearSessionCookie,
+  createSession,
+  readSession,
+  SESSION_COOKIE,
+  sessionCookie,
+  type Session,
+} from "./session";
 
 // The only HTTP surface. /auth/* and /admin/* may call the Directory; /api/* routes go
 // straight to the caller's vault, addressed by the ID in their signed session cookie.
@@ -37,36 +66,62 @@ type C = Context<AppEnv>;
 
 export const app = new Hono<AppEnv>();
 
-const tooLarge = (c: Context) => c.json({ error: "too_large", message: "the request body is too large" }, 413);
+const tooLarge = (c: Context) =>
+  c.json({ error: "too_large", message: "the request body is too large" }, 413);
 const JSON_LIMIT = bodyLimit({ maxSize: 64 * 1024, onError: tooLarge });
-const UPLOAD_LIMIT = bodyLimit({ maxSize: MAX_UPLOAD_BYTES + 64 * 1024, onError: tooLarge });
+const UPLOAD_LIMIT = bodyLimit({
+  maxSize: MAX_UPLOAD_BYTES + 64 * 1024,
+  onError: tooLarge,
+});
 
 app.onError((err, c) => {
+  if (err instanceof z.ZodError)
+    return c.json({ error: "invalid", message: "invalid request" }, 400);
   if (err instanceof HTTPException) {
-    return c.json({ error: err.status === 413 ? "too_large" : "invalid", message: err.message || "bad request" }, err.status);
+    return c.json(
+      {
+        error: err.status === 413 ? "too_large" : "invalid",
+        message: err.message || "bad request",
+      },
+      err.status,
+    );
   }
   const code = errorCode(err);
-  if (code) return c.json({ error: code, message: errorDetail(err) }, httpStatus(code) as 400);
-  console.error("unhandled error", { name: err instanceof Error ? err.name : "unknown", path: new URL(c.req.url).pathname });
+  if (code)
+    return c.json(
+      { error: code, message: errorDetail(err) },
+      httpStatus(code) as 400,
+    );
+  console.error("unhandled error", {
+    name: err instanceof Error ? err.name : "unknown",
+    route: httpRoute(new URL(c.req.url).pathname),
+  });
   return c.json({ error: "internal", message: "something went wrong" }, 500);
 });
 
-app.notFound((c) => c.json({ error: "not_found", message: "no such route" }, 404));
+app.notFound((c) =>
+  c.json({ error: "not_found", message: "no such route" }, 404),
+);
 
 // Security headers on every Worker response, and no caching of personal data.
 app.use("*", async (c, next) => {
   await next();
   c.header("x-content-type-options", "nosniff");
-  c.header("referrer-policy", "same-origin");
+  c.header(
+    "referrer-policy",
+    c.req.path.startsWith("/share") ? "no-referrer" : "same-origin",
+  );
   c.header("x-frame-options", "DENY");
-  if (!c.res.headers.has("cache-control")) c.header("cache-control", "no-store");
+  if (!c.res.headers.has("cache-control"))
+    c.header("cache-control", "no-store");
 });
 
 // Writes must come from this site. SameSite=Lax cookies already block most cross-site writes.
 app.use("*", async (c, next) => {
   if (!["GET", "HEAD", "OPTIONS"].includes(c.req.method)) {
     const origin = c.req.header("origin");
-    if (origin && origin !== new URL(c.req.url).origin) throw new AppError("forbidden", "cross-site request refused");
+    if (origin && origin !== new URL(c.req.url).origin)
+      throw new AppError("forbidden", "cross-site request refused");
   }
   await next();
 });
@@ -76,7 +131,11 @@ app.get("/api/health", (c) => c.json({ ok: true }));
 // ------------------------------------------------------------------ auth
 
 app.get("/auth/login", async (c) => {
-  const { location, cookie } = await beginLogin(c.env, new URL(c.req.url).origin);
+  const { location, cookie } = await beginLogin(
+    c.env,
+    new URL(c.req.url).origin,
+    c.req.query("returnTo"),
+  );
   c.header("set-cookie", cookie);
   return c.redirect(location, 302);
 });
@@ -85,10 +144,20 @@ app.get("/auth/callback", async (c) => {
   const url = new URL(c.req.url);
   c.header("set-cookie", clearOidcCookie(), { append: true });
   try {
-    const { subject, email } = await finishLogin(c.env, url.origin, url.searchParams, getCookie(c, OIDC_COOKIE));
-    const cookie = await startSession(c.env, { provider: "google", subject, email, hint: hintFor(cfOf(c)) });
+    const { subject, email, returnTo } = await finishLogin(
+      c.env,
+      url.origin,
+      url.searchParams,
+      getCookie(c, OIDC_COOKIE),
+    );
+    const cookie = await startSession(c.env, {
+      provider: "google",
+      subject,
+      email,
+      hint: hintFor(cfOf(c)),
+    });
     c.header("set-cookie", cookie, { append: true });
-    return c.redirect("/", 302);
+    return c.redirect(returnTo ?? "/", 302);
   } catch (e) {
     return c.redirect(`/?error=${errorCode(e) ?? "unavailable"}`, 302);
   }
@@ -103,7 +172,7 @@ app.delete("/auth/account", requireSession(), async (c) => {
   const s = c.get("session");
   // A revoked cookie must not be able to delete the account.
   await vault(c.env, s.vid).checkSession(c.get("who"));
-  await directory(c.env).deleteAccount(s.uid);
+  await directoryForUser(c.env, s.uid).deleteAccount(s.uid);
   c.header("set-cookie", clearSessionCookie());
   return c.json({ deleting: true }, 202);
 });
@@ -111,19 +180,36 @@ app.delete("/auth/account", requireSession(), async (c) => {
 /** Staging only: exists when the TEST_SIGNIN_KEY secret is set, which production never has. */
 app.post("/auth/test-login", JSON_LIMIT, async (c) => {
   const key = c.env.TEST_SIGNIN_KEY;
-  if (!key) return c.json({ error: "not_found", message: "no such route" }, 404);
-  if (!sameSecret(c.req.header("x-test-signin-key") ?? "", key)) throw new AppError("forbidden", "wrong test key");
+  if (!key || c.env.ALLOW_TEST_SIGNIN !== "true")
+    return c.json({ error: "not_found", message: "no such route" }, 404);
+  if (!sameSecret(c.req.header("x-test-signin-key") ?? "", key))
+    throw new AppError("forbidden", "wrong test key");
   const { email } = await jsonBody(c, z.object({ email: z.email() }));
-  const cookie = await startSession(c.env, { provider: "test", subject: email.toLowerCase(), email, hint: hintFor(cfOf(c)) });
+  const cookie = await startSession(c.env, {
+    provider: "test",
+    subject: email.toLowerCase(),
+    email,
+    hint: hintFor(cfOf(c)),
+  });
   c.header("set-cookie", cookie);
   return c.body(null, 204);
 });
 
 async function startSession(env: Env, input: SignInInput): Promise<string> {
-  if (!env.SESSION_KEY) throw new AppError("unavailable", "sessions are not configured");
-  const { userId, vaultId } = await directory(env).signIn(input);
-  const { gen } = await vault(env, vaultId).openSession(userId);
-  return sessionCookie(await createSession(env.SESSION_KEY, { uid: userId, vid: vaultId, gen }));
+  if (!env.SESSION_KEY)
+    throw new AppError("unavailable", "sessions are not configured");
+  const target = await directoryForSignIn(env, input);
+  const { userId, vaultId } = await target.directory.signIn(target.input);
+  await directory(env).bindIdentityHome(input.provider, input.subject, userId);
+  const { gen, epoch } = await vault(env, vaultId).openSession(userId);
+  return sessionCookie(
+    await createSession(env.SESSION_KEY, {
+      uid: userId,
+      vid: vaultId,
+      gen,
+      epoch,
+    }),
+  );
 }
 
 function cfOf(c: C): CfLocation | undefined {
@@ -134,10 +220,15 @@ function cfOf(c: C): CfLocation | undefined {
 
 function requireSession(): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
-    const s = await readSession(c.env.SESSION_KEY, getCookie(c, SESSION_COOKIE));
+    const s = await readSession(
+      c.env.SESSION_KEY,
+      getCookie(c, SESSION_COOKIE),
+    );
     if (!s) throw new AppError("unauthenticated", "sign in to continue");
     c.set("session", s);
-    c.set("who", { userId: s.uid, gen: s.gen });
+    c.set("who", { userId: s.uid, gen: s.gen, epoch: s.epoch });
+    const limited = await rateLimitRequest(c.req.raw, c.env, s.uid);
+    if (limited) return limited;
     await next();
   };
 }
@@ -157,7 +248,10 @@ const ProfilePatch = z
   })
   .partial();
 
-const roleDate = z.string().regex(DATE_PATTERN, "use a year, or a year and month such as 2021-03").nullable();
+const roleDate = z
+  .string()
+  .regex(DATE_PATTERN, "use a year, or a year and month such as 2021-03")
+  .nullable();
 
 const NewRoleBody = z.object({
   kind: z.enum(ROLE_KINDS as [RoleKind, ...RoleKind[]]),
@@ -167,15 +261,21 @@ const NewRoleBody = z.object({
   endDate: roleDate,
 });
 
-const RolePatch = NewRoleBody.partial();
+const RolePatch = NewRoleBody.partial().extend({
+  expectedRevision: z.number().int().positive().optional(),
+});
 
 const FactPatchBody = z
   .object({
+    expectedRevision: z.number().int().positive().optional(),
     text: z.string().trim().min(1).max(MAX_FACT_CHARS),
     roleId: z.string().max(64).nullable(),
   })
   .partial()
-  .refine((p) => p.text !== undefined || p.roleId !== undefined, "change the text, the role, or both");
+  .refine(
+    (p) => p.text !== undefined || p.roleId !== undefined,
+    "change the text, the role, or both",
+  );
 
 const NewFactBody = z.object({
   roleId: z.string().max(64).nullable(),
@@ -186,11 +286,58 @@ const NewFactBody = z.object({
 
 const Ids = z.array(z.string().max(64)).max(1000);
 
+api.get("/live", async (c) => {
+  if (c.req.header("origin") !== new URL(c.req.url).origin)
+    throw new AppError("forbidden", "cross-site socket refused");
+  const headers = new Headers({
+    upgrade: "websocket",
+    "x-vault-session": JSON.stringify({
+      ...c.get("who"),
+      exp: c.get("session").exp,
+    }),
+  });
+  return myVault(c).fetch(
+    new Request("https://vault.internal/live", { headers }),
+  );
+});
+
+api.post("/test/model-budget", JSON_LIMIT, async (c) => {
+  const secret = c.env.TEST_SIGNIN_KEY;
+  if (!secret || c.env.ALLOW_TEST_SIGNIN !== "true")
+    throw new AppError("not_found", "no such route");
+  if (!sameSecret(c.req.header("x-test-signin-key") ?? "", secret))
+    throw new AppError("forbidden", "wrong test key");
+  const budget = await jsonBody(
+    c,
+    z
+      .object({
+        maxCostMicros: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+        maxCalls: z.number().int().positive().max(100000),
+      })
+      .strict(),
+  );
+  await myVault(c).freezeModelBudget(
+    c.get("who"),
+    budget.maxCostMicros,
+    budget.maxCalls,
+  );
+  return c.body(null, 204);
+});
+
 api.get("/me", async (c) => c.json(await myVault(c).me(c.get("who"))));
 
-api.get("/profile", async (c) => c.json(await myVault(c).getProfile(c.get("who"))));
+api.get("/profile", async (c) =>
+  c.json(await myVault(c).getProfile(c.get("who"))),
+);
 
-api.put("/profile", JSON_LIMIT, async (c) => c.json(await myVault(c).updateProfile(c.get("who"), await jsonBody(c, ProfilePatch))));
+api.put("/profile", JSON_LIMIT, async (c) =>
+  c.json(
+    await myVault(c).updateProfile(
+      c.get("who"),
+      await jsonBody(c, ProfilePatch),
+    ),
+  ),
+);
 
 api.post("/account/sign-out-everywhere", async (c) => {
   await myVault(c).signOutEverywhere(c.get("who"));
@@ -199,6 +346,7 @@ api.post("/account/sign-out-everywhere", async (c) => {
 });
 
 const ALLOWED_UPLOADS: Record<string, string> = {
+  zip: "application/zip",
   pdf: "application/pdf",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 };
@@ -208,90 +356,252 @@ api.post("/sources", UPLOAD_LIMIT, async (c) => {
     throw new AppError("invalid", "expected a multipart upload");
   });
   const file = form.get("file");
-  if (!(file instanceof File)) throw new AppError("invalid", "attach the file as the \"file\" field");
+  if (!(file instanceof File))
+    throw new AppError("invalid", 'attach the file as the "file" field');
   const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
   const contentType = ALLOWED_UPLOADS[extension];
-  if (!contentType) throw new AppError("invalid", "upload a PDF or DOCX file");
+  if (!contentType)
+    throw new AppError(
+      "invalid",
+      "upload a PDF, DOCX, or LinkedIn export ZIP file",
+    );
   if (file.size === 0) throw new AppError("invalid", "the file is empty");
-  if (file.size > MAX_UPLOAD_BYTES) throw new AppError("too_large", "files can be at most 10 MB");
+  if (file.size > MAX_UPLOAD_BYTES)
+    throw new AppError("too_large", "files can be at most 10 MB");
 
-  const key = sourceKey(c.get("session").vid, crypto.randomUUID());
-  await c.env.FILES.put(key, await file.arrayBuffer(), { httpMetadata: { contentType } });
-  try {
-    const { sourceId } = await myVault(c).addSource(c.get("who"), { filename: file.name.slice(0, 200), r2Key: key });
-    return c.json({ sourceId }, 201);
-  } catch (e) {
-    await c.env.FILES.delete(key);
-    throw e;
-  }
+  await myVault(c).checkSession(c.get("who"));
+  const bytes = await file.arrayBuffer();
+  const request = requestKey(c);
+  const digest = await uploadDescriptorDigest(
+    { filename: file.name, contentType },
+    bytes,
+  );
+  const descriptor = {
+    requestKey: request,
+    descriptorDigest: digest,
+    filename: file.name.slice(0, 200),
+    contentType,
+    byteLength: file.size,
+    r2Key: sourceKey(c.get("session").vid, `${request}-${digest}`),
+  };
+  const reserved = await myVault(c).reserveUpload(c.get("who"), descriptor);
+  if (reserved.intent.state === "complete")
+    return c.json({ sourceId: reserved.intent.sourceId }, 201);
+  await c.env.FILES.put(descriptor.r2Key, bytes, {
+    httpMetadata: { contentType },
+  });
+  return c.json(await myVault(c).completeUpload(c.get("who"), descriptor), 201);
 });
 
-api.get("/sources", async (c) => c.json({ sources: await myVault(c).listSources(c.get("who")) }));
+api.get("/sources/:id/text", async (c) =>
+  c.json(await myVault(c).sourceEvidence(c.get("who"), c.req.param("id"))),
+);
+api.post(
+  "/sources/:id/ocr",
+  bodyLimit({ maxSize: 12 * 1024 * 1024, onError: tooLarge }),
+  async (c) => {
+    if (!c.env.MODEL_TRANSCRIBE)
+      throw new AppError(
+        "unavailable",
+        "image transcription is not configured",
+      );
+    const original = await myVault(c).sourceFile(
+      c.get("who"),
+      c.req.param("id"),
+    );
+    if (!original.filename.toLowerCase().endsWith(".pdf"))
+      throw new AppError("invalid", "image recovery requires a PDF source");
+    const images = await jsonBody(c, OcrImagesSchema);
+    validateTranscriptionInput({
+      ...images,
+      referenceDate: new Date().toISOString().slice(0, 10),
+    });
+    const metadata = {
+      filename: `${original.filename.slice(0, 170)} (image transcription)`,
+      contentType: "application/json",
+      origin: "ocr" as const,
+      parentSourceId: c.req.param("id"),
+    };
+    const stableBody = JSON.stringify(images);
+    const digest = await uploadDescriptorDigest(metadata, stableBody);
+    const request = requestKey(c);
+    const descriptor = {
+      ...metadata,
+      requestKey: request,
+      descriptorDigest: digest,
+      byteLength: new TextEncoder().encode(stableBody).byteLength,
+      r2Key: sourceKey(c.get("session").vid, `${request}-${digest}.ocr.json`),
+    };
+    const reserved = await myVault(c).reserveUpload(c.get("who"), descriptor);
+    if (reserved.intent.state === "complete")
+      return c.json({ sourceId: reserved.intent.sourceId }, 202);
+    const input = {
+      ...images,
+      referenceDate: new Date(reserved.intent.createdAt)
+        .toISOString()
+        .slice(0, 10),
+    };
+    await c.env.FILES.put(descriptor.r2Key, JSON.stringify(input), {
+      httpMetadata: { contentType: "application/json" },
+    });
+    return c.json(
+      await myVault(c).completeUpload(c.get("who"), descriptor),
+      202,
+    );
+  },
+);
+
+api.get("/sources", async (c) =>
+  c.json({ sources: await myVault(c).listSources(c.get("who")) }),
+);
 
 /** The original upload, as the user sent it. */
 api.get("/sources/:id/file", async (c) => {
-  const { r2Key, filename } = await myVault(c).sourceFile(c.get("who"), c.req.param("id"));
+  const { r2Key, filename } = await myVault(c).sourceFile(
+    c.get("who"),
+    c.req.param("id"),
+  );
   const object = await c.env.FILES.get(r2Key);
   if (!object) throw new AppError("not_found", "the file is no longer stored");
+  await myVault(c).checkSession(c.get("who"));
   const extension = filename.split(".").pop()?.toLowerCase() ?? "";
   const name = `${fileName(filename.replace(/\.[^.]*$/, ""))}${ALLOWED_UPLOADS[extension] ? `.${extension}` : ""}`;
   return new Response(object.body, {
     headers: {
-      "content-type": object.httpMetadata?.contentType ?? "application/octet-stream",
+      "content-type":
+        object.httpMetadata?.contentType ?? "application/octet-stream",
       "content-disposition": `attachment; filename="${name}"`,
       "cache-control": "private, no-store",
     },
   });
 });
 
-api.get("/roles", async (c) => c.json({ roles: await myVault(c).listRoles(c.get("who")) }));
+api.get("/roles", async (c) =>
+  c.json({ roles: await myVault(c).listRoles(c.get("who")) }),
+);
 
-api.post("/roles", JSON_LIMIT, async (c) => c.json(await myVault(c).addRole(c.get("who"), await jsonBody(c, NewRoleBody)), 201));
+api.post("/roles", JSON_LIMIT, async (c) =>
+  c.json(
+    await myVault(c).addRole(c.get("who"), await jsonBody(c, NewRoleBody)),
+    201,
+  ),
+);
 
 api.patch("/roles/:id", JSON_LIMIT, async (c) => {
-  await myVault(c).editRole(c.get("who"), c.req.param("id"), await jsonBody(c, RolePatch));
+  await myVault(c).editRole(
+    c.get("who"),
+    c.req.param("id"),
+    await jsonBody(c, RolePatch),
+  );
   return c.body(null, 204);
 });
 
 api.get("/facts", async (c) => {
   const state = c.req.query("state");
-  if (state && !["proposed", "confirmed", "rejected"].includes(state)) throw new AppError("invalid", "unknown state");
-  return c.json({ facts: await myVault(c).listFacts(c.get("who"), state as ReviewState | undefined) });
+  if (state && !["proposed", "confirmed", "rejected"].includes(state))
+    throw new AppError("invalid", "unknown state");
+  return c.json({
+    facts: await myVault(c).listFacts(
+      c.get("who"),
+      state as ReviewState | undefined,
+    ),
+  });
 });
 
-api.post("/facts", JSON_LIMIT, async (c) => c.json(await myVault(c).addFact(c.get("who"), await jsonBody(c, NewFactBody)), 201));
+api.post("/facts", JSON_LIMIT, async (c) =>
+  c.json(
+    await myVault(c).addFact(c.get("who"), await jsonBody(c, NewFactBody)),
+    201,
+  ),
+);
 
 api.patch("/facts/:id", JSON_LIMIT, async (c) => {
-  await myVault(c).editFact(c.get("who"), c.req.param("id"), await jsonBody(c, FactPatchBody));
+  await myVault(c).editFact(
+    c.get("who"),
+    c.req.param("id"),
+    await jsonBody(c, FactPatchBody),
+  );
   return c.body(null, 204);
 });
 
 api.post("/review", JSON_LIMIT, async (c) => {
-  await myVault(c).review(c.get("who"), await jsonBody(c, z.object({ confirm: Ids, reject: Ids })));
+  await myVault(c).review(
+    c.get("who"),
+    await jsonBody(
+      c,
+      z.object({
+        confirm: Ids,
+        reject: Ids,
+        expectedRevisions: z
+          .record(z.string(), z.number().int().positive())
+          .optional(),
+      }),
+    ),
+  );
   return c.body(null, 204);
 });
 
 api.post("/applications", JSON_LIMIT, async (c) => {
-  const { jdText } = await jsonBody(c, z.object({ jdText: z.string().trim().min(40, "paste the whole job description").max(MAX_JD_CHARS) }));
+  const { jdText } = await jsonBody(
+    c,
+    z.object({
+      jdText: z
+        .string()
+        .trim()
+        .min(40, "paste the whole job description")
+        .max(MAX_JD_CHARS),
+    }),
+  );
   return c.json(await myVault(c).addApplication(c.get("who"), jdText), 201);
 });
 
-api.get("/applications", async (c) => c.json({ applications: await myVault(c).listApplications(c.get("who")) }));
+api.get("/applications", async (c) =>
+  c.json({ applications: await myVault(c).listApplications(c.get("who")) }),
+);
 
-api.post("/applications/:id/resumes", async (c) => c.json(await myVault(c).tailor(c.get("who"), c.req.param("id")), 202));
+api.post("/applications/:id/resumes", async (c) =>
+  c.json(
+    await myVault(c).tailor(c.get("who"), c.req.param("id"), requestKey(c)),
+    202,
+  ),
+);
 
-api.get("/resumes/:id", async (c) => c.json(await myVault(c).getResume(c.get("who"), c.req.param("id"))));
+api.get("/resumes/:id", async (c) =>
+  c.json(
+    await myVault(c).getResume(
+      c.get("who"),
+      c.req.param("id"),
+      versionQuery(c),
+    ),
+  ),
+);
 
 api.patch("/resumes/:id/lines/:lineId", JSON_LIMIT, async (c) => {
-  const { text } = await jsonBody(c, z.object({ text: z.string().trim().min(1).max(MAX_LINE_CHARS) }));
-  await myVault(c).editLine(c.get("who"), c.req.param("id"), c.req.param("lineId"), text);
+  const { text, expectedVersion } = await jsonBody(
+    c,
+    z.object({
+      text: z.string().trim().min(1).max(MAX_LINE_CHARS),
+      expectedVersion: z.number().int().positive().optional(),
+    }),
+  );
+  await myVault(c).editLine(
+    c.get("who"),
+    c.req.param("id"),
+    c.req.param("lineId"),
+    text,
+    expectedVersion,
+  );
   return c.body(null, 204);
 });
 
 /** Renders once per resume version and serves the cached PDF after that. */
 api.get("/resumes/:id/pdf", async (c) => {
   const resumeId = c.req.param("id");
-  const data = await myVault(c).renderData(c.get("who"), resumeId);
+  const data = await myVault(c).renderData(
+    c.get("who"),
+    resumeId,
+    versionQuery(c),
+  );
   const key = pdfKey(c.get("session").vid, resumeId, data.version);
   let pdf: ArrayBuffer | Uint8Array;
   const cached = await c.env.FILES.get(key);
@@ -299,9 +609,19 @@ api.get("/resumes/:id/pdf", async (c) => {
     pdf = await cached.arrayBuffer();
   } else {
     pdf = await renderPdf(c.env, renderResumeHtml(data));
-    await c.env.FILES.put(key, pdf, { httpMetadata: { contentType: "application/pdf" } });
+    await c.env.FILES.put(key, pdf, {
+      httpMetadata: { contentType: "application/pdf" },
+    });
   }
-  const name = fileName([data.profile.name, data.company].filter(Boolean).join(" ") || "resume");
+  try {
+    await myVault(c).checkSession(c.get("who"));
+  } catch (error) {
+    await c.env.FILES.delete(key);
+    throw error;
+  }
+  const name = fileName(
+    [data.profile.name, data.company].filter(Boolean).join(" ") || "resume",
+  );
   return new Response(pdf, {
     headers: {
       "content-type": "application/pdf",
@@ -313,11 +633,16 @@ api.get("/resumes/:id/pdf", async (c) => {
 
 /** The HTML the PDF is printed from, for a print preview. It holds only escaped text, and the CSP keeps it inert. */
 api.get("/resumes/:id/preview", async (c) => {
-  const data = await myVault(c).renderData(c.get("who"), c.req.param("id"));
+  const data = await myVault(c).renderData(
+    c.get("who"),
+    c.req.param("id"),
+    versionQuery(c),
+  );
   return new Response(renderResumeHtml(data), {
     headers: {
       "content-type": "text/html; charset=utf-8",
-      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox",
+      "content-security-policy":
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox",
       "cache-control": "private, no-store",
     },
   });
@@ -334,6 +659,257 @@ api.get("/export", async (c) => {
   });
 });
 
+api.get("/resumes/:id/docx", async (c) => {
+  const data = await myVault(c).renderData(
+    c.get("who"),
+    c.req.param("id"),
+    versionQuery(c),
+  );
+  const key = `vaults/${c.get("session").vid}/exports/${c.req.param("id")}-${data.version}-word1.docx`;
+  const stored = await c.env.FILES.get(key);
+  const bytes = stored ? await stored.arrayBuffer() : renderDocx(data);
+  if (!stored)
+    await c.env.FILES.put(key, bytes, {
+      httpMetadata: {
+        contentType:
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      },
+    });
+  try {
+    await myVault(c).checkSession(c.get("who"));
+  } catch (error) {
+    await c.env.FILES.delete(key);
+    throw error;
+  }
+  return new Response(bytes, {
+    headers: {
+      "content-type":
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "content-disposition": 'attachment; filename="resume.docx"',
+    },
+  });
+});
+api.get("/documents/:id/docx", async (c) => {
+  const doc = await myVault(c).getDocument(c.get("who"), c.req.param("id"));
+  if (doc.state !== "ready" || !doc.result)
+    throw new AppError("conflict", "the document is not ready");
+  const paragraphs =
+    doc.kind === "prep"
+      ? doc.result.questions.flatMap((q, i) => [
+          q.question,
+          ...doc.result!.units.filter((u) => u.group === i).map((u) => u.text),
+        ])
+      : doc.result.units.map((u) => u.text);
+  return new Response(
+    textDocx(
+      doc.kind === "prep" ? "Interview preparation" : "Cover letter",
+      paragraphs,
+    ),
+    {
+      headers: {
+        "content-type":
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "content-disposition": 'attachment; filename="document.docx"',
+      },
+    },
+  );
+});
+api.get("/runs", async (c) =>
+  c.json({ runs: await myVault(c).listRuns(c.get("who")) }),
+);
+api.get("/runs/:id", async (c) =>
+  c.json(await myVault(c).runInfo(c.get("who"), c.req.param("id"))),
+);
+api.post("/runs/:id/retry", async (c) =>
+  c.json(
+    await myVault(c).retryRun(c.get("who"), c.req.param("id"), requestKey(c)),
+    202,
+  ),
+);
+api.post("/runs/:id/cancel", async (c) => {
+  await myVault(c).cancelRun(c.get("who"), c.req.param("id"));
+  return c.body(null, 202);
+});
+api.get("/resumes/:id/versions", async (c) =>
+  c.json({
+    versions: await myVault(c).resumeVersions(c.get("who"), c.req.param("id")),
+  }),
+);
+api.patch("/applications/:id", JSON_LIMIT, async (c) => {
+  const patch = await jsonBody(
+    c,
+    z.object({
+      status: z.enum(APPLICATION_STATUSES).optional(),
+      appliedAt: z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/)
+        .nullable()
+        .optional(),
+      notes: z.string().max(10000).optional(),
+      expectedRevision: z.number().int().positive().optional(),
+    }),
+  );
+  await myVault(c).updateApplication(c.get("who"), c.req.param("id"), patch);
+  return c.body(null, 204);
+});
+api.get("/applications/:id/documents", async (c) =>
+  c.json({
+    documents: await myVault(c).listDocuments(c.get("who"), c.req.param("id")),
+  }),
+);
+api.post("/applications/:id/documents", JSON_LIMIT, async (c) => {
+  const options = await jsonBody(
+    c,
+    z.object({
+      kind: z.enum(["refine", "letter", "prep", "questions"]),
+      instruction: z.string().trim().max(2000).optional(),
+      resumeId: z.string().max(100).optional(),
+      expectedVersion: z.number().int().positive().optional(),
+      lineIds: z.array(z.string().max(100)).max(100).optional(),
+    }),
+  );
+  return c.json(
+    await myVault(c).startDocument(
+      c.get("who"),
+      c.req.param("id"),
+      options,
+      requestKey(c),
+    ),
+    202,
+  );
+});
+api.get("/documents/:id", async (c) =>
+  c.json(await myVault(c).getDocument(c.get("who"), c.req.param("id"))),
+);
+api.get("/shares", async (c) =>
+  c.json({ grants: await myVault(c).listShares(c.get("who")) }),
+);
+api.post("/shares", JSON_LIMIT, async (c) => {
+  const selection = await jsonBody(
+    c,
+    z.object({
+      factIds: z.array(z.string().max(100)).max(100),
+      resumes: z
+        .array(
+          z.object({
+            id: z.string().max(100),
+            version: z.number().int().positive(),
+          }),
+        )
+        .max(20),
+      expiresAt: z.number().int().positive().optional(),
+    }),
+  );
+  const grant = await myVault(c).createShare(c.get("who"), selection);
+  const token = await createShareToken(c.env.SESSION_KEY, {
+    vid: c.get("session").vid,
+    grantId: grant.id,
+    epoch: grant.epoch,
+    exp: grant.expiresAt,
+  });
+  return c.json(
+    { grant, url: shareLink(new URL(c.req.url).origin, token) },
+    201,
+  );
+});
+api.delete("/shares/:id", async (c) => {
+  await myVault(c).revokeShare(c.get("who"), c.req.param("id"));
+  return c.body(null, 204);
+});
+app.post("/share/session", JSON_LIMIT, async (c) => {
+  const { token } = await jsonBody(
+    c,
+    z.object({ token: z.string().max(4096) }),
+  );
+  const claims = await readShareToken(c.env.SESSION_KEY, token);
+  if (!claims)
+    throw new AppError("gone", "this share link is unavailable or expired");
+  await vault(c.env, claims.vid).readShare({
+    grantId: claims.grantId,
+    epoch: claims.epoch,
+  });
+  c.header("set-cookie", await createShareSession(c.env.SESSION_KEY, claims));
+  return c.body(null, 204);
+});
+app.get("/share/snapshot", async (c) => {
+  const claims = await readShareToken(
+    c.env.SESSION_KEY,
+    getCookie(c, SHARE_COOKIE),
+    "coach-session",
+  );
+  if (!claims)
+    throw new AppError("gone", "this share link is unavailable or expired");
+  return c.json(
+    await vault(c.env, claims.vid).readShare({
+      grantId: claims.grantId,
+      epoch: claims.epoch,
+    }),
+  );
+});
+api.get("/billing", async (c) =>
+  c.json(await myVault(c).billingInfo(c.get("who"))),
+);
+api.post("/billing/checkout", JSON_LIMIT, async (c) => {
+  const { planId } = await jsonBody(
+    c,
+    z.object({ planId: z.string().max(40) }),
+  );
+  return c.json(
+    await myVault(c).billingCheckout(c.get("who"), planId, requestKey(c)),
+  );
+});
+api.post("/billing/checkout/cancel", async (c) => {
+  await myVault(c).billingCancelCheckout(c.get("who"));
+  return c.body(null, 204);
+});
+api.post("/billing/portal", async (c) =>
+  c.json(await myVault(c).billingPortal(c.get("who"), requestKey(c))),
+);
+app.post(
+  "/billing/webhook",
+  bodyLimit({ maxSize: 1024 * 1024, onError: tooLarge }),
+  async (c) => {
+    const cfg = billingConfig(c.env);
+    if (!cfg) throw new AppError("unavailable", "billing is not configured");
+    const payload = new Uint8Array(await c.req.arrayBuffer());
+    if (
+      !(await verifyStripe(
+        payload,
+        c.req.header("stripe-signature") ?? "",
+        cfg.webhookSecret,
+      ))
+    )
+      throw new AppError("forbidden", "invalid billing signature");
+    let text: string;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(
+        payload,
+      );
+    } catch {
+      throw new AppError("invalid", "billing payload is not UTF-8");
+    }
+    const event = parseStripeEvent(text);
+    const customer = event.data.object.customer;
+    if (typeof customer !== "string") return c.body(null, 204);
+    const account = await stripeClient(cfg).customer(customer);
+    const uid = account.metadata.account_uid;
+    if (!uid) return c.body(null, 204);
+    await directoryForUser(c.env, uid).acceptBillingEvent(event);
+    return c.body(null, 204);
+  },
+);
+api.get("/mcp/grants", async (c) =>
+  c.json({ grants: await myVault(c).listMcpGrants(c.get("who")) }),
+);
+api.delete("/mcp/grants/:id", async (c) => {
+  const grant = await myVault(c).revokeMcpGrant(
+    c.get("who"),
+    c.req.param("id"),
+  );
+  if (grant.oauthGrantId)
+    await revokeOAuthGrant(c.env, c.get("session").uid, grant.oauthGrantId);
+  return c.body(null, 204);
+});
 app.route("/api", api);
 
 // ------------------------------------------------------------------ admin (Cloudflare Access)
@@ -346,10 +922,43 @@ admin.use("*", async (c, next) => {
 
 admin.get("/vaults", async (c) => {
   const limit = Number(c.req.query("limit") ?? 50);
-  return c.json({ vaults: await directory(c.env).listVaults({ after: c.req.query("after"), limit: Number.isFinite(limit) ? limit : 50 }) });
+  const size = Math.min(200, Math.max(1, Number.isFinite(limit) ? limit : 50));
+  const pages = await Promise.all(
+    [...allDirectories(c.env)].map((d) =>
+      d.listVaults({ after: c.req.query("after"), limit: size }),
+    ),
+  );
+  return c.json({
+    vaults: pages
+      .flat()
+      .sort((a, b) => a.vaultId.localeCompare(b.vaultId))
+      .slice(0, size),
+  });
 });
 
-admin.get("/invites", async (c) => c.json({ invites: await directory(c.env).listInvites() }));
+admin.post("/vaults/:id/runs/:run/retry", async (c) =>
+  c.json(
+    await vault(c.env, c.req.param("id")).adminRetry(
+      c.req.param("run"),
+      requestKey(c),
+    ),
+    202,
+  ),
+);
+
+admin.get("/vaults/:id/extraction-feedback", async (c) =>
+  c.json({
+    sources: await vault(c.env, c.req.param("id")).extractionFeedback(),
+  }),
+);
+
+admin.get("/vaults/:id/runs", async (c) =>
+  c.json({ runs: await vault(c.env, c.req.param("id")).adminRuns() }),
+);
+
+admin.get("/invites", async (c) =>
+  c.json({ invites: await directory(c.env).listInvites() }),
+);
 
 admin.post("/invites", JSON_LIMIT, async (c) => {
   const { email } = await jsonBody(c, z.object({ email: z.email() }));
@@ -362,6 +971,7 @@ admin.delete("/invites/:email", async (c) => {
   return c.body(null, 204);
 });
 
+admin.route("/", maintenance);
 app.route("/admin", admin);
 
 // ------------------------------------------------------------------ helpers
@@ -374,10 +984,34 @@ async function jsonBody<T>(c: C, schema: z.ZodType<T>): Promise<T> {
     throw new AppError("invalid", "expected a JSON body");
   }
   const parsed = schema.safeParse(raw);
-  if (!parsed.success) throw new AppError("invalid", z.prettifyError(parsed.error).replace(/\s+/g, " ").slice(0, 300));
+  if (!parsed.success)
+    throw new AppError(
+      "invalid",
+      z.prettifyError(parsed.error).replace(/\s+/g, " ").slice(0, 300),
+    );
   return parsed.data;
 }
 
 function fileName(text: string): string {
-  return text.replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-").slice(0, 80) || "resume";
+  return (
+    text
+      .replace(/[^\w\- ]+/g, "")
+      .trim()
+      .replace(/\s+/g, "-")
+      .slice(0, 80) || "resume"
+  );
+}
+
+function requestKey(c: C): string {
+  const key = c.req.header("idempotency-key") ?? crypto.randomUUID();
+  if (!/^[a-zA-Z0-9_-]{1,100}$/.test(key))
+    throw new AppError("invalid", "invalid request key");
+  return key;
+}
+function versionQuery(c: C): number | undefined {
+  const value = c.req.query("version");
+  if (value === undefined) return undefined;
+  if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value)))
+    throw new AppError("invalid", "invalid document version");
+  return Number(value);
 }

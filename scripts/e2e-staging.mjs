@@ -5,6 +5,23 @@
 //
 //   STAGING_URL=https://resumatic-staging.<account>.workers.dev TEST_SIGNIN_KEY=... npm run e2e:staging
 
+import { writeFile } from "node:fs/promises";
+import { validate } from "./validate-config.mjs";
+
+const missing = (await validate({ environment: "staging", purpose: "e2e" }))
+  .missing;
+if (missing.length) {
+  const pending = {
+    status: "pending",
+    commit: process.env.GITHUB_SHA ?? null,
+    missing,
+  };
+  await writeFile("e2e-report.json", JSON.stringify(pending, null, 2) + "\n", {
+    mode: 0o600,
+  });
+  console.error(JSON.stringify(pending));
+  process.exit(2);
+}
 const base = process.env.STAGING_URL?.replace(/\/+$/, "");
 const key = process.env.TEST_SIGNIN_KEY;
 if (!base || !key) {
@@ -38,13 +55,35 @@ handle high event volumes, design internal APIs and mentor engineers. Rust exper
 
 let cookie = "";
 const started = Date.now();
+const manifest = {
+  base,
+  userId: "",
+  vaultId: "",
+  sources: [],
+  resumes: [],
+  deletionRequested: false,
+};
+async function saveManifest() {
+  await writeFile(
+    process.env.DELETION_MANIFEST_PATH ?? "deletion-manifest.json",
+    JSON.stringify(manifest, null, 2) + "\n",
+    { mode: 0o600 },
+  );
+}
 
 function log(step, detail = "") {
-  console.log(`[${((Date.now() - started) / 1000).toFixed(1).padStart(6)}s] ${step}${detail ? `: ${detail}` : ""}`);
+  console.log(
+    `[${((Date.now() - started) / 1000).toFixed(1).padStart(6)}s] ${step}${detail ? `: ${detail}` : ""}`,
+  );
 }
 
 async function call(method, path, body, headers = {}) {
-  const init = { method, headers: { ...headers, ...(cookie ? { cookie } : {}) }, redirect: "manual" };
+  const init = {
+    method,
+    headers: { ...headers, ...(cookie ? { cookie } : {}) },
+    redirect: "manual",
+    signal: AbortSignal.timeout(30_000),
+  };
   if (body instanceof FormData) init.body = body;
   else if (body !== undefined) {
     init.body = JSON.stringify(body);
@@ -56,7 +95,10 @@ async function call(method, path, body, headers = {}) {
 async function json(method, path, body, expected = 200) {
   const res = await call(method, path, body);
   const text = await res.text();
-  if (res.status !== expected) throw new Error(`${method} ${path}: expected ${expected}, got ${res.status} ${text.slice(0, 300)}`);
+  if (res.status !== expected)
+    throw new Error(
+      `${method} ${path}: expected ${expected}, got ${res.status}`,
+    );
   return text ? JSON.parse(text) : undefined;
 }
 
@@ -73,7 +115,14 @@ async function until(what, fn, timeoutMs) {
 /** A one-page PDF with plain Helvetica text, which Workers AI can convert to Markdown. */
 function makePdf(lines) {
   const esc = (s) => s.replace(/[\\()]/g, (c) => `\\${c}`);
-  const content = ["BT", "/F1 11 Tf", "15 TL", "60 740 Td", ...lines.map((l, i) => `${i ? "T* " : ""}(${esc(l)}) Tj`), "ET"].join("\n");
+  const content = [
+    "BT",
+    "/F1 11 Tf",
+    "15 TL",
+    "60 740 Td",
+    ...lines.map((l, i) => `${i ? "T* " : ""}(${esc(l)}) Tj`),
+    "ET",
+  ].join("\n");
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -89,41 +138,110 @@ function makePdf(lines) {
   });
   const xref = Buffer.byteLength(pdf, "latin1");
   pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  pdf += offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("");
+  pdf += offsets
+    .map((o) => `${String(o).padStart(10, "0")} 00000 n \n`)
+    .join("");
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(pdf, "latin1");
 }
 
 async function main() {
-  const email = `e2e-${Date.now()}@resumatic.test`;
-  const login = await call("POST", "/auth/test-login", { email }, { "x-test-signin-key": key });
-  if (login.status !== 204) throw new Error(`test sign-in failed: ${login.status} ${await login.text()}`);
-  cookie = login.headers.getSetCookie().find((c) => c.startsWith("__Host-session="))?.split(";")[0] ?? "";
+  const email = `e2e-${crypto.randomUUID()}@resumatic.test`;
+  const login = await call(
+    "POST",
+    "/auth/test-login",
+    { email },
+    { "x-test-signin-key": key },
+  );
+  if (login.status !== 204)
+    throw new Error(`test sign-in failed: ${login.status}`);
+  cookie =
+    login.headers
+      .getSetCookie()
+      .find((c) => c.startsWith("__Host-session="))
+      ?.split(";")[0] ?? "";
   if (!cookie) throw new Error("no session cookie");
-  log("signed in", email);
+  const payload = JSON.parse(
+    Buffer.from(
+      cookie.slice(cookie.indexOf("=") + 1).split(".")[0],
+      "base64url",
+    ).toString("utf8"),
+  );
+  manifest.userId = payload.uid;
+  manifest.vaultId = payload.vid;
+  await saveManifest();
+  log("signed in", manifest.userId);
 
-  await json("PUT", "/api/profile", { name: "Jane Doe", email: "jane@example.com", location: "Toronto" });
+  // Freeze this synthetic account's lifetime limits inside its Vault before any model calls.
+  const budget = await call(
+    "POST",
+    "/api/test/model-budget",
+    {
+      maxCostMicros: Math.floor(
+        Number(process.env.EVAL_BUDGET_USD) * 1_000_000,
+      ),
+      maxCalls: Number(process.env.EVAL_MAX_CALLS),
+    },
+    { "x-test-signin-key": key },
+  );
+  if (budget.status !== 204)
+    throw new Error(`test budget could not be enforced: ${budget.status}`);
+
+  await json("PUT", "/api/profile", {
+    name: "Jane Doe",
+    email: "jane@example.com",
+    location: "Toronto",
+  });
 
   const form = new FormData();
-  form.set("file", new File([makePdf(RESUME)], "jane-doe.pdf", { type: "application/pdf" }));
+  form.set(
+    "file",
+    new File([makePdf(RESUME)], "jane-doe.pdf", { type: "application/pdf" }),
+  );
   const { sourceId } = await json("POST", "/api/sources", form, 201);
+  manifest.sources.push(sourceId);
+  await saveManifest();
   log("uploaded", sourceId);
 
   const source = await until(
     "Distill",
-    async () => (await json("GET", "/api/sources")).sources.find((s) => s.id === sourceId && s.state !== "queued"),
+    async () =>
+      (await json("GET", "/api/sources")).sources.find(
+        (s) => s.id === sourceId && s.state !== "queued",
+      ),
     180_000,
   );
-  if (source.state !== "ready") throw new Error(`Distill failed: ${source.error}`);
+  if (source.state !== "ready") throw new Error("Distill failed");
   const { facts } = await json("GET", "/api/facts");
   const { roles } = await json("GET", "/api/roles");
   log("distilled", `${roles.length} roles, ${facts.length} facts`);
   if (facts.length < 3) throw new Error("too few facts extracted");
-  if (facts.some((f) => !f.quote)) throw new Error("an extracted fact has no quote");
-  await json("POST", "/api/review", { confirm: [...facts.map((f) => f.id), ...roles.map((r) => r.id)], reject: [] }, 204);
+  if (facts.some((f) => !f.quote))
+    throw new Error("an extracted fact has no quote");
+  await json(
+    "POST",
+    "/api/review",
+    {
+      confirm: [...facts.map((f) => f.id), ...roles.map((r) => r.id)],
+      reject: [],
+    },
+    204,
+  );
 
-  const { applicationId } = await json("POST", "/api/applications", { jdText: JOB }, 201);
-  const { resumeId } = await json("POST", `/api/applications/${applicationId}/resumes`, undefined, 202);
+  const { applicationId } = await json(
+    "POST",
+    "/api/applications",
+    { jdText: JOB },
+    201,
+  );
+  const { resumeId } = await json(
+    "POST",
+    `/api/applications/${applicationId}/resumes`,
+    undefined,
+    202,
+  );
+  manifest.resumes.push(resumeId);
+  await saveManifest();
   log("tailoring", resumeId);
   const resume = await until(
     "Tailor",
@@ -133,28 +251,81 @@ async function main() {
     },
     300_000,
   );
-  if (resume.state !== "ready") throw new Error(`Tailor failed: ${resume.error}`);
-  const lines = [resume.body.summary, ...resume.body.sections.flatMap((s) => s.lines)].filter(Boolean);
-  log("tailored", `${lines.length} lines; report ${JSON.stringify(resume.report)}`);
+  if (resume.state !== "ready") throw new Error("Tailor failed");
+  const lines = [
+    resume.body.summary,
+    ...resume.body.sections.flatMap((s) => s.lines),
+  ].filter(Boolean);
+  log("tailored", `${lines.length} lines`);
   if (lines.length === 0) throw new Error("the resume has no lines");
-  for (const line of lines) if (!line.factIds.length) throw new Error(`line cites nothing: ${line.text}`);
+  for (const line of lines)
+    if (!line.factIds.length) throw new Error("a line cites no facts");
 
   const pdf = await call("GET", `/api/resumes/${resumeId}/pdf`);
   const bytes = Buffer.from(await pdf.arrayBuffer());
-  if (pdf.status !== 200 || bytes.subarray(0, 5).toString() !== "%PDF-") throw new Error(`PDF download failed: ${pdf.status}`);
+  if (pdf.status !== 200 || bytes.subarray(0, 5).toString() !== "%PDF-")
+    throw new Error(`PDF download failed: ${pdf.status}`);
   log("rendered PDF", `${bytes.length} bytes`);
 
   const exported = await json("GET", "/api/export");
-  if (exported.facts.length !== facts.length) throw new Error("export is missing facts");
+  if (exported.facts.length !== facts.length)
+    throw new Error("export is missing facts");
   log("exported");
 
   await json("DELETE", "/auth/account", undefined, 202);
-  await until("deletion", async () => [401, 410].includes((await call("GET", "/api/me")).status), 120_000);
-  log("deleted account");
+  manifest.deletionRequested = true;
+  await saveManifest();
+  await until(
+    "deletion",
+    async () => [401, 410].includes((await call("GET", "/api/me")).status),
+    120_000,
+  );
+  log("account access revoked; store erasure requires audit-deletion.mjs");
+  await writeFile(
+    "e2e-report.json",
+    JSON.stringify(
+      {
+        status: "passed",
+        commit: process.env.GITHUB_SHA ?? null,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - started,
+        checks: {
+          upload: true,
+          tailor: true,
+          pdf: true,
+          export: true,
+          accessRevoked: true,
+          storageErasure: "pending",
+        },
+      },
+      null,
+      2,
+    ) + "\n",
+    { mode: 0o600 },
+  );
 }
 
 main().catch(async (e) => {
   console.error(`E2E FAILED: ${e.message}`);
-  if (cookie) await call("DELETE", "/auth/account").catch(() => {});
+  await writeFile(
+    "e2e-report.json",
+    JSON.stringify(
+      {
+        status: "failed",
+        commit: process.env.GITHUB_SHA ?? null,
+        durationMs: Date.now() - started,
+      },
+      null,
+      2,
+    ) + "\n",
+    { mode: 0o600 },
+  );
+  if (cookie) {
+    const deletion = await call("DELETE", "/auth/account").catch(() => null);
+    if (deletion?.status === 202) {
+      manifest.deletionRequested = true;
+      await saveManifest();
+    }
+  }
   process.exit(1);
 });

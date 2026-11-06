@@ -1,5 +1,11 @@
 import { useCallback, useMemo, useState } from "react";
-import type { ResumeBody, ResumeLine, ResumeSection, ResumeView, RoleKind } from "../../shared/api";
+import type {
+  ResumeBody,
+  ResumeLine,
+  ResumeSection,
+  ResumeView,
+  RoleKind,
+} from "../../shared/api";
 import { api } from "../api";
 import { formatDateRange, SECTION_HEADING } from "../format";
 import type { Reload } from "../hooks";
@@ -19,14 +25,28 @@ function groupSections(sections: ResumeSection[]) {
   return groups;
 }
 
-export function ResumeSheet({ resume, body, reload }: { resume: ResumeView; body: ResumeBody; reload: Reload }) {
+export function ResumeSheet({
+  resume,
+  body,
+  reload,
+  readOnly = false,
+}: {
+  resume: ResumeView;
+  body: ResumeBody;
+  reload: Reload;
+  readOnly?: boolean;
+}) {
   const lineIds = useMemo(
-    () => [...(body.summary ? [body.summary.id] : []), ...body.sections.flatMap((s) => s.lines.map((l) => l.id))],
+    () => [
+      ...(body.summary ? [body.summary.id] : []),
+      ...body.sections.flatMap((s) => s.lines.map((l) => l.id)),
+    ],
     [body],
   );
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
   const allOpen = lineIds.length > 0 && lineIds.every((id) => open.has(id));
-  const isEmpty = !body.summary && body.sections.length === 0 && body.skills.length === 0;
+  const isEmpty =
+    !body.summary && body.sections.length === 0 && body.skills.length === 0;
 
   const toggle = useCallback(
     (id: string) =>
@@ -47,6 +67,8 @@ export function ResumeSheet({ resume, body, reload }: { resume: ResumeView; body
       expanded={open.has(l.id)}
       onToggle={toggle}
       reload={reload}
+      expectedVersion={resume.version}
+      readOnly={readOnly}
     />
   );
 
@@ -54,21 +76,45 @@ export function ResumeSheet({ resume, body, reload }: { resume: ResumeView; body
     <div className="resume-layout">
       <div>
         <div className="toolbar">
-          <a className="button primary" href={api.pdfUrl(resume.id)} download="resume.pdf">
+          <a
+            className="button primary"
+            href={api.pdfUrl(resume.id, resume.version)}
+            download={`resume-v${resume.version}.pdf`}
+          >
             Download PDF
           </a>
-          <a className="button" href={api.previewUrl(resume.id)} target="_blank" rel="noopener">
+          <a
+            className="button"
+            href={api.docxUrl(resume.id, resume.version)}
+            download={`resume-v${resume.version}.docx`}
+          >
+            Download Word
+          </a>
+          <a
+            className="button"
+            href={api.previewUrl(resume.id, resume.version)}
+            target="_blank"
+            rel="noopener"
+          >
             Print preview
           </a>
           {lineIds.length > 0 && (
-            <button type="button" onClick={() => setOpen(allOpen ? new Set() : new Set(lineIds))}>
+            <button
+              type="button"
+              onClick={() => setOpen(allOpen ? new Set() : new Set(lineIds))}
+            >
               {allOpen ? "Hide all evidence" : "Show all evidence"}
             </button>
           )}
           <TailorAgain applicationId={resume.applicationId} />
         </div>
         <article className="paper" aria-label="Resume preview">
-          {isEmpty && <p className="meta">This resume has no lines. Confirm more facts, then tailor a new version.</p>}
+          {isEmpty && (
+            <p className="meta">
+              This resume has no lines. Confirm more facts, then tailor a new
+              version.
+            </p>
+          )}
           {body.summary && (
             <section className="paper-section">
               <h2>Summary</h2>
@@ -85,9 +131,13 @@ export function ResumeSheet({ resume, body, reload }: { resume: ResumeView; body
                       <p className="entry-org">{s.org}</p>
                       {s.title && <p className="entry-title">{s.title}</p>}
                     </div>
-                    <p className="entry-dates">{formatDateRange(s.startDate, s.endDate)}</p>
+                    <p className="entry-dates">
+                      {formatDateRange(s.startDate, s.endDate)}
+                    </p>
                   </div>
-                  {s.lines.length > 0 && <ul className="plain-list lines">{s.lines.map(line)}</ul>}
+                  {s.lines.length > 0 && (
+                    <ul className="plain-list lines">{s.lines.map(line)}</ul>
+                  )}
                 </div>
               ))}
             </section>
@@ -118,7 +168,11 @@ function TailorAgain({ applicationId }: { applicationId: string }) {
   const { tailor, pending, error } = useTailor();
   return (
     <>
-      <button type="button" onClick={() => void tailor(applicationId)} disabled={pending}>
+      <button
+        type="button"
+        onClick={() => void tailor(applicationId)}
+        disabled={pending}
+      >
         {pending ? "Starting…" : "Tailor a new version"}
       </button>
       <ActionError message={error} />

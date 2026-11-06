@@ -1,11 +1,12 @@
 import { z } from "zod";
+import { modelAttempt, type ModelObservers } from "./usage";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
 }
 
-export interface ChatConfig {
+export interface ChatConfig extends ModelObservers {
   accountId: string;
   token: string;
   gatewayId: string;
@@ -13,6 +14,14 @@ export interface ChatConfig {
   temperature: number;
   /** Route name, used in error messages only. */
   route: string;
+  timeoutMs?: number;
+  /** Eval accounting reserves before each network attempt, including schema retries. */
+  beforeAttempt?: (
+    model: string,
+    input: string,
+    maxOutputTokens: number,
+  ) => void;
+  maxOutputTokens?: number;
 }
 
 type Fetcher = (input: string, init: RequestInit) => Promise<Response>;
@@ -40,7 +49,21 @@ export async function chatComplete<T>(
   let conversation = withSchema;
   let lastError = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const raw = await callOnce(cfg, conversation, fetcher);
+    let raw: string;
+    try {
+      raw = await callOnce(cfg, conversation, z.toJSONSchema(schema), fetcher);
+    } catch (error) {
+      if (!(error instanceof JsonModeError)) throw error;
+      conversation = [
+        ...withSchema,
+        {
+          role: "user",
+          content:
+            "That reply was not valid JSON for the schema. Return a corrected JSON object only.",
+        },
+      ];
+      continue;
+    }
     const parsed = parseJson(raw);
     const result = parsed.ok ? schema.safeParse(parsed.value) : null;
     if (result?.success) return result.data;
@@ -48,40 +71,94 @@ export async function chatComplete<T>(
     conversation = [
       ...withSchema,
       { role: "assistant", content: raw },
-      { role: "user", content: `That reply was not valid: ${lastError}\nReply again with corrected JSON only.` },
+      {
+        role: "user",
+        content: `That reply was not valid: ${lastError}\nReply again with corrected JSON only.`,
+      },
     ];
   }
   // A plain error, so the Workflow step retries the call; the message holds no model output.
-  throw new Error(`model output for ${cfg.route} did not match its schema twice`);
+  throw new Error(
+    `model output for ${cfg.route} did not match its schema twice`,
+  );
 }
 
-async function callOnce(cfg: ChatConfig, messages: ChatMessage[], fetcher: Fetcher): Promise<string> {
-  const res = await fetcher(`https://api.cloudflare.com/client/v4/accounts/${cfg.accountId}/ai/v1/chat/completions`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${cfg.token}`,
-      "content-type": "application/json",
-      "cf-aig-gateway-id": cfg.gatewayId,
-      "cf-aig-collect-log-payload": "false",
-    },
-    body: JSON.stringify({
+class JsonModeError extends Error {}
+
+async function callOnce(
+  cfg: ChatConfig,
+  messages: ChatMessage[],
+  schema: unknown,
+  fetcher: Fetcher,
+): Promise<string> {
+  const maxOutputTokens = cfg.maxOutputTokens ?? 8192;
+  const payload = {
+    model: cfg.model,
+    messages,
+    temperature: cfg.temperature,
+    max_tokens: maxOutputTokens,
+    response_format: cfg.model.startsWith("@cf/")
+      ? { type: "json_schema", json_schema: schema }
+      : { type: "json_object" },
+  };
+  const bodyText = JSON.stringify(payload);
+  cfg.beforeAttempt?.(cfg.model, bodyText, maxOutputTokens);
+  const body = await modelAttempt(
+    {
+      route: cfg.route,
       model: cfg.model,
-      messages,
-      temperature: cfg.temperature,
-      response_format: { type: "json_object" },
-    }),
-  });
-  if (!res.ok) {
-    // Thrown as a plain error so the Workflow step retries it.
-    throw new Error(`model call for ${cfg.route} failed with HTTP ${res.status}`);
-  }
-  const body = (await res.json()) as { choices?: { message?: { content?: string | null } }[] };
+      inputChars: bodyText.length,
+      maxOutputTokens,
+    },
+    cfg,
+    async () => {
+      const res = await fetcher(
+        `https://api.cloudflare.com/client/v4/accounts/${cfg.accountId}/ai/v1/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${cfg.token}`,
+            "content-type": "application/json",
+            "cf-aig-gateway-id": cfg.gatewayId,
+            "cf-aig-collect-log-payload": "false",
+            "cf-aig-skip-cache": "true",
+            "cf-aig-request-timeout": String(cfg.timeoutMs ?? 60_000),
+            // Workflow retries own network retry policy; avoid multiplying hidden gateway attempts.
+            "cf-aig-max-attempts": "1",
+          },
+          signal: AbortSignal.timeout(cfg.timeoutMs ?? 60_000),
+          body: bodyText,
+        },
+      ).catch(() => {
+        throw new Error(`model call for ${cfg.route} failed`);
+      });
+      if (!res.ok) {
+        const errorText = await res.text();
+        if (/JSON Mode (?:couldn't|could not) be met/i.test(errorText))
+          throw new JsonModeError("json_mode_failed");
+        // Thrown as a plain error so the Workflow step retries it.
+        throw new Error(
+          `model call for ${cfg.route} failed with HTTP ${res.status}`,
+        );
+      }
+      return (await res.json().catch(() => {
+        throw new Error(`model response for ${cfg.route} was not JSON`);
+      })) as {
+        usage?: unknown;
+        choices?: { message?: { content?: string | null } }[];
+      };
+    },
+    (response) => response.usage,
+  );
   const content = body.choices?.[0]?.message?.content;
-  if (typeof content !== "string") throw new Error(`model call for ${cfg.route} returned no content`);
+  if (typeof content !== "string")
+    throw new Error(`model call for ${cfg.route} returned no content`);
   return content;
 }
 
-function parseJson(raw: string): { ok: true; value: unknown } | { ok: false; error: string } {
+function parseJson(
+  raw: string,
+): { ok: true; value: unknown } | { ok: false; error: string } {
   const trimmed = raw
     .trim()
     .replace(/^```(?:json)?\s*/i, "")

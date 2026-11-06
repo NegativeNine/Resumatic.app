@@ -1,0 +1,282 @@
+import { billingConfig } from "../shared/billing";
+import { AppError } from "../shared/errors";
+import {
+  entitlementFor,
+  settledInvoice,
+  stripeClient,
+  subscriptionIsOpen,
+  type BillingEvent,
+  type Entitlement,
+  type PaidPeriod,
+} from "../worker/billing";
+
+export const BILLING_MIGRATIONS = [
+  `CREATE TABLE billing_events (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, subscription_id TEXT, invoice_id TEXT, user_id TEXT, state TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL)`,
+  `CREATE TABLE billing_accounts (user_id TEXT PRIMARY KEY, customer_id TEXT NOT NULL UNIQUE, subscription_id TEXT, paid_period TEXT, entitlement TEXT, revision INTEGER NOT NULL DEFAULT 0, delivered_revision INTEGER NOT NULL DEFAULT 0)`,
+];
+
+/** Durable inbox and entitlement outbox. Webhooks trigger a read of current customer state. */
+export class BillingStore {
+  constructor(
+    private sql: SqlStorage,
+    private env: Env,
+    private hooks: {
+      transaction<T>(fn: () => T): T;
+      account(userId: string): { vaultId: string } | null;
+      deliver(
+        vaultId: string,
+        revision: number,
+        entitlement: Entitlement,
+      ): Promise<void>;
+    },
+    private fetcher: typeof fetch = fetch,
+  ) {}
+
+  accept(event: BillingEvent): void {
+    const cfg = billingConfig(this.env);
+    if (!cfg) throw new AppError("unavailable", "billing is not configured");
+    if (event.livemode !== cfg.secretKey.startsWith("sk_live_"))
+      throw new AppError(
+        "invalid",
+        "billing event mode does not match this environment",
+      );
+    const object = event.data.object;
+    if (
+      ![
+        "invoice.paid",
+        "invoice.payment_failed",
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+      ].includes(event.type)
+    )
+      return;
+    const customer =
+      typeof object.customer === "string" ? object.customer : null;
+    if (!customer || !/^cus_[A-Za-z0-9]+$/.test(customer))
+      throw new AppError("invalid", "billing event has no customer");
+    const subscription = event.type.startsWith("customer.subscription.")
+      ? String(object.id)
+      : typeof object.subscription === "string"
+        ? object.subscription
+        : null;
+    const invoice = event.type.startsWith("invoice.")
+      ? String(object.id)
+      : null;
+    if (
+      (subscription && !/^sub_[A-Za-z0-9]+$/.test(subscription)) ||
+      (invoice && !/^in_[A-Za-z0-9]+$/.test(invoice))
+    )
+      throw new AppError("invalid", "billing event has an invalid identifier");
+    this.sql.exec(
+      `INSERT OR IGNORE INTO billing_events (id, customer_id, subscription_id, invoice_id, created_at) VALUES (?, ?, ?, ?, ?)`,
+      event.id,
+      customer,
+      subscription,
+      invoice,
+      Date.now(),
+    );
+  }
+
+  pending(): boolean {
+    return (
+      !!this.sql
+        .exec(`SELECT id FROM billing_events WHERE state = 'pending' LIMIT 1`)
+        .toArray()[0] ||
+      !!this.sql
+        .exec(
+          `SELECT user_id FROM billing_accounts WHERE delivered_revision < revision LIMIT 1`,
+        )
+        .toArray()[0]
+    );
+  }
+
+  async reconcile(): Promise<void> {
+    const cfg = billingConfig(this.env);
+    if (!cfg) return;
+    const stripe = stripeClient(cfg, this.fetcher);
+    const events = this.sql
+      .exec<{ id: string; customer_id: string; invoice_id: string | null }>(
+        `SELECT id, customer_id, invoice_id FROM billing_events WHERE state = 'pending' ORDER BY created_at, id LIMIT 20`,
+      )
+      .toArray();
+    let failed = false;
+    for (const event of events) {
+      try {
+        const customer = await stripe.customer(event.customer_id);
+        const uid = customer.metadata.account_uid;
+        if (!uid || !this.hooks.account(uid)) {
+          this.sql.exec(`DELETE FROM billing_events WHERE id = ?`, event.id);
+          continue;
+        }
+        this.sql.exec(
+          `UPDATE billing_events SET user_id = ? WHERE id = ?`,
+          uid,
+          event.id,
+        );
+        const row = this.sql
+          .exec<{
+            customer_id: string;
+            subscription_id: string | null;
+            paid_period: string | null;
+            entitlement: string | null;
+          }>(
+            `SELECT customer_id, subscription_id, paid_period, entitlement FROM billing_accounts WHERE user_id = ?`,
+            uid,
+          )
+          .toArray()[0];
+        if (row && row.customer_id !== event.customer_id)
+          throw new AppError(
+            "forbidden",
+            "billing customer association is invalid",
+          );
+        const all = await stripe.subscriptions(event.customer_id);
+        if (
+          all.some(
+            (subscription) =>
+              (typeof subscription.customer === "string"
+                ? subscription.customer
+                : subscription.customer.id) !== event.customer_id ||
+              subscription.metadata.account_uid !== uid,
+          )
+        )
+          throw new AppError(
+            "forbidden",
+            "billing subscription association is invalid",
+          );
+        const open = all.filter(subscriptionIsOpen);
+        if (open.length > 1)
+          throw new AppError(
+            "unavailable",
+            "multiple subscriptions require billing review",
+          );
+        const subscription =
+          open[0] ?? all.find((sub) => sub.id === row?.subscription_id) ?? null;
+        let paid: PaidPeriod | null = row?.paid_period
+          ? JSON.parse(row.paid_period)
+          : null;
+        if (
+          !subscription ||
+          paid?.subscriptionId !== subscription.id ||
+          paid.priceId !== subscription.items.data[0]!.price.id
+        )
+          paid = null;
+        const invoiceIds = new Set<string>();
+        if (event.invoice_id) invoiceIds.add(event.invoice_id);
+        const latestInvoice = subscription?.latest_invoice;
+        if (latestInvoice)
+          invoiceIds.add(
+            typeof latestInvoice === "string"
+              ? latestInvoice
+              : latestInvoice.id,
+          );
+        for (const id of invoiceIds) {
+          const settled = settledInvoice(await stripe.invoice(id));
+          if (
+            settled &&
+            subscription &&
+            settled.subscriptionId === subscription.id &&
+            settled.priceId === subscription.items.data[0]!.price.id &&
+            (!paid || settled.paidThrough > paid.paidThrough)
+          )
+            paid = settled;
+        }
+        const entitlement = entitlementFor(subscription, cfg, paid);
+        // Account deletion may have interleaved with the Stripe reads.
+        if (!this.hooks.account(uid)) {
+          this.sql.exec(`DELETE FROM billing_events WHERE id = ?`, event.id);
+          continue;
+        }
+        this.hooks.transaction(() => {
+          // Other alarm invocations can reconcile while Stripe requests are in flight.
+          // Never overwrite a newer snapshot with a response fetched before it.
+          const currentEvent = this.sql
+            .exec<{ state: string }>(
+              `SELECT state FROM billing_events WHERE id = ?`,
+              event.id,
+            )
+            .toArray()[0];
+          if (!currentEvent || currentEvent.state !== "pending") return;
+          const currentRow = this.sql
+            .exec<{
+              customer_id: string;
+              subscription_id: string | null;
+              paid_period: string | null;
+              entitlement: string | null;
+            }>(
+              `SELECT customer_id, subscription_id, paid_period, entitlement FROM billing_accounts WHERE user_id = ?`,
+              uid,
+            )
+            .toArray()[0];
+          if (
+            JSON.stringify(currentRow ?? null) !== JSON.stringify(row ?? null)
+          ) {
+            throw new AppError(
+              "unavailable",
+              "billing state changed during reconciliation",
+            );
+          }
+          this.sql.exec(
+            `INSERT INTO billing_accounts (user_id, customer_id, subscription_id, paid_period, entitlement, revision) VALUES (?, ?, ?, ?, ?, 1)
+ON CONFLICT(user_id) DO UPDATE SET subscription_id = excluded.subscription_id, paid_period = excluded.paid_period, entitlement = excluded.entitlement,
+revision = billing_accounts.revision + CASE WHEN billing_accounts.entitlement != excluded.entitlement THEN 1 ELSE 0 END`,
+            uid,
+            event.customer_id,
+            subscription?.id ?? null,
+            paid ? JSON.stringify(paid) : null,
+            JSON.stringify(entitlement),
+          );
+          this.sql.exec(
+            `UPDATE billing_events SET state = 'applied' WHERE id = ?`,
+            event.id,
+          );
+        });
+      } catch {
+        failed = true;
+      }
+    }
+    for (const row of this.sql
+      .exec<{ user_id: string; revision: number; entitlement: string }>(
+        `SELECT user_id, revision, entitlement FROM billing_accounts WHERE delivered_revision < revision LIMIT 20`,
+      )
+      .toArray()) {
+      try {
+        const account = this.hooks.account(row.user_id);
+        if (account)
+          await this.hooks.deliver(
+            account.vaultId,
+            row.revision,
+            JSON.parse(row.entitlement),
+          );
+        this.sql.exec(
+          `UPDATE billing_accounts SET delivered_revision = ? WHERE user_id = ? AND revision = ?`,
+          row.revision,
+          row.user_id,
+          row.revision,
+        );
+      } catch {
+        failed = true;
+      }
+    }
+    if (failed)
+      throw new AppError(
+        "unavailable",
+        "billing reconciliation remains pending",
+      );
+  }
+
+  erase(userId: string, customerId?: string | null): void {
+    const row = this.sql
+      .exec<{ customer_id: string }>(
+        `SELECT customer_id FROM billing_accounts WHERE user_id = ?`,
+        userId,
+      )
+      .toArray()[0];
+    this.sql.exec(
+      `DELETE FROM billing_events WHERE user_id = ? OR customer_id = ?`,
+      userId,
+      customerId ?? row?.customer_id ?? "",
+    );
+    this.sql.exec(`DELETE FROM billing_accounts WHERE user_id = ?`, userId);
+  }
+}

@@ -2,6 +2,8 @@ import { useId, useState, type ChangeEvent } from "react";
 import type { Profile } from "../../shared/api";
 import { api } from "../api";
 import { ActionError, Field, PageHeader } from "../components/ui";
+import { BillingTools, CoachSharingTools } from "../components/AccountTools";
+import { ConnectedApps } from "../components/ConnectedApps";
 import { useAction } from "../hooks";
 import { useSession } from "../session";
 
@@ -10,17 +12,21 @@ const DELETION_NOTE =
   "Your account is being deleted. You've been signed out, and your uploads, facts, applications and resumes are being removed.";
 
 export function AccountPage() {
+  const { me } = useSession();
   return (
     <>
       <PageHeader title="Account" />
       <div className="stack">
         <ProfileForm />
+        <BillingTools />
+        <CoachSharingTools />
+        {me.capabilities?.connectedApps && <ConnectedApps />}
         <SignOutCard />
         <section className="card" aria-labelledby="data-heading">
           <h2 id="data-heading">Your data</h2>
           <p className="card-text">
-            Download everything in your vault as one JSON file: your profile, sources, roles, facts with their quotes,
-            applications and resumes.
+            Download everything in your vault as one JSON file: your profile,
+            sources, roles, facts with their quotes, applications and resumes.
           </p>
           <a className="button" href={api.exportUrl} download>
             Download all my data
@@ -34,7 +40,10 @@ export function AccountPage() {
 
 type ProfileDraft = Omit<Profile, "links"> & { links: string };
 
-const toDraft = (profile: Profile): ProfileDraft => ({ ...profile, links: profile.links.join("\n") });
+const toDraft = (profile: Profile): ProfileDraft => ({
+  ...profile,
+  links: profile.links.join("\n"),
+});
 
 function ProfileForm() {
   const { me, updateMe } = useSession();
@@ -43,11 +52,13 @@ function ProfileForm() {
   const { run, pending, error } = useAction();
   const id = useId();
 
-  const edit = (key: keyof ProfileDraft) => (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const value = e.target.value;
-    setDraft((current) => ({ ...current, [key]: value }));
-    setSaved(false);
-  };
+  const edit =
+    (key: keyof ProfileDraft) =>
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const value = e.target.value;
+      setDraft((current) => ({ ...current, [key]: value }));
+      setSaved(false);
+    };
 
   async function save() {
     const profile: Profile = {
@@ -78,16 +89,36 @@ function ProfileForm() {
       }}
     >
       <h2 id="profile-heading">Profile</h2>
-      <p className="card-text meta">Your contact details, for the top of your resumes.</p>
+      <p className="card-text meta">
+        Your contact details, for the top of your resumes.
+      </p>
       <div className="field-grid">
         <Field id={`${id}-name`} label="Name">
-          <input id={`${id}-name`} type="text" autoComplete="name" value={draft.name} onChange={edit("name")} />
+          <input
+            id={`${id}-name`}
+            type="text"
+            autoComplete="name"
+            value={draft.name}
+            onChange={edit("name")}
+          />
         </Field>
         <Field id={`${id}-email`} label="Email">
-          <input id={`${id}-email`} type="email" autoComplete="email" value={draft.email} onChange={edit("email")} />
+          <input
+            id={`${id}-email`}
+            type="email"
+            autoComplete="email"
+            value={draft.email}
+            onChange={edit("email")}
+          />
         </Field>
         <Field id={`${id}-phone`} label="Phone">
-          <input id={`${id}-phone`} type="tel" autoComplete="tel" value={draft.phone} onChange={edit("phone")} />
+          <input
+            id={`${id}-phone`}
+            type="tel"
+            autoComplete="tel"
+            value={draft.phone}
+            onChange={edit("phone")}
+          />
         </Field>
         <Field id={`${id}-location`} label="Location">
           <input
@@ -100,7 +131,11 @@ function ProfileForm() {
           />
         </Field>
       </div>
-      <Field id={`${id}-links`} label="Links" hint="One per line, such as your LinkedIn profile or portfolio.">
+      <Field
+        id={`${id}-links`}
+        label="Links"
+        hint="One per line, such as your LinkedIn profile or portfolio."
+      >
         <textarea
           id={`${id}-links`}
           rows={3}
@@ -154,8 +189,14 @@ function SignOutCard() {
       </div>
       <ActionError message={here.error} />
       <div className="option-row">
-        <p>Sign out on every device where you're signed in, including this one.</p>
-        <button type="button" onClick={() => void signOutEverywhere()} disabled={busy}>
+        <p>
+          Sign out on every device where you're signed in, including this one.
+        </p>
+        <button
+          type="button"
+          onClick={() => void signOutEverywhere()}
+          disabled={busy}
+        >
           {everywhere.pending ? "Signing out…" : "Sign out everywhere"}
         </button>
       </div>
@@ -175,8 +216,9 @@ function DeleteAccount() {
     <section className="card danger-card" aria-labelledby="delete-heading">
       <h2 id="delete-heading">Delete account</h2>
       <p className="card-text">
-        This permanently deletes your account and everything in your vault: uploaded files, roles, facts, applications
-        and resumes. It can't be undone, so you may want to download your data first.
+        This permanently deletes your account and everything in your vault:
+        uploaded files, roles, facts, applications and resumes. It can't be
+        undone, so you may want to download your data first.
       </p>
       <form
         onSubmit={(e) => {
@@ -200,7 +242,11 @@ function DeleteAccount() {
           spellCheck={false}
         />
         <div className="actions">
-          <button type="submit" className="danger" disabled={!confirmed || pending}>
+          <button
+            type="submit"
+            className="danger"
+            disabled={!confirmed || pending}
+          >
             {pending ? "Deleting…" : "Delete my account"}
           </button>
         </div>

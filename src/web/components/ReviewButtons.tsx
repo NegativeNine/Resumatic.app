@@ -17,7 +17,12 @@ export interface ReviewControl {
  * Confirms or rejects one role or fact. The item usually leaves the filtered list afterwards, so
  * focus goes to the item if it is still shown, otherwise to a neighbour or the review heading.
  */
-export function useReview(id: string, reload: Reload, item: RefObject<HTMLElement | null>): ReviewControl {
+export function useReview(
+  id: string,
+  reload: Reload,
+  item: RefObject<HTMLElement | null>,
+  revision = 1,
+): ReviewControl {
   const { run, error } = useAction();
   const [deciding, setDeciding] = useState<Decision | null>(null);
 
@@ -32,13 +37,22 @@ export function useReview(id: string, reload: Reload, item: RefObject<HTMLElemen
     ];
     setDeciding(decision);
     const ok = await run(async () => {
-      await api.review(decision === "confirm" ? { confirm: [id], reject: [] } : { confirm: [], reject: [id] });
+      await api.review({
+        confirm: decision === "confirm" ? [id] : [],
+        reject: decision === "reject" ? [id] : [],
+        expectedRevisions: { [id]: revision },
+      });
       await reload();
     });
     setDeciding(null);
     if (ok) {
       candidates
-        .find((c): c is HTMLElement => c instanceof HTMLElement && c.isConnected && c.hasAttribute("tabindex"))
+        .find(
+          (c): c is HTMLElement =>
+            c instanceof HTMLElement &&
+            c.isConnected &&
+            c.hasAttribute("tabindex"),
+        )
         ?.focus();
     }
   }
@@ -56,7 +70,13 @@ interface Props {
   onEdit?: () => void;
 }
 
-export function ReviewButtons({ state, noun, describedBy, review, onEdit }: Props) {
+export function ReviewButtons({
+  state,
+  noun,
+  describedBy,
+  review,
+  onEdit,
+}: Props) {
   const busy = review.deciding !== null;
   const suffix = noun ? ` ${noun}` : "";
 
@@ -85,7 +105,13 @@ export function ReviewButtons({ state, noun, describedBy, review, onEdit }: Prop
         </button>
       )}
       {onEdit && (
-        <button type="button" className="small quiet" aria-describedby={describedBy} disabled={busy} onClick={onEdit}>
+        <button
+          type="button"
+          className="small quiet"
+          aria-describedby={describedBy}
+          disabled={busy}
+          onClick={onEdit}
+        >
           Edit{suffix}
         </button>
       )}

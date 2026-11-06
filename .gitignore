@@ -30,6 +30,19 @@ worker-configuration.d.ts
 
 # Eval output
 eval-report.json
+extract-report.json
+extract-report.md
+seeded-report.json
+seeded-report.md
 
 # Local secrets template (the real file, .dev.vars, stays ignored)
 !.dev.vars.example
+
+# Local acceptance reports and account deletion manifests
+*-preflight.json
+config-report.json
+e2e-report.json
+deletion-manifest.json
+deletion-audit.json
+dependency-audit.json
+release-report.json
