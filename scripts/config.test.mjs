@@ -317,6 +317,13 @@ test("release gates require passing evidence for the exact candidate commit", as
       },
     ]),
   );
+  const { config: production } = await readConfig("production", fileURLToPath(new URL("../wrangler.jsonc", import.meta.url)));
+  Object.assign(evidence.models, {
+    writerModel: production.vars.MODEL_WRITE,
+    judgeModel: production.vars.MODEL_JUDGE,
+    writerFamily: "writer-family",
+    judgeFamily: "judge-family",
+  });
   Object.assign(evidence.extraction, {
     trapLeaks: 0,
     unsupportedClaims: 0,
@@ -406,6 +413,14 @@ test("release gates require passing evidence for the exact candidate commit", as
       }
     }
     assertMissing({ ...evidence, models: { ...evidence.models, status: "pending" } }, "models");
+    for (const models of [
+      { ...evidence.models, writerModel: "other/model" },
+      { ...evidence.models, judgeModel: evidence.models.writerModel },
+      { ...evidence.models, writerFamily: "same", judgeFamily: "same" },
+      { ...evidence.models, writerFamily: "" },
+      { ...evidence.models, judgeFamily: undefined },
+      { ...evidence.models, judgeFamily: "unreviewed family" },
+    ]) assertMissing({ ...evidence, models }, "MODEL_INDEPENDENCE");
     assertMissing({
         ...evidence,
         models: { ...evidence.models, commit: "b".repeat(40) },

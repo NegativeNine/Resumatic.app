@@ -59,18 +59,52 @@ test("missing details stay pending as missing or unattributed rather than being 
   assert.doesNotMatch(JSON.stringify(report), /not in report/);
 });
 
-test("rejects repeated pages, scan limits, full pages without continuation and provider failures", async () => {
+test("reports positive matches from incomplete pages and bounded scans without claiming absence", async () => {
+  const config = { manifest: manifest(), accountId, token: "token", workflows };
+  const fetcher = async (url) => {
+    const parts = new URL(url).pathname.split("/"), workflow = parts[6], instance = parts[8];
+    if (instance) return ok({ status: "complete", params: { vaultId, sourceId: id(1) } });
+    if (workflow === "distill") return Response.json({ success: true, result: [{ id: id(1) }] });
+    if (workflow === "tailor") return ok(Array.from({ length: 100 }, (_, i) => ({ id: id(i + 10) })));
+    return ok([]);
+  };
+  const report = await compareWorkflowInventory({ ...config, maxInstances: 2, fetcher });
+  assert.equal(report.status, "pending");
+  assert.equal(report.inspected, 2);
+  assert.equal(report.scanLimited, true);
+  assert.deepEqual(report.paginationUncertain, ["DISTILL", "TAILOR"]);
+  assert.ok(report.reasons.includes("PROVIDER_PAGINATION_UNCERTAIN"));
+  assert.ok(report.reasons.includes("PROVIDER_SCAN_LIMIT"));
+  assert.deepEqual(report.ledgerNotObserved, [{ binding: "TAILOR", id: id(2) }]);
+  assert.deepEqual(report.visibleNotInLedger, [{ binding: "TAILOR", id: id(10) }]);
+});
+
+test("rejects repeated pages, malformed pagination and provider failures", async () => {
   const config = { manifest: manifest(), accountId, token: "token", workflows };
   await assert.rejects(() => compareWorkflowInventory({ ...config, fetcher: async () => ok([], { cursor: "repeat" }) }), /INVALID_PROVIDER_PAGINATION/);
-  await assert.rejects(() => compareWorkflowInventory({ ...config, maxInstances: 1, fetcher: async (url) => {
-    if (new URL(url).pathname.endsWith("instances")) return ok([{ id: id(1) }, { id: id(2) }]);
-    return ok({ status: "complete", params: { vaultId, sourceId: id(1) } });
-  } }), /PROVIDER_SCAN_LIMIT/);
-  await assert.rejects(() => compareWorkflowInventory({ ...config, fetcher: async () => ok(Array.from({ length: 100 }, (_, i) => ({ id: id(i) }))) }), /PROVIDER_PAGINATION_AMBIGUOUS/);
+  await assert.rejects(() => compareWorkflowInventory({ ...config, fetcher: async () => ok([], null) }), /INVALID_PROVIDER_RESPONSE/);
+  await assert.rejects(() => compareWorkflowInventory({ ...config, fetcher: async () => ok([], { cursor: 4 }) }), /INVALID_PROVIDER_RESPONSE/);
   await assert.rejects(() => compareWorkflowInventory({ ...config, fetcher: async () => new Response("career text", { status: 500 }) }), /PROVIDER_REQUEST_FAILED/);
   await assert.rejects(() => compareWorkflowInventory({ ...config, workflows: workflows.slice(1), fetcher: async () => { throw new Error("not called"); } }), /INVALID_WORKFLOW_BINDINGS/);
   await assert.rejects(() => compareWorkflowInventory({ ...config, fetcher: async () => Response.json({ success: true, result: [], result_info: {}, errors: [{ message: "private" }] }) }), /INVALID_PROVIDER_RESPONSE/);
   await assert.rejects(() => compareWorkflowInventory({ ...config, fetcher: async () => ok([{ id: ".." }]) }), /INVALID_PROVIDER_RESPONSE/);
+});
+
+test("bounds provider response bodies and cancels an oversized stream", async () => {
+  let cancelled = false;
+  const fetcher = async () => new Response(new ReadableStream({
+    pull(controller) { controller.enqueue(new Uint8Array(4 * 1024 * 1024 + 1)); },
+    cancel() { cancelled = true; },
+  }));
+  await assert.rejects(() => compareWorkflowInventory({ manifest: manifest(), accountId, token: "token", workflows, fetcher }), /PROVIDER_RESPONSE_LIMIT/);
+  assert.equal(cancelled, true);
+  let deniedCancelled = false;
+  const denied = async () => new Response(new ReadableStream({
+    pull(controller) { controller.enqueue(new Uint8Array([1])); },
+    cancel() { deniedCancelled = true; },
+  }), { status: 403 });
+  await assert.rejects(() => compareWorkflowInventory({ manifest: manifest(), accountId, token: "token", workflows, fetcher: denied }), /PROVIDER_REQUEST_FAILED/);
+  assert.equal(deniedCancelled, true);
 });
 
 test("CLI remains pending, bounds its credentials to the configured account, and writes owner-only metadata", async () => {

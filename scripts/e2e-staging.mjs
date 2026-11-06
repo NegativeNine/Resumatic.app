@@ -10,8 +10,15 @@ import { validate } from "./validate-config.mjs";
 import { makePdf } from "./lib/synthetic-pdf.mjs";
 import { preDeletionInventory } from "./lib/deletion-audit.mjs";
 
+// This script can invoke models and Browser Run. Its per-Vault budget does not
+// establish that Node evaluations and Worker calls share the same ledger, and
+// Browser Run is billed separately. No environment value can enable this
+// paid path until those bindings and provider-side billing bounds are verified.
+const STAGING_E2E_SPEND_SAFETY_VERIFIED = false;
 const missing = (await validate({ environment: "staging", purpose: "e2e" }))
   .missing;
+if (!STAGING_E2E_SPEND_SAFETY_VERIFIED)
+  missing.push("STAGING_E2E_SPEND_SAFETY_UNVERIFIED");
 if (missing.length) {
   const pending = {
     status: "pending",

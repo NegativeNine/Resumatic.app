@@ -5,6 +5,45 @@ const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const BINDING = { distill: "DISTILL", tailor: "TAILOR", refine: "DOCUMENTS", letter: "DOCUMENTS", prep: "DOCUMENTS", questions: "DOCUMENTS", reembed: "REEMBED" };
 const BINDINGS = ["DISTILL", "TAILOR", "DOCUMENTS", "REEMBED"];
 const STATES = new Set(["queued", "running", "paused", "errored", "terminated", "complete", "waitingForPause", "waiting", "rollingBack"]);
+const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+const MAX_SCAN_BYTES = 32 * 1024 * 1024;
+
+/** Bound both the individual provider response and the whole diagnostic. */
+async function readJson(response, budget) {
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error("PROVIDER_REQUEST_FAILED");
+  }
+  if (!response.body) throw new Error("PROVIDER_REQUEST_FAILED");
+  const reader = response.body.getReader();
+  const parts = [];
+  let length = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!(value instanceof Uint8Array)) throw new Error("INVALID_PROVIDER_RESPONSE");
+      length += value.byteLength;
+      budget.used += value.byteLength;
+      if (length > MAX_RESPONSE_BYTES || budget.used > MAX_SCAN_BYTES)
+        throw new Error("PROVIDER_RESPONSE_LIMIT");
+      parts.push(value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    if (error instanceof Error && ["INVALID_PROVIDER_RESPONSE", "PROVIDER_RESPONSE_LIMIT"].includes(error.message)) throw error;
+    throw new Error("PROVIDER_REQUEST_FAILED");
+  } finally { reader.releaseLock(); }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) { bytes.set(part, offset); offset += part.byteLength; }
+  try {
+    const body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    if (!body || body.success !== true || body.result === undefined ||
+        (body.errors !== undefined && (!Array.isArray(body.errors) || body.errors.length))) throw new Error();
+    return body;
+  } catch { throw new Error("INVALID_PROVIDER_RESPONSE"); }
+}
 
 /**
  * Compare a pre-deletion ledger with provider-visible per-vault Workflow instances.
@@ -38,7 +77,9 @@ export async function compareWorkflowInventory({ manifest, accountId, token, wor
   const found = new Set();
   const untracked = [];
   const mismatched = [];
-  let inspected = 0, unattributed = 0, pages = 0;
+  let inspected = 0, unattributed = 0, pages = 0, scanLimited = false;
+  const paginationUncertain = [];
+  const budget = { used: 0 };
   const root = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workflows`;
   async function get(url) {
     let response;
@@ -48,13 +89,7 @@ export async function compareWorkflowInventory({ manifest, accountId, token, wor
         redirect: "error", signal: AbortSignal.timeout(15000),
       });
     } catch { throw new Error("PROVIDER_REQUEST_FAILED"); }
-    if (!response.ok) throw new Error("PROVIDER_REQUEST_FAILED");
-    try {
-      const body = await response.json();
-      if (body?.success !== true || body.result === undefined ||
-          (body.errors !== undefined && (!Array.isArray(body.errors) || body.errors.length))) throw new Error();
-      return body;
-    } catch { throw new Error("INVALID_PROVIDER_RESPONSE"); }
+    return readJson(response, budget);
   }
   for (const binding of BINDINGS) {
     const url = `${root}/${encodeURIComponent(configured.get(binding))}/instances`;
@@ -65,17 +100,21 @@ export async function compareWorkflowInventory({ manifest, accountId, token, wor
       const query = new URLSearchParams({ per_page: "100" });
       if (cursor) query.set("cursor", cursor);
       const body = await get(`${url}?${query}`);
-      if (!Array.isArray(body.result) || body.result.length > 100 || !body.result_info ||
-          typeof body.result_info !== "object" || Array.isArray(body.result_info) ||
-          (body.result_info.cursor !== undefined && body.result_info.cursor !== null && typeof body.result_info.cursor !== "string"))
+      const info = body.result_info;
+      if (!Array.isArray(body.result) || body.result.length > 100 ||
+          (info !== undefined && (info === null || typeof info !== "object" || Array.isArray(info))) ||
+          (info?.cursor !== undefined && info.cursor !== null && typeof info.cursor !== "string"))
         throw new Error("INVALID_PROVIDER_RESPONSE");
-      if (body.result.length === 100 && !body.result_info.cursor)
-        throw new Error("PROVIDER_PAGINATION_AMBIGUOUS");
+      // A valid response can omit result_info. Inspect the available page,
+      // but don't claim the cursor-less listing is a complete snapshot.
+      const uncertain = info === undefined || (body.result.length === 100 && !info.cursor);
+      if (uncertain) paginationUncertain.push(binding);
       for (const item of body.result) {
         const id = item?.id;
         if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(id) || ids.has(id)) throw new Error("INVALID_PROVIDER_RESPONSE");
         ids.add(id);
-        if (++inspected > maxInstances) throw new Error("PROVIDER_SCAN_LIMIT");
+        if (inspected >= maxInstances) { scanLimited = true; break; }
+        inspected++;
         const detail = await get(`${url}/${encodeURIComponent(id)}?simple=true`);
         const result = detail.result;
         if (!result || typeof result !== "object" || !STATES.has(result.status)) throw new Error("INVALID_PROVIDER_RESPONSE");
@@ -97,18 +136,20 @@ export async function compareWorkflowInventory({ manifest, accountId, token, wor
           : params.runId === id;
         if (!valid) mismatched.push({ binding, id });
       }
-      cursor = body.result_info.cursor || undefined;
+      if (scanLimited || uncertain) break;
+      cursor = info.cursor || undefined;
       if (cursor && (cursor.length > 4096 || cursors.has(cursor))) throw new Error("INVALID_PROVIDER_PAGINATION");
       if (cursor) cursors.add(cursor);
     } while (cursor);
+    if (scanLimited) break;
   }
   const ledgerNotObserved = [...expected.keys()].filter((key) => !found.has(key)).map((key) => {
     const [binding, id] = key.split(":");
     return { binding, id };
   });
   return {
-    status: "pending", inspected, unattributed, ledgerNotObserved,
+    status: "pending", inspected, unattributed, scanLimited, paginationUncertain, ledgerNotObserved,
     visibleNotInLedger: untracked, payloadMismatch: mismatched,
-    reasons: ["PROVIDER_SNAPSHOT_NOT_PROVEN", "DELAYED_CREATES_NOT_EXCLUDED", "RETAINED_AND_FLEET_WORKFLOWS_NOT_AUDITED"],
+    reasons: ["PROVIDER_SNAPSHOT_NOT_PROVEN", "DELAYED_CREATES_NOT_EXCLUDED", "RETAINED_AND_FLEET_WORKFLOWS_NOT_AUDITED", ...(paginationUncertain.length ? ["PROVIDER_PAGINATION_UNCERTAIN"] : []), ...(scanLimited ? ["PROVIDER_SCAN_LIMIT"] : [])],
   };
 }

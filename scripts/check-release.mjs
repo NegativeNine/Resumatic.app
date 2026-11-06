@@ -8,6 +8,7 @@ import { readConfig } from "./lib/config.mjs";
 import { configuredExtractors } from "./lib/extractor-routes.mjs";
 import { workflowInventoryAuditCapability } from "./lib/deletion-audit.mjs";
 import { extractionConfiguration } from "../test/extract-evals/configuration.mjs";
+import { modelIndependence } from "./lib/model-independence.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const required = [
   "models",
@@ -30,6 +31,15 @@ const report = {
 const hex256 = (value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 const count = (value, minimum) => Number.isSafeInteger(value) && value >= minimum;
 const finite = (value) => typeof value === "number" && Number.isFinite(value);
+/** Model-family labels are operator attestations, bound to the configured IDs. */
+async function validModelIndependence(models) {
+  try {
+    const { config } = await readConfig("production", join(root, "wrangler.jsonc"));
+    return modelIndependence(models, config.vars);
+  } catch {
+    return false;
+  }
+}
 /** Validate the aggregate returned by the full-corpus human-audited promotion assessor.
  * The protected environment remains an operator attestation: this cannot authenticate
  * the report, underlying dataset, consent or audit independently. */
@@ -143,6 +153,8 @@ try {
     )
       report.missing.push(key);
   }
+  if (!(await validModelIndependence(evidence.models)))
+    report.missing.push("MODEL_INDEPENDENCE");
   if (
     evidence.extraction?.trapLeaks !== 0 ||
     evidence.extraction?.unsupportedClaims !== 0 ||
