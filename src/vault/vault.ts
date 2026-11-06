@@ -3653,18 +3653,21 @@ export class Vault extends DurableObject<Env> {
   }
 
   async deletionProbe(): Promise<{ rows: number }> {
-    if (!this.initialised || !hasSchema(this.sql)) return { rows: 0 };
+    // An uninitialized or partially destroyed object can still contain rows.
+    // Inspect SQLite itself rather than inferring erasure from lifecycle flags.
     const tables = this.sql
       .exec<{ name: string }>(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`,
+        `SELECT name FROM sqlite_master WHERE type='table' AND substr(name,1,7) <> 'sqlite_'`,
       )
       .toArray();
     let rows = 0;
     for (const { name } of tables) {
-      if (/^[a-z_]+$/.test(name))
-        rows += this.sql
-          .exec<{ n: number }>(`SELECT COUNT(*) AS n FROM "${name}"`)
-          .one().n;
+      // Identifiers come from SQLite, but must still be quoted and escaped.
+      // Skipping an unfamiliar table would make the audit report a false zero.
+      const identifier = name.replaceAll('"', '""');
+      rows += this.sql
+        .exec<{ n: number }>(`SELECT COUNT(*) AS n FROM "${identifier}"`)
+        .one().n;
     }
     return { rows };
   }

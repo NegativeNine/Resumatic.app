@@ -64,6 +64,15 @@ try {
           ? result[key]
           : null;
     report.checks.retentionReviewed = result.retentionReviewed === true;
+    if (
+      result.billingEventCoverage?.scope !== "user_id_only" ||
+      result.billingEventCoverage?.complete !== false
+    )
+      throw new Error("INVALID_BILLING_EVENT_COVERAGE");
+    report.checks.billingEventCoverage = {
+      scope: "user_id_only",
+      complete: false,
+    };
     report.checks.workflowCoverage = workflowCoverage(
       result.workflowCoverage,
       probeInput,
@@ -73,6 +82,8 @@ try {
     if (countKeys.every((key) => report.checks[key] === 0)) {
       if (!report.checks.workflowCoverage.complete)
         throw new Error("WORKFLOW_INVENTORY_ATTESTATION_PENDING");
+      if (!report.checks.billingEventCoverage.complete)
+        throw new Error("BILLING_EVENT_ATTRIBUTION_PENDING");
       if (!report.checks.retentionReviewed)
         throw new Error("PLATFORM_RETENTION_REVIEW_PENDING");
       report.status = "passed";

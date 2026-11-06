@@ -219,6 +219,9 @@ maintenance.post("/deletion-audits/:id", async (c) => {
     vaultId: vid,
     userId: body.userId,
     directoryRows: counts.reduce((a, b) => a + b, 0),
+    // Unassociated Stripe events have a customer ID but no user ID. The
+    // probe cannot attribute those events after the customer mapping is gone.
+    billingEventCoverage: { scope: "user_id_only" as const, complete: false as const },
     vaultRows: probe.rows,
     r2Objects,
     oauthRecords: await oauthUserGrantCount(c.env, body.userId),

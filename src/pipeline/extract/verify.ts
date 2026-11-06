@@ -172,11 +172,19 @@ function supportsEndOnly(quote: string, end: string): boolean {
   return labeledEnds.length === 1 && dateMatches(labeledEnds[0]![1]!, end);
 }
 
-/** Semicolons may separate several roles on one converted source line. */
+/** A converted line may combine multiple roles or multiple spells at one role. */
 function ambiguousRoleDateLine(quote: string): boolean {
-  return quote.split(/\r?\n/u).some((line) =>
-    /[;；]/u.test(line) && /\b(?:19|20)\d{2}\b/u.test(line),
-  );
+  return quote.split(/\r?\n/u).some((line) => {
+    if (/[;；]/u.test(line) && /\b(?:19|20)\d{2}\b/u.test(line)) return true;
+    // Current ranges must count too: two roles can have the same starting
+    // year, so comparing only distinct years cannot identify their owner.
+    const ranges = line.matchAll(
+      /\b(?:[A-Za-zÀ-ž]{3,12}\.?\s+)?(?:19|20)\d{2}(?:[-/.](?:0?[1-9]|1[0-2]))?\s*(?:[-–—]|to|bis|hasta)\s*(?:(?:[A-Za-zÀ-ž]{3,12}\.?\s+)?(?:19|20)\d{2}(?:[-/.](?:0?[1-9]|1[0-2]))?|present|current|now|heute|actualidad)\b/giu,
+    );
+    let count = 0;
+    for (const _ of ranges) if (++count > 1) return true;
+    return false;
+  });
 }
 
 const SKILL_QUALIFIER =

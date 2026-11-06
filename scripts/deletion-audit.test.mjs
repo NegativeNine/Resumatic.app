@@ -105,7 +105,7 @@ test("zero results for supplied IDs stay pending without an independently comple
     body.vaultId = body.vaultId.toUpperCase();
     body.workflowInventoryComplete = true;
     await writeFile(join(dir, "manifest.json"), JSON.stringify(body));
-    const mock = `globalThis.fetch=async()=>new Response(JSON.stringify({vaultId:${JSON.stringify(body.vaultId.toLowerCase())},userId:${JSON.stringify(body.userId)},directoryRows:0,vaultRows:0,r2Objects:0,oauthRecords:0,activeRuns:0,retentionReviewed:true,workflowCoverage:{scope:'supplied_ids_only',checked:3,complete:false}}),{status:200});`;
+    const mock = `globalThis.fetch=async()=>new Response(JSON.stringify({vaultId:${JSON.stringify(body.vaultId.toLowerCase())},userId:${JSON.stringify(body.userId)},directoryRows:0,vaultRows:0,r2Objects:0,oauthRecords:0,activeRuns:0,retentionReviewed:true,billingEventCoverage:{scope:'user_id_only',complete:false},workflowCoverage:{scope:'supplied_ids_only',checked:3,complete:false}}),{status:200});`;
     await writeFile(join(dir, "fetch.mjs"), mock);
     const script = fileURLToPath(
       new URL("./audit-deletion.mjs", import.meta.url),
@@ -135,6 +135,10 @@ test("zero results for supplied IDs stay pending without an independently comple
       await readFile(join(dir, "deletion-audit.json"), "utf8"),
     );
     assert.equal(report.status, "pending");
+    assert.deepEqual(report.checks.billingEventCoverage, {
+      scope: "user_id_only",
+      complete: false,
+    });
     assert.deepEqual(report.reasons, [
       "WORKFLOW_INVENTORY_ATTESTATION_PENDING",
     ]);
@@ -143,6 +147,23 @@ test("zero results for supplied IDs stay pending without an independently comple
       checked: 3,
       complete: false,
     });
+    // An older or incompatible server must not silently omit the limitation.
+    await writeFile(join(dir, "fetch.mjs"), mock.replace(
+      "billingEventCoverage:{scope:'user_id_only',complete:false},",
+      "",
+    ));
+    const incompatible = spawnSync(
+      process.execPath,
+      ["--import", join(dir, "fetch.mjs"), script, "--manifest", join(dir, "manifest.json")],
+      {
+        cwd: dir,
+        env: { ...process.env, STAGING_URL: body.base, ACCESS_CLIENT_ID: "test", ACCESS_CLIENT_SECRET: "test" },
+        encoding: "utf8",
+      },
+    );
+    assert.equal(incompatible.status, 2);
+    const incompatibleReport = JSON.parse(await readFile(join(dir, "deletion-audit.json"), "utf8"));
+    assert.deepEqual(incompatibleReport.reasons, ["INVALID_BILLING_EVENT_COVERAGE"]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

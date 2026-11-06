@@ -27,6 +27,7 @@ describe("deletion Workflow probe", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       activeRuns: expected,
+      billingEventCoverage: { scope: "user_id_only", complete: false },
       workflowCoverage: { complete: false, scope: "supplied_ids_only" },
     });
   });
