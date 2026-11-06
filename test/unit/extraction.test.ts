@@ -510,6 +510,23 @@ describe("Clairic boundaries", () => {
     expect(parts.every((p) => p.text.length <= 15)).toBe(true);
     expect(() => chunks("x".repeat(16), 15)).toThrow("clairic_line_too_long");
   });
+  it("requires an explicit, correctly typed answer for every requested field", () => {
+    const fields = { title: { type: "text" as const }, skills: { type: "list" as const, items: "text" as const } };
+    const response = { answers: { title: { value: null }, skills: { value: [] } }, truncated: false };
+    expect(parseFieldResult(response, fields).answers.skills?.value).toEqual([]);
+    expect(() => parseFieldResult({ answers: { title: { value: null } }, truncated: false }, fields)).toThrow("field_response_incomplete");
+    expect(() => parseFieldResult({ answers: { title: {}, skills: { value: [] } }, truncated: false }, fields)).toThrow("field_response_shape");
+    expect(() => parseFieldResult({ answers: { title: { value: [] }, skills: { value: [] } }, truncated: false }, fields)).toThrow("field_response_shape");
+    expect(() => parseFieldResult({ answers: { title: { value: null }, skills: { value: [5] } }, truncated: false }, fields)).toThrow("field_response_shape");
+  });
+  it("fails the extraction rather than silently accepting a partial outline", async () => {
+    const models: Models = {
+      ...fakeModels(),
+      extractFields: async () => ({ answers: { job_headers: { value: [] } }, truncated: false }),
+    };
+    await expect(clairic.extract({ markdown: "Acme — Engineer", filename: "resume.md", referenceDate: "2026-11-05" }, models))
+      .rejects.toThrow("field_response_incomplete");
+  });
   it("assembles a role and a fact with absolute source spans", async () => {
     const header = "Acme — Engineer (2021 – Present)";
     const fact = "Built 12 services";
@@ -531,6 +548,10 @@ describe("Clairic boundaries", () => {
                 value: [header],
                 spans: [[0, header.length] as [number, number]],
               },
+              education_headers: { value: [] },
+              project_headers: { value: [] },
+              volunteer_headers: { value: [] },
+              skills: { value: [] },
             },
             truncated: false,
           };

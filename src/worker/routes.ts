@@ -622,6 +622,16 @@ api.get("/sources", async (c) =>
   c.json({ sources: await myVault(c).listSources(c.get("who")) }),
 );
 
+// One Vault turn keeps source state and proposed items from different moments
+// from being combined into a misleading ready/empty review screen.
+api.get("/v2/vault", async (c) => {
+  const response = unwrapResult(await durableReadResult(() => myVault(c), (v) => v.reviewView(c.get("who"))));
+  if (!response.body) throw new AppError("unavailable", "the review view is unavailable");
+  return new Response(guardedStream(response.body, () => myVault(c).checkSession(c.get("who"))), {
+    headers: { "content-type": "application/json", "cache-control": "private, no-store" },
+  });
+});
+
 api.post("/sources/:id/cancel", async (c) => {
   await myVault(c).cancelSource(c.get("who"), c.req.param("id"));
   return c.body(null, 202);
@@ -1330,7 +1340,7 @@ admin.post("/invites", JSON_LIMIT, async (c) => {
 });
 
 admin.delete("/invites/:email", async (c) => {
-  await directory(c.env).removeInvite(c.req.param("email"));
+  await directory(c.env).removeInviteV2(c.req.param("email"));
   return c.body(null, 204);
 });
 

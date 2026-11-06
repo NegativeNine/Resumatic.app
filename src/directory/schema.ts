@@ -156,6 +156,38 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
      WHEN OLD.state='swept' AND NOT EXISTS(SELECT 1 FROM account_final_sweeps a WHERE a.vault_id=OLD.vault_id AND a.user_id=OLD.user_id AND a.swept_at=OLD.swept_at AND a.phase='destroyed')
      BEGIN SELECT RAISE(ABORT, 'account_finalization_requires_destroy'); END`,
   ],
+  [
+    // Existing invites receive distinct incarnations. The trigger also covers
+    // older INSERT statements after this migration has been installed.
+    `ALTER TABLE invites ADD COLUMN generation TEXT`,
+    `UPDATE invites SET generation=lower(hex(randomblob(16))) WHERE generation IS NULL`,
+    `CREATE TRIGGER assign_invite_generation AFTER INSERT ON invites WHEN NEW.generation IS NULL
+     BEGIN UPDATE invites SET generation=lower(hex(randomblob(16))) WHERE email=NEW.email; END`,
+    // INSERT OR IGNORE is used by older and current admin paths. A repeated
+    // issuance is a new grant even while its previous row still exists.
+    `CREATE TRIGGER rotate_reissued_invite BEFORE INSERT ON invites WHEN EXISTS(SELECT 1 FROM invites WHERE email=NEW.email)
+     BEGIN UPDATE invites SET generation=lower(hex(randomblob(16))),created_at=NEW.created_at WHERE email=NEW.email; END`,
+    `CREATE TABLE invite_delete_permits (email TEXT PRIMARY KEY)`,
+    // An older alarm must not remove a reissued invite without the captured
+    // generation. Current administrative revocation installs a permit too.
+    `CREATE TRIGGER guard_invite_delete BEFORE DELETE ON invites
+     WHEN NOT EXISTS(SELECT 1 FROM invite_delete_permits WHERE email=OLD.email)
+     BEGIN SELECT RAISE(ABORT, 'invite_delete_permit_required'); END`,
+    // Closed receipts keep only the random operation ID, fencing late RPCs
+    // without retaining the removed account's email, user ID or vault ID.
+    `CREATE TABLE invite_deletion_receipts (
+       operation_id TEXT PRIMARY KEY, user_id TEXT, vault_id TEXT, email TEXT, generation TEXT,
+       state TEXT NOT NULL CHECK(state IN ('captured','removed','closed'))
+     )`,
+    `CREATE TABLE account_invite_deletions (user_id TEXT PRIMARY KEY, vault_id TEXT NOT NULL UNIQUE, operation_id TEXT NOT NULL UNIQUE)`,
+    // A legacy finalizer cannot discard the account link before the global
+    // invite receipt has been closed and redacted, even when DELETE matched no invite.
+    `ALTER TABLE account_final_sweeps ADD COLUMN invite_closed INTEGER NOT NULL DEFAULT 0 CHECK(invite_closed IN (0,1))`,
+    `DROP TRIGGER guard_account_finalization`,
+    `CREATE TRIGGER guard_account_finalization BEFORE DELETE ON vaults
+     WHEN OLD.state='swept' AND NOT EXISTS(SELECT 1 FROM account_final_sweeps a WHERE a.vault_id=OLD.vault_id AND a.user_id=OLD.user_id AND a.swept_at=OLD.swept_at AND a.phase='destroyed' AND a.invite_closed=1)
+     BEGIN SELECT RAISE(ABORT, 'account_finalization_requires_destroy'); END`,
+  ],
 ];
 
 export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T, global = false, shard = false): void {

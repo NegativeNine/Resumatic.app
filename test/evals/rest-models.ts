@@ -221,6 +221,7 @@ export function restModels(
           "fields",
           Object.keys(fields).length,
         ),
+        fields,
       );
     },
     async embed(texts, callOpts) {

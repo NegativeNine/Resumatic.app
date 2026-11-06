@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { inspectPilotDeployment, validPilotObservation } from "./lib/pilot-deployment.mjs";
+import { inspectPilotDeployment, preflightPilotDeployment, validPilotObservation } from "./lib/pilot-deployment.mjs";
 import { runPilotInspection } from "./inspect-pilot-deployment.mjs";
 import { SharedPilotBudget } from "../test/evals/shared-pilot.mjs";
 
@@ -10,7 +10,7 @@ const deployment = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const nonce = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const token = "synthetic-token-never-in-output";
 const secret = "synthetic-pilot-key-for-test-only-1234567890";
-const origin = "https://staging.example.test";
+const origin = "https://resumatic-staging.account-example.workers.dev";
 const observation = {
   path: "distill", vaultId: "c".repeat(64), runId: "synthetic-run", step: "convert",
   workerVersion: version, runtimeVersion: version,
@@ -54,10 +54,14 @@ async function probe(options = {}) {
 const provider = (options = {}) => {
   const calls = [];
   let deployments = 0;
+  let subdomains = 0;
   const fetcher = async (url, init) => {
     calls.push({ url, init });
     if (options.failure) throw new Error(`private ${token}`);
     if (options.oversized) return new Response("x".repeat(512 * 1024 + 1), { status: 200 });
+    if (url.endsWith("/workers/subdomain")) return respond({ success: true, result: { subdomain:
+      ++subdomains === 1 ? (options.subdomainBefore ?? "account-example") : (options.subdomainAfter ?? "account-example") } });
+    if (url.endsWith("/scripts/resumatic-staging/subdomain")) return respond({ success: true, result: { enabled: options.enabled ?? true } });
     if (url.includes("/versions/")) return respond(options.version ?? config());
     return respond(++deployments === 1 ? (options.before ?? active()) : (options.after ?? active()));
   };
@@ -77,22 +81,117 @@ test("consumes the live one-use probe and compares a stable single-version deplo
   assert.equal(result.deployment, "single_version_observed");
   assert.equal(result.bindings, "expected_bindings_observed");
   assert.equal(result.observation, "https_probe_version_matches");
+  assert.equal(result.origin, "workers_dev_observed");
   assert.ok(result.pending.includes("staging_url_account_binding_unverified"));
   assert.ok(result.pending.includes("worker_code_revision_unverified"));
   assert.ok(result.pending.includes("workflow_and_old_version_drain_unverified"));
   assert.ok(result.pending.includes("provider_spend_bound_unverified"));
   assert.ok(result.pending.includes("test_configuration_override"));
   assert.equal(result.versionId, version);
-  assert.equal(providerCalls.length, 3);
+  assert.equal(providerCalls.length, 7);
   assert.equal(pilotCalls.filter((c) => c.url.endsWith("/identity/consume")).length, 1);
   for (const call of providerCalls) {
-    assert.ok(call.url.startsWith(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/resumatic-staging/`));
+    assert.ok(call.url.startsWith(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/`));
     assert.equal(call.init.method, "GET");
     assert.equal(call.init.redirect, "error");
     assert.equal(call.init.headers.authorization, `Bearer ${token}`);
   }
   assert.doesNotMatch(JSON.stringify(result), /synthetic-token|synthetic-pilot-key|synthetic-run|cccccccc/);
   await assert.rejects(pilot.consumeIdentity(nonce, observation.runId), /shared_pilot_identity_invalid/);
+});
+
+test("observes an enabled exact workers.dev origin for the configured account and Worker", async () => {
+  const workersOrigin = "https://resumatic-staging.account-example.workers.dev";
+  const workersEnv = { ...env, STAGING_URL: workersOrigin };
+  const workersDeps = { readConfig: async () => ({ name: "resumatic-staging", config: { vars: {
+    CF_ACCOUNT_ID: account, APP_ORIGIN: workersOrigin,
+  } } }) };
+  const calls = [];
+  const fetcher = async (url, init) => {
+    calls.push({ url, init });
+    if (url.endsWith("/workers/subdomain")) return respond({ success: true, result: { subdomain: "account-example" } });
+    if (url.endsWith("/scripts/resumatic-staging/subdomain")) return respond({ success: true, result: { enabled: true } });
+    if (url.includes("/versions/")) return respond(config());
+    return respond(active());
+  };
+  const result = await preflightPilotDeployment({ env: workersEnv, fetcher }, workersDeps);
+  assert.equal(result.origin, "workers_dev_observed");
+  assert.equal(result.deployment, "single_version_observed");
+  assert.equal(result.bindings, "expected_bindings_observed");
+  assert.equal(result.status, "pending");
+  assert.ok(result.pending.includes("staging_url_account_binding_unverified"));
+  assert.ok(calls.every((call) => call.init.method === "GET" && call.init.redirect === "error"));
+  assert.doesNotMatch(JSON.stringify(result), /synthetic-token|account-example/);
+});
+
+test("custom domains remain pending even when provider metadata claims a matching Worker", async () => {
+  const customOrigin = "https://staging.example.test";
+  const customEnv = { ...env, STAGING_URL: customOrigin, PILOT_BUDGET_KEY: secret };
+  const customDeps = { readConfig: async () => ({ name: "resumatic-staging", config: { vars: {
+    CF_ACCOUNT_ID: account, APP_ORIGIN: customOrigin,
+  } } }) };
+  let providerCalls = 0, pilotCalls = 0;
+  const providerFetch = async () => {
+    providerCalls++;
+    return respond({ success: true, result: [{ id: "domain-1", zone_id: "b".repeat(32), enabled: true,
+      hostname: "staging.example.test", service: "resumatic-staging", environment: "production" }],
+      result_info: { page: 1, count: 1, total_count: 1, total_pages: 1 } });
+  };
+  const result = await runPilotInspection({ args: ["--path", "distill", "--vault-id", observation.vaultId],
+    env: customEnv, input: { isTTY: true }, output: { isTTY: true, write() {} }, providerFetch,
+    pilotFetch: async () => { pilotCalls++; throw new Error("unexpected"); } }, customDeps);
+  assert.equal(result.origin, "unverified");
+  assert.ok(result.pending.includes("staging_origin_unverified"));
+  assert.equal(providerCalls, 0);
+  assert.equal(pilotCalls, 0);
+  const directCalls = [];
+  const directPilot = new SharedPilotBudget(customOrigin, secret, async (url) => {
+    directCalls.push(url);
+    return respond({ nonce, expiresAt: Date.now() + 60_000 }, 201);
+  });
+  await directPilot.beginIdentity(observation.path, observation.vaultId);
+  const customDirect = await inspectPilotDeployment({ pilot: directPilot, nonce, runId: observation.runId,
+    env: customEnv, fetcher: providerFetch }, customDeps);
+  assert.ok(customDirect.pending.includes("staging_origin_unverified"));
+  assert.equal(directCalls.length, 1); // the setup's begin call, before inspection
+  assert.equal(providerCalls, 0);
+  const p = await probe();
+  const c = provider({ subdomainBefore: "other-account" });
+  const direct = await inspectPilotDeployment({ pilot: p.pilot, nonce, runId: p.runId, env, fetcher: c.fetcher }, deps);
+  assert.ok(direct.pending.includes("staging_origin_unverified"));
+  assert.equal(p.calls.length, 1); // only the setup's begin call, before inspection
+  const changed = provider({ subdomainAfter: "other-account" });
+  const changedResult = await runPilotInspection({ args: ["--path", "distill", "--vault-id", observation.vaultId],
+    env: { ...env, PILOT_BUDGET_KEY: secret }, input: { isTTY: true }, output: { isTTY: true, write() {} },
+    providerFetch: changed.fetcher, pilotFetch: async () => { pilotCalls++; throw new Error("unexpected"); } }, deps);
+  assert.ok(changedResult.pending.includes("staging_origin_changed_or_unavailable"));
+  assert.equal(pilotCalls, 0);
+});
+
+test("workers.dev origin requires the exact enabled account and Worker", async () => {
+  for (const [workersOrigin, accountLabel, enabled] of [
+    ["https://resumatic-staging.account-example.workers.dev", "other-account", true],
+    ["https://resumatic-staging.account-example.workers.dev", "account-example", false],
+    ["https://preview-resumatic-staging.account-example.workers.dev", "account-example", true],
+    ["https://resumatic-staging.account-example.workers.dev:8443", "account-example", true],
+  ]) {
+    const workersEnv = { ...env, STAGING_URL: workersOrigin, PILOT_BUDGET_KEY: secret };
+    const workersDeps = { readConfig: async () => ({ name: "resumatic-staging", config: { vars: {
+      CF_ACCOUNT_ID: account, APP_ORIGIN: workersOrigin,
+    } } }) };
+    const fetcher = async (url) => {
+      if (url.endsWith("/workers/subdomain")) return respond({ success: true, result: { subdomain: accountLabel } });
+      if (url.endsWith("/scripts/resumatic-staging/subdomain")) return respond({ success: true, result: { enabled } });
+      if (url.includes("/versions/")) return respond(config());
+      return respond(active());
+    };
+    let pilotCalls = 0;
+    const result = await runPilotInspection({ args: ["--path", "distill", "--vault-id", observation.vaultId],
+      env: workersEnv, input: { isTTY: true }, output: { isTTY: true, write() {} },
+      providerFetch: fetcher, pilotFetch: async () => { pilotCalls++; throw new Error("unexpected"); } }, workersDeps);
+    assert.equal(result.origin, "unverified");
+    assert.equal(pilotCalls, 0);
+  }
 });
 
 test("rejects untrusted claims, invalid config and mismatched origins without consuming a challenge", async () => {
@@ -128,7 +227,7 @@ test("rejects untrusted claims, invalid config and mismatched origins without co
 test("does not consume a waiting challenge or one whose provider deployment is split", async () => {
   const waiting = await inspect({ waiting: true });
   assert.ok(waiting.result.pending.includes("probe_not_observed"));
-  assert.equal(waiting.providerCalls.length, 0);
+  assert.equal(waiting.providerCalls.length, 2); // origin is checked before sending the key
   assert.equal(waiting.pilotCalls.filter((c) => c.url.endsWith("/identity/consume")).length, 0);
   const split = active();
   split.result.deployments[0].versions = [
@@ -202,7 +301,7 @@ test("interactive wrapper opens and consumes only its own challenge, never start
   assert.equal(result.status, "pending");
   assert.equal(result.observation, "https_probe_version_matches");
   assert.equal(waits, 1);
-  assert.equal(providerCalls.calls.length, 6);
+  assert.equal(providerCalls.calls.length, 14);
   assert.deepEqual(pilotCalls.map((c) => new URL(c.url).pathname), [
     "/auth/test/pilot-budget/identity/begin",
     "/auth/test/pilot-budget/identity/status",

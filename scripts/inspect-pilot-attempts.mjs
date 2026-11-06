@@ -7,7 +7,8 @@ import { reconcilePilotAttempts } from "./lib/pilot-reconcile.mjs";
 
 export async function inspectPilotAttempts({ env = process.env, providerFetch = fetch, pilotFetch = fetch } = {}, dependencies = {}) {
   const preflight = await preflightPilotDeployment({ env, fetcher: providerFetch }, dependencies);
-  if (preflight.deployment !== "single_version_observed" || preflight.bindings !== "expected_bindings_observed") return preflight;
+  if (preflight.deployment !== "single_version_observed" || preflight.bindings !== "expected_bindings_observed" ||
+      preflight.origin !== "workers_dev_observed") return preflight;
   try {
     const pilot = new SharedPilotBudget(env.STAGING_URL, env.PILOT_BUDGET_KEY, pilotFetch);
     const { totals, attempts } = await pilot.auditAttempts();

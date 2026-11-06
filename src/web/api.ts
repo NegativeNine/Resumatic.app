@@ -162,6 +162,7 @@ export const api = {
     request<void>("POST", "/api/account/sign-out-everywhere"),
 
   uploadSource,
+  reviewView: () => request<{ sources: SourceView[]; roles: RoleView[]; facts: FactView[] }>("GET", "/api/v2/vault"),
   sources: () => request<{ sources: SourceView[] }>("GET", "/api/sources"),
   retryRun: (runId: string) =>
     generate<{ runId: string; targetId: string }>(`/api/runs/${encodeURIComponent(runId)}/retry`, undefined, ["runId", "targetId"]),

@@ -53,10 +53,21 @@ export function fieldRequest(
   return { model: "clairic", state, fields, reference_date: referenceDate };
 }
 
-export function parseFieldResult(raw: unknown): FieldResult {
+/** Reject incomplete provider responses; an explicit null or empty list is a valid answer. */
+export function parseFieldResult(raw: unknown, fields?: Record<string, FieldSpec>): FieldResult {
   const result = FieldResultSchema.safeParse(raw);
   if (!result.success) throw new Error("field_response_shape");
   if (result.data.truncated) throw new Error("field_response_truncated");
+  if (fields) for (const [name, field] of Object.entries(fields)) {
+    if (!Object.hasOwn(result.data.answers, name)) throw new Error("field_response_incomplete");
+    const answer = result.data.answers[name]!;
+    const value = answer.value;
+    if (value === undefined || (value !== null && (
+      field.type === "list" ? !Array.isArray(value) || value.some((item) => typeof item !== "string") :
+      field.type === "number" ? typeof value !== "number" || !Number.isFinite(value) :
+      typeof value !== "string"
+    ))) throw new Error("field_response_shape");
+  }
   return result.data;
 }
 
@@ -87,5 +98,5 @@ export async function extractFields(
       }),
     (response) => (response as { usage?: unknown })?.usage,
   );
-  return parseFieldResult(raw);
+  return parseFieldResult(raw, fields);
 }

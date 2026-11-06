@@ -1,4 +1,5 @@
 import type { InterviewAnswer } from "../shared/interview";
+import { reviewViewStream } from "./review-stream";
 import {
   refinementCacheKey,
   cacheRefinement,
@@ -951,6 +952,24 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     await this.reconcileStaleSources();
     this.requireOwner(who);
+    return this.readSources();
+  }
+
+  /** Capture the source-review screen after reconciliation, in one object turn. */
+  async reviewView(who: Who): Promise<Response> {
+    this.requireOwner(who);
+    await this.rearmPendingRuns();
+    this.requireOwner(who);
+    await this.reconcileStaleSources();
+    this.requireOwner(who);
+    const view = this.ctx.storage.transactionSync(() => {
+      this.requireOwner(who);
+      return { sources: this.readSources(), roles: this.readRoles(), facts: this.readFacts() };
+    });
+    return new Response(reviewViewStream(view), { headers: { "content-type": "application/json", "cache-control": "private, no-store" } });
+  }
+
+  private readSources(): SourceView[] {
     return this.sql
       .exec<{
         id: string;

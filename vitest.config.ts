@@ -72,6 +72,10 @@ export default defineConfig({
             ...(process.env.RESUMATIC_PLACEMENT_DIAGNOSTIC === "1"
               ? ["test/diagnostics/*.diagnostic.ts"]
               : []),
+            // Large streamed RPC test uses substantial memory and runs on request.
+            ...(process.env.RESUMATIC_REVIEW_STREAM_STRESS === "1"
+              ? ["test/diagnostics/review-stream.stress.ts"]
+              : []),
           ],
           testTimeout: 30_000,
         },

@@ -47,7 +47,21 @@ function removeExportCacheMigration(sql: SqlStorage): void {
   sql.exec(`DROP TABLE export_cache`);
 }
 
+function removeInviteDeletionMigration(sql: SqlStorage): void {
+  sql.exec(`DROP TRIGGER guard_account_finalization`);
+  sql.exec(`ALTER TABLE account_final_sweeps DROP COLUMN invite_closed`);
+  for (const trigger of ["assign_invite_generation", "rotate_reissued_invite", "guard_invite_delete"])
+    sql.exec(`DROP TRIGGER ${trigger}`);
+  for (const table of ["invite_delete_permits", "invite_deletion_receipts", "account_invite_deletions"])
+    sql.exec(`DROP TABLE ${table}`);
+  sql.exec(`ALTER TABLE invites DROP COLUMN generation`);
+  sql.exec(`CREATE TRIGGER guard_account_finalization BEFORE DELETE ON vaults
+    WHEN OLD.state='swept' AND NOT EXISTS(SELECT 1 FROM account_final_sweeps a WHERE a.vault_id=OLD.vault_id AND a.user_id=OLD.user_id AND a.swept_at=OLD.swept_at AND a.phase='destroyed')
+    BEGIN SELECT RAISE(ABORT, 'account_finalization_requires_destroy'); END`);
+}
+
 function removeFinalSweepMigration(sql: SqlStorage): void {
+  removeInviteDeletionMigration(sql);
   sql.exec(`DROP TRIGGER guard_account_finalization`);
   sql.exec(`DROP TABLE account_final_sweeps`);
 }
@@ -100,6 +114,28 @@ function removeGlobalAuthMigration(sql: SqlStorage): void {
 }
 
 describe("atomic schema migrations", () => {
+  it("installs invite incarnation and guards atomically while preserving legacy invites", async () => {
+    const stub = env.DIRECTORY.getByName(`invite-migration-${crypto.randomUUID()}`);
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      removeInviteDeletionMigration(sql);
+      sql.exec(`INSERT INTO invites(email,created_at) VALUES ('legacy@example.test',1)`);
+      const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((q) => q.includes("ALTER TABLE invites ADD COLUMN generation")));
+      expect(previous).toBeGreaterThan(0);
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrateDirectory(failAtTrigger(sql, "rotate_reissued_invite"), tx)).toThrow(/synthetic migration interruption/);
+      expect(sql.exec<{ name: string }>(`PRAGMA table_info(invites)`).toArray().some((c) => c.name === "generation")).toBe(false);
+      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(previous));
+      migrateDirectory(sql, tx);
+      const first = sql.exec<{generation: string}>(`SELECT generation FROM invites WHERE email='legacy@example.test'`).one().generation;
+      expect(first).toMatch(/^[a-f0-9]{32}$/);
+      // This is the exact INSERT used by older runtimes; a reissue rotates it.
+      sql.exec(`INSERT OR IGNORE INTO invites(email,created_at) VALUES ('legacy@example.test',2)`);
+      expect(sql.exec<{generation: string}>(`SELECT generation FROM invites WHERE email='legacy@example.test'`).one().generation).not.toBe(first);
+      expect(() => sql.exec(`DELETE FROM invites WHERE email='legacy@example.test'`)).toThrow(/invite_delete_permit_required/);
+    });
+  });
   it("installs the account final-sweep table and guard atomically without inventing legacy proofs", async () => {
     const stub = env.DIRECTORY.getByName(`final-sweep-migration-${crypto.randomUUID()}`);
     await runInDurableObject(stub, (_instance, state) => {

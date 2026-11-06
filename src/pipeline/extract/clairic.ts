@@ -130,7 +130,7 @@ export const clairic: Extractor = {
     ): Promise<FieldResult> => {
       if (++calls > 64) throw new Error("clairic_call_limit");
       return parseFieldResult(
-        await models.extractFields!(text, fields, input.referenceDate),
+        await models.extractFields!(text, fields, input.referenceDate), fields,
       );
     };
     const result: RawExtraction = { roles: [], facts: [] };

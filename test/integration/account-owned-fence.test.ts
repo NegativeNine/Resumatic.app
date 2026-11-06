@@ -176,7 +176,7 @@ it("resumes finalization after an acknowledged destroy and a later control-plane
     local.SWEEP_DELAY_MS = "0";
     local.DIRECTORY = {
       idFromName: (name: string) => original.idFromName(name),
-      get: () => ({ removeInvite: async () => { throw new Error("synthetic directory outage"); } }),
+      get: () => ({ captureInviteForDeletion: (...args: Parameters<ReturnType<typeof original.get>["captureInviteForDeletion"]>) => original.get(original.idFromName("global")).captureInviteForDeletion(...args), removeCapturedInvite: async () => { throw new Error("synthetic directory outage"); } }),
     } as unknown as typeof original;
     try {
       await instance.alarm();

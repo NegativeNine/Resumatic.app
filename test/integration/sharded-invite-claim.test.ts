@@ -56,7 +56,7 @@ describe("sharded account invitation claims", () => {
     const initial = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
     const account = await initial.directory.signIn(initial.input);
     await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, initial.input.shardClaimToken);
-    await global.removeInvite(p.email);
+    await global.removeInviteV2(p.email);
     const returning = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "1" }, p);
     expect(await returning.directory.signIn(returning.input)).toEqual(account);
   }, 30_000);

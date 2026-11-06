@@ -45,7 +45,7 @@ describe("global-home invite authorization", () => {
     const global = directory(env);
     await global.addInvite(p.email);
     const account = await global.signIn(p);
-    await global.removeInvite(p.email);
+    await global.removeInviteV2(p.email);
     expect(await global.signIn(p)).toEqual(account);
   }, 30_000);
 

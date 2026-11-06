@@ -56,6 +56,8 @@ type VaultDbRow = {
   updated_at: number;
   final_generation: string | null;
   final_phase: string | null;
+  invite_closed: number | null;
+  invite_operation: string | null;
 };
 
 type RetiredVaultDbRow = {
@@ -65,6 +67,7 @@ type RetiredVaultDbRow = {
   swept_at: number | null;
   generation: string | null;
 };
+type DeletingOwner = { user_id: string; email: string; operation_id: string };
 
 const validSweepTime = (value: number | null): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0;
@@ -614,6 +617,8 @@ export class Directory extends DurableObject<Env> {
       "vault_replacements",
       "retired_vaults",
       "account_final_sweeps",
+      "invite_deletion_receipts",
+      "account_invite_deletions",
       "identity_homes",
       "placement_finalizations",
       "placement_receipts",
@@ -674,6 +679,18 @@ export class Directory extends DurableObject<Env> {
     count += this.sql.exec<{ n: number }>(
       `SELECT COUNT(*) AS n FROM account_final_sweeps WHERE vault_id=? AND user_id<>?`, vaultId, userId,
     ).one().n;
+    count += this.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM invite_deletion_receipts WHERE vault_id=? AND user_id<>?`, vaultId, userId,
+    ).one().n;
+    count += this.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM account_invite_deletions WHERE vault_id=? AND user_id<>?`, vaultId, userId,
+    ).one().n;
+    // An unattributed open receipt, or a supposedly closed receipt that still
+    // carries identity, prevents any account audit from claiming zero.
+    count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invite_deletion_receipts
+      WHERE (state IN ('captured','removed') AND (user_id IS NULL OR user_id='' OR vault_id IS NULL OR vault_id='' OR email IS NULL OR email=''))
+         OR (state='closed' AND (user_id IS NOT NULL OR vault_id IS NOT NULL OR email IS NOT NULL OR generation IS NOT NULL))`).one().n;
+    count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invite_delete_permits`).one().n;
     return count;
   }
   async forgetIdentityHome(
@@ -954,6 +971,27 @@ export class Directory extends DurableObject<Env> {
       ).toArray();
       if (expected.length !== 1)
         throw new AppError("conflict", "the account vault has changed");
+      const owner = this.sql.exec<{ email: string; state: string }>(`SELECT email,state FROM users WHERE user_id=?`, userId).toArray()[0];
+      if (!owner || !["active", "deleting"].includes(owner.state))
+        throw new AppError("unavailable", "account deletion requires review");
+      let invite = this.sql.exec<{ vault_id: string; operation_id: string }>(
+        `SELECT vault_id,operation_id FROM account_invite_deletions WHERE user_id=?`, userId,
+      ).toArray()[0];
+      if (!invite) {
+        // A deletion already in progress before this migration has no safe
+        // capture time: do not adopt a possibly reissued invitation.
+        if (owner.state !== "active") throw new AppError("unavailable", "account invitation requires review");
+        invite = { vault_id: expectedVaultId, operation_id: crypto.randomUUID() };
+        this.sql.exec(`INSERT INTO account_invite_deletions(user_id,vault_id,operation_id) VALUES (?,?,?)`, userId, expectedVaultId, invite.operation_id);
+      } else if (invite.vault_id !== expectedVaultId || owner.state !== "deleting") {
+        throw new AppError("unavailable", "account invitation requires review");
+      }
+      // For a global-home account, capture and mark deletion atomically in
+      // this one object. A sharded home captures immediately after commit.
+      if (this.isGlobal) {
+        const normalized = this.inviteDeletionIdentity(invite.operation_id, userId, expectedVaultId, owner.email);
+        this.captureInviteRow(invite.operation_id, userId, expectedVaultId, normalized);
+      }
       const active = this.sql.exec<{ vault_id: string }>(
         `SELECT vault_id FROM vaults WHERE user_id = ? AND state IN ('active', 'deleting')`,
         userId,
@@ -980,13 +1018,14 @@ export class Directory extends DurableObject<Env> {
       const existing = await this.ctx.storage.getAlarm();
       if (existing === null || existing > now + RETRY_MS)
         await this.ctx.storage.setAlarm(now + RETRY_MS);
-      return { active: [...new Set(active.map((v) => v.vault_id))], targets: [...new Set(targets.map((v) => v.vault_id))] };
+      return { active: [...new Set(active.map((v) => v.vault_id))], targets: [...new Set(targets.map((v) => v.vault_id))], inviteOperation: invite.operation_id, email: owner.email };
     });
     // A preparing replacement may still be copying files. Revoke its Vault
     // as well as the active one immediately, rather than waiting for the
     // retirement alarm. The alarm remains responsible for retry and cleanup.
     // Attempt every Vault even if another one is unavailable.
     const results = await Promise.allSettled([
+      ...(this.isGlobal ? [] : [directory(this.env).captureInviteForDeletion(toQuiesce.inviteOperation, userId, expectedVaultId, toQuiesce.email)]),
       ...toQuiesce.active.map(async (id) => this.env.VAULT.get(this.env.VAULT.idFromString(id)).quiesceForAccountDeletion(userId)),
       ...toQuiesce.targets.map(async (id) => this.env.VAULT.get(this.env.VAULT.idFromString(id)).quiesceForRetirement(userId)),
     ]);
@@ -1023,11 +1062,100 @@ export class Directory extends DurableObject<Env> {
     );
   }
 
-  async removeInvite(email: string): Promise<void> {
-    this.sql.exec(
-      `DELETE FROM invites WHERE email = ?`,
-      email.trim().toLowerCase(),
-    );
+  /** Legacy callers cannot prove whether this is an admin request or a stale finalizer. */
+  async removeInvite(_email: string): Promise<void> {
+    throw new AppError("unavailable", "invitation service is updating; try again");
+  }
+
+  /** A distinct RPC makes older unconditional finalizers fail closed. */
+  async removeInviteV2(email: string): Promise<void> {
+    const normalized = email.trim().toLowerCase();
+    this.ctx.storage.transactionSync(() => this.deleteInvite(normalized));
+  }
+
+  /** Execute only inside the transaction that authorized this particular deletion. */
+  private deleteInvite(email: string, generation?: string): void {
+    this.sql.exec(`INSERT INTO invite_delete_permits(email) VALUES (?)`, email);
+    try {
+      if (generation === undefined) this.sql.exec(`DELETE FROM invites WHERE email=?`, email);
+      else this.sql.exec(`DELETE FROM invites WHERE email=? AND generation=?`, email, generation);
+    } finally {
+      this.sql.exec(`DELETE FROM invite_delete_permits WHERE email=?`, email);
+    }
+  }
+
+  private inviteDeletionIdentity(operationId: string, userId: string, vaultId: string, email: string): string {
+    if (!this.isGlobal || typeof operationId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operationId) ||
+        typeof userId !== "string" || !userId || userId.length > 100 ||
+        typeof vaultId !== "string" || !/^[a-f0-9]{64}$/i.test(vaultId) ||
+        typeof email !== "string" || !email.trim() || email.length > 320)
+      throw new AppError("invalid", "invalid invite deletion");
+    return email.trim().toLowerCase();
+  }
+
+  private requireRedactedInviteReceipt(row: { user_id: string | null; vault_id: string | null; email: string | null; generation: string | null }): void {
+    if (row.user_id !== null || row.vault_id !== null || row.email !== null || row.generation !== null)
+      throw new AppError("unavailable", "invite deletion receipt requires review");
+  }
+
+  /** Capture once; a retry must never adopt an invite issued after the first capture. */
+  async captureInviteForDeletion(operationId: string, userId: string, vaultId: string, email: string): Promise<void> {
+    const normalized = this.inviteDeletionIdentity(operationId, userId, vaultId, email);
+    this.ctx.storage.transactionSync(() => this.captureInviteRow(operationId, userId, vaultId, normalized));
+  }
+
+  /** Caller must already hold the transaction containing its ownership check. */
+  private captureInviteRow(operationId: string, userId: string, vaultId: string, normalized: string): void {
+    const existing = this.sql.exec<{ user_id: string | null; vault_id: string | null; email: string | null; generation: string | null; state: string }>(
+      `SELECT user_id,vault_id,email,generation,state FROM invite_deletion_receipts WHERE operation_id=?`, operationId,
+    ).toArray()[0];
+    if (existing) {
+      if (existing.state === "closed") { this.requireRedactedInviteReceipt(existing); return; }
+      if (existing.user_id !== userId || existing.vault_id !== vaultId || existing.email !== normalized || !["captured", "removed"].includes(existing.state))
+        throw new AppError("conflict", "invite deletion changed; retry cleanup");
+      return;
+    }
+    const invite = this.sql.exec<{ generation: string | null }>(`SELECT generation FROM invites WHERE email=?`, normalized).toArray()[0];
+    if (invite && (typeof invite.generation !== "string" || !/^[a-f0-9]{32}$/.test(invite.generation)))
+      throw new AppError("unavailable", "invite requires operator review");
+    this.sql.exec(`INSERT INTO invite_deletion_receipts(operation_id,user_id,vault_id,email,generation,state) VALUES (?,?,?,?,?,'captured')`,
+      operationId, userId, vaultId, normalized, invite?.generation ?? null);
+  }
+
+  /** Remove only the captured incarnation; a later invitation must survive. */
+  async removeCapturedInvite(operationId: string, userId: string, vaultId: string, email: string): Promise<void> {
+    const normalized = this.inviteDeletionIdentity(operationId, userId, vaultId, email);
+    this.ctx.storage.transactionSync(() => {
+      const row = this.sql.exec<{ user_id: string | null; vault_id: string | null; email: string | null; generation: string | null; state: string }>(
+        `SELECT user_id,vault_id,email,generation,state FROM invite_deletion_receipts WHERE operation_id=?`, operationId,
+      ).toArray()[0];
+      if (!row) throw new AppError("unavailable", "invite deletion requires capture");
+      if (row.state === "closed") { this.requireRedactedInviteReceipt(row); return; }
+      if (row.user_id !== userId || row.vault_id !== vaultId || row.email !== normalized || !["captured", "removed"].includes(row.state))
+        throw new AppError("conflict", "invite deletion changed; retry cleanup");
+      if (row.state === "removed") return;
+      if (row.generation !== null) {
+        if (!/^[a-f0-9]{32}$/.test(row.generation)) throw new AppError("unavailable", "invite requires operator review");
+        this.deleteInvite(normalized, row.generation);
+      }
+      this.sql.exec(`UPDATE invite_deletion_receipts SET state='removed' WHERE operation_id=? AND state='captured'`, operationId);
+    });
+  }
+
+  /** Preserve a non-identifying tombstone against late capture or removal RPCs. */
+  async closeInviteDeletion(operationId: string, userId: string, vaultId: string, email: string): Promise<void> {
+    const normalized = this.inviteDeletionIdentity(operationId, userId, vaultId, email);
+    this.ctx.storage.transactionSync(() => {
+      const row = this.sql.exec<{ user_id: string | null; vault_id: string | null; email: string | null; generation: string | null; state: string }>(
+        `SELECT user_id,vault_id,email,generation,state FROM invite_deletion_receipts WHERE operation_id=?`, operationId,
+      ).toArray()[0];
+      if (!row) throw new AppError("unavailable", "invite deletion requires capture");
+      if (row.state === "closed") { this.requireRedactedInviteReceipt(row); return; }
+      if (row.user_id !== userId || row.vault_id !== vaultId || row.email !== normalized || row.state !== "removed")
+        throw new AppError("conflict", "invite deletion changed; retry cleanup");
+      this.sql.exec(`UPDATE invite_deletion_receipts SET user_id=NULL,vault_id=NULL,email=NULL,generation=NULL,state='closed' WHERE operation_id=? AND state='removed'`, operationId);
+    });
   }
 
   async listInvites(): Promise<{ email: string; createdAt: number }[]> {
@@ -1233,14 +1361,15 @@ export class Directory extends DurableObject<Env> {
   }
 
   private requireFinalizationUnchanged(row: VaultDbRow): void {
-    const { vault_id: vaultId, user_id: userId, swept_at: sweptAt, final_generation: generation, final_phase: phase } = row;
+    const { vault_id: vaultId, user_id: userId, swept_at: sweptAt, final_generation: generation, final_phase: phase, invite_closed: inviteClosed, invite_operation: inviteOperation } = row;
     if (!validSweepTime(sweptAt) || this.env.VAULT.idFromString(vaultId).toString() !== vaultId ||
         !generation || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(generation) ||
-        (phase !== "awaiting" && phase !== "destroyed") || !this.sql.exec(
-      `SELECT v.vault_id FROM vaults v JOIN users u ON u.user_id=v.user_id JOIN account_final_sweeps a ON a.vault_id=v.vault_id
-       WHERE v.vault_id=? AND v.user_id=? AND u.state='deleting' AND v.state='swept' AND v.swept_at=?
-       AND a.user_id=? AND a.swept_at=? AND a.generation=? AND a.phase=?`,
-      vaultId, userId, sweptAt, userId, sweptAt, generation, phase,
+        !inviteOperation || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(inviteOperation) ||
+        (phase !== "awaiting" && phase !== "destroyed") || (inviteClosed !== 0 && inviteClosed !== 1) || !this.sql.exec(
+      `SELECT v.vault_id FROM vaults v JOIN users u ON u.user_id=v.user_id JOIN account_final_sweeps a ON a.vault_id=v.vault_id JOIN account_invite_deletions i ON i.user_id=v.user_id AND i.vault_id=v.vault_id
+       WHERE v.vault_id=? AND v.user_id=? AND u.email=? AND u.state='deleting' AND v.state='swept' AND v.swept_at=?
+       AND a.user_id=? AND a.swept_at=? AND a.generation=? AND a.phase=? AND a.invite_closed=? AND i.operation_id=?`,
+      vaultId, userId, row.email, sweptAt, userId, sweptAt, generation, phase, inviteClosed, inviteOperation,
     ).toArray().length || this.sql.exec(
       `SELECT vault_id FROM retired_vaults WHERE user_id=? OR vault_id=?`,
       userId, vaultId,
@@ -1271,6 +1400,10 @@ export class Directory extends DurableObject<Env> {
       attempted.add(v.vault_id);
       try {
         this.requireFinalizationUnchanged(v);
+        // The coordinator commits the captured invite incarnation before any
+        // later cleanup can yield. Retried capture uses the same receipt.
+        await directory(this.env).captureInviteForDeletion(v.invite_operation!, v.user_id, v.vault_id, v.email);
+        this.requireFinalizationUnchanged(v);
         if (v.final_phase === "awaiting") {
           const stub = this.env.VAULT.get(this.env.VAULT.idFromString(v.vault_id));
           await stub.quiesceForAccountDeletion(v.user_id);
@@ -1297,7 +1430,7 @@ export class Directory extends DurableObject<Env> {
         // using a stale owner or final-sweep incarnation.
         this.requireFinalizationUnchanged(v);
         const shard = /^s(\d+):/i.exec(v.user_id);
-        await directory(this.env).removeInvite(v.email);
+        await directory(this.env).removeCapturedInvite(v.invite_operation!, v.user_id, v.vault_id, v.email);
         this.requireFinalizationUnchanged(v);
         if (v.stripe_customer)
           await cleanupBillingCustomer(this.env, v.stripe_customer, fetch, parseCheckoutIds(v.stripe_checkout_sessions));
@@ -1342,6 +1475,16 @@ export class Directory extends DurableObject<Env> {
               await directory(this.env).forgetIdentityHome(identity.provider, identity.subject, Number(shard[1]), v.user_id);
             }
         }
+        if (!v.invite_closed) {
+          this.requireFinalizationUnchanged(v);
+          await directory(this.env).closeInviteDeletion(v.invite_operation!, v.user_id, v.vault_id, v.email);
+          this.ctx.storage.transactionSync(() => {
+            this.requireFinalizationUnchanged(v);
+            this.sql.exec(`UPDATE account_final_sweeps SET invite_closed=1 WHERE vault_id=? AND user_id=? AND generation=? AND invite_closed=0`,
+              v.vault_id, v.user_id, v.final_generation);
+          });
+          v.invite_closed = 1;
+        }
         this.ctx.storage.transactionSync(() => {
           // External cleanup yields. A newly observed retired vault or a
           // changed account must prevent this stale finalization snapshot
@@ -1374,6 +1517,8 @@ export class Directory extends DurableObject<Env> {
             this.sql.exec(`DELETE FROM vaults WHERE vault_id = ?`, v.vault_id);
             this.sql.exec(`DELETE FROM account_final_sweeps WHERE vault_id=? AND user_id=? AND generation=? AND phase='destroyed'`,
               v.vault_id, v.user_id, v.final_generation);
+            this.sql.exec(`DELETE FROM account_invite_deletions WHERE vault_id=? AND user_id=? AND operation_id=?`,
+              v.vault_id, v.user_id, v.invite_operation);
             this.sql.exec(`DELETE FROM users WHERE user_id = ?`, v.user_id);
             this.sql.exec(`DELETE FROM placement_finalizations WHERE user_id=?`, v.user_id);
             this.sql.exec(`DELETE FROM shard_deletion_releases WHERE user_id=?`, v.user_id);
@@ -1394,19 +1539,21 @@ export class Directory extends DurableObject<Env> {
     return attempted;
   }
 
-  private requireDeletingUnchanged(vaultId: string, userId: string): void {
-    if (!this.sql.exec(`SELECT v.vault_id FROM vaults v JOIN users u ON u.user_id=v.user_id WHERE v.vault_id=? AND v.user_id=? AND v.state='deleting' AND u.state='deleting'`, vaultId, userId).toArray().length)
+  private requireDeletingUnchanged(vaultId: string, owner: DeletingOwner): void {
+    if (!this.sql.exec(`SELECT v.vault_id FROM vaults v JOIN users u ON u.user_id=v.user_id JOIN account_invite_deletions i ON i.user_id=v.user_id AND i.vault_id=v.vault_id WHERE v.vault_id=? AND v.user_id=? AND u.email=? AND i.operation_id=? AND v.state='deleting' AND u.state='deleting'`, vaultId, owner.user_id, owner.email, owner.operation_id).toArray().length)
       throw new AppError("unavailable", "account deletion changed; retry cleanup");
   }
 
   private async erase(vaultId: string): Promise<void> {
     const id = this.env.VAULT.idFromString(vaultId);
     if (id.toString() !== vaultId) throw new AppError("unavailable", "vault identity requires review");
-    const owner = this.sql.exec<{ user_id: string }>(`SELECT user_id FROM vaults WHERE vault_id=? AND state='deleting'`, vaultId).toArray()[0];
+    const owner = this.sql.exec<DeletingOwner>(`SELECT v.user_id,u.email,i.operation_id FROM vaults v JOIN users u ON u.user_id=v.user_id JOIN account_invite_deletions i ON i.user_id=v.user_id AND i.vault_id=v.vault_id WHERE v.vault_id=? AND v.state='deleting'`, vaultId).toArray()[0];
     if (!owner) throw new AppError("unavailable", "account deletion changed; retry cleanup");
-    this.requireDeletingUnchanged(vaultId, owner.user_id);
+    this.requireDeletingUnchanged(vaultId, owner);
+    await directory(this.env).captureInviteForDeletion(owner.operation_id, owner.user_id, vaultId, owner.email);
+    this.requireDeletingUnchanged(vaultId, owner);
     await this.env.VAULT.get(id).quiesceForAccountDeletion(owner.user_id);
-    this.requireDeletingUnchanged(vaultId, owner.user_id);
+    this.requireDeletingUnchanged(vaultId, owner);
     // Do not let an unrelated unresolved dispatch indefinitely postpone
     // cancellation of already-known billing or removal of visible objects.
     // These attempts are provisional: they cannot settle a fence or mark a
@@ -1414,11 +1561,11 @@ export class Directory extends DurableObject<Env> {
     // repeated only after close succeeds. Use separate stubs so a failed RPC
     // does not poison another concurrent operation.
     const [billingAttempt, sweepAttempt, runsAttempt, closeAttempt] = await Promise.allSettled([
-      this.preliminaryBillingCleanup(vaultId, owner.user_id),
+      this.preliminaryBillingCleanup(vaultId, owner),
       deletePrefix(this.env.FILES, vaultPrefix(vaultId)),
       (async () => {
         const known = await this.env.VAULT.get(id).knownRunsForAccountDeletion(owner.user_id);
-        this.requireDeletingUnchanged(vaultId, owner.user_id);
+        this.requireDeletingUnchanged(vaultId, owner);
         await stopKnownVaultRuns(this.env, known);
       })(),
       (async () => {
@@ -1433,13 +1580,13 @@ export class Directory extends DurableObject<Env> {
     if (runsAttempt.status === "rejected")
       console.error("preliminary workflow cleanup pending", { code: logErrorCode(runsAttempt.reason) });
     if (closeAttempt.status === "rejected") throw closeAttempt.reason;
-    this.requireDeletingUnchanged(vaultId, owner.user_id);
+    this.requireDeletingUnchanged(vaultId, owner);
     const runs = closeAttempt.value;
     const stub = this.env.VAULT.get(id);
     const customer = await stub.billingCustomerForAccountDeletion(owner.user_id);
-    this.requireDeletingUnchanged(vaultId, owner.user_id);
+    this.requireDeletingUnchanged(vaultId, owner);
     const newCheckoutIds = await stub.billingCheckoutSessionsForAccountDeletion(owner.user_id);
-    this.requireDeletingUnchanged(vaultId, owner.user_id);
+    this.requireDeletingUnchanged(vaultId, owner);
     const previous = this.sql.exec<{ stripe_customer: string | null; stripe_checkout_sessions: string }>(
       `SELECT stripe_customer, stripe_checkout_sessions FROM vaults WHERE vault_id=?`, vaultId,
     ).one();
@@ -1455,21 +1602,21 @@ export class Directory extends DurableObject<Env> {
     if (!knownCustomer && checkoutIds.length)
       throw new AppError("unavailable", "checkout customer requires operator review");
     if (knownCustomer) await cleanupBillingCustomer(this.env, knownCustomer, fetch, checkoutIds);
-    this.requireDeletingUnchanged(vaultId, owner.user_id);
+    this.requireDeletingUnchanged(vaultId, owner);
     await stopVaultRuns(this.env, runs);
-    this.requireDeletingUnchanged(vaultId, owner.user_id);
+    this.requireDeletingUnchanged(vaultId, owner);
     await revokeOAuthUserGrants(this.env, owner.user_id);
-    this.requireDeletingUnchanged(vaultId, owner.user_id);
+    this.requireDeletingUnchanged(vaultId, owner);
     await stub.quiesceForAccountDeletion(owner.user_id);
-    this.requireDeletingUnchanged(vaultId, owner.user_id);
+    this.requireDeletingUnchanged(vaultId, owner);
     await deletePrefix(this.env.FILES, vaultPrefix(vaultId));
-    this.requireDeletingUnchanged(vaultId, owner.user_id);
+    this.requireDeletingUnchanged(vaultId, owner);
     // Preserve the persisted owner through the delayed second sweep.  The
     // proof row and phase change commit together; a legacy swept row cannot
     // be backfilled from an already destroyed Vault.
     const sweptAt = Date.now(), generation = crypto.randomUUID();
     this.ctx.storage.transactionSync(() => {
-      this.requireDeletingUnchanged(vaultId, owner.user_id);
+      this.requireDeletingUnchanged(vaultId, owner);
       this.sql.exec(`INSERT INTO account_final_sweeps(vault_id,user_id,generation,swept_at,phase) VALUES (?,?,?,?,'awaiting')`,
         vaultId, owner.user_id, generation, sweptAt);
       this.sql.exec(`UPDATE vaults SET state='swept',swept_at=?,updated_at=? WHERE vault_id=? AND user_id=? AND state='deleting'`,
@@ -1478,10 +1625,10 @@ export class Directory extends DurableObject<Env> {
   }
 
   /** Best effort only: never create or infer an unknown billing customer. */
-  private async preliminaryBillingCleanup(vaultId: string, userId: string): Promise<void> {
+  private async preliminaryBillingCleanup(vaultId: string, owner: DeletingOwner): Promise<void> {
     const id = this.env.VAULT.idFromString(vaultId);
-    const known = await this.env.VAULT.get(id).knownBillingForAccountDeletion(userId);
-    this.requireDeletingUnchanged(vaultId, userId);
+    const known = await this.env.VAULT.get(id).knownBillingForAccountDeletion(owner.user_id);
+    this.requireDeletingUnchanged(vaultId, owner);
     const previous = this.sql.exec<{ stripe_customer: string | null; stripe_checkout_sessions: string }>(
       `SELECT stripe_customer, stripe_checkout_sessions FROM vaults WHERE vault_id=?`, vaultId,
     ).one();
@@ -1537,8 +1684,9 @@ export class Directory extends DurableObject<Env> {
     return this.sql
       .exec<VaultDbRow>(
         `SELECT v.vault_id, v.user_id, u.email, v.hint, v.state, v.swept_at, v.updated_at, v.stripe_customer, v.stripe_checkout_sessions,
-                a.generation AS final_generation, a.phase AS final_phase
-         FROM vaults v JOIN users u ON u.user_id = v.user_id LEFT JOIN account_final_sweeps a ON a.vault_id=v.vault_id WHERE v.state = ?`,
+                a.generation AS final_generation, a.phase AS final_phase, a.invite_closed, i.operation_id AS invite_operation
+         FROM vaults v JOIN users u ON u.user_id = v.user_id LEFT JOIN account_final_sweeps a ON a.vault_id=v.vault_id
+         LEFT JOIN account_invite_deletions i ON i.user_id=v.user_id AND i.vault_id=v.vault_id WHERE v.state = ?`,
         state,
       )
       .toArray();

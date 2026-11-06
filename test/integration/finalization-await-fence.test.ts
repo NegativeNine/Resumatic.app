@@ -52,7 +52,7 @@ it("does not remove an invite after placement preparation yields to a changed fi
       const original = env.DIRECTORY;
       local.DIRECTORY = {
         idFromName: (name: string) => original.idFromName(name),
-        get: () => ({ closePlacementHome: async () => { entered(); await held; return []; }, removeInvite }),
+        get: () => ({ captureInviteForDeletion: async () => {}, closePlacementHome: async () => { entered(); await held; return []; }, removeCapturedInvite: removeInvite }),
       };
       running = instance.alarm();
       await ready;
@@ -83,7 +83,7 @@ it("does not contact Stripe after invite cleanup yields to a changed finalizatio
       const original = env.DIRECTORY;
       local.DIRECTORY = {
         idFromName: (name: string) => original.idFromName(name),
-        get: () => ({ removeInvite: async () => { entered(); await held; } }),
+        get: () => ({ captureInviteForDeletion: async () => {}, removeCapturedInvite: async () => { entered(); await held; } }),
       };
       vi.stubGlobal("fetch", stripe);
       running = instance.alarm();
@@ -114,7 +114,7 @@ it("does not revoke OAuth grants after Stripe cleanup yields to a changed finali
       state.storage.sql.exec(`UPDATE vaults SET stripe_customer='cus_test' WHERE vault_id=?`, user.vaultId);
       Object.assign(local, billing, { OAUTH_KV: { list } });
       const original = env.DIRECTORY;
-      local.DIRECTORY = { idFromName: (name: string) => original.idFromName(name), get: () => ({ removeInvite: async () => {} }) };
+      local.DIRECTORY = { idFromName: (name: string) => original.idFromName(name), get: () => ({ captureInviteForDeletion: async () => {}, removeCapturedInvite: async () => {} }) };
       vi.stubGlobal("fetch", vi.fn(async () => {
         if (++requests === 1) { entered(); await held; }
         return Response.json({ object: "list", data: [], has_more: false });

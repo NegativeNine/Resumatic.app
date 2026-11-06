@@ -20,7 +20,8 @@ export async function runPilotInspection({ args, env = process.env, input = proc
     return pending("path_and_vault_id_required");
   if (!input?.isTTY || !output?.isTTY) return pending("interactive_terminal_required");
   const preflight = await preflightPilotDeployment({ env, fetcher: providerFetch }, dependencies);
-  if (preflight.deployment !== "single_version_observed" || preflight.bindings !== "expected_bindings_observed")
+  if (preflight.deployment !== "single_version_observed" || preflight.bindings !== "expected_bindings_observed" ||
+      preflight.origin !== "workers_dev_observed")
     return preflight;
   let pilot;
   try { pilot = new SharedPilotBudget(env.STAGING_URL, env.PILOT_BUDGET_KEY, pilotFetch); }

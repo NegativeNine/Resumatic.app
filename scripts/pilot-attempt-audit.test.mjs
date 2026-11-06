@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { auditPilotLedger, createPilotLedger, reservePilotLedger, settlePilotAttempt } from "../test/extract-evals/budget-ledger.mjs";
 
-const account = "a".repeat(32), origin = "https://staging.example.test";
+const account = "a".repeat(32), origin = "https://resumatic-staging.account-example.workers.dev";
 const version = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", deployment = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const key = "synthetic-pilot-key-for-test-only-1234567890", token = "synthetic-token-not-for-output";
 const env = { CLOUDFLARE_ACCOUNT_ID: account, CLOUDFLARE_API_TOKEN: token, STAGING_URL: origin, PILOT_BUDGET_KEY: key };
@@ -20,9 +20,11 @@ const bindings = [
   { type: "plain_text", name: "PILOT_SHARED_BUDGET", text: "true" },
   { type: "plain_text", name: "ALLOW_TEST_SIGNIN", text: "true" },
 ];
-const providerFetch = async (url) => Response.json({ success: true, result: url.includes("/versions/")
-  ? { id: version, resources: { bindings } }
-  : { deployments: [{ id: deployment, strategy: "percentage", versions: [{ version_id: version, percentage: 100 }] }] } });
+const providerFetch = async (url) => Response.json({ success: true, result:
+  url.endsWith("/workers/subdomain") ? { subdomain: "account-example" }
+    : url.endsWith("/scripts/resumatic-staging/subdomain") ? { enabled: true }
+    : url.includes("/versions/") ? { id: version, resources: { bindings } }
+    : { deployments: [{ id: deployment, strategy: "percentage", versions: [{ version_id: version, percentage: 100 }] }] } });
 const attempt = () => ({ idMac: "d".repeat(64), reservedMicros: 7, reservedCalls: 1, state: "pending", actualMicros: null });
 const totals = () => ({ maxMicros: 10_000_000, maxCalls: 50, reservedMicros: 7, reservedCalls: 1,
   frozen: false, count: 1, pending: 1, unknown: 0, overrun: 0 });
@@ -42,6 +44,18 @@ test("attempt audit reads only opaque bounded metadata and remains pending", asy
   assert.equal(calls[0].init.method, "GET");
   assert.equal(calls[0].init.headers["x-pilot-budget-key"], key);
   assert.doesNotMatch(JSON.stringify(report), /synthetic-token|synthetic-pilot-key/);
+});
+
+test("attempt audit does not send its key to a custom domain", async () => {
+  const customOrigin = "https://staging.example.test";
+  const customEnv = { ...env, STAGING_URL: customOrigin };
+  const customDeps = { readConfig: async () => ({ name: "resumatic-staging", config: { vars: {
+    CF_ACCOUNT_ID: account, APP_ORIGIN: customOrigin,
+  } } }) };
+  let calls = 0;
+  const result = await inspectPilotAttempts({ env: customEnv, providerFetch, pilotFetch: async () => { calls++; } }, customDeps);
+  assert.ok(result.pending.includes("staging_origin_unverified"));
+  assert.equal(calls, 0);
 });
 
 test("rejects untrusted origins and invalid or oversized audit responses", async () => {

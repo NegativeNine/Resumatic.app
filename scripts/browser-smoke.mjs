@@ -59,15 +59,17 @@ if (!browser?.startsWith("/")) {
       return send(res, 200, me.profile);
     }
     if (path === "/api/shares" && req.method === "GET") return send(res, 200, { grants: [{ id: "legacy-grant", epoch: "synthetic", createdAt: Date.now(), expiresAt: Date.now() + 60_000, revokedAt: null, factCount: 0, resumeCount: 1, available: false }] });
-    if (path === "/api/sources" && req.method === "GET") {
+    if ((path === "/api/sources" || path === "/api/v2/vault") && req.method === "GET") {
       state.sourceReads = (state.sourceReads ?? 0) + 1;
       if (state.sourcePollFailures > 0) { state.sourcePollFailures--; state.sourcePollFailureCount = (state.sourcePollFailureCount ?? 0) + 1; return send(res, 503, { error: "unavailable" }); }
       if (state.sourceForbiddenFailures > 0) { state.sourceForbiddenFailures--; state.sourceForbiddenSeen = true; return send(res, 403, { error: "forbidden", message: "Access unavailable" }); }
-      return send(res, 200, { sources: state.source ? [{ id: "source-1", filename: "synthetic.pdf", state: state.sourceRunning ? "queued" : state.sourceFailed ? "failed" : "ready", retryRunId: state.sourceFailed ? "run-1" : undefined, dispatchUncertain: state.sourceRunning, cancellationPending: state.sourceCancel, error: null, createdAt: 1, proposed: 2 }, { id: "source-ocr", filename: "synthetic.pdf (image transcription)", state: "ready", origin: "ocr", parentSourceId: "source-1", error: null, createdAt: 2, proposed: 0 }] : [] });
+      const sources = state.source ? [{ id: "source-1", filename: "synthetic.pdf", state: state.sourceRunning ? "queued" : state.sourceFailed ? "failed" : "ready", retryRunId: state.sourceFailed ? "run-1" : undefined, dispatchUncertain: state.sourceRunning, cancellationPending: state.sourceCancel, error: null, createdAt: 1, proposed: !state.hideSourceFact && state.factState === "proposed" ? 1 : 0 }, { id: "source-ocr", filename: "synthetic.pdf (image transcription)", state: "ready", origin: "ocr", parentSourceId: "source-1", error: null, createdAt: 2, proposed: 0 }] : [];
+      if (path === "/api/v2/vault") return send(res, 200, { sources, roles: [...(state.source && !state.hideSourceRole ? [{ ...role, state: state.roleState }] : []), ...state.manualRoles], facts: [...(state.source && !state.hideSourceFact ? [{ ...fact, state: state.factState }] : []), ...(state.manualFact ? [state.manualFact] : [])] });
+      return send(res, 200, { sources });
     }
     if (path === "/api/sources/source-1/cancel" && req.method === "POST") { state.sourceCancel = true; res.writeHead(202); res.end(); return; }
     if (path === "/api/runs/run-1/retry" && req.method === "POST") { const key = req.headers["idempotency-key"]; if (typeof key !== "string" || !key) return send(res, 400, { error: "invalid" }); state.sourceRetryKeys.push(key); if (state.sourceRetryKeys.length === 1) return send(res, 503, { error: "unavailable" }); state.sourceFailed = false; return send(res, 202, { runId: "run-2", targetId: "source-1" }); }
-    if (path === "/api/roles" && req.method === "GET") return send(res, 200, { roles: [...(state.source ? [{ ...role, state: state.roleState }] : []), ...state.manualRoles] });
+    if (path === "/api/roles" && req.method === "GET") return send(res, 200, { roles: [...(state.source && !state.hideSourceRole ? [{ ...role, state: state.roleState }] : []), ...state.manualRoles] });
     if ((path === "/api/roles" || path === "/api/v3/roles") && req.method === "POST") {
       const body = JSON.parse((await read(req)).toString("utf8"));
       if (body.org !== "Synthetic Volunteer Group") return send(res, 400, { error: "invalid" });
@@ -82,7 +84,7 @@ if (!browser?.startsWith("/")) {
       if (key !== state.manualRoleKeys[0]) return send(res, 409, { error: "conflict" });
       return send(res, 201, { roleId: "manual-role" });
     }
-    if (path === "/api/facts" && req.method === "GET") return send(res, 200, { facts: [...(state.source ? [{ ...fact, state: state.factState }] : []), ...(state.manualFact ? [state.manualFact] : [])] });
+    if (path === "/api/facts" && req.method === "GET") return send(res, 200, { facts: [...(state.source && !state.hideSourceFact ? [{ ...fact, state: state.factState }] : []), ...(state.manualFact ? [state.manualFact] : [])] });
     if (path === "/api/v2/facts" && req.method === "POST") {
       const body = JSON.parse((await read(req)).toString("utf8"));
       const key = req.headers["idempotency-key"];
@@ -276,6 +278,14 @@ if (!browser?.startsWith("/")) {
     stage = "sign_in"; await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Sign in with Google')`); await clickText("a", "Sign in with Google"); await wait(`document.body?.innerText.includes('Sources & facts') && !!document.querySelector('input[type=file]')`);
     stage = "upload_retry"; const root = await call("DOM.getDocument"); const input = await call("DOM.querySelector", { nodeId: root.root.nodeId, selector: "input[type=file]" }); await call("DOM.setFileInputFiles", { nodeId: input.nodeId, files: [file] }); await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Retry upload')`); await clickText("button", "Retry upload"); await wait(`document.body?.innerText.includes('Built 12 payment services')`); if (state.uploadKeys.length !== 2 || state.uploadKeys[0] !== state.uploadKeys[1]) throw new Error("UPLOAD_RETRY_KEY_MISMATCH");
     stage = "ocr_download_links"; await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download image inputs (JSON)' && x.getAttribute('href') === '/api/sources/source-ocr/file') && !![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download original PDF' && x.getAttribute('href') === '/api/sources/source-1/file')`);
+    stage = "source_role_only";
+    state.hideSourceFact = true; await call("Page.reload");
+    await wait(`([...document.querySelectorAll('.source-list > li.source')].find(e => e.querySelector('.source-name')?.textContent.trim() === 'synthetic.pdf')?.textContent ?? '').includes('Ready · 1 role to review')`);
+    stage = "source_empty";
+    state.hideSourceRole = true; await call("Page.reload");
+    await wait(`(() => { const row = [...document.querySelectorAll('.source-list > li.source')].find(e => e.querySelector('.source-name')?.textContent.trim() === 'synthetic.pdf'); return !!row && row.textContent.includes('Ready · no items shown') && row.textContent.includes('No roles or facts from this source are shown'); })()`);
+    state.hideSourceFact = false; state.hideSourceRole = false; await call("Page.reload");
+    await wait(`document.body?.innerText.includes('Ready · 1 role and 1 fact to review')`);
     stage = "poll_recovery";
     state.sourceRunning = true; await call("Page.reload");
     await wait(`document.body?.innerText.includes("we can't confirm that reading started")`);
@@ -285,7 +295,7 @@ if (!browser?.startsWith("/")) {
     if (!state.sourcePollFailureCount) throw new Error("POLL_FAILURE_NOT_OBSERVED");
     state.sourceRunning = false;
     // No push or manual retry: the running-state poll must recover itself.
-    await wait(`document.body?.innerText.includes('Ready · 2 facts to review')`);
+    await wait(`document.body?.innerText.includes('Ready · 1 role and 1 fact to review')`);
     if (state.sourcePollFailureCount !== 2) throw new Error("POLL_RETRY_NOT_OBSERVED");
     if (await evalPage(`window.__syntheticVaultPushes !== 0`)) throw new Error("POLL_RECOVERY_USED_PUSH");
     const readsAfterReady = state.sourceReads;
@@ -304,7 +314,7 @@ if (!browser?.startsWith("/")) {
     await delay(2500);
     if (state.sourceReads !== readsAfterForbidden || await evalPage(`window.__syntheticVaultPushes !== 0`)) throw new Error("POLL_CONTINUED_AFTER_FORBIDDEN");
     await clickText('[role="alert"] button', "Try again");
-    await wait(`document.body?.innerText.includes('Ready · 2 facts to review')`);
+    await wait(`document.body?.innerText.includes('Ready · 1 role and 1 fact to review')`);
     stage = "uncertain_source_cancellation";
     state.sourceRunning = true; await call("Page.reload");
     await wait(`document.body?.innerText.includes("we can't confirm that reading started")`);
@@ -317,16 +327,18 @@ if (!browser?.startsWith("/")) {
     await clickText("button", "Retry reading");
     await wait(`document.body?.innerText.includes('Try again') || !!document.querySelector('[role="alert"]')`);
     await clickText("button", "Retry reading");
-    await wait(`document.body?.innerText.includes('Ready · 2 facts to review')`);
+    await wait(`document.body?.innerText.includes('Ready · 1 role and 1 fact to review')`);
     if (state.sourceRetryKeys.length !== 2 || state.sourceRetryKeys[0] !== state.sourceRetryKeys[1]) throw new Error("SOURCE_RETRY_KEY_MISMATCH");
-    await wait(`document.body?.innerText.includes('Ready · 2 facts to review')`);
+    await wait(`document.body?.innerText.includes('Ready · 1 role and 1 fact to review')`);
     stage = "review_role"; await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Confirm role')`); await clickText("button", "Confirm role"); await wait(`!([...document.querySelectorAll('button')].some(x => x.textContent.trim() === 'Confirm role'))`);
+    await wait(`document.body?.innerText.includes('Ready · 1 fact to review')`);
     stage = "fact_level_review"; await wait(`document.body?.innerText.includes('needs your confirmation before it is used')`); await clickText('.fact button', 'Edit');
     await wait(`!!document.querySelector('.fact select[id$="-level"]')`);
     await evalPage(`(() => { const e = document.querySelector('.fact select[id$="-level"]'); e.value = 'led'; e.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     await clickText('.fact button', 'Save fact'); await wait(`!document.querySelector('.fact select[id$="-level"]')`);
     if (fact.level !== 'led' || fact.levelNeedsReview) throw new Error('FACT_LEVEL_NOT_REAFFIRMED');
     stage = "review_fact"; await wait(`!![...document.querySelectorAll('.fact button')].find(x => x.textContent.trim() === 'Confirm' && !x.disabled)`); await clickText(".fact button", "Confirm"); await wait(`document.body?.innerText.includes('nothing is waiting for review')`);
+    await wait(`document.body?.innerText.includes('Ready · review complete')`);
     stage = "manual_fact_retry";
     await clickText("button", "Add a fact yourself");
     await wait(`!!document.querySelector('.add-fact-form textarea')`);
@@ -560,7 +572,7 @@ if (!browser?.startsWith("/")) {
     await call("Page.navigate", { url: `${origin}/share?invalid=1#synthetic-invalid` });
     await wait(`document.body?.innerText.includes('Share unavailable')`);
     if (await evalPage(`location.hash !== '' || !![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Try again')`)) throw new Error("EXPIRED_SHARE_NOT_TERMINAL");
-    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, pollRecovery: true, pollNonTransient: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, factLevelReview: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, jobRetryKey: true, profileSubmissionLock: true, profileConcurrentEdit: true, profileLostResponse: true, applicationTracking: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, legacySkillRemoval: true, checkedSkillRemoval: true, checkedLineRemoval: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true, stableResourceReload: true, shareRetry: true, expiredShare: true } }));
+    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, sourceRoleOnly: true, sourceEmpty: true, pollRecovery: true, pollNonTransient: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, factLevelReview: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, jobRetryKey: true, profileSubmissionLock: true, profileConcurrentEdit: true, profileLostResponse: true, applicationTracking: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, legacySkillRemoval: true, checkedSkillRemoval: true, checkedLineRemoval: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true, stableResourceReload: true, shareRetry: true, expiredShare: true } }));
   } catch {
     console.log(JSON.stringify({ status: "failed", reason: "BROWSER_SMOKE_FAILED", stage, promotionEligible: false })); process.exitCode = 1;
   } finally {

@@ -3,7 +3,7 @@ import type { SourceView } from "../../shared/api";
 import { api } from "../api";
 import { count, formatDate } from "../format";
 import { useAction, type Reload } from "../hooks";
-import { proposedFrom, type Vault } from "../vault";
+import { sourceReviewSummaries, type Vault } from "../vault";
 import { useSession } from "../session";
 import { rasterizeResume } from "../scan";
 import { ApiError } from "../api";
@@ -18,6 +18,7 @@ export function SourceList({
 }) {
   const { me } = useSession();
   const sources = [...vault.sources].sort((a, b) => b.createdAt - a.createdAt);
+  const summaries = sourceReviewSummaries(vault);
   const revisions = Object.fromEntries(
     [...vault.roles, ...vault.facts].map((item) => [
       item.id,
@@ -38,7 +39,10 @@ export function SourceList({
             <SourceRow
               key={source.id}
               source={source}
-              proposedIds={proposedFrom(vault, source.id)}
+              proposedIds={summaries.get(source.id)?.proposedIds ?? []}
+              proposedRoles={summaries.get(source.id)?.proposedRoles ?? 0}
+              proposedFacts={summaries.get(source.id)?.proposedFacts ?? 0}
+              visibleItems={summaries.get(source.id)?.visibleItems ?? 0}
               revisions={revisions}
               reload={reload}
               ocrEnabled={Boolean(me.capabilities?.ocr)}
@@ -53,12 +57,18 @@ export function SourceList({
 function SourceRow({
   source,
   proposedIds,
+  proposedRoles,
+  proposedFacts,
+  visibleItems,
   revisions,
   reload,
   ocrEnabled,
 }: {
   source: SourceView;
   proposedIds: string[];
+  proposedRoles: number;
+  proposedFacts: number;
+  visibleItems: number;
   revisions: Record<string, number>;
   reload: Reload;
   ocrEnabled: boolean;
@@ -90,7 +100,7 @@ function SourceRow({
             </p>
           )}
         </div>
-        <SourceStatus source={source} />
+        <SourceStatus source={source} proposedRoles={proposedRoles} proposedFacts={proposedFacts} visibleItems={visibleItems} />
       </div>
       {source.state === "queued" && source.cancellationPending && (
         <p className="source-error" role="status">
@@ -122,6 +132,12 @@ function SourceRow({
             carefully; a Word document or text export may read better.
           </p>
         )}
+      {source.state === "ready" && visibleItems === 0 && (
+        <p className="source-error" role="status">
+          No roles or facts from this source are shown. Check the source, try a
+          different format, or add your experience manually below.
+        </p>
+      )}
       {proposedIds.length > 0 && (
         <ConfirmAll
           filename={source.filename}
@@ -237,7 +253,9 @@ function ScanRecovery({
   );
 }
 
-function SourceStatus({ source }: { source: SourceView }) {
+function SourceStatus({ source, proposedRoles, proposedFacts, visibleItems }: {
+  source: SourceView; proposedRoles: number; proposedFacts: number; visibleItems: number;
+}) {
   switch (source.state) {
     case "queued":
       if (source.cancellationPending)
@@ -252,14 +270,17 @@ function SourceStatus({ source }: { source: SourceView }) {
       );
     case "failed":
       return <Badge tone="failed">Couldn't read</Badge>;
-    case "ready":
+    case "ready": {
+      const pending = [
+        proposedRoles ? count(proposedRoles, "role") : "",
+        proposedFacts ? count(proposedFacts, "fact") : "",
+      ].filter(Boolean).join(" and ");
       return (
         <Badge tone="ready">
-          {source.proposed > 0
-            ? `Ready · ${count(source.proposed, "fact")} to review`
-            : "Ready · all reviewed"}
+          {pending ? `Ready · ${pending} to review` : visibleItems ? "Ready · review complete" : "Ready · no items shown"}
         </Badge>
       );
+    }
   }
 }
 

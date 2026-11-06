@@ -12,6 +12,7 @@ const SCRIPT = /^[A-Za-z0-9_-]{1,63}$/;
 const RUN = /^[A-Za-z0-9_-]{1,100}$/;
 const STEP = /^[A-Za-z0-9 _:-]{1,100}$/;
 const PATHS = new Set(["distill", "tailor", "document", "reembed", "vault"]);
+const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 /** Only the metadata returned by the existing one-use identity probe. */
 export function validPilotObservation(value) {
@@ -30,7 +31,7 @@ async function providerJson(fetcher, url, token) {
       method: "GET", headers: { authorization: `Bearer ${token}`, accept: "application/json" },
       redirect: "error", signal: AbortSignal.timeout(10_000),
     });
-    if (!response.ok || !response.body) throw new Error();
+    if (response.status !== 200 || !response.body) throw new Error();
     const reader = response.body.getReader();
     const chunks = [];
     let length = 0;
@@ -57,6 +58,27 @@ async function providerJson(fetcher, url, token) {
     // Provider bodies, URLs and exception messages may contain credentials.
     throw new Error("provider_metadata_unavailable");
   }
+}
+
+/** Provider metadata observation only: it does not attest routing continuity or code. */
+async function observedOrigin(fetcher, token, account, script, origin) {
+  const url = new URL(origin);
+  if (url.port || !SCRIPT.test(script)) return null;
+  const host = url.hostname.toLowerCase();
+  const accountBase = `${API}/accounts/${account}/workers`;
+  if (host.endsWith(".workers.dev")) {
+    const label = script.toLowerCase();
+    if (!DNS_LABEL.test(label)) return null;
+    const subdomain = await providerJson(fetcher, `${accountBase}/subdomain`, token);
+    const setting = await providerJson(fetcher, `${accountBase}/scripts/${encodeURIComponent(script)}/subdomain`, token);
+    const accountLabel = typeof subdomain?.subdomain === "string" ? subdomain.subdomain.toLowerCase() : "";
+    if (!DNS_LABEL.test(accountLabel) || setting?.enabled !== true ||
+        origin !== `https://${label}.${accountLabel}.workers.dev`) return null;
+    return { kind: "workers_dev_observed", fingerprint: `workers-dev:${label}:${accountLabel}` };
+  }
+  // A configured custom domain does not prove that public DNS still points
+  // to Cloudflare. Never send a shared key based on that metadata alone.
+  return null;
 }
 
 function activeDeployment(result) {
@@ -90,7 +112,7 @@ function checkedBindings(result, version, script) {
  * caller origin, Workflow drain, or spending limits and cannot enable a pilot.
  */
 export async function preflightPilotDeployment({ env = process.env, fetcher = fetch }, testDependencies = {}) {
-  const report = { status: "pending", deployment: "unverified", bindings: "unverified",
+  const report = { status: "pending", deployment: "unverified", bindings: "unverified", origin: "unverified",
     pending: ["staging_url_account_binding_unverified", "worker_code_revision_unverified", "workflow_and_old_version_drain_unverified", "provider_spend_bound_unverified"] };
   let config, scriptName;
   try {
@@ -114,6 +136,8 @@ export async function preflightPilotDeployment({ env = process.env, fetcher = fe
   if (testDependencies.readConfig) report.pending.push("test_configuration_override");
   const base = `${API}/accounts/${accountId.toLowerCase()}/workers/scripts/${encodeURIComponent(scriptName)}`;
   try {
+    const originBefore = await observedOrigin(fetcher, token, accountId.toLowerCase(), scriptName, httpsOrigin(env.STAGING_URL));
+    if (!originBefore) { report.pending.push("staging_origin_unverified"); return report; }
     const before = activeDeployment(await providerJson(fetcher, `${base}/deployments?per_page=1`, token));
     if (!before) { report.pending.push("single_active_deployment_unverified"); return report; }
     const version = await providerJson(fetcher, `${base}/versions/${before.version}`, token);
@@ -126,8 +150,13 @@ export async function preflightPilotDeployment({ env = process.env, fetcher = fe
       report.pending.push("deployment_changed_or_unavailable");
       return report;
     }
+    const originAfter = await observedOrigin(fetcher, token, accountId.toLowerCase(), scriptName, httpsOrigin(env.STAGING_URL));
+    if (!originAfter || originAfter.kind !== originBefore.kind || originAfter.fingerprint !== originBefore.fingerprint) {
+      report.pending.push("staging_origin_changed_or_unavailable"); return report;
+    }
     report.deployment = "single_version_observed";
     report.bindings = "expected_bindings_observed";
+    report.origin = originAfter.kind;
     report.deploymentId = before.id;
     report.versionId = before.version;
   } catch { report.pending.push("provider_metadata_unavailable"); }
@@ -147,7 +176,7 @@ export async function preflightPilotDeployment({ env = process.env, fetcher = fe
  */
 export async function inspectPilotDeployment({ pilot, nonce, runId, env = process.env, fetcher = fetch }, testDependencies = {}) {
   const report = {
-    status: "pending", deployment: "unverified", bindings: "unverified", observation: "unverified",
+    status: "pending", deployment: "unverified", bindings: "unverified", origin: "unverified", observation: "unverified",
     pending: ["staging_url_account_binding_unverified", "worker_code_revision_unverified", "workflow_and_old_version_drain_unverified", "provider_spend_bound_unverified"],
   };
   let config, scriptName;
@@ -172,6 +201,11 @@ export async function inspectPilotDeployment({ pilot, nonce, runId, env = proces
     return report;
   }
   if (testDependencies.readConfig) report.pending.push("test_configuration_override");
+  let originBefore;
+  try {
+    originBefore = await observedOrigin(fetcher, token, accountId.toLowerCase(), scriptName, httpsOrigin(env.STAGING_URL));
+    if (!originBefore) { report.pending.push("staging_origin_unverified"); return report; }
+  } catch { report.pending.push("staging_origin_unavailable"); return report; }
   try {
     if ((await pilot.identityStatus(nonce)).state !== "observed") {
       report.pending.push("probe_not_observed");
@@ -203,7 +237,12 @@ export async function inspectPilotDeployment({ pilot, nonce, runId, env = proces
       report.pending.push("deployment_changed_or_unavailable");
       return report;
     }
+    const originAfter = await observedOrigin(fetcher, token, accountId.toLowerCase(), scriptName, httpsOrigin(env.STAGING_URL));
+    if (!originAfter || originAfter.kind !== originBefore.kind || originAfter.fingerprint !== originBefore.fingerprint) {
+      report.pending.push("staging_origin_changed_or_unavailable"); return report;
+    }
     report.deployment = "single_version_observed";
+    report.origin = originAfter.kind;
     report.observation = observation.workerVersion.toLowerCase() === before.version && observation.runtimeVersion.toLowerCase() === before.version
       ? "https_probe_version_matches" : "version_mismatch";
     if (report.observation === "version_mismatch") report.pending.push("observation_version_mismatch");
