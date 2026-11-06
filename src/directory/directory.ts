@@ -1058,13 +1058,15 @@ export class Directory extends DurableObject<Env> {
       this.sql.exec(`SELECT vault_id FROM retired_vaults LIMIT 1`).toArray().length > 0
     ) await this.scheduleAt(Date.now() + RETRY_MS);
     else if (billingAt !== null) await this.scheduleAt(Math.max(Date.now() + RETRY_MS, billingAt));
-    try {
-      await this.billing.reconcile();
-    } catch {
+    // Billing can wait on a provider indefinitely. Start deletion work while
+    // it is in flight so an unrelated account's inbox cannot postpone erasure
+    // or leave known subscriptions running. This does not treat that billing
+    // request as settled; the alarm still awaits it before rescheduling.
+    const billing = this.billing.reconcile().catch(() => {
       console.error("billing reconciliation pending", {
         code: "billing_unavailable",
       });
-    }
+    });
     const deleting = this.vaultsIn("deleting");
     // One stalled account should not prevent the other accounts in this
     // bounded batch from starting their own independent deletion work.
@@ -1216,6 +1218,7 @@ export class Directory extends DurableObject<Env> {
         });
       }
     }
+    await billing;
     await this.scheduleNext();
   }
 

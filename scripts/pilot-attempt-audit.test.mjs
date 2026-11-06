@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { inspectPilotAttempts } from "./inspect-pilot-attempts.mjs";
+import { createHmac, createHash } from "node:crypto";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { auditPilotLedger, createPilotLedger, reservePilotLedger, settlePilotAttempt } from "../test/extract-evals/budget-ledger.mjs";
 
 const account = "a".repeat(32), origin = "https://staging.example.test";
 const version = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", deployment = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -61,4 +67,134 @@ test("rejects untrusted origins and invalid or oversized audit responses", async
   assert.deepEqual(large, { status: "pending", pending: ["pilot_attempt_audit_unavailable"] });
   const partial = await inspectPilotAttempts({ env, providerFetch, pilotFetch: async () => Response.json({ totals: totals(), attempts: [attempt()] }, { status: 206 }) }, dependencies);
   assert.deepEqual(partial, { status: "pending", pending: ["pilot_attempt_audit_unavailable"] });
+});
+
+test("compares a private local ledger by keyed fingerprint without modifying it or authorizing spend", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pilot-reconcile-"));
+  try {
+    const local = createPilotLedger(dir, 10_000_000, 50);
+    reservePilotLedger(local.file, "extraction", local.extraction.micros, local.extraction.calls, 7, 6, "attempt-one");
+    reservePilotLedger(local.file, "tailoring", local.tailoring.micros, local.tailoring.calls, 8, 1, "attempt-two");
+    settlePilotAttempt(local.file, "extraction", "attempt-one", 5);
+    const mac = (id) => createHmac("sha256", key).update(`resumatic-pilot-attempt-v1:${id}`).digest("hex");
+    const attempts = [
+      { idMac: mac("attempt-one"), reservedMicros: 7, reservedCalls: 6, state: "settled", actualMicros: 5 },
+      { idMac: mac("other-host"), reservedMicros: 4, reservedCalls: 1, state: "pending", actualMicros: null },
+    ];
+    const snapshot = { totals: { maxMicros: 10_000_000, maxCalls: 50, reservedMicros: 11, reservedCalls: 7,
+      frozen: false, count: 2, pending: 1, unknown: 0, overrun: 0 }, attempts };
+    const hash = () => createHash("sha256").update(readFileSync(local.file)).digest("hex");
+    const before = hash();
+    const report = await inspectPilotAttempts({ env: { ...env, PILOT_LOCAL_LEDGER: local.file }, providerFetch,
+      pilotFetch: async () => Response.json(snapshot) }, dependencies);
+    assert.equal(report.status, "pending");
+    assert.equal(report.local.status, "pending");
+    assert.equal(report.local.sharedOnly, 1);
+    assert.deepEqual(report.local.attempts.map((row) => [row.idMac, row.comparison]), [
+      [mac("attempt-one"), "matching_amount_and_state"], [mac("attempt-two"), "local_only"],
+    ]);
+    assert.ok(report.local.limitations.includes("local_attempt_call_weights_unavailable"));
+    assert.ok(report.local.limitations.includes("snapshots_not_atomic"));
+    assert.equal(hash(), before);
+    assert.doesNotMatch(JSON.stringify(report), /attempt-one|attempt-two|other-host|synthetic-pilot-key/);
+    snapshot.attempts[0].actualMicros = 6;
+    const changed = await inspectPilotAttempts({ env: { ...env, PILOT_LOCAL_LEDGER: local.file }, providerFetch,
+      pilotFetch: async () => Response.json(snapshot) }, dependencies);
+    assert.equal(changed.local.attempts[0].comparison, "different");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a corrupt or non-private local ledger stays unavailable without exposing its contents", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pilot-reconcile-"));
+  try {
+    const local = createPilotLedger(dir, 10_000_000, 50);
+    reservePilotLedger(local.file, "extraction", local.extraction.micros, local.extraction.calls, 7, 1, "private-attempt");
+    const db = new DatabaseSync(local.file);
+    db.prepare("UPDATE budgets SET used_micros=8 WHERE suite='extraction'").run();
+    db.close();
+    const report = await inspectPilotAttempts({ env: { ...env, PILOT_LOCAL_LEDGER: local.file }, providerFetch,
+      pilotFetch: async () => Response.json({ totals: totals(), attempts: [attempt()] }) }, dependencies);
+    assert.deepEqual(report.local, { status: "pending", reason: "local_ledger_unavailable" });
+    assert.doesNotMatch(JSON.stringify(report), /private-attempt|pilot-reconcile-/);
+    const repaired = new DatabaseSync(local.file);
+    repaired.prepare("UPDATE budgets SET used_micros=7 WHERE suite='extraction'").run();
+    // SQLite rowid tables can contain NULL in a non-INTEGER PRIMARY KEY.
+    repaired.prepare("UPDATE attempts SET id=NULL").run();
+    repaired.close();
+    const nullId = await inspectPilotAttempts({ env: { ...env, PILOT_LOCAL_LEDGER: local.file }, providerFetch,
+      pilotFetch: async () => Response.json({ totals: totals(), attempts: [attempt()] }) }, dependencies);
+    assert.deepEqual(nullId.local, { status: "pending", reason: "local_ledger_unavailable" });
+    const fixedId = new DatabaseSync(local.file);
+    fixedId.prepare("UPDATE attempts SET id='private-attempt' WHERE id IS NULL").run();
+    fixedId.close();
+    chmodSync(local.file, 0o644);
+    const nonPrivate = await inspectPilotAttempts({ env: { ...env, PILOT_LOCAL_LEDGER: local.file }, providerFetch,
+      pilotFetch: async () => Response.json({ totals: totals(), attempts: [attempt()] }) }, dependencies);
+    assert.deepEqual(nonPrivate.local, { status: "pending", reason: "local_ledger_unavailable" });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("accepts a complete 50-attempt local campaign within the audit bound", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pilot-audit-full-"));
+  try {
+    const local = createPilotLedger(dir, 10_000_000, 50);
+    for (let i = 0; i < 50; i++) {
+      const suite = i < 25 ? "extraction" : "tailoring";
+      reservePilotLedger(local.file, suite, local[suite].micros, local[suite].calls, 1, 1, `attempt-${String(i).padStart(2, "0")}`);
+    }
+    const before = createHash("sha256").update(readFileSync(local.file)).digest("hex");
+    assert.equal(auditPilotLedger(local.file).attempts.length, 50);
+    assert.equal(createHash("sha256").update(readFileSync(local.file)).digest("hex"), before);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("rejects malformed metadata, substituted views, oversized values and an invalid nullable number", () => {
+  for (const scenario of ["many meta rows", "many budgets", "view", "oversized id", "invalid actual"]) {
+    const dir = mkdtempSync(join(tmpdir(), "pilot-audit-malformed-"));
+    try {
+      const local = createPilotLedger(dir, 10_000_000, 50);
+      reservePilotLedger(local.file, "extraction", local.extraction.micros, local.extraction.calls, 1, 1, "valid-attempt");
+      const db = new DatabaseSync(local.file);
+      try {
+        db.exec("BEGIN");
+        if (scenario === "many meta rows") {
+          const insert = db.prepare("INSERT INTO meta(version,total_micros,total_calls,frozen) VALUES(2,1,1,0)");
+          for (let i = 0; i < 1000; i++) insert.run();
+        } else if (scenario === "many budgets") {
+          const insert = db.prepare("INSERT INTO budgets(suite,max_micros,max_calls) VALUES(?,1,1)");
+          for (let i = 0; i < 1000; i++) insert.run(`extra-${i}`);
+        } else if (scenario === "view") {
+          db.exec("DROP TABLE meta; CREATE VIEW meta AS SELECT 2 AS version, 10000000 AS total_micros, 50 AS total_calls, 0 AS frozen");
+        } else if (scenario === "oversized id") {
+          db.prepare("UPDATE attempts SET id=?").run("private".repeat(100_000));
+        } else {
+          // This must not be mistaken for a genuine NULL while pending.
+          db.prepare("UPDATE attempts SET actual_micros='invalid'").run();
+        }
+        db.exec("COMMIT");
+      } finally { db.close(); }
+      const hash = () => createHash("sha256").update(readFileSync(local.file)).digest("hex");
+      const before = hash();
+      assert.throws(() => auditPilotLedger(local.file), /live_eval_ledger_unavailable/, scenario);
+      assert.equal(hash(), before, scenario);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+});
+
+test("rejects oversized or unsafe SQLite files and sidecars without modifying them", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pilot-audit-size-"));
+  try {
+    const local = createPilotLedger(dir, 10_000_000, 50);
+    const wal = `${local.file}-wal`;
+    symlinkSync(local.file, wal);
+    assert.throws(() => auditPilotLedger(local.file), /live_eval_ledger_unavailable/);
+    unlinkSync(wal);
+    writeFileSync(wal, new Uint8Array(8 * 1024 * 1024), { mode: 0o600 });
+    assert.throws(() => auditPilotLedger(local.file), /live_eval_ledger_unavailable/);
+    unlinkSync(wal);
+    truncateSync(local.file, 8 * 1024 * 1024 + 1);
+    const before = createHash("sha256").update(readFileSync(local.file)).digest("hex");
+    assert.throws(() => auditPilotLedger(local.file), /live_eval_ledger_unavailable/);
+    assert.equal(createHash("sha256").update(readFileSync(local.file)).digest("hex"), before);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

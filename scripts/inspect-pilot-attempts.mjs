@@ -3,6 +3,7 @@
 import { fileURLToPath } from "node:url";
 import { SharedPilotBudget } from "../test/evals/shared-pilot.mjs";
 import { preflightPilotDeployment } from "./lib/pilot-deployment.mjs";
+import { reconcilePilotAttempts } from "./lib/pilot-reconcile.mjs";
 
 export async function inspectPilotAttempts({ env = process.env, providerFetch = fetch, pilotFetch = fetch } = {}, dependencies = {}) {
   const preflight = await preflightPilotDeployment({ env, fetcher: providerFetch }, dependencies);
@@ -10,8 +11,13 @@ export async function inspectPilotAttempts({ env = process.env, providerFetch = 
   try {
     const pilot = new SharedPilotBudget(env.STAGING_URL, env.PILOT_BUDGET_KEY, pilotFetch);
     const { totals, attempts } = await pilot.auditAttempts();
+    let local;
+    if (env.PILOT_LOCAL_LEDGER) {
+      try { local = reconcilePilotAttempts(env.PILOT_LOCAL_LEDGER, env.PILOT_BUDGET_KEY, attempts); }
+      catch { local = { status: "pending", reason: "local_ledger_unavailable" }; }
+    }
     return { status: "pending", deploymentId: preflight.deploymentId, versionId: preflight.versionId,
-      totals, attempts, pending: [...preflight.pending, "attempt_outcome_and_provider_bounds_unverified"] };
+      totals, attempts, ...(local ? { local } : {}), pending: [...preflight.pending, "attempt_outcome_and_provider_bounds_unverified"] };
   } catch {
     return { status: "pending", pending: ["pilot_attempt_audit_unavailable"] };
   }

@@ -4,8 +4,9 @@ import {
   type ApplicationStatus,
   type ApplicationView,
 } from "../../shared/api";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { useAction, type Reload } from "../hooks";
+import { trackingWriteObserved } from "../tracker-save";
 import { ApplicationDocuments } from "./Documents";
 import { ActionError, Field } from "./ui";
 import "./workspace.css";
@@ -37,12 +38,27 @@ export function ApplicationWorkspace({
   async function save() {
     setSaved(false);
     const ok = await action.run(async () => {
-      await api.updateApplication(application.id, {
+      const submitted = {
         status,
         appliedAt: appliedAt || null,
         notes,
-        expectedRevision: revision,
-      });
+      };
+      try {
+        await api.updateApplication(application.id, { ...submitted, expectedRevision: revision });
+      } catch (error) {
+        // The update can commit even when its reply is lost. A retry with the
+        // old revision conflicts; reconcile only if the server now has exactly
+        // this submission at the next revision. Otherwise preserve the draft.
+        if (revision === undefined) throw error;
+        let current: ApplicationView | undefined;
+        try {
+          current = (await api.applications()).applications.find((item) => item.id === application.id);
+        } catch (readError) {
+          if (readError instanceof ApiError && (readError.status === 401 || readError.status === 410)) throw readError;
+          throw error;
+        }
+        if (!trackingWriteObserved(current, application.id, revision, submitted)) throw error;
+      }
       if (revision !== undefined) setRevision(revision + 1);
       await onSaved();
     });

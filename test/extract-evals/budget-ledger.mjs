@@ -1,6 +1,7 @@
 import {
   constants,
   closeSync,
+  lstatSync,
   openSync,
   realpathSync,
   statSync,
@@ -13,6 +14,10 @@ import { privateRoot } from "./private-dataset.mjs";
 const NAME = "first-staging-evals-budget.sqlite";
 const CANT_OPEN = "live_eval_ledger_unavailable";
 const SUITES = new Set(["extraction", "tailoring"]);
+// A one-shot campaign contains at most 50 attempts and never deletes rows.
+// This is deliberately far larger than its expected SQLite database, while
+// bounding the size of a malformed file supplied to the read-only audit.
+const MAX_AUDIT_FILE_BYTES = 8 * 1024 * 1024;
 
 function validatePath(path, exists = true) {
   try {
@@ -300,4 +305,72 @@ export function freezePilotLedger(file) {
   } finally {
     db?.close();
   }
+}
+
+/** Read one consistent, bounded local accounting snapshot without changing it. */
+export function auditPilotLedger(file) {
+  validatePath(file);
+  let db;
+  try {
+    let bytes = statSync(file).size;
+    for (const suffix of ["-wal", "-shm", "-journal"]) {
+      let sidecar;
+      try { sidecar = lstatSync(`${file}${suffix}`); }
+      catch (error) { if (error?.code === "ENOENT") continue; throw error; }
+      if (!sidecar.isFile() || sidecar.nlink !== 1 || (sidecar.mode & 0o077) !== 0 ||
+          (typeof process.getuid === "function" && sidecar.uid !== process.getuid())) throw new Error();
+      bytes += sidecar.size;
+    }
+    if (bytes > MAX_AUDIT_FILE_BYTES) throw new Error();
+    db = new DatabaseSync(file, { readOnly: true });
+    db.exec("PRAGMA busy_timeout=10000; PRAGMA query_only=ON; PRAGMA trusted_schema=OFF");
+    if (db.prepare("PRAGMA journal_mode").get()?.journal_mode !== "delete") throw new Error();
+    db.exec("BEGIN");
+    // The one-shot ledger uses ordinary tables, never views or virtual
+    // tables. Refuse a substituted schema before selecting its contents.
+    const schema = db.prepare(`SELECT name,type,CASE WHEN typeof(sql)='text' AND length(CAST(sql AS BLOB))<=4096 THEN sql ELSE NULL END AS definition FROM sqlite_schema WHERE name IN ('meta','budgets','attempts') LIMIT 4`).all();
+    if (schema.length !== 3 || new Set(schema.map((row) => row.name)).size !== 3 ||
+        schema.some((row) => row.type !== "table" || typeof row.definition !== "string" || !/^\s*CREATE\s+TABLE\b/i.test(row.definition)))
+      throw new Error();
+    // Validate malformed values inside SQLite so large TEXT/BLOB cells are not
+    // copied into JavaScript. Counts are capped before .all() allocates arrays.
+    const number = (name) => `CASE WHEN typeof(${name})='integer' THEN ${name} ELSE NULL END AS ${name}`;
+    const nullableNumber = (name) => `CASE WHEN typeof(${name})='integer' THEN ${name} WHEN ${name} IS NULL THEN NULL ELSE -1 END AS ${name}`;
+    const text = (name, maxBytes) => `CASE WHEN typeof(${name})='text' AND length(CAST(${name} AS BLOB))<=${maxBytes} THEN ${name} ELSE NULL END AS ${name}`;
+    const metaRows = db.prepare(`SELECT ${["version", "total_micros", "total_calls", "frozen"].map(number).join(",")} FROM meta LIMIT 2`).all();
+    const budgets = db.prepare(`SELECT ${text("suite", 10)},${["max_micros", "max_calls", "used_micros", "used_calls"].map(number).join(",")} FROM budgets LIMIT 3`).all();
+    const rows = db.prepare(`SELECT ${text("id", 100)},${text("suite", 10)},${number("reserved_micros")},${nullableNumber("actual_micros")},${text("state", 16)} FROM attempts LIMIT 51`).all();
+    budgets.sort((a, b) => typeof a.suite === "string" && typeof b.suite === "string" ? (a.suite < b.suite ? -1 : a.suite > b.suite ? 1 : 0) : 0);
+    const m = metaRows[0];
+    const nonnegative = (n) => Number.isSafeInteger(n) && n >= 0;
+    if (metaRows.length !== 1 || m.version !== 2 || !integer(m.total_micros) || m.total_micros > 10_000_000 ||
+        !integer(m.total_calls) || m.total_calls > 50 || ![0, 1].includes(m.frozen) ||
+        budgets.length !== 2 || budgets[0].suite !== "extraction" || budgets[1].suite !== "tailoring" ||
+        budgets.some((b) => !integer(b.max_micros) || !integer(b.max_calls) || !nonnegative(b.used_micros) ||
+          !nonnegative(b.used_calls) || b.used_micros > b.max_micros || b.used_calls > b.max_calls) ||
+        budgets.reduce((n, b) => n + b.max_micros, 0) !== m.total_micros ||
+        budgets.reduce((n, b) => n + b.max_calls, 0) !== m.total_calls || rows.length > 50 ||
+        rows.some((row) => typeof row.id !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(row.id) || !SUITES.has(row.suite) ||
+          !integer(row.reserved_micros) || !["pending", "settled", "unknown"].includes(row.state) ||
+          (row.actual_micros !== null && !nonnegative(row.actual_micros)) ||
+          (row.state === "settled" && row.actual_micros === null) ||
+          (row.state !== "settled" && row.actual_micros !== null)) ||
+        (m.frozen !== 1 && rows.some((row) => row.state === "unknown" ||
+          (row.state === "settled" && row.actual_micros > row.reserved_micros))) ||
+        budgets.some((b) => {
+          const group = rows.filter((row) => row.suite === b.suite);
+          return group.reduce((n, row) => n + row.reserved_micros, 0) !== b.used_micros ||
+            b.used_calls < group.length || (group.length === 0 && b.used_calls !== 0);
+        })) throw new Error();
+    db.exec("COMMIT");
+    rows.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    return { totalMicros: m.total_micros, totalCalls: m.total_calls, frozen: m.frozen === 1,
+      budgets: budgets.map((b) => ({ suite: b.suite, reservedMicros: b.used_micros, reservedCalls: b.used_calls })),
+      attempts: rows.map((row) => ({ id: row.id, suite: row.suite, reservedMicros: row.reserved_micros,
+        state: row.state === "settled" && row.actual_micros > row.reserved_micros ? "overrun" : row.state,
+        actualMicros: row.actual_micros })) };
+  } catch {
+    try { db?.exec("ROLLBACK"); } catch {}
+    throw new Error(CANT_OPEN);
+  } finally { db?.close(); }
 }

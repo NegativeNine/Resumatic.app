@@ -107,7 +107,10 @@ if (!browser?.startsWith("/")) {
       if (body.confirm?.includes("fact-1")) state.factState = "confirmed";
       return send(res, 204);
     }
-    if (path === "/api/applications" && req.method === "GET") return send(res, 200, { applications: state.applications });
+    if (path === "/api/applications" && req.method === "GET") {
+      if (state.trackingReadFailures > 0) { state.trackingReadFailures--; return send(res, 503, { error: "unavailable" }); }
+      return send(res, 200, { applications: state.applications });
+    }
     if (path === "/api/v2/applications" && req.method === "POST") {
       const body = JSON.parse((await read(req)).toString("utf8"));
       if (typeof body.jdText !== "string" || body.jdText.length < 40) return send(res, 400, { error: "invalid" });
@@ -127,9 +130,16 @@ if (!browser?.startsWith("/")) {
     }
     if (path === "/api/applications/application-1" && req.method === "PATCH") {
       const body = JSON.parse((await read(req)).toString("utf8"));
+      state.trackingRequests ??= [];
+      state.trackingRequests.push(body);
       const application = state.applications[0];
       if (!application || body.expectedRevision !== application.revision) return send(res, 409, { error: "conflict" });
       Object.assign(application, { status: body.status, appliedAt: body.appliedAt, notes: body.notes, revision: application.revision + 1 });
+      if (state.trackingRequests.length === 1) {
+        // The write committed, but both its response and the first reconciliation read fail.
+        state.trackingReadFailures = 1;
+        return send(res, 503, { error: "unavailable" });
+      }
       return send(res, 204);
     }
     if (path === "/api/applications/application-1/resumes" && req.method === "POST") {
@@ -312,7 +322,20 @@ if (!browser?.startsWith("/")) {
     finishJob();
     await wait(`document.body?.innerText.includes('Synthetic platform engineer job')`);
     if (state.jobRequests.length !== 2 || state.jobKeys.length !== 2 || state.jobKeys[0] !== state.jobKeys[1] || state.applications.length !== 1 || state.jobRequests.some((body) => body.jdText !== jobText) || !await evalPage(`document.querySelector('form.card textarea')?.value === '' && !document.querySelector('form.card textarea')?.readOnly && document.activeElement === document.querySelector('form.card textarea')`)) throw new Error("JOB_SAVE_RESULT_WRONG");
-    stage = "tracking"; await clickText("button", "Track & prepare"); await wait(`!!document.querySelector('.application-workspace select')`); await evalPage(`(() => { const e = document.querySelector('.application-workspace select'); e.value = 'applied'; e.dispatchEvent(new Event('change', { bubbles: true })); })()`); await evalPage(`document.querySelector('.application-workspace textarea').focus()`); await call("Input.insertText", { text: "Synthetic follow-up note" }); await clickText("button", "Save tracking details"); await wait(`document.querySelector('.application-workspace')?.innerText.includes('Saved.')`); if (state.applications[0]?.status !== "applied" || state.applications[0]?.notes !== "Synthetic follow-up note") throw new Error("TRACKING_NOT_SAVED");
+    stage = "tracking"; await clickText("button", "Track & prepare"); await wait(`!!document.querySelector('.application-workspace select')`); await evalPage(`(() => { const e = document.querySelector('.application-workspace select'); e.value = 'applied'; e.dispatchEvent(new Event('change', { bubbles: true })); })()`); await evalPage(`document.querySelector('.application-workspace textarea').focus()`); await call("Input.insertText", { text: "Synthetic follow-up note" }); await clickText("button", "Save tracking details");
+    await wait(`!!document.querySelector('.application-workspace [role="alert"]')`);
+    if (!await evalPage(`document.querySelector('.application-workspace textarea')?.value === 'Synthetic follow-up note'`)) throw new Error("TRACKING_DRAFT_LOST");
+    await clickText("button", "Save tracking details");
+    await wait(`document.querySelector('.application-workspace')?.innerText.includes('Saved.')`);
+    if (state.trackingRequests.length !== 2 || state.trackingRequests.some((item) => item.expectedRevision !== 1) || state.applications[0]?.revision !== 2 || state.applications[0]?.status !== "applied" || state.applications[0]?.notes !== "Synthetic follow-up note") throw new Error("TRACKING_NOT_RECONCILED");
+    // A concurrent edit with different content must remain a conflict and keep the local draft.
+    state.applications[0].notes = "Remote note"; state.applications[0].revision++;
+    await evalPage(`(() => { const e = document.querySelector('.application-workspace textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(e, 'Local draft'); e.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await clickText("button", "Save tracking details");
+    await wait(`!!document.querySelector('.application-workspace [role="alert"]')`);
+    if (!await evalPage(`document.querySelector('.application-workspace textarea')?.value === 'Local draft'`) || state.applications[0].notes !== "Remote note") throw new Error("TRACKING_CONFLICT_DRAFT_LOST");
+    await clickText("button", "Reload saved details");
+    await wait(`document.querySelector('.application-workspace textarea')?.value === 'Remote note'`);
     stage = "cover_letter"; await clickText("button", "Create cover letter"); await wait(`!![...document.querySelectorAll('summary')].find(x => x.textContent.trim() === 'Read cover letter')`); await clickText("summary", "Read cover letter"); await wait(`document.body?.innerText.includes('I built 12 payment services.')`);
     await wait(`(() => { const link = [...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download Word'); return link?.origin === location.origin && link.getAttribute('href') === '/api/documents/document-1/docx' && link.referrerPolicy === 'no-referrer'; })()`);
     stage = "saved_interview_answer";

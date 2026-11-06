@@ -8,6 +8,7 @@ import { checkLine } from "../../src/grounding/verdict";
 import { fakeModels } from "../support/fixtures";
 import { evalBudgetFromEnv } from "../extract-evals/budget";
 import { credentials, restModels, wranglerVars } from "./rest-models";
+import { seedFailureRecords, summarizeSeedRecords, type SeedRecord } from "./seeded-report";
 import {
   INSTRUCTION_CLAIM,
   SEED_CASES,
@@ -27,31 +28,12 @@ const creds = live ? credentials() : null;
 if (live && !creds) throw new Error("seeded_eval_credentials_required");
 const budget = live ? evalBudgetFromEnv() : null;
 const vars = live ? wranglerVars(process.env.EVAL_ENV || "staging") : {};
-const records: {
-  caseId: string;
-  repeat: number;
-  seed?: SeedKind;
-  outcome: string;
-  [key: string]: unknown;
-}[] = [];
+const records: SeedRecord[] = [];
 const hash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 afterAll(() => {
-  const kinds = SEED_KINDS.map((kind) => {
-    const entries = records.filter((record) => record.seed === kind);
-    const planted = entries.filter((record) => record.outcome === "evaluated");
-    const caught = planted.filter((record) => record.caught === true).length;
-    return {
-      kind,
-      planted: planted.length,
-      caught,
-      catchRate: planted.length ? caught / planted.length : null,
-      skipped: entries.filter((record) => record.outcome === "inapplicable")
-        .length,
-      failed: entries.filter((record) => record.outcome === "failed").length,
-    };
-  });
+  const kinds = summarizeSeedRecords(records);
   const report = {
     generatedAt: new Date().toISOString(),
     mode: live ? "live" : "harness-self-check",
@@ -74,7 +56,7 @@ afterAll(() => {
       "representative-production-regression-cases",
     ],
     measurement:
-      "Planted-claim signatures plus deterministic post-checks; not an independent semantic audit.",
+      "Planted-claim signatures plus deterministic post-checks; ambiguous action rewrites are not counted as catches. This is not an independent semantic audit.",
     budget: budget
       ? {
           calls: budget.calls,
@@ -89,7 +71,7 @@ afterAll(() => {
   writeFileSync("seeded-report.json", JSON.stringify(report, null, 2));
   writeFileSync(
     "seeded-report.md",
-    `# Seeded fabrication evaluation\n\nMode: ${report.mode}. Promotion remains pending.\n\n| Seed | Planted | Caught | Catch rate | Skipped | Failed |\n| --- | ---: | ---: | ---: | ---: | ---: |\n${kinds.map((row) => `| ${row.kind} | ${row.planted} | ${row.caught} | ${row.catchRate === null ? "n/a" : `${(row.catchRate * 100).toFixed(1)}%`} | ${row.skipped} | ${row.failed} |`).join("\n")}\n\nBaseline retention is included in the JSON report so dropping every line cannot masquerade as quality.\n`,
+    `# Seeded fabrication evaluation\n\nMode: ${report.mode}. Promotion remains pending.\n\n| Seed | Planted | Caught | Uncertain | Catch rate | Inapplicable | Failed | Not run |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n${kinds.map((row) => `| ${row.kind} | ${row.planted} | ${row.caught} | ${row.uncertain} | ${row.catchRate === null ? "n/a" : `${(row.catchRate * 100).toFixed(1)}%`} | ${row.skipped} | ${row.failed} | ${row.notRun} |`).join("\n")}\n\nBaseline retention is included in the JSON report so dropping every line cannot masquerade as quality.\n`,
   );
 });
 
@@ -97,19 +79,19 @@ describe.sequential("seeded fabrication verification", () => {
   for (let repeat = 0; repeat < repeats; repeat++) {
     it.each(SEED_CASES)(`run ${repeat + 1}: $id`, async (testCase) => {
       const usage: Usage[] = [];
-      const models = live
-        ? restModels(creds!, vars, {
-            budget: budget!,
-            onUsage: (item) => {
-              usage.push(item);
-            },
-          })
-        : fakeModels({
-            judgeRejects: [INSTRUCTION_CLAIM, "ignore all earlier rules"],
-          });
       let activeSeed: SeedKind | undefined;
       let recorded = false;
       try {
+        const models = live
+          ? restModels(creds!, vars, {
+              budget: budget!,
+              onUsage: (item) => {
+                usage.push(item);
+              },
+            })
+          : fakeModels({
+              judgeRejects: [INSTRUCTION_CLAIM, "ignore all earlier rules"],
+            });
         const draft = await writeDraft(
           models,
           testCase.analysis,
@@ -174,13 +156,9 @@ describe.sequential("seeded fabrication verification", () => {
           expect(score.caught).toBe(true);
         }
       } catch {
-        if (!recorded)
-          records.push({
-            caseId: testCase.id,
-            repeat,
-            seed: activeSeed,
-            outcome: "failed",
-          });
+        // Stop on an error rather than risk further paid calls, but do not
+        // mistake the unvisited seed kinds for a complete set of results.
+        records.push(...seedFailureRecords(testCase.id, repeat, activeSeed, recorded));
         // Provider replies, prompts and candidate text stay out of diagnostics and artifacts.
         throw new Error("seeded_eval_case_failed");
       } finally {

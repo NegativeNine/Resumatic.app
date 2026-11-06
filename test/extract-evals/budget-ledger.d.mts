@@ -30,3 +30,11 @@ export function finishPilotSuite(
   succeeded: boolean,
 ): boolean;
 export function freezePilotLedger(file: string): void;
+export function auditPilotLedger(file: string): {
+  totalMicros: number;
+  totalCalls: number;
+  frozen: boolean;
+  budgets: { suite: "extraction" | "tailoring"; reservedMicros: number; reservedCalls: number }[];
+  attempts: { id: string; suite: "extraction" | "tailoring"; reservedMicros: number;
+    state: "pending" | "settled" | "unknown" | "overrun"; actualMicros: number | null }[];
+};

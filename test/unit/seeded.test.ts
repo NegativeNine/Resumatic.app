@@ -103,6 +103,44 @@ describe("seeded fabrication harness", () => {
     });
   });
 
+  it("does not score a surviving negation as caught when the verb changes form", async () => {
+    const testCase = SEED_CASES[0]!;
+    const draft = await writeDraft(models(), testCase.analysis, testCase.selection, testCase.facts, testCase.roles);
+    const planted = plantSeed("negateAction", draft, testCase)!;
+    const bad = planted.draft.lines.find((line) => line.id === planted.lineId)!;
+    const verified: VerifiedDraft = { lines: [{ ...bad, text: "Did not help build the service", status: "repaired" }], report };
+    expect(scoreSeed(planted, verified, testCase)).toMatchObject({ caught: false, survives: true });
+  });
+
+  it("reports synonymous or ambiguous rewrites as uncertain instead of caught", async () => {
+    const testCase = SEED_CASES[0]!;
+    const draft = await writeDraft(models(), testCase.analysis, testCase.selection, testCase.facts, testCase.roles);
+    const planted = plantSeed("negateAction", draft, testCase)!;
+    const bad = planted.draft.lines.find((line) => line.id === planted.lineId)!;
+    for (const text of ["Never assisted in building a Go service", "Not only helped build a Go service"]) {
+      const verified: VerifiedDraft = { lines: [{ ...bad, text, status: "repaired" }], report };
+      expect(scoreSeed(planted, verified, testCase)).toMatchObject({ caught: false, uncertain: true });
+    }
+  });
+
+  it("does not plant a negation when the source supports only a different object", () => {
+    const testCase = SEED_CASES[0]!;
+    const draft = { lines: [{ id: "different", roleId: testCase.facts[0]!.roleId, factIds: [testCase.facts[0]!.id],
+      text: "Helped build the payroll system" }] };
+    expect(plantSeed("negateAction", draft, testCase)).toBeNull();
+  });
+
+  it("does not treat an uncited fact as proof that a rewrite recovered", () => {
+    const base = SEED_CASES[0]!;
+    const first = { ...base.facts[0]!, text: "Helped build billing systems", quote: "Helped build billing systems" };
+    const second = { ...base.facts[1]!, roleId: first.roleId, text: "Helped build payroll systems", quote: "Helped build payroll systems" };
+    const testCase = { ...base, facts: [first, second], selection: { ...base.selection, factIds: [first.id, second.id] } };
+    const draft = { lines: [{ id: "line", roleId: first.roleId, factIds: [first.id, second.id], text: first.text }] };
+    const planted = plantSeed("negateAction", draft, testCase)!;
+    const verified: VerifiedDraft = { lines: [{ ...draft.lines[0]!, factIds: [first.id], text: second.text, status: "repaired" }], report };
+    expect(scoreSeed(planted, verified, testCase)).toMatchObject({ caught: false, uncertain: true });
+  });
+
   it("keeps supported baseline lines when the fixture judge has no reason to reject them", async () => {
     for (const testCase of SEED_CASES) {
       const model = models();

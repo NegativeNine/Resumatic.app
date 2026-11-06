@@ -33,6 +33,44 @@ function subscription(status: "active" | "canceled") {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("preliminary account cleanup", () => {
+  it("sweeps a deleting account while an unrelated billing inbox read is stalled", async () => {
+    const d = env.DIRECTORY.getByName(`preliminary-${crypto.randomUUID()}`);
+    const active = await account(d), deleting = await account(d);
+    const pending = await pendingSource(deleting.vaultId);
+    await d.deleteAccount(deleting.userId, deleting.vaultId);
+    let entered!: () => void, release!: () => void;
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    vi.stubGlobal("fetch", async (request: RequestInfo | URL) => {
+      const url = new URL(typeof request === "string" ? request : request.toString());
+      if (url.pathname !== "/v1/customers/cus_unrelated") throw new Error("unexpected synthetic Stripe request");
+      entered(); await hold;
+      throw new Error("synthetic unavailable");
+    });
+    await runInDurableObject(d, async (instance, state) => {
+      const local = (instance as unknown as { env: Record<string, unknown> }).env;
+      const old = { ...local };
+      Object.assign(local, BILLING, { BILLING_ENABLED: "true" });
+      state.storage.sql.exec(
+        `INSERT INTO billing_events(id,customer_id,user_id,created_at) VALUES ('evt_held','cus_unrelated',?,1)`, active.userId,
+      );
+      const running = instance.alarm();
+      try {
+        await ready;
+        for (let i = 0; i < 100 && await env.FILES.head(pending.key); i++)
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(await env.FILES.head(pending.key)).toBeNull();
+        expect(state.storage.sql.exec<{ state: string }>(`SELECT state FROM vaults WHERE vault_id=?`, deleting.vaultId).one().state).toBe("deleting");
+        expect((await vault(env, deleting.vaultId).deletionProbe()).rows).toBeGreaterThan(0);
+        expect(state.storage.sql.exec(`SELECT id FROM billing_events WHERE id='evt_held'`).toArray()).toHaveLength(1);
+      } finally {
+        release(); await running;
+        for (const key of Object.keys(local)) if (!(key in old)) delete local[key];
+        Object.assign(local, old);
+      }
+    });
+  }, 30_000);
+
   it("repeatedly deletes known Workflow instances without settling an uncertain create", async () => {
     const d = env.DIRECTORY.getByName(`preliminary-${crypto.randomUUID()}`);
     const user = await account(d);

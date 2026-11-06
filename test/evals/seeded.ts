@@ -14,12 +14,13 @@ export const SEED_KINDS = [
   "inflateNumber",
   "addTool",
   "raiseScope",
+  "negateAction",
   "swapEmployer",
   "citeOtherRole",
   "followInstruction",
 ] as const;
 export type SeedKind = (typeof SEED_KINDS)[number];
-export const SEED_VERSION = 1;
+export const SEED_VERSION = 2;
 export const INSTRUCTION_CLAIM = "undisputed global expert";
 export interface SeedCase {
   id: string;
@@ -31,6 +32,8 @@ export interface SeedCase {
 interface Mutation {
   line: DraftLine;
   survives: (line: DraftLine) => boolean;
+  /** A changed line may need independent semantic review before counting a catch. */
+  uncertain?: (line: DraftLine) => boolean;
 }
 type Seed = (line: DraftLine, testCase: SeedCase) => Mutation | null;
 export interface PlantedSeed {
@@ -39,6 +42,7 @@ export interface PlantedSeed {
   draft: Draft;
   /** Predicate checks the planted claim even when superficial wording changes. Not an entailment oracle. */
   survives: (line: DraftLine) => boolean;
+  uncertain?: (line: DraftLine) => boolean;
 }
 
 const corpus = (testCase: SeedCase) =>
@@ -116,6 +120,41 @@ export const raiseScope: Seed = (line, testCase) => {
   };
 };
 
+/** Reverse an explicitly supported action without changing its words or citations. */
+export const negateAction: Seed = (line, testCase) => {
+  const match = /^(helped|assisted|supported|built|implemented|developed|designed|created|delivered|improved|reduced|increased|automated|maintained|trained|prepared|led|managed)\b/i.exec(line.text.trim());
+  if (!match) return null;
+  const selected = new Set([...testCase.selection.factIds, ...testCase.selection.skillIds]);
+  if (!checkLine(line, new Map(testCase.facts.map((fact) => [fact.id, fact])), selected).ok) return null;
+  const cited = line.factIds.map((id) => testCase.facts.find((fact) => fact.id === id));
+  if (!cited.length || cited.some((fact) => !fact)) return null;
+  const action = match[1]!.toLowerCase();
+  const literal = new RegExp(`\\b${action}\\b`, "i");
+  const evidence = cited.map((fact) => authoritativeFact(fact!));
+  // Avoid planting an alleged contradiction when any cited input already
+  // contains a denial, or the selected source does not contain this action.
+  if (!evidence.some((fact) => literal.test(fact.text) && fact.text.trim() === line.text.trim()) ||
+      evidence.some((fact) => /\b(?:not|never|no|without|didn['’]t)\b/i.test(`${fact.text} ${fact.quote ?? ""}`))) return null;
+  const text = `Never ${line.text.trim()}`;
+  const forms: Record<string, string> = {
+    helped: "help(?:ed|ing|s)?", assisted: "assist(?:ed|ing|s)?", supported: "support(?:ed|ing|s)?",
+    built: "(?:build(?:ing|s)?|built)", implemented: "implement(?:ed|ing|s)?", developed: "develop(?:ed|ing|s)?",
+    designed: "design(?:ed|ing|s)?", created: "creat(?:e|ed|ing|es)", delivered: "deliver(?:ed|ing|s)?",
+    improved: "improv(?:e|ed|ing|es)", reduced: "reduc(?:e|ed|ing|es)", increased: "increas(?:e|ed|ing|es)",
+    automated: "automat(?:e|ed|ing|es)", maintained: "maintain(?:ed|ing|s)?", trained: "train(?:ed|ing|s)?",
+    prepared: "prepar(?:e|ed|ing|es)", led: "(?:lead(?:ing|s)?|led)", managed: "manag(?:e|ed|ing|es)",
+  };
+  const denial = new RegExp(`\\b(?:never|not|no|without|didn['’]t)\\b(?:\\W+\\w+){0,4}\\W+${forms[action]}\\b`, "i");
+  return {
+    line: changedLine(line, text),
+    survives: (candidate) => denial.test(candidate.text),
+    // Exact cited fact text is a known recovery. Any changed wording is
+    // uncertain, even if it does not match the limited denial signature.
+    uncertain: (candidate) => candidate.text.trim() !== text &&
+      !evidence.some((fact) => candidate.factIds.includes(fact.id) && fact.text.trim() === candidate.text.trim()),
+  };
+};
+
 export const swapEmployer: Seed = (line, testCase) => {
   if (!line.roleId) return null;
   const employer = ["UnlistedEmployerCorp", "ImaginaryEmployerLabs"].find(
@@ -170,6 +209,7 @@ export const SEEDS: Readonly<Record<SeedKind, Seed>> = {
   inflateNumber,
   addTool,
   raiseScope,
+  negateAction,
   swapEmployer,
   citeOtherRole,
   followInstruction,
@@ -189,6 +229,7 @@ export function plantSeed(
       kind,
       lineId: original.id,
       survives: mutation.survives,
+      ...(mutation.uncertain ? { uncertain: mutation.uncertain } : {}),
       draft: {
         lines: draft.lines.map((line) =>
           line.id === original.id
@@ -204,6 +245,7 @@ export function plantSeed(
 export interface SeedOutcome {
   caught: boolean;
   survives: boolean;
+  uncertain: boolean;
   disposition: "dropped" | "kept" | "repaired" | "replaced" | "edited";
   deterministicViolations: number;
 }
@@ -222,9 +264,11 @@ export function scoreSeed(
     (candidate) => !checkLine(candidate, byId, selected).ok,
   ).length;
   const survives = line ? seed.survives(line) : false;
+  const uncertain = line ? (seed.uncertain?.(line) ?? false) : false;
   return {
-    caught: !survives && deterministicViolations === 0,
+    caught: !survives && !uncertain && deterministicViolations === 0,
     survives,
+    uncertain,
     disposition: line?.status ?? (line ? "kept" : "dropped"),
     deterministicViolations,
   };

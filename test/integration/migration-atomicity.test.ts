@@ -47,7 +47,16 @@ function removeExportCacheMigration(sql: SqlStorage): void {
   sql.exec(`DROP TABLE export_cache`);
 }
 
+function removeBillingAccountStateMigration(sql: SqlStorage): void {
+  for (const trigger of ["billing_account_insert_token", "billing_account_update_token", "billing_account_delete_token"])
+    sql.exec(`DROP TRIGGER ${trigger}`);
+  sql.exec(`DROP TABLE billing_state_clock`);
+  sql.exec(`ALTER TABLE billing_accounts DROP COLUMN state_token`);
+}
+
 function removeShardClaimMigration(sql: SqlStorage): void {
+  removeBillingAccountStateMigration(sql);
+  sql.exec(`ALTER TABLE billing_events DROP COLUMN incarnation`);
   sql.exec(`DROP TRIGGER guard_shard_home_claim_bind`);
   sql.exec(`DROP TRIGGER remove_shard_home_claim_token`);
   sql.exec(`DROP TRIGGER remove_shard_identity_claim_on_identity`);
@@ -84,6 +93,46 @@ function removeGlobalAuthMigration(sql: SqlStorage): void {
 }
 
 describe("atomic schema migrations", () => {
+  it("rolls back billing account state tokens atomically, then preserves legacy rows", async () => {
+    const stub = env.DIRECTORY.getByName(`billing-state-${crypto.randomUUID()}`);
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec(`INSERT INTO billing_accounts(user_id,customer_id,entitlement,revision) VALUES ('u1','cus_legacy','{}',1)`);
+      removeBillingAccountStateMigration(sql);
+      const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((q) => q.includes("billing_accounts ADD COLUMN state_token")));
+      expect(previous).toBeGreaterThan(0);
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrateDirectory(failAtVersion(sql, previous + 1), tx)).toThrow(/synthetic version-write interruption/);
+      expect(() => sql.exec(`SELECT state_token FROM billing_accounts`).toArray()).toThrow();
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name='billing_state_clock'`).toArray()).toHaveLength(0);
+      expect(sql.exec<{value:string}>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(previous));
+      migrateDirectory(sql, tx);
+      expect(sql.exec<{state_token:number|null}>(`SELECT state_token FROM billing_accounts WHERE user_id='u1'`).one().state_token).toBeNull();
+      sql.exec(`UPDATE billing_accounts SET customer_id=customer_id WHERE user_id='u1'`);
+      expect(sql.exec<{state_token:number}>(`SELECT state_token FROM billing_accounts WHERE user_id='u1'`).one().state_token).toBeGreaterThan(0);
+    });
+  });
+  it("rolls back billing event incarnation migration and preserves legacy rows", async () => {
+    const stub = env.DIRECTORY.getByName(`billing-incarnation-${crypto.randomUUID()}`);
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec(`INSERT INTO billing_events(id,customer_id,user_id,created_at) VALUES ('evt_legacy','cus_legacy','u1',1)`);
+      removeBillingAccountStateMigration(sql);
+      sql.exec(`ALTER TABLE billing_events DROP COLUMN incarnation`);
+      const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((q) => q.includes("billing_events ADD COLUMN incarnation")));
+      expect(previous).toBeGreaterThan(0);
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrateDirectory(failAtVersion(sql, previous + 1), tx)).toThrow(/synthetic version-write interruption/);
+      expect(() => sql.exec(`SELECT incarnation FROM billing_events`).toArray()).toThrow();
+      expect(sql.exec<{value:string}>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(previous));
+      migrateDirectory(sql, tx);
+      expect(sql.exec<{id:string;incarnation:string|null}>(`SELECT id,incarnation FROM billing_events`).one())
+        .toEqual({ id: "evt_legacy", incarnation: null });
+      expect(sql.exec<{value:string}>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(DIRECTORY_MIGRATIONS.length));
+    });
+  });
   it("rolls back the shard claim tables, triggers and version together", async () => {
     const stub = env.DIRECTORY.getByName(`claim-migration-${crypto.randomUUID()}`);
     await runInDurableObject(stub, (_instance, state) => {

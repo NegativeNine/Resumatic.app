@@ -21,6 +21,31 @@ export const BILLING_DEFERRED_MIGRATIONS = [
 export const BILLING_DELIVERY_RETRY_MIGRATIONS = [
   `CREATE TABLE billing_delivery_retries (user_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, next_attempt_at INTEGER NOT NULL)`,
 ];
+export const BILLING_EVENT_INCARNATION_MIGRATIONS = [
+  `ALTER TABLE billing_events ADD COLUMN incarnation TEXT`,
+];
+// A global, non-identifying sequence gives every account incarnation and
+// state update a fresh token, including writes from older SQL code. The clock
+// also distinguishes absent -> inserted -> deleted while a lookup is in flight.
+export const BILLING_ACCOUNT_STATE_MIGRATIONS = [
+  `ALTER TABLE billing_accounts ADD COLUMN state_token INTEGER`,
+  `CREATE TABLE billing_state_clock (id INTEGER PRIMARY KEY CHECK(id=1), value INTEGER NOT NULL CHECK(value>=0 AND value<=9007199254740991))`,
+  `INSERT INTO billing_state_clock(id,value) VALUES (1,0)`,
+  `CREATE TRIGGER billing_account_insert_token AFTER INSERT ON billing_accounts BEGIN
+     SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM billing_state_clock WHERE id=1) THEN RAISE(ABORT,'billing_state_clock_missing') END;
+     UPDATE billing_state_clock SET value=value+1 WHERE id=1;
+     UPDATE billing_accounts SET state_token=(SELECT value FROM billing_state_clock WHERE id=1) WHERE user_id=NEW.user_id;
+   END`,
+  `CREATE TRIGGER billing_account_update_token AFTER UPDATE OF user_id,customer_id,subscription_id,paid_period,entitlement,revision ON billing_accounts BEGIN
+     SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM billing_state_clock WHERE id=1) THEN RAISE(ABORT,'billing_state_clock_missing') END;
+     UPDATE billing_state_clock SET value=value+1 WHERE id=1;
+     UPDATE billing_accounts SET state_token=(SELECT value FROM billing_state_clock WHERE id=1) WHERE user_id=NEW.user_id;
+   END`,
+  `CREATE TRIGGER billing_account_delete_token AFTER DELETE ON billing_accounts BEGIN
+     SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM billing_state_clock WHERE id=1) THEN RAISE(ABORT,'billing_state_clock_missing') END;
+     UPDATE billing_state_clock SET value=value+1 WHERE id=1;
+   END`,
+];
 
 const RETRY_DELAY_MS = 60_000;
 
@@ -86,13 +111,14 @@ export class BillingStore {
     // cannot insert a new customer-only row after deletion begins.
     if (!this.hooks.account(userId)) return;
     this.sql.exec(
-      `INSERT OR IGNORE INTO billing_events (id, customer_id, subscription_id, invoice_id, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO billing_events (id, customer_id, subscription_id, invoice_id, user_id, created_at, incarnation) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       event.id,
       customer,
       subscription,
       invoice,
       userId,
       Date.now(),
+      crypto.randomUUID(),
     );
   }
 
@@ -130,14 +156,28 @@ export class BillingStore {
     if (!cfg) return;
     const stripe = stripeClient(cfg, this.fetcher);
     const events = this.sql
-      .exec<{ id: string; customer_id: string; invoice_id: string | null; user_id: string | null; next_attempt_at: number }>(
-        `SELECT id, customer_id, invoice_id, user_id, next_attempt_at FROM billing_events WHERE state = 'pending' AND next_attempt_at <= ? ORDER BY next_attempt_at, created_at, id LIMIT 20`,
+      .exec<{ id: string; customer_id: string; invoice_id: string | null; user_id: string | null; created_at: number; next_attempt_at: number; incarnation: string | null }>(
+        `SELECT id, customer_id, invoice_id, user_id, created_at, next_attempt_at, incarnation FROM billing_events WHERE state = 'pending' AND next_attempt_at <= ? ORDER BY next_attempt_at, created_at, id LIMIT 20`,
         Date.now(),
       )
       .toArray();
+    // Older inbox rows and old Workers may omit this field. Assign each
+    // selected row a fresh incarnation before any provider I/O so a deleted
+    // and reinserted event cannot match an earlier reconciliation, even when
+    // every other field and millisecond timestamp is identical.
+    for (const event of events) {
+      if (event.incarnation === null) {
+        const incarnation = crypto.randomUUID();
+        this.sql.exec(`UPDATE billing_events SET incarnation=? WHERE id=? AND incarnation IS NULL`, incarnation, event.id);
+        event.incarnation = incarnation;
+      }
+    }
     let failed = false;
     for (const event of events) {
+      let attributedUserId: string | null = null;
       try {
+        if (!event.incarnation || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.incarnation))
+          throw new AppError("unavailable", "billing event identity requires review");
         const customer = await stripe.customer(event.customer_id);
         const uid = customer.metadata.account_uid;
         // Some legacy pending events stored an empty owner rather than NULL.
@@ -155,32 +195,50 @@ export class BillingStore {
         if (event.user_id && event.user_id !== uid)
           throw new AppError("unavailable", "billing customer attribution changed");
         if (!uid || !this.hooks.account(uid)) {
-          this.sql.exec(`DELETE FROM billing_events WHERE id = ?`, event.id);
+          // The event may have been erased and replaced while Stripe was in
+          // flight. Do not remove a different customer's newly received row.
+          this.sql.exec(
+            `DELETE FROM billing_events WHERE id=? AND incarnation=? AND customer_id=? AND user_id IS ? AND created_at=? AND state='pending' AND next_attempt_at=?`,
+            event.id, event.incarnation, event.customer_id, event.user_id, event.created_at, event.next_attempt_at,
+          );
           continue;
         }
         this.sql.exec(
-          `UPDATE billing_events SET user_id = ? WHERE id = ? AND (user_id IS NULL OR user_id = '' OR user_id = ?)`,
+          `UPDATE billing_events SET user_id = ? WHERE id = ? AND incarnation = ? AND customer_id = ? AND created_at = ? AND state = 'pending' AND next_attempt_at = ? AND (user_id IS NULL OR user_id = '' OR user_id = ?)`,
           uid,
           event.id,
+          event.incarnation,
+          event.customer_id,
+          event.created_at,
+          event.next_attempt_at,
           uid,
         );
         const attributed = this.sql.exec<{ user_id: string | null }>(
-          `SELECT user_id FROM billing_events WHERE id = ?`, event.id,
+          `SELECT user_id FROM billing_events WHERE id = ? AND incarnation = ? AND customer_id = ? AND created_at = ? AND state = 'pending' AND next_attempt_at = ?`,
+          event.id, event.incarnation, event.customer_id, event.created_at, event.next_attempt_at,
         ).toArray()[0];
         if (!attributed) continue; // An account erasure removed the event during I/O.
         if (attributed.user_id !== uid)
           throw new AppError("unavailable", "billing customer attribution changed");
+        attributedUserId = uid;
+        // Existing pre-migration rows have no token. Touch only such a row;
+        // the trigger assigns a token synchronously before any dependent I/O.
+        this.sql.exec(`UPDATE billing_accounts SET customer_id=customer_id WHERE user_id=? AND state_token IS NULL`, uid);
         const row = this.sql
           .exec<{
             customer_id: string;
             subscription_id: string | null;
             paid_period: string | null;
             entitlement: string | null;
+            state_token: number | null;
           }>(
-            `SELECT customer_id, subscription_id, paid_period, entitlement FROM billing_accounts WHERE user_id = ?`,
+            `SELECT customer_id, subscription_id, paid_period, entitlement, state_token FROM billing_accounts WHERE user_id = ?`,
             uid,
           )
           .toArray()[0];
+        const clock = this.sql.exec<{ value: number }>(`SELECT value FROM billing_state_clock WHERE id=1`).toArray()[0]?.value;
+        if (!Number.isSafeInteger(clock) || clock! < 0 || (row && (!Number.isSafeInteger(row.state_token) || row.state_token! < 1)))
+          throw new AppError("unavailable", "billing state identity requires review");
         if (row && row.customer_id !== event.customer_id)
           throw new AppError(
             "forbidden",
@@ -263,7 +321,10 @@ export class BillingStore {
           nextAttempt = now + 60_000;
         // Account deletion may have interleaved with the Stripe reads.
         if (!this.hooks.account(uid)) {
-          this.sql.exec(`DELETE FROM billing_events WHERE id = ?`, event.id);
+          this.sql.exec(
+            `DELETE FROM billing_events WHERE id=? AND incarnation=? AND customer_id=? AND user_id=? AND created_at=? AND state='pending' AND next_attempt_at=?`,
+            event.id, event.incarnation, event.customer_id, uid, event.created_at, event.next_attempt_at,
+          );
           continue;
         }
         this.hooks.transaction(() => {
@@ -271,8 +332,8 @@ export class BillingStore {
           // Never overwrite a newer snapshot with a response fetched before it.
           const currentEvent = this.sql
             .exec<{ state: string; next_attempt_at: number }>(
-              `SELECT state, next_attempt_at FROM billing_events WHERE id = ?`,
-              event.id,
+              `SELECT state, next_attempt_at FROM billing_events WHERE id = ? AND incarnation = ? AND customer_id = ? AND user_id = ? AND created_at = ?`,
+              event.id, event.incarnation, event.customer_id, uid, event.created_at,
             )
             .toArray()[0];
           if (!currentEvent || currentEvent.state !== "pending" || currentEvent.next_attempt_at !== event.next_attempt_at) return;
@@ -282,13 +343,15 @@ export class BillingStore {
               subscription_id: string | null;
               paid_period: string | null;
               entitlement: string | null;
+              state_token: number | null;
             }>(
-              `SELECT customer_id, subscription_id, paid_period, entitlement FROM billing_accounts WHERE user_id = ?`,
+              `SELECT customer_id, subscription_id, paid_period, entitlement, state_token FROM billing_accounts WHERE user_id = ?`,
               uid,
             )
             .toArray()[0];
           if (
-            JSON.stringify(currentRow ?? null) !== JSON.stringify(row ?? null)
+            JSON.stringify(currentRow ?? null) !== JSON.stringify(row ?? null) ||
+            (!row && this.sql.exec<{ value: number }>(`SELECT value FROM billing_state_clock WHERE id=1`).toArray()[0]?.value !== clock)
           ) {
             throw new AppError(
               "unavailable",
@@ -301,8 +364,8 @@ export class BillingStore {
             const deferredId = `deferred:${invoiceId}`;
             if (deferredId === event.id) nextAttempt = begins;
             else this.sql.exec(
-              `INSERT OR IGNORE INTO billing_events (id, customer_id, subscription_id, invoice_id, user_id, state, created_at, next_attempt_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
-              deferredId, event.customer_id, subscription!.id, invoiceId, uid, now, begins,
+              `INSERT OR IGNORE INTO billing_events (id, customer_id, subscription_id, invoice_id, user_id, state, created_at, next_attempt_at, incarnation) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+              deferredId, event.customer_id, subscription!.id, invoiceId, uid, now, begins, crypto.randomUUID(),
             );
           }
           this.sql.exec(
@@ -327,20 +390,40 @@ revision = billing_accounts.revision + CASE WHEN billing_accounts.entitlement !=
         // including cancellations, from being reconciled. Do not postpone a
         // concurrent reconciliation that already changed this event.
         this.sql.exec(
-          `UPDATE billing_events SET next_attempt_at = ? WHERE id = ? AND state = 'pending' AND next_attempt_at = ?`,
+          `UPDATE billing_events SET next_attempt_at = ? WHERE id = ? AND incarnation IS ? AND customer_id = ? AND created_at = ? AND state = 'pending' AND next_attempt_at = ? AND (user_id IS ? OR user_id IS ?)`,
           Date.now() + RETRY_DELAY_MS,
           event.id,
+          event.incarnation,
+          event.customer_id,
+          event.created_at,
           event.next_attempt_at,
+          event.user_id,
+          attributedUserId,
         );
       }
     }
     for (const row of this.sql
-      .exec<{ user_id: string; revision: number; entitlement: string; retry_at: number | null }>(
-        `SELECT a.user_id, a.revision, a.entitlement, r.next_attempt_at AS retry_at FROM billing_accounts a LEFT JOIN billing_delivery_retries r ON r.user_id = a.user_id AND r.revision = a.revision WHERE a.delivered_revision < a.revision AND COALESCE(r.next_attempt_at, 0) <= ? ORDER BY COALESCE(r.next_attempt_at, 0), a.user_id LIMIT 20`,
+      .exec<{ user_id: string; revision: number; entitlement: string; retry_at: number | null; state_token: number | null }>(
+        `SELECT a.user_id, a.revision, a.entitlement, a.state_token, r.next_attempt_at AS retry_at FROM billing_accounts a LEFT JOIN billing_delivery_retries r ON r.user_id = a.user_id AND r.revision = a.revision WHERE a.delivered_revision < a.revision AND COALESCE(r.next_attempt_at, 0) <= ? ORDER BY COALESCE(r.next_attempt_at, 0), a.user_id LIMIT 20`,
         Date.now(),
       )
       .toArray()) {
+      if (row.state_token === null) {
+        this.sql.exec(`UPDATE billing_accounts SET customer_id=customer_id WHERE user_id=? AND revision=? AND state_token IS NULL`, row.user_id, row.revision);
+        row.state_token = this.sql.exec<{ state_token: number | null }>(`SELECT state_token FROM billing_accounts WHERE user_id=? AND revision=? AND entitlement=? AND delivered_revision<revision`, row.user_id, row.revision, row.entitlement).toArray()[0]?.state_token ?? null;
+      }
       try {
+        if (!Number.isSafeInteger(row.state_token) || row.state_token! < 1)
+          throw new AppError("unavailable", "billing state identity requires review");
+        // Earlier rows in the batch may have yielded. Do not dispatch a
+        // snapshot that was replaced or already delivered while they ran.
+        if (!this.sql.exec(
+          `SELECT 1 FROM billing_accounts a LEFT JOIN billing_delivery_retries r ON r.user_id=a.user_id AND r.revision=a.revision
+           WHERE a.user_id=? AND a.revision=? AND a.state_token=? AND a.entitlement=? AND a.delivered_revision<a.revision
+             AND r.next_attempt_at IS ? AND COALESCE(r.next_attempt_at,0)<=?`,
+          row.user_id, row.revision, row.state_token, row.entitlement, row.retry_at, Date.now(),
+        ).toArray().length)
+          continue;
         const account = this.hooks.account(row.user_id);
         if (account)
           await this.hooks.deliver(
@@ -353,14 +436,15 @@ revision = billing_accounts.revision + CASE WHEN billing_accounts.entitlement !=
         if (!account || this.hooks.account(row.user_id)?.vaultId !== account.vaultId)
           continue;
         this.sql.exec(
-          `UPDATE billing_accounts SET delivered_revision = ? WHERE user_id = ? AND revision = ?`,
+          `UPDATE billing_accounts SET delivered_revision = ? WHERE user_id = ? AND revision = ? AND state_token = ?`,
           row.revision,
           row.user_id,
           row.revision,
+          row.state_token,
         );
         // Do not erase a retry recorded for a newer revision while the RPC
         // was in flight.
-        this.sql.exec(`DELETE FROM billing_delivery_retries WHERE user_id = ? AND revision <= ?`, row.user_id, row.revision);
+        this.sql.exec(`DELETE FROM billing_delivery_retries WHERE user_id = ? AND revision <= ? AND EXISTS (SELECT 1 FROM billing_accounts WHERE user_id=? AND revision=? AND state_token=? AND delivered_revision=?)`, row.user_id, row.revision, row.user_id, row.revision, row.state_token, row.revision);
       } catch {
         failed = true;
         // Store backoff only if this exact entitlement is still undelivered.
@@ -368,12 +452,13 @@ revision = billing_accounts.revision + CASE WHEN billing_accounts.entitlement !=
         // erasure must not be delayed or resurrected by a stale failure.
         this.sql.exec(
           `INSERT INTO billing_delivery_retries (user_id, revision, next_attempt_at)
-           SELECT user_id, revision, ? FROM billing_accounts WHERE user_id = ? AND revision = ? AND delivered_revision < revision
+           SELECT user_id, revision, ? FROM billing_accounts WHERE user_id = ? AND revision = ? AND state_token IS ? AND delivered_revision < revision
            ON CONFLICT(user_id) DO UPDATE SET revision = excluded.revision, next_attempt_at = excluded.next_attempt_at
            WHERE billing_delivery_retries.revision < excluded.revision OR (billing_delivery_retries.revision = excluded.revision AND billing_delivery_retries.next_attempt_at = ?)`,
           Date.now() + RETRY_DELAY_MS,
           row.user_id,
           row.revision,
+          row.state_token,
           row.retry_at,
         );
       }

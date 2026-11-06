@@ -33,6 +33,11 @@ it("rejects a pre-migration create after a previously erased shard wakes", async
   await runInDurableObject(f.home, (_instance, state) => {
     state.storage.sql.exec(`UPDATE meta SET value='0' WHERE key='shard_auth_floor'`);
     state.storage.sql.exec(`DELETE FROM meta WHERE key='shard_rollout_epoch'`);
+    for (const trigger of ["billing_account_insert_token", "billing_account_update_token", "billing_account_delete_token"])
+      state.storage.sql.exec(`DROP TRIGGER ${trigger}`);
+    state.storage.sql.exec(`DROP TABLE billing_state_clock`);
+    state.storage.sql.exec(`ALTER TABLE billing_accounts DROP COLUMN state_token`);
+    state.storage.sql.exec(`ALTER TABLE billing_events DROP COLUMN incarnation`);
     state.storage.sql.exec(`DROP TRIGGER guard_shard_home_claim_bind`);
     state.storage.sql.exec(`DROP TRIGGER remove_shard_home_claim_token`);
     state.storage.sql.exec(`DROP TRIGGER remove_shard_identity_claim_on_identity`);

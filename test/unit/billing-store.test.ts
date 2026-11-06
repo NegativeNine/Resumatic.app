@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
-import { BillingStore, BILLING_MIGRATIONS, BILLING_DEFERRED_MIGRATIONS, BILLING_DELIVERY_RETRY_MIGRATIONS } from "../../src/directory/billing";
+import { BillingStore, BILLING_MIGRATIONS, BILLING_DEFERRED_MIGRATIONS, BILLING_DELIVERY_RETRY_MIGRATIONS, BILLING_EVENT_INCARNATION_MIGRATIONS, BILLING_ACCOUNT_STATE_MIGRATIONS } from "../../src/directory/billing";
 import {
   cleanupBillingCustomer,
   type BillingEvent,
@@ -78,6 +78,8 @@ function fixture() {
   for (const statement of BILLING_MIGRATIONS) db.exec(statement);
   for (const statement of BILLING_DEFERRED_MIGRATIONS) db.exec(statement);
   for (const statement of BILLING_DELIVERY_RETRY_MIGRATIONS) db.exec(statement);
+  for (const statement of BILLING_EVENT_INCARNATION_MIGRATIONS) db.exec(statement);
+  for (const statement of BILLING_ACCOUNT_STATE_MIGRATIONS) db.exec(statement);
   const state = {
     subscriptions: [
       subscription("sub_old", "canceled", "in_old"),
@@ -118,6 +120,183 @@ function fixture() {
 }
 
 describe("durable billing reconciliation", () => {
+  it.each(["same-value update", "change and revert", "delete and recreate", "absent insert and delete"])(
+    "does not apply a stale provider snapshot after account ABA: %s", async (scenario) => {
+      const f = fixture();
+      let release!: () => void, entered!: () => void;
+      const holding = new Promise<void>((resolve) => { release = resolve; });
+      const ready = new Promise<void>((resolve) => { entered = resolve; });
+      const fetcher = f.fetcher.getMockImplementation()!;
+      try {
+        if (scenario !== "absent insert and delete")
+          f.db.prepare("INSERT INTO billing_accounts(user_id,customer_id,entitlement,revision,delivered_revision) VALUES ('u1','cus_123','{}',1,1)").run();
+        f.store.accept("u1", event("evt_account_aba"));
+        f.fetcher.mockImplementation(async (input, init) => {
+          if (new URL(String(input)).pathname === "/v1/subscriptions") { entered(); await holding; }
+          return fetcher(input, init);
+        });
+        const pending = f.store.reconcile();
+        await ready;
+        if (scenario === "same-value update") f.db.prepare("UPDATE billing_accounts SET paid_period=paid_period WHERE user_id='u1'").run();
+        if (scenario === "change and revert") {
+          f.db.prepare("UPDATE billing_accounts SET paid_period='new' WHERE user_id='u1'").run();
+          f.db.prepare("UPDATE billing_accounts SET paid_period=NULL WHERE user_id='u1'").run();
+        }
+        if (scenario === "delete and recreate") {
+          f.db.prepare("DELETE FROM billing_accounts WHERE user_id='u1'").run();
+          f.db.prepare("INSERT INTO billing_accounts(user_id,customer_id,entitlement,revision,delivered_revision) VALUES ('u1','cus_123','{}',1,1)").run();
+        }
+        if (scenario === "absent insert and delete") {
+          f.db.prepare("INSERT INTO billing_accounts(user_id,customer_id,entitlement,revision,delivered_revision) VALUES ('u1','cus_123','{}',1,1)").run();
+          f.db.prepare("DELETE FROM billing_accounts WHERE user_id='u1'").run();
+        }
+        const current = f.db.prepare("SELECT * FROM billing_accounts WHERE user_id='u1'").get();
+        release();
+        await expect(pending).rejects.toThrow("pending");
+        expect(f.db.prepare("SELECT * FROM billing_accounts WHERE user_id='u1'").get()).toEqual(current);
+        expect(f.db.prepare("SELECT state FROM billing_events WHERE id='evt_account_aba'").get()).toMatchObject({ state: "pending" });
+      } finally { release(); f.db.close(); }
+    },
+  );
+
+  it("assigns a pre-migration account a token before reading subscriptions", async () => {
+    const f = fixture();
+    try {
+      f.db.prepare("INSERT INTO billing_accounts(user_id,customer_id,entitlement,revision,delivered_revision) VALUES ('u1','cus_123','{}',1,1)").run();
+      f.db.prepare("UPDATE billing_accounts SET state_token=NULL WHERE user_id='u1'").run();
+      f.store.accept("u1", event("evt_legacy_account"));
+      await f.store.reconcile();
+      expect(f.db.prepare("SELECT state_token FROM billing_accounts WHERE user_id='u1'").get()!.state_token).toBeGreaterThan(0);
+    } finally { f.db.close(); }
+  });
+
+  it("backs off a malformed event incarnation without starving other events or delivery", async () => {
+    const f = fixture();
+    try {
+      f.db.prepare("INSERT INTO billing_events(id,customer_id,user_id,created_at,incarnation) VALUES ('evt_bad','cus_123','u1',1,'malformed')").run();
+      f.store.accept("u1", event("evt_good"));
+      await expect(f.store.reconcile()).rejects.toThrow("pending");
+      expect(f.db.prepare("SELECT state,next_attempt_at FROM billing_events WHERE id='evt_bad'").get()).toMatchObject({ state: "pending", next_attempt_at: expect.any(Number) });
+      expect(f.db.prepare("SELECT next_attempt_at FROM billing_events WHERE id='evt_bad'").get()!.next_attempt_at).toBeGreaterThan(Date.now());
+      expect(f.db.prepare("SELECT state FROM billing_events WHERE id='evt_good'").get()).toMatchObject({ state: "applied" });
+      expect(f.deliver).toHaveBeenCalledOnce();
+    } finally { f.db.close(); }
+  });
+
+  it.each(["success", "failure"])("does not acknowledge or defer a recreated account after an old delivery %s", async (outcome) => {
+    const f = fixture();
+    let release!: () => void, entered!: () => void;
+    const holding = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    try {
+      f.db.prepare("INSERT INTO billing_accounts(user_id,customer_id,entitlement,revision,delivered_revision) VALUES ('u1','cus_123','{\"plan\":\"old\"}',1,0)").run();
+      f.deliver.mockImplementation(async () => { entered(); await holding; if (outcome === "failure") throw new Error("old delivery failed"); });
+      const pending = f.store.reconcile().catch(() => {});
+      await ready;
+      f.db.prepare("DELETE FROM billing_accounts WHERE user_id='u1'").run();
+      f.db.prepare("INSERT INTO billing_accounts(user_id,customer_id,entitlement,revision,delivered_revision) VALUES ('u1','cus_123','{\"plan\":\"new\"}',1,0)").run();
+      release(); await pending;
+      expect(f.db.prepare("SELECT entitlement,delivered_revision FROM billing_accounts WHERE user_id='u1'").get())
+        .toMatchObject({ entitlement: '{"plan":"new"}', delivered_revision: 0 });
+      expect(f.db.prepare("SELECT * FROM billing_delivery_retries WHERE user_id='u1'").get()).toBeUndefined();
+    } finally { release(); f.db.close(); }
+  });
+
+  it.each(["owner unavailable", "new attribution", "provider failure"])(
+    "does not change a replacement event after a held customer read: %s",
+    async (scenario) => {
+      const f = fixture();
+      let release!: () => void, entered!: () => void;
+      const holding = new Promise<void>((resolve) => { release = resolve; });
+      const ready = new Promise<void>((resolve) => { entered = resolve; });
+      try {
+        f.db.prepare("INSERT INTO billing_events(id,customer_id,user_id,created_at) VALUES ('evt_race','cus_123',NULL,1)").run();
+        f.fetcher.mockImplementation(async () => {
+          entered(); await holding;
+          if (scenario === "provider failure") throw new Error("synthetic failure");
+          return Response.json({ id: "cus_123", metadata: { account_uid: "u1" } });
+        });
+        const running = f.store.reconcile().catch(() => {});
+        await ready;
+        f.db.prepare("DELETE FROM billing_events WHERE id='evt_race'").run();
+        f.db.prepare("INSERT INTO billing_events(id,customer_id,user_id,created_at,next_attempt_at) VALUES ('evt_race','cus_other',NULL,2,0)").run();
+        if (scenario === "owner unavailable") f.state.active = false;
+        release(); await running;
+        expect(f.db.prepare("SELECT customer_id,user_id,state,next_attempt_at FROM billing_events WHERE id='evt_race'").get())
+          .toMatchObject({ customer_id: "cus_other", user_id: null, state: "pending", next_attempt_at: 0 });
+        expect(f.db.prepare("SELECT COUNT(*) AS n FROM billing_accounts").get()!.n).toBe(0);
+      } finally { release(); f.db.close(); }
+    },
+  );
+
+  it("does not delete a replacement event after a held subscription read", async () => {
+    const f = fixture();
+    let release!: () => void, entered!: () => void;
+    const holding = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    const fetcher = f.fetcher.getMockImplementation()!;
+    try {
+      f.store.accept("u1", event("evt_race"));
+      f.fetcher.mockImplementation(async (input, init) => {
+        if (new URL(String(input)).pathname === "/v1/subscriptions") { entered(); await holding; }
+        return fetcher(input, init);
+      });
+      const running = f.store.reconcile().catch(() => {});
+      await ready;
+      f.store.erase("u1", "cus_123");
+      f.db.prepare("INSERT INTO billing_events(id,customer_id,user_id,created_at,next_attempt_at) VALUES ('evt_race','cus_other','u2',2,0)").run();
+      f.state.active = false;
+      release(); await running;
+      expect(f.db.prepare("SELECT customer_id,user_id,state,next_attempt_at FROM billing_events WHERE id='evt_race'").get())
+        .toMatchObject({ customer_id: "cus_other", user_id: "u2", state: "pending", next_attempt_at: 0 });
+    } finally { release(); f.db.close(); }
+  });
+
+  it.each(["u1", null])("does not touch a same-customer event reassigned during Stripe I/O (original owner %s)", async (originalOwner) => {
+    const f = fixture();
+    let release!: () => void, entered!: () => void;
+    const holding = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    try {
+      f.db.prepare("INSERT INTO billing_events(id,customer_id,user_id,created_at) VALUES ('evt_race','cus_123',?,1)").run(originalOwner);
+      f.fetcher.mockImplementation(async () => {
+        entered(); await holding;
+        return Response.json({ id: "cus_123", metadata: { account_uid: "u1" } });
+      });
+      const running = f.store.reconcile().catch(() => {});
+      await ready;
+      // Keep the same timestamp to ensure ownership itself is part of the
+      // guard; millisecond timestamps cannot identify a row incarnation.
+      f.db.prepare("UPDATE billing_events SET user_id='u2' WHERE id='evt_race'").run();
+      if (originalOwner === "u1") f.state.active = false;
+      release(); await running;
+      expect(f.db.prepare("SELECT customer_id,user_id,state,next_attempt_at FROM billing_events WHERE id='evt_race'").get())
+        .toMatchObject({ customer_id: "cus_123", user_id: "u2", state: "pending", next_attempt_at: 0 });
+    } finally { release(); f.db.close(); }
+  });
+
+  it.each(["legacy writer", "current writer"])("distinguishes a recreated event with identical visible fields and timestamp: %s", async (writer) => {
+    const f = fixture();
+    let release!: () => void, entered!: () => void;
+    const holding = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    try {
+      f.db.prepare("INSERT INTO billing_events(id,customer_id,user_id,invoice_id,created_at) VALUES ('evt_race','cus_123',NULL,'in_old',1)").run();
+      f.fetcher.mockImplementation(async () => { entered(); await holding; return Response.json({ id: "cus_123", metadata: { account_uid: "u1" } }); });
+      const running = f.store.reconcile().catch(() => {});
+      await ready;
+      const captured = f.db.prepare("SELECT incarnation FROM billing_events WHERE id='evt_race'").get()!.incarnation;
+      expect(typeof captured).toBe("string");
+      f.db.prepare("DELETE FROM billing_events WHERE id='evt_race'").run();
+      const replacement = writer === "current writer" ? crypto.randomUUID() : null;
+      f.db.prepare("INSERT INTO billing_events(id,customer_id,user_id,invoice_id,created_at,incarnation) VALUES ('evt_race','cus_123',NULL,'in_new',1,?)").run(replacement);
+      release(); await running;
+      expect(f.db.prepare("SELECT user_id,invoice_id,state,next_attempt_at,incarnation FROM billing_events WHERE id='evt_race'").get())
+        .toMatchObject({ user_id: null, invoice_id: "in_new", state: "pending", next_attempt_at: 0, incarnation: replacement });
+      expect(f.db.prepare("SELECT COUNT(*) AS n FROM billing_accounts").get()!.n).toBe(0);
+    } finally { release(); f.db.close(); }
+  });
+
   it.each([true, false])("redelivers when the old RPC completes %s before the new delivery", async (oldCompletesFirst) => {
     const f = fixture();
     let release!: () => void;
@@ -303,6 +482,36 @@ describe("durable billing reconciliation", () => {
       clock.mockRestore();
       f.db.close();
     }
+  });
+
+  it.each(["insert", "advance"])("does not dispatch a stale batch row when its retry is rescheduled (%s)", async (change) => {
+    const f = fixture();
+    let release!: () => void, reached!: () => void;
+    const paused = new Promise<void>((resolve) => { reached = resolve; });
+    const unblock = new Promise<void>((resolve) => { release = resolve; });
+    const deliver = vi.fn(async (vaultId: string) => {
+      if (vaultId === "u1") { reached(); await unblock; }
+    });
+    const store = new BillingStore(f.sql, billingEnv as Env, {
+      transaction: (fn) => fn(), account: (uid) => ({ vaultId: uid }), deliver,
+    }, f.fetcher);
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      f.db.prepare("INSERT INTO billing_accounts(user_id,customer_id,entitlement,revision) VALUES ('u1','cus_1','{}',1),('u2','cus_2','{}',1)").run();
+      if (change === "advance") f.db.prepare("INSERT INTO billing_delivery_retries(user_id,revision,next_attempt_at) VALUES('u2',1,?)").run(now);
+      const running = store.reconcile();
+      await paused;
+      f.db.prepare("INSERT INTO billing_delivery_retries(user_id,revision,next_attempt_at) VALUES('u2',1,?) ON CONFLICT(user_id) DO UPDATE SET next_attempt_at=excluded.next_attempt_at").run(now + 60_000);
+      release(); await running;
+      expect(deliver).toHaveBeenCalledTimes(1);
+      expect(deliver).toHaveBeenCalledWith("u1", 1, {});
+      expect(store.nextPendingAt()).toBe(now + 60_000);
+      clock.mockReturnValue(now + 60_000);
+      await store.reconcile();
+      expect(deliver).toHaveBeenCalledWith("u2", 1, {});
+      expect(f.db.prepare("SELECT delivered_revision FROM billing_accounts WHERE user_id='u2'").get()!.delivered_revision).toBe(1);
+    } finally { release(); clock.mockRestore(); f.db.close(); }
   });
 
   it("does not back off a newer entitlement after an older delivery fails", async () => {

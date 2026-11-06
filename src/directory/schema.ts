@@ -1,4 +1,4 @@
-import { BILLING_MIGRATIONS, BILLING_DEFERRED_MIGRATIONS, BILLING_DELIVERY_RETRY_MIGRATIONS } from "./billing";
+import { BILLING_MIGRATIONS, BILLING_DEFERRED_MIGRATIONS, BILLING_DELIVERY_RETRY_MIGRATIONS, BILLING_EVENT_INCARNATION_MIGRATIONS, BILLING_ACCOUNT_STATE_MIGRATIONS } from "./billing";
 import { PLACEMENT_FENCE_MIGRATIONS } from "./placement-fence";
 // Directory tables. Holds identities and the vault directory; never career data.
 
@@ -143,6 +143,8 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
     `CREATE TRIGGER remove_shard_identity_claim_on_identity AFTER DELETE ON identities BEGIN DELETE FROM shard_identity_claim_tokens WHERE provider=OLD.provider AND subject=OLD.subject AND user_id=OLD.user_id; END`,
     `CREATE TRIGGER remove_shard_identity_claim_token AFTER DELETE ON users BEGIN DELETE FROM shard_identity_claim_tokens WHERE user_id=OLD.user_id; END`,
   ],
+  BILLING_EVENT_INCARNATION_MIGRATIONS,
+  BILLING_ACCOUNT_STATE_MIGRATIONS,
 ];
 
 export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T, global = false, shard = false): void {

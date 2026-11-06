@@ -328,6 +328,11 @@ describe("Directory initialization fence", () => {
     const target = env.VAULT.newUniqueId().toString();
     const retired = env.VAULT.newUniqueId().toString();
     await runInDurableObject(d, (_instance, ctx) => {
+      for (const trigger of ["billing_account_insert_token", "billing_account_update_token", "billing_account_delete_token"])
+        ctx.storage.sql.exec(`DROP TRIGGER ${trigger}`);
+      ctx.storage.sql.exec(`DROP TABLE billing_state_clock`);
+      ctx.storage.sql.exec(`ALTER TABLE billing_accounts DROP COLUMN state_token`);
+      ctx.storage.sql.exec(`ALTER TABLE billing_events DROP COLUMN incarnation`);
       ctx.storage.sql.exec(`DROP TRIGGER guard_shard_home_claim_bind`);
       ctx.storage.sql.exec(`DROP TRIGGER remove_shard_home_claim_token`);
       ctx.storage.sql.exec(`DROP TRIGGER remove_shard_identity_claim_on_identity`);
