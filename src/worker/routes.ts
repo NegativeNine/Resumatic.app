@@ -756,6 +756,10 @@ api.get("/resumes/:id/pdf", async (c) => {
     pdf = await cached.arrayBuffer();
   } else {
     pdf = await renderPdf(c.env, renderResumeHtml(data));
+    // Rendering may have outlived the session or account. Avoid starting a
+    // cache write after a known closure; the post-write check below is still
+    // required because the vault can close while the put is in flight.
+    await myVault(c).checkSession(c.get("who"));
     await c.env.FILES.put(key, pdf, {
       httpMetadata: { contentType: "application/pdf" },
     });

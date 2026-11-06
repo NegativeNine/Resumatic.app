@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FactRecord } from "../../src/shared/types";
-import { evidenceForFacts, sameEvidence } from "../../src/vault/snapshots";
+import { assertGroundedResume, evidenceForFacts, sameEvidence } from "../../src/vault/snapshots";
+import type { RenderData } from "../../src/shared/types";
 
 const fact: FactRecord = {
   id: "fact-1", revision: 3, origin: "extracted", roleId: "role-1",
@@ -39,5 +40,21 @@ describe("immutable resume evidence", () => {
     expect(Object.hasOwn(captured, "__proto__")).toBe(true);
     expect(sameEvidence(captured.__proto__, special)).toBe(true);
     expect(Object.getPrototypeOf(captured)).toBe(Object.prototype);
+  });
+
+  it("does not trust an old quote when the snapshot cannot establish its origin", () => {
+    const render: RenderData = {
+      profile: { name: "A User", email: "", phone: "", location: "", links: [] },
+      body: { summary: { id: "line", text: "Built 10 services", factIds: ["fact-1"], status: "kept" }, sections: [], skills: [] },
+      version: 1, company: null, title: null,
+    };
+    const stored = { "fact-1": { text: "Built services", quote: "Built 10 services" } };
+    // A pre-provenance quote may describe an earlier user claim, so it does
+    // not justify adding the number to a corrected claim.
+    expect(() => assertGroundedResume(render, stored, "snapshot")).toThrow(/unverified/);
+    const extracted = { ...fact, text: stored["fact-1"].text, quote: stored["fact-1"].quote, level: "implemented" as const };
+    expect(() => assertGroundedResume(render, stored, "snapshot", evidenceForFacts([extracted]))).not.toThrow();
+    const corrected = { ...extracted, origin: "user" as const };
+    expect(() => assertGroundedResume(render, stored, "snapshot", evidenceForFacts([corrected]))).toThrow(/unverified/);
   });
 });

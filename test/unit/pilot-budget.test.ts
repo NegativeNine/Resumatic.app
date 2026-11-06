@@ -38,6 +38,19 @@ describe("pilot cost reservations", () => {
     expect(budget.actualMicros({ ...usage, attemptId: "not-reserved" })).toBeNull();
     expect(budget.actualMicros({ ...usage, attemptId: undefined })).toBeNull();
   });
+  it.each([
+    [-1, 100],
+    [0.5, 100],
+    [100, -1],
+    [100, 0.5],
+  ])("freezes on malformed token counts (%s input, %s output)", (inputTokens, outputTokens) => {
+    const budget = new EvalBudget({ usd: 1, maxCalls: 2, prices: { "fake/model": [1, 1] } });
+    const attemptId = budget.reserve("fake/model", "input", 100);
+    const usage = { attemptId, route: "write", model: "fake/model", inputTokens, outputTokens, costUsd: null };
+    expect(budget.actualMicros(usage)).toBeNull();
+    expect(() => budget.observe(usage)).toThrow("live_eval_campaign_frozen");
+    expect(() => budget.reserve("fake/model", "another input", 100)).toThrow("live_eval_campaign_frozen");
+  });
   it("refuses unbounded output pricing and invalid pass counts before any attempt", () => {
     const budget = new EvalBudget({
       usd: 1,

@@ -28,6 +28,9 @@ import { supportedRoleAssignment } from "./role-assignment";
 /** Known injection patterns; eval and human gates still test semantic leakage. */
 export function isInstruction(text: string): boolean {
   if (
+    /\b(?:for|in|on)\s+(?:(?:this|my|the)\s+)?(?:r[eé]sum[eé]|cv)(?![\p{L}\p{N}])[^.!?\n]{0,100}\b(?:invent|fabricate|pretend)\b/iu.test(text) ||
+    /\bpara\s+(?:(?:mi|el|este)\s+)?curr[ií]culum\b[^.!?\n]{0,100}\b(?:inventa|fabrica|finge)\b/i.test(text) ||
+    /\b(?:für|fuer)\s+(?:(?:meinen?|den|diesen)\s+)?lebenslauf\b[^.!?\n]{0,100}\b(?:erfinde|behaupte)\b/i.test(text) ||
     /\b(?:before|after|when|while)\s+(?:you\s+)?(?:generat(?:e|ing)|writ(?:e|ing)|creat(?:e|ing)|tailor(?:ing)?|draft(?:ing)?)\b[^.!?\n]{0,120}\b(?:claim|say|state|write|include|add|list|assert|pretend)\b/i.test(
       text,
     ) ||

@@ -1,5 +1,5 @@
 import { AppError } from "../shared/errors";
-import { DEFAULT_RANK, rankOf, scopeRank } from "../grounding/claims";
+import { checkClaim, type Evidence } from "../grounding/claims";
 import { authoritativeFact } from "../grounding/verdict";
 import type { Profile, ResumeBody, ResumeReport } from "../shared/api";
 import type {
@@ -86,7 +86,7 @@ export function assertGroundedResume(
     // A historic snapshot may have used a stale ownership level to verify a
     // line. Recheck scope from its stored evidence; only a complete immutable
     // record can establish that a user explicitly selected a level.
-    let supported = 0;
+    const cited: Evidence[] = [];
     for (const id of line.factIds) {
       const stored = facts[id]!;
       if (stored.quote !== null && typeof stored.quote !== "string") throw unavailable();
@@ -95,12 +95,16 @@ export function assertGroundedResume(
         if (!completeEvidence(full) || full.id !== id || full.text !== stored.text || full.quote !== stored.quote ||
             (roleId !== null && full.roleId !== roleId)) throw unavailable();
         const safe = authoritativeFact(full);
-        supported = Math.max(supported, rankOf(safe.level), scopeRank(safe.text), scopeRank(safe.quote ?? ""));
+        cited.push({ text: safe.text, quote: safe.quote, level: safe.level });
       } else {
-        supported = Math.max(supported, scopeRank(stored.text), scopeRank(stored.quote ?? ""));
+        // Earlier snapshots did not record origin. A retained quote may have
+        // preceded a user's correction, so it cannot establish the revised claim.
+        cited.push({ text: stored.text, quote: null, level: null });
       }
     }
-    if (scopeRank(line.text) > (supported || DEFAULT_RANK)) throw unavailable();
+    // Reapply current deterministic checks, including numbers and names, to
+    // historical versions. These checks supplement the original model judge.
+    if (!checkClaim(line.text, cited).ok) throw unavailable();
   }
   const texts = new Set(Object.values(facts).map((fact) => fact?.text).filter((text): text is string => typeof text === "string" && !!text.trim()));
   if (render.body.skills.some((skill) => typeof skill !== "string" || !texts.has(skill))) throw unavailable();

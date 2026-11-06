@@ -1,7 +1,7 @@
 import { AppError } from "../shared/errors";
 import { sourceKey } from "../shared/r2";
 
-/** Longer than the maximum lifetime of an outbound upload request; never extended by retries. */
+/** Cleanup scheduling threshold, never extended by retries. It does not prove an R2 put has settled. */
 export const UPLOAD_INTENT_TTL_MS = 24 * 60 * 60 * 1000;
 export const UPLOAD_MIGRATIONS: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS upload_intents (
@@ -57,7 +57,8 @@ type Reservation = { intent: UploadIntent; replay: boolean };
 /**
  * The Vault authenticates before using this store. reserve precedes every R2 put; complete follows
  * an acknowledged put and atomically creates the source/run. An ambiguous failure retains the
- * intent and object. Cleanup can delete only expired, permanently fenced pending intents.
+ * intent and object. Expiry prevents an intent from being completed, but does not prove a
+ * previously dispatched R2 put has settled; expiry cleanup is therefore best effort.
  */
 export class UploadStore {
   constructor(

@@ -134,13 +134,11 @@ export class EvalBudget {
         this.frozen = true;
         throw new Error("live_eval_ledger_unavailable");
       }
-      const actualMicros =
-        costUsd === null ||
-        !Number.isFinite(costUsd) ||
-        costUsd < 0 ||
-        !Number.isSafeInteger(Math.ceil(costUsd * 1_000_000))
-          ? null
-          : Math.ceil(costUsd * 1_000_000);
+      // Apply the same integer, non-negative token validation used by the
+      // shared coordinator. Otherwise a malformed report (for example, a
+      // negative input count offset by positive output) can settle locally
+      // as a valid undercount even though the shared ledger froze it.
+      const actualMicros = this.actualMicros(usage);
       if (this.config.ledger)
         settlePilotAttempt(
           this.config.ledger.file,

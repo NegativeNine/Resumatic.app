@@ -11,7 +11,11 @@ beforeEach(() => setModels(() => fakeModels()));
 afterEach(() => setModels(null));
 
 describe("historical share grounding", () => {
-  it("blocks an older line whose ownership level is not supported by its saved evidence", async () => {
+  it.each([
+    ["ownership level", "Led the migration project", "Migration project participant"],
+    ["number", "Built 987654321 services", "Built services"],
+    ["name", "Built HYPERTOOL services", "Built services"],
+  ])("blocks an older line with an unsupported %s", async (_kind, claim, factText) => {
     const user = await signIn();
     const upload = await user.upload("synthetic.pdf", RESUME);
     const { sourceId } = await upload.json() as { sourceId: string };
@@ -34,9 +38,9 @@ describe("historical share grounding", () => {
       const row = sql.exec<{ data: string }>(`SELECT data FROM resume_versions WHERE resume_id=? AND version=1`, resumeId).one();
       const saved = JSON.parse(row.data);
       const line = saved.render.body.sections[0].lines[0];
-      line.text = "Led the migration project";
+      line.text = claim;
       line.factIds = [line.factIds[0]];
-      saved.facts[line.factIds[0]] = { text: "Migration project participant", quote: null };
+      saved.facts[line.factIds[0]] = { text: factText, quote: null };
       delete saved.evidence; // An old version did not capture level provenance.
       sql.exec(`UPDATE resume_versions SET data=? WHERE resume_id=? AND version=1`, JSON.stringify(saved), resumeId);
       sql.exec(`UPDATE resumes SET body=? WHERE id=?`, JSON.stringify(saved.render.body), resumeId);
@@ -49,7 +53,7 @@ describe("historical share grounding", () => {
       expect((await user.fetch(`/api/resumes/${resumeId}/${suffix}`)).status).toBe(409);
     expect((await user.send("POST", "/api/shares", { factIds: [], resumes: [{ id: resumeId, version: 1 }] })).status).toBe(409);
     expect((await call("/share/snapshot", { cookie })).status).toBe(410);
-    expect(JSON.stringify(await user.json("/api/export"))).toContain("Led the migration project");
+    expect(JSON.stringify(await user.json("/api/export"))).toContain(claim);
   }, 30_000);
 
   it("blocks an issued detached-edit share while keeping its snapshot for its owner", async () => {
