@@ -313,7 +313,7 @@ export async function startSession(env: Env, input: SignInInput): Promise<string
   let account: { userId: string; vaultId: string; created?: boolean; shardClaimToken?: string | null; shardInviteClaim?: ShardInviteClaim | null };
   try {
     account = input.provider === "google" && target.input.homeShard !== undefined
-      ? await target.directory.signInWithInviteClaim({ ...target.input, reportCreation: true })
+      ? await target.directory.signInWithInviteClaimV2({ ...target.input, reportCreation: true })
       : await target.directory.signIn({ ...target.input, reportCreation: true });
   } finally {
     await settleRoutedPlacement(env, target.directory, target.input);
@@ -1360,8 +1360,18 @@ admin.post("/invites", JSON_LIMIT, async (c) => {
 });
 
 admin.delete("/invites/:email", async (c) => {
-  await directory(c.env).removeInviteV2(c.req.param("email"));
-  return c.body(null, 204);
+  const operation = c.req.header("Idempotency-Key") ?? "";
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(operation))
+    throw new AppError("invalid", "a UUID idempotency key is required");
+  const result = await directory(c.env).revokeInviteV3(c.req.param("email"), operation);
+  if (result.state === "complete") return c.body(null, 204);
+  return c.json({ ...result, operationId: operation }, 202);
+});
+
+admin.get("/invites/revocations/:operation", async (c) => {
+  const result = await directory(c.env).inviteRevocationStatus(c.req.param("operation"));
+  if (result.state === "unknown") throw new AppError("not_found", "invitation revocation not found");
+  return c.json(result);
 });
 
 admin.route("/", maintenance);

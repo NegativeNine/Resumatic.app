@@ -16,7 +16,7 @@ async function account() {
   const config = { ...env, DIRECTORY_SHARDS: "16" };
   const held = await directoryForSignIn(config, input);
   const first = await directoryForSignIn(config, input);
-  const current = await first.directory.signInWithInviteClaim({ ...first.input, reportCreation: true });
+  const current = await first.directory.signInWithInviteClaimV2({ ...first.input, reportCreation: true });
   await global.bindIdentityHomeV3("google", input.subject, current.userId, input.authEpoch, undefined, false, current.shardInviteClaim ?? null);
   return { global, input, held, current, home: directoryForUser(env, current.userId) };
 }
@@ -25,9 +25,13 @@ it("rejects a pre-migration create after a previously erased shard wakes", async
   const f = await account();
   await f.home.deleteAccount(f.current.userId, f.current.vaultId);
   // Resolve the sharded invitation before testing identity-floor erasure.
-  await f.global.removeInviteV2(f.input.email);
+  expect((await f.global.revokeInviteV3(f.input.email, crypto.randomUUID())).state).toBe("complete");
   await runDurableObjectAlarm(f.home);
-  await eventually(async () => !(await f.home.existingIdentity("google", f.input.subject)), "identity erasure");
+  await eventually(async () => {
+    await runDurableObjectAlarm(f.global);
+    await runDurableObjectAlarm(f.home);
+    return !(await f.home.existingIdentity("google", f.input.subject));
+  }, "identity erasure");
   expect(await f.global.googleAuthEpoch()).toBeGreaterThan(f.input.authEpoch!);
   const barrier = await f.global.googleShardRolloutEpoch();
   const beforeRollout = { ...f.held.input, authEpoch: barrier - 1 };
@@ -135,9 +139,13 @@ it("rejects a previously dispatched shard create after deletion and a new global
   const f = await account();
   await f.home.deleteAccount(f.current.userId, f.current.vaultId);
   // Resolve the sharded invitation before testing identity-floor erasure.
-  await f.global.removeInviteV2(f.input.email);
+  expect((await f.global.revokeInviteV3(f.input.email, crypto.randomUUID())).state).toBe("complete");
   await runDurableObjectAlarm(f.home);
-  await eventually(async () => !(await f.home.existingIdentity("google", f.input.subject)), "identity erasure");
+  await eventually(async () => {
+    await runDurableObjectAlarm(f.global);
+    await runDurableObjectAlarm(f.home);
+    return !(await f.home.existingIdentity("google", f.input.subject));
+  }, "identity erasure");
   await f.global.addInvite(f.input.email);
   const fresh = { ...f.input, authEpoch: await f.global.googleAuthEpoch() };
   const target = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "1" }, fresh);
@@ -157,9 +165,13 @@ it("rejects a stale invited shard create after deletion even without a replaceme
   const f = await account();
   await f.home.deleteAccount(f.current.userId, f.current.vaultId);
   // Resolve the sharded invitation before testing identity-floor erasure.
-  await f.global.removeInviteV2(f.input.email);
+  expect((await f.global.revokeInviteV3(f.input.email, crypto.randomUUID())).state).toBe("complete");
   await runDurableObjectAlarm(f.home);
-  await eventually(async () => !(await f.home.existingIdentity("google", f.input.subject)), "identity erasure");
+  await eventually(async () => {
+    await runDurableObjectAlarm(f.global);
+    await runDurableObjectAlarm(f.home);
+    return !(await f.home.existingIdentity("google", f.input.subject));
+  }, "identity erasure");
   await runInDurableObject(f.home, async (instance) => {
     const legacy = { ...f.held.input };
     delete legacy.shardInviteClaim;
@@ -214,9 +226,13 @@ it("raises the shard floor at erasure and forces unrelated older callbacks to re
   const oldEpoch = f.input.authEpoch!;
   await f.home.deleteAccount(f.current.userId, f.current.vaultId);
   // Resolve the sharded invitation before testing identity-floor erasure.
-  await f.global.removeInviteV2(f.input.email);
+  expect((await f.global.revokeInviteV3(f.input.email, crypto.randomUUID())).state).toBe("complete");
   await runDurableObjectAlarm(f.home);
-  await eventually(async () => !(await f.home.existingIdentity("google", f.input.subject)), "identity erasure");
+  await eventually(async () => {
+    await runDurableObjectAlarm(f.global);
+    await runDurableObjectAlarm(f.home);
+    return !(await f.home.existingIdentity("google", f.input.subject));
+  }, "identity erasure");
   const floor = await runInDurableObject(f.home, (_instance, state) => Number(state.storage.sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='shard_auth_floor'`).one().value));
   expect(floor).toBeGreaterThan(oldEpoch);
   await runInDurableObject(f.home, async (instance) => {
@@ -227,15 +243,21 @@ it("raises the shard floor at erasure and forces unrelated older callbacks to re
 it("reissues a legacy acknowledgement that has no epoch", async () => {
   const f = await account();
   await f.home.deleteAccount(f.current.userId, f.current.vaultId);
+  // Revoke while the globally bound claim still proves the account's invite;
+  // the synthetic early home release below removes that ownership evidence.
+  expect((await f.global.revokeInviteV3(f.input.email, crypto.randomUUID())).state).toBe("complete");
   const shard = Number(f.current.userId.match(/^s(\d+):/)![1]);
   await runInDurableObject(f.home, async (instance, state) => {
     state.storage.sql.exec(`INSERT INTO shard_deletion_releases(user_id,provider,subject,state,fence_epoch) VALUES (?,'google',?,'acknowledged',NULL)`, f.current.userId, f.input.subject);
     await (instance as unknown as { releaseGoogleShardHome(userId: string, subject: string, shard: number): Promise<void> }).releaseGoogleShardHome(f.current.userId, f.input.subject, shard);
     expect(state.storage.sql.exec<{state:string;fence_epoch:number}>(`SELECT state,fence_epoch FROM shard_deletion_releases WHERE user_id=?`, f.current.userId).one()).toEqual({ state: "acknowledged", fence_epoch: expect.any(Number) });
   });
-  await f.global.removeInviteV2(f.input.email);
   await runDurableObjectAlarm(f.home);
-  await eventually(async () => !(await f.home.existingIdentity("google", f.input.subject)), "legacy acknowledgement erasure");
+  await eventually(async () => {
+    await runDurableObjectAlarm(f.global);
+    await runDurableObjectAlarm(f.home);
+    return !(await f.home.existingIdentity("google", f.input.subject));
+  }, "legacy acknowledgement erasure");
 });
 
 it("keeps the maximum epoch when release replies arrive out of order", async () => {

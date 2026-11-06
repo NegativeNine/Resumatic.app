@@ -31,7 +31,7 @@ const configured = (shards: string): Env => ({
 type Routed = Awaited<ReturnType<typeof directoryForSignIn>>;
 const routedSignIn = (route: Routed, p = route.input) =>
   p.provider === "google" && p.homeShard !== undefined
-    ? route.directory.signInWithInviteClaim(p)
+    ? route.directory.signInWithInviteClaimV2(p)
     : route.directory.signIn(p);
 const routedBind = (route: Routed, userId: string) =>
   route.input.provider === "google" && route.input.homeShard !== undefined
@@ -101,7 +101,7 @@ describe("Directory placement in Durable Objects", () => {
     await home.deleteAccount(account.userId, account.vaultId);
     // Resolve the sharded account's ambiguous invitation before testing
     // placement-claim erasure.
-    await directory(env).removeInviteV2(p.email);
+    expect((await directory(env).revokeInviteV3(p.email, crypto.randomUUID())).state).toBe("complete");
     await runDurableObjectAlarm(home);
     await eventually(
       async () => (await home.existingIdentity(p.provider, p.subject)) === null,
@@ -139,7 +139,7 @@ describe("Directory placement in Durable Objects", () => {
       expect(stale.input.expectedUserId).toBe(old.userId);
       const home = directoryForUser(env, old.userId);
       await home.deleteAccount(old.userId, old.vaultId);
-      if (old.userId.startsWith("s")) await directory(env).removeInviteV2(p.email);
+      if (old.userId.startsWith("s")) expect((await directory(env).revokeInviteV3(p.email, crypto.randomUUID())).state).toBe("complete");
       await runDurableObjectAlarm(home);
       await eventually(
         async () => (await home.existingIdentity(p.provider, p.subject)) === null,
@@ -479,7 +479,7 @@ describe("Directory placement in Durable Objects", () => {
       };
       const shard = {
         existingIdentity: async () => null,
-        signInWithInviteClaim: async () => ({ userId: `s1:${crypto.randomUUID()}`, vaultId: "synthetic-vault", created: reported, shardClaimToken: shardInviteClaim.token, shardInviteClaim }),
+        signInWithInviteClaimV2: async () => ({ userId: `s1:${crypto.randomUUID()}`, vaultId: "synthetic-vault", created: reported, shardClaimToken: shardInviteClaim.token, shardInviteClaim }),
       };
       const openSession = vi.fn(async () => ({ gen: 1, epoch: "synthetic" }));
       const bindings = {

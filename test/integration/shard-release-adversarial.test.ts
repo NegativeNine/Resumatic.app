@@ -74,6 +74,10 @@ describe("sharded Google home release: adversarial ordering", () => {
     });
     expect(await home(subject)).toEqual({ user_id: null, shard });
     expect(await g.googleAuthEpoch()).toBe(fresh);
+    // Resolve this deliberately created legacy reservation through its
+    // normal bound-owner release before later inventory tests run.
+    await g.bindIdentityHome("google", subject, userId, fresh);
+    await g.forgetGoogleShardHomeV3(subject, shard, userId);
   });
 
   it("blocks legacy raw home deletion after migration without leaving a marker", async () => {
@@ -97,14 +101,14 @@ describe("sharded Google home release: adversarial ordering", () => {
     const p = { provider: "google" as const, subject, email: subject, hint: "enam" as const, authEpoch: await g.googleAuthEpoch() };
     await g.addInvite(subject);
     const target = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
-    const created = await target.directory.signInWithInviteClaim({ ...target.input, reportCreation: true });
+    const created = await target.directory.signInWithInviteClaimV2({ ...target.input, reportCreation: true });
     await g.bindIdentityHomeV3("google", subject, created.userId, p.authEpoch, undefined, false, created.shardInviteClaim!);
     const account = { userId: created.userId, vaultId: created.vaultId };
     const shard = directoryForUser(env, account.userId);
     await shard.deleteAccount(account.userId, account.vaultId);
     // Explicitly resolve the captured invite so this test reaches the
     // independent shard-release race it is exercising.
-    await g.removeInviteV2(subject);
+    expect((await g.revokeInviteV3(subject, crypto.randomUUID())).state).toBe("complete");
 
     const original = Directory.prototype.forgetGoogleShardHomeV3;
     let calls = 0;
@@ -157,14 +161,14 @@ describe("sharded Google home release: adversarial ordering", () => {
     const p = { provider: "google" as const, subject, email: subject, hint: "enam" as const, authEpoch: await g.googleAuthEpoch() };
     await g.addInvite(subject);
     const target = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
-    const created = await target.directory.signInWithInviteClaim({ ...target.input, reportCreation: true });
+    const created = await target.directory.signInWithInviteClaimV2({ ...target.input, reportCreation: true });
     await g.bindIdentityHomeV3("google", subject, created.userId, p.authEpoch, undefined, false, created.shardInviteClaim!);
     const account = { userId: created.userId, vaultId: created.vaultId };
     const shard = directoryForUser(env, account.userId);
     await shard.deleteAccount(account.userId, account.vaultId);
     // Explicitly resolve the captured invite so this test reaches the
     // independent shard-release race it is exercising.
-    await g.removeInviteV2(subject);
+    expect((await g.revokeInviteV3(subject, crypto.randomUUID())).state).toBe("complete");
     await runInDurableObject(shard, (_instance, state) => {
       expect(() => state.storage.sql.exec(`DELETE FROM identities WHERE provider='google' AND subject=?`, subject))
         .toThrow(/(?:shard_deletion_barrier_required|shard_auth_floor_required)/);
@@ -212,14 +216,14 @@ describe("sharded Google home release: adversarial ordering", () => {
     const p = { provider: "google" as const, subject, email: subject, hint: "enam" as const, authEpoch: await g.googleAuthEpoch() };
     await g.addInvite(subject);
     const target = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
-    const created = await target.directory.signInWithInviteClaim({ ...target.input, reportCreation: true });
+    const created = await target.directory.signInWithInviteClaimV2({ ...target.input, reportCreation: true });
     await g.bindIdentityHomeV3("google", subject, created.userId, p.authEpoch, undefined, false, created.shardInviteClaim!);
     const account = { userId: created.userId, vaultId: created.vaultId };
     const shard = directoryForUser(env, account.userId);
     await shard.deleteAccount(account.userId, account.vaultId);
     // Explicitly resolve the captured invite so this test reaches the
     // independent shard-release race it is exercising.
-    await g.removeInviteV2(subject);
+    expect((await g.revokeInviteV3(subject, crypto.randomUUID())).state).toBe("complete");
 
     let entered!: () => void, release!: () => void;
     const ready = new Promise<void>((resolve) => { entered = resolve; });

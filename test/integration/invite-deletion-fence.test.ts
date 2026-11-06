@@ -37,7 +37,7 @@ it("preserves a reissued invite and same-email replacement account through old-a
   await global.captureInviteForDeletion(op, old.userId, old.vaultId, email);
   await global.removeCapturedInvite(op, old.userId, old.vaultId, email);
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(true);
-  await global.removeInviteV2(email);
+  expect(await global.revokeInviteV3(email, crypto.randomUUID())).toMatchObject({ state: "complete" });
 }, 30_000);
 
 it("retries a lost capture without adopting a newer or previously absent invite", async () => {
@@ -55,7 +55,7 @@ it("retries a lost capture without adopting a newer or previously absent invite"
   await global.captureInviteForDeletion(op, account.userId, account.vaultId, email);
   await global.removeCapturedInvite(op, account.userId, account.vaultId, email);
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(true);
-  await global.removeInviteV2(email);
+  expect(await global.revokeInviteV3(email, crypto.randomUUID())).toMatchObject({ state: "complete" });
 });
 
 it("captures a global-home invite atomically at deletion initiation", async () => {
@@ -76,7 +76,7 @@ it("captures a global-home invite atomically at deletion initiation", async () =
   });
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(true);
   expect(await global.deletionProbe(old.userId, old.vaultId)).toBe(0);
-  await global.removeInviteV2(email);
+  expect(await global.revokeInviteV3(email, crypto.randomUUID())).toMatchObject({ state: "complete" });
 }, 30_000);
 
 it("holds a legacy deletion with no invitation operation rather than adopting a reissue", async () => {
@@ -93,7 +93,7 @@ it("holds a legacy deletion with no invitation operation rather than adopting a 
     await expect(instance.deleteAccount(old.userId, old.vaultId)).rejects.toThrow("account invitation requires review");
   });
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(true);
-  await global.removeInviteV2(email);
+  expect(await global.revokeInviteV3(email, crypto.randomUUID())).toMatchObject({ state: "complete" });
 }, 30_000);
 
 it("rejects legacy unconditional removal and guards old SQL, including after a reissue", async () => {
@@ -111,7 +111,7 @@ it("rejects legacy unconditional removal and guards old SQL, including after a r
     expect(() => sql.exec(`DELETE FROM invites WHERE email=?`, email)).toThrow(/invite_delete_permit_required/);
   });
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(true);
-  await global.removeInviteV2(email);
+  expect(await global.revokeInviteV3(email, crypto.randomUUID())).toMatchObject({ state: "complete" });
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(false);
 });
 

@@ -59,7 +59,7 @@ it("prevents an older deletion writer from authorizing an unconditional invite d
       .toThrow("invite_delete_authorization_v2_required");
   });
   expect((await d.listInvites()).some((row) => row.email === email)).toBe(true);
-  await d.removeInviteV2(email);
+  expect(await d.revokeInviteV3(email, crypto.randomUUID())).toMatchObject({ state: "complete" });
   expect((await d.listInvites()).some((row) => row.email === email)).toBe(false);
 });
 

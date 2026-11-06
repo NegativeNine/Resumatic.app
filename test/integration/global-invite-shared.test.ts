@@ -54,7 +54,7 @@ it("preserves a shared legacy email under the same JavaScript normalization as s
   await alarmNow(global);
   expect((await global.listInvites()).some((invite) => invite.email === normalized)).toBe(true);
   expect(await global.deletionProbe(a.userId, a.vaultId)).toBe(0);
-  await global.removeInviteV2(email);
+  expect(await global.revokeInviteV3(email, crypto.randomUUID())).toMatchObject({ state: "complete" });
 }, 30_000);
 
 it("removes the invite when both same-email accounts are already deleting", async () => {
@@ -114,7 +114,7 @@ it("does not skip a malformed row following a known shared user", async () => {
     } finally { state.storage.sql.exec(`DELETE FROM users WHERE user_id IN (?,?)`, `first-${id}`, `last-${id}`); }
   });
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(true);
-  await global.removeInviteV2(email);
+  expect(await global.revokeInviteV3(email, crypto.randomUUID())).toMatchObject({ state: "complete" });
 });
 
 it("holds a same-email user whose state is unknown", async () => {
@@ -133,7 +133,7 @@ it("holds a same-email user whose state is unknown", async () => {
     } finally { state.storage.sql.exec(`DELETE FROM users WHERE user_id=?`, `unknown-${id}`); }
   });
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(true);
-  await global.removeInviteV2(email);
+  expect(await global.revokeInviteV3(email, crypto.randomUUID())).toMatchObject({ state: "complete" });
 });
 
 it("holds an oversized local inventory and can retry after it is reduced", async () => {
@@ -157,7 +157,7 @@ it("holds an oversized local inventory and can retry after it is reduced", async
     const scan = instance as unknown as { hasOtherLocalInviteUser(userId: string, email: string, includeDeleting: boolean): boolean };
     expect(scan.hasOtherLocalInviteUser(user, email, true)).toBe(false);
   });
-  await global.removeInviteV2(email);
+  expect(await global.revokeInviteV3(email, crypto.randomUUID())).toMatchObject({ state: "complete" });
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(false);
 }, 30_000);
 
@@ -180,5 +180,5 @@ it("holds an ambiguous malformed local email and retries without deleting a reis
   });
   await global.addInvite(email);
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(true);
-  await global.removeInviteV2(email);
+  expect(await global.revokeInviteV3(email, crypto.randomUUID())).toMatchObject({ state: "complete" });
 });

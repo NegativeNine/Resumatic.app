@@ -341,8 +341,15 @@ describe("admin", () => {
     expect(listed.invites.map((i) => i.email)).toContain(invitee.toLowerCase());
     expect((await testLogin(invitee.toLowerCase())).status).toBe(204);
 
-    expect((await call(`/admin/invites/${encodeURIComponent(invitee)}`, { method: "DELETE", headers })).status).toBe(204);
+    expect((await call(`/admin/invites/${encodeURIComponent(invitee)}`, { method: "DELETE", headers })).status).toBe(422);
+    const operation = crypto.randomUUID();
+    expect((await call(`/admin/invites/${encodeURIComponent(invitee)}`, { method: "DELETE", headers: { ...headers, "Idempotency-Key": operation } })).status).toBe(204);
+    expect((await call(`/admin/invites/revocations/${operation}`, { headers })).status).toBe(200);
     const after = (await (await call("/admin/invites", { headers })).json()) as { invites: { email: string }[] };
     expect(after.invites.map((i) => i.email)).not.toContain(invitee.toLowerCase());
+    expect((await call("/admin/invites", { method: "POST", headers, body: JSON.stringify({ email: invitee }) })).status).toBe(201);
+    expect((await call(`/admin/invites/${encodeURIComponent(invitee)}`, { method: "DELETE", headers: { ...headers, "Idempotency-Key": operation } })).status).toBe(204);
+    const reissued = (await (await call("/admin/invites", { headers })).json()) as { invites: { email: string }[] };
+    expect(reissued.invites.map((i) => i.email)).toContain(invitee.toLowerCase());
   });
 });

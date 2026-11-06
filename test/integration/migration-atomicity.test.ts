@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { DIRECTORY_MIGRATIONS, migrateDirectory } from "../../src/directory/schema";
 import { MIGRATIONS, migrate, SCHEMA_VERSION } from "../../src/vault/schema";
-import { undoInviteCoordinatorMigration, undoInviteCoordinatorTargetMigration, undoInviteInventoryMigrations, undoInviteTargetSealMigration, undoShardInviteBindingMigration } from "../support/undo-invite-inventory";
+import { undoInviteCoordinatorMigration, undoInviteCoordinatorTargetMigration, undoInviteInventoryMigrations, undoInviteRevocationMigration, undoInviteTargetSealMigration, undoShardInviteBindingMigration, undoShardClaimRevocationMigration } from "../support/undo-invite-inventory";
 
 /** Interrupt a migration after its first DDL statement has executed. */
 function failAtTrigger(sql: SqlStorage, trigger: string): SqlStorage {
@@ -127,6 +127,8 @@ describe("atomic schema migrations", () => {
     { table: "invite_inventory_barrier", trigger: "inventory_barrier_users_insert", undo: undoInviteCoordinatorMigration },
     { table: "shard_home_invite_claims", trigger: "shard_invite_claim_immutable", undo: undoShardInviteBindingMigration },
     { table: "shard_invite_target_seals", trigger: "shard_invite_target_insert_guard", undo: undoInviteTargetSealMigration },
+    { table: "shard_revoked_invite_claims", trigger: "shard_invite_create_marker_open", undo: undoShardClaimRevocationMigration },
+    { table: "invite_revocation_barrier", trigger: "invite_revocation_home_insert", undo: undoInviteRevocationMigration },
   ])("rolls back the $table migration and its guards together", async ({ table, trigger, undo }) => {
     const stub = env.DIRECTORY.getByName(`inventory-migration-${crypto.randomUUID()}`);
     await runInDurableObject(stub, (_instance, state) => {
@@ -139,9 +141,25 @@ describe("atomic schema migrations", () => {
       expect(() => migrateDirectory(failAtTrigger(sql, trigger), tx)).toThrow(/synthetic migration interruption/);
       expect(sql.exec(`SELECT name FROM sqlite_master WHERE name=?`, table).toArray()).toHaveLength(0);
       expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(previous));
+      if (table === "shard_revoked_invite_claims") {
+        for (const index of ["shard_invite_account_bindings_token", "shard_identity_claim_tokens_token"])
+          expect(sql.exec(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`, index).toArray()).toHaveLength(0);
+        expect(sql.exec(`SELECT key FROM meta WHERE key='shard_invite_revocation_guard'`).toArray()).toHaveLength(0);
+      }
+      if (table === "invite_revocation_barrier") {
+        for (const name of ["guard_global_google_shard_home_delete", "guard_global_google_release_v3"]) {
+          const guard = sql.exec<{ sql: string }>(`SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?`, name).one();
+          expect(guard.sql).not.toContain("invite_revocation_mutation_marker");
+        }
+      }
       migrateDirectory(sql, tx);
       expect(sql.exec(`SELECT name FROM sqlite_master WHERE name=?`, table).toArray()).toHaveLength(1);
       expect(sql.exec(`SELECT name FROM sqlite_master WHERE name=?`, trigger).toArray()).toHaveLength(1);
+      if (table === "shard_revoked_invite_claims") {
+        for (const index of ["shard_invite_account_bindings_token", "shard_identity_claim_tokens_token"])
+          expect(sql.exec(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`, index).toArray()).toHaveLength(1);
+        expect(sql.exec(`SELECT key FROM meta WHERE key='shard_invite_revocation_guard'`).toArray()).toHaveLength(0);
+      }
     });
   });
   it("adds target verification as unproven for old receipts and rolls it back with the version on failure", async () => {

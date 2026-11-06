@@ -59,7 +59,7 @@ it("preserves an invite reissued before a sharded deletion capture reaches the c
   expect(await env.FILES.get(key)).toBeNull();
   expect(await target.directory.deletionProbe(account.userId, account.vaultId)).toBe(0);
   expect(await global.deletionProbe(account.userId, account.vaultId)).toBe(0);
-  await global.removeInviteV2(email);
+  expect(await global.revokeInviteV3(email, crypto.randomUUID())).toMatchObject({ state: "complete" });
 }, 30_000);
 
 it("fences legacy invite delete permits while allowing deliberate admin revocation", async () => {
@@ -70,7 +70,7 @@ it("fences legacy invite delete permits while allowing deliberate admin revocati
       .toThrow(/invite_delete_authorization_required/);
   });
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(true);
-  await global.removeInviteV2(email);
+  expect(await global.revokeInviteV3(email, crypto.randomUUID())).toMatchObject({ state: "complete" });
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(false);
 });
 
@@ -93,7 +93,7 @@ it("holds a legacy unbound deletion until deliberate invite revocation", async (
   });
   await runAlarm();
   expect(await home.deletionProbe(account.userId, account.vaultId)).toBeGreaterThan(0);
-  await global.removeInviteV2(input.email);
+  expect(await global.revokeInviteV3(input.email, crypto.randomUUID())).toMatchObject({ state: "complete" });
   await runAlarm();
   expect(await home.deletionProbe(account.userId, account.vaultId)).toBe(0);
   expect((await global.listInvites()).some((invite) => invite.email === input.email)).toBe(false);

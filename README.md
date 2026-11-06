@@ -72,7 +72,7 @@ Every push to `main` runs the tests, builds with `CLOUDFLARE_ENV=staging`, deplo
 
 Until the Cloudflare secrets exist, CI skips the staging deploy and the evals with a warning instead of failing; once they are set, both run and gate as described above.
 
-Sign-up is invite-only while `INVITE_ONLY` is `"true"`: add invites with `POST /admin/invites`, then send the [invite email](docs/beta/invite-email.md). Test sign-ins skip the invite list; they exist only where `TEST_SIGNIN_KEY` is set, which must never include production. Before inviting anyone, make sure the support address in `src/web/config.ts` receives mail, and have counsel review the draft privacy notice and terms.
+Sign-up is invite-only while `INVITE_ONLY` is `"true"`: add invites with `POST /admin/invites`, then send the [invite email](docs/beta/invite-email.md). Invitation revocation requires a stable idempotency key and a verified rollout; see the [operations guide](docs/seeker-operations.md). Test sign-ins skip the invite list; they exist only where `TEST_SIGNIN_KEY` is set, which must never include production. Before inviting anyone, make sure the support address in `src/web/config.ts` receives mail, and have counsel review the draft privacy notice and terms.
 
 ## Layout
 

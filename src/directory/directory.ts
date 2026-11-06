@@ -16,6 +16,8 @@ import type { InviteTarget } from "./invite-target-seal";
 import { InviteCoordinator, type InventoryIdentity } from "./invite-coordinator";
 import { validShardInviteClaim, type ShardInviteClaim } from "./shard-invite-binding";
 import { boundShardInviteClaim } from "./shard-invite-owner";
+import { ShardClaimRevocation, type RevokedShardClaim, type ShardClaimSeal } from "./shard-claim-revocation";
+import { InviteRevocation, type InviteRevocationStatus } from "./invite-revocation";
 
 /** How soon a failed deletion is retried. */
 const RETRY_MS = 60_000;
@@ -128,6 +130,57 @@ export class Directory extends DurableObject<Env> {
     return new InviteInventory(this.sql, (fn) => this.ctx.storage.transactionSync(fn), () => this.readShardAuthFloor(),
       (userId) => this.ctx.id.equals(this.env.DIRECTORY.idFromName(directoryNameForUser(userId))))
       .seal(operation, email, excludedUserId, epoch, target);
+  }
+
+  private get inviteRevocation(): InviteRevocation {
+    return new InviteRevocation({
+      sql: this.sql,
+      storage: this.ctx.storage,
+      transaction: (fn) => this.ctx.storage.transactionSync(fn),
+      fingerprint: async (operation, email) => {
+        if (!this.env.SESSION_KEY) throw new AppError("unavailable", "invitation revocation requires review");
+        const encoder = new TextEncoder();
+        const key = await crypto.subtle.importKey("raw", encoder.encode(this.env.SESSION_KEY), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+        const mac = await crypto.subtle.sign("HMAC", key, encoder.encode(JSON.stringify(["invite-revocation-v1", operation, email])));
+        return Array.from(new Uint8Array(mac), (b) => b.toString(16).padStart(2, "0")).join("");
+      },
+      verifyRollout: () => {
+        if (!this.isGlobal || !this.inviteInventoryEnabled())
+          throw new AppError("unavailable", "invitation revocation rollout requires verification");
+      },
+      seal: (claim) => directoryByName(this.env, `directory-${claim.shard}`).sealShardInviteClaimV2(claim),
+      close: (claim) => directoryByName(this.env, `directory-${claim.shard}`).closeShardInviteClaimV2(claim),
+      removeInvite: (email, generation) => this.deleteInvite(email, generation),
+    });
+  }
+
+  async revokeInviteV3(email: string, operation: string): Promise<InviteRevocationStatus> {
+    if (!this.isGlobal) throw new AppError("invalid", "invitation revocation requires the coordinator");
+    const started = await this.inviteRevocation.begin(email, operation);
+    if (started.state === "complete") return started;
+    await this.inviteRevocation.resume();
+    return this.inviteRevocation.status(operation);
+  }
+
+  async inviteRevocationStatus(operation: string): Promise<InviteRevocationStatus> {
+    if (!this.isGlobal) throw new AppError("invalid", "invitation revocation requires the coordinator");
+    return this.inviteRevocation.status(operation);
+  }
+
+  private get shardClaimRevocation(): ShardClaimRevocation {
+    return new ShardClaimRevocation(this.sql, (fn) => this.ctx.storage.transactionSync(fn),
+      (shard, userId) => this.ctx.id.equals(this.env.DIRECTORY.idFromName(`directory-${shard}`)) &&
+        (!userId || directoryNameForUser(userId) === `directory-${shard}`));
+  }
+
+  async sealShardInviteClaimV2(claim: RevokedShardClaim): Promise<ShardClaimSeal> {
+    if (!this.isShard) throw new AppError("invalid", "invitation claim requires a shard");
+    return this.shardClaimRevocation.seal(claim);
+  }
+
+  async closeShardInviteClaimV2(claim: RevokedShardClaim): Promise<void> {
+    if (!this.isShard) throw new AppError("invalid", "invitation claim requires a shard");
+    return this.shardClaimRevocation.close(claim);
   }
 
   async closeInviteInventory(operation: string, sealEpoch: number, closeEpoch: number): Promise<void> {
@@ -339,8 +392,20 @@ export class Directory extends DurableObject<Env> {
     return this.signInCore(p, true);
   }
 
-  private async signInCore(p: SignInInput, inviteClaimV3: boolean): Promise<{ userId: string; vaultId: string; created?: boolean; shardClaimToken?: string | null; shardInviteClaim?: ShardInviteClaim | null }> {
+  /** Versioned creation so a migrated shard fences late revoked claims. */
+  async signInWithInviteClaimV2(p: SignInInput): Promise<{ userId: string; vaultId: string; created?: boolean; shardClaimToken?: string | null; shardInviteClaim?: ShardInviteClaim | null }> {
+    if (p.provider !== "google" || !this.isShard || p.homeShard === undefined ||
+        !this.ctx.id.equals(this.env.DIRECTORY.idFromName(`directory-${p.homeShard}`)))
+      throw new AppError("invalid", "invalid account placement claim");
+    if (p.shardInviteClaim !== undefined && (!validShardInviteClaim(p.shardInviteClaim) ||
+        p.shardInviteClaim.token !== p.shardClaimToken || p.shardInviteClaim.email !== p.email.trim().toLowerCase()))
+      throw new AppError("invalid", "invalid account placement claim");
+    return this.signInCore(p, true, true);
+  }
+
+  private async signInCore(p: SignInInput, inviteClaimV3: boolean, revocationSafe = false): Promise<{ userId: string; vaultId: string; created?: boolean; shardClaimToken?: string | null; shardInviteClaim?: ShardInviteClaim | null }> {
     if (p.authExpiryMs !== undefined) requireFreshAuth(p.authExpiryMs);
+    if (this.isShard && p.shardInviteClaim) this.shardClaimRevocation.assertOpen(p.shardInviteClaim.token);
     if (p.shardClaimToken !== undefined &&
         (p.provider !== "google" || !Number.isInteger(p.homeShard) || p.homeShard! < 0 || p.homeShard! > 15 ||
           !this.ctx.id.equals(this.env.DIRECTORY.idFromName(`directory-${p.homeShard}`)) || typeof p.shardClaimToken !== "string" ||
@@ -409,6 +474,9 @@ export class Directory extends DurableObject<Env> {
           : shardedUserId(p.homeShard);
       const now = Date.now();
       this.googleWrite(p.provider, p.authEpoch, () => {
+        const claimToken = revocationSafe ? p.shardInviteClaim?.token : undefined;
+        if (claimToken) this.shardClaimRevocation.beginCreate(p.provider, p.subject, userId, claimToken);
+        try {
         this.sql.exec(
           `INSERT INTO users (user_id, email, state, created_at) VALUES (?, ?, 'active', ?)`,
           userId,
@@ -449,6 +517,9 @@ export class Directory extends DurableObject<Env> {
           p.hint,
           now,
         );
+        } finally {
+          if (claimToken) this.shardClaimRevocation.endCreate(p.provider, p.subject, userId);
+        }
       });
       created = true;
       row = this.findAccount(p.provider, p.subject)!;
@@ -490,6 +561,7 @@ export class Directory extends DurableObject<Env> {
       ).toArray()[0];
       if (binding) {
         shardInviteClaim = { token: binding.token, email: binding.email, generation: binding.generation };
+        this.shardClaimRevocation.assertOpen(binding.token);
         const storedEmail = this.sql.exec<{ email: string }>(`SELECT email FROM users WHERE user_id=?`, row.user_id).toArray()[0]?.email;
         if (!validShardInviteClaim(shardInviteClaim) || binding.provider !== p.provider || binding.subject !== p.subject ||
             storedEmail !== binding.email || p.email.trim().toLowerCase() !== binding.email || shardClaimToken !== binding.token ||
@@ -660,41 +732,46 @@ export class Directory extends DurableObject<Env> {
     if (authExpiryMs !== undefined) requireFreshAuth(authExpiryMs);
     const normalized = email.trim().toLowerCase();
     return this.googleWrite(provider, authEpoch, () => {
-      if (this.env.INVITE_ONLY !== "false" && !this.isInvited(normalized))
-        throw new AppError("forbidden", "this email has not been invited to the beta yet");
-      let home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null; placement_state: string }>(
-        `SELECT shard,user_id,generation,placement_state FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
-      ).toArray()[0];
-      if (!home) {
-        this.sql.exec(`INSERT INTO identity_homes(provider,subject,shard) VALUES (?,?,?)`, provider, subject, preferredShard);
-        if (preferredShard !== null) {
-          const token = crypto.randomUUID();
-          const grant = this.sql.exec<{ generation: string | null }>(`SELECT generation FROM invites WHERE email=?`, normalized).toArray()[0];
-          const claim: ShardInviteClaim = { token, email: normalized, generation: grant?.generation ?? null };
-          if (!validShardInviteClaim(claim) || (grant && grant.generation === null))
-            throw new AppError("unavailable", "invitation requires review");
-          this.sql.exec(`INSERT INTO shard_home_claim_tokens(provider,subject,token) VALUES (?,?,?)`, provider, subject, token);
-          this.sql.exec(`INSERT INTO shard_home_invite_claims(provider,subject,token,email,generation) VALUES (?,?,?,?,?)`,
-            provider, subject, token, normalized, claim.generation);
-        }
-        home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null; placement_state: string }>(
+      this.sql.exec(`INSERT INTO invite_registration_marker(slot,email) VALUES (1,?)`, normalized);
+      try {
+        if (this.env.INVITE_ONLY !== "false" && !this.isInvited(normalized))
+          throw new AppError("forbidden", "this email has not been invited to the beta yet");
+        let home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null; placement_state: string }>(
           `SELECT shard,user_id,generation,placement_state FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
-        ).one();
+        ).toArray()[0];
+        if (!home) {
+          this.sql.exec(`INSERT INTO identity_homes(provider,subject,shard) VALUES (?,?,?)`, provider, subject, preferredShard);
+          if (preferredShard !== null) {
+            const token = crypto.randomUUID();
+            const grant = this.sql.exec<{ generation: string | null }>(`SELECT generation FROM invites WHERE email=?`, normalized).toArray()[0];
+            const claim: ShardInviteClaim = { token, email: normalized, generation: grant?.generation ?? null };
+            if (!validShardInviteClaim(claim) || (grant && grant.generation === null))
+              throw new AppError("unavailable", "invitation requires review");
+            this.sql.exec(`INSERT INTO shard_home_claim_tokens(provider,subject,token) VALUES (?,?,?)`, provider, subject, token);
+            this.sql.exec(`INSERT INTO shard_home_invite_claims(provider,subject,token,email,generation) VALUES (?,?,?,?,?)`,
+              provider, subject, token, normalized, claim.generation);
+          }
+          home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null; placement_state: string }>(
+            `SELECT shard,user_id,generation,placement_state FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
+          ).one();
+        }
+        if (home.generation || home.placement_state !== "open") throw new AppError("unavailable", "account placement requires review");
+        if (home.shard === null) return { shard: null, shardInviteClaim: null };
+        const row = this.sql.exec<{ token: string; email: string; generation: string | null; user_id: string | null }>(
+          `SELECT token,email,generation,user_id FROM shard_home_invite_claims WHERE provider=? AND subject=?`, provider, subject,
+        ).toArray()[0];
+        const token = this.sql.exec<{ token: string }>(`SELECT token FROM shard_home_claim_tokens WHERE provider=? AND subject=?`, provider, subject).toArray()[0]?.token;
+        if (!row) {
+          if (home.user_id === null) throw new AppError("unavailable", "legacy account placement requires review");
+          return { shard: home.shard, shardInviteClaim: null };
+        }
+        const claim: ShardInviteClaim = { token: row.token, email: row.email, generation: row.generation };
+        if (!validShardInviteClaim(claim) || token !== claim.token || claim.email !== normalized || row.user_id !== home.user_id)
+          throw new AppError("conflict", "account placement changed; retry sign-in");
+        return { shard: home.shard, shardInviteClaim: claim };
+      } finally {
+        this.sql.exec(`DELETE FROM invite_registration_marker WHERE slot=1`);
       }
-      if (home.generation || home.placement_state !== "open") throw new AppError("unavailable", "account placement requires review");
-      if (home.shard === null) return { shard: null, shardInviteClaim: null };
-      const row = this.sql.exec<{ token: string; email: string; generation: string | null; user_id: string | null }>(
-        `SELECT token,email,generation,user_id FROM shard_home_invite_claims WHERE provider=? AND subject=?`, provider, subject,
-      ).toArray()[0];
-      const token = this.sql.exec<{ token: string }>(`SELECT token FROM shard_home_claim_tokens WHERE provider=? AND subject=?`, provider, subject).toArray()[0]?.token;
-      if (!row) {
-        if (home.user_id === null) throw new AppError("unavailable", "legacy account placement requires review");
-        return { shard: home.shard, shardInviteClaim: null };
-      }
-      const claim: ShardInviteClaim = { token: row.token, email: row.email, generation: row.generation };
-      if (!validShardInviteClaim(claim) || token !== claim.token || claim.email !== normalized || row.user_id !== home.user_id)
-        throw new AppError("conflict", "account placement changed; retry sign-in");
-      return { shard: home.shard, shardInviteClaim: claim };
     });
   }
   async placementEpoch(): Promise<number> {
@@ -879,6 +956,8 @@ export class Directory extends DurableObject<Env> {
       "shard_home_invite_claims",
       "shard_invite_account_bindings",
       "shard_invite_target_seals",
+      "shard_revoked_invite_claims",
+      "invite_revocation_claims",
       "invite_inventory_barrier",
       "identity_homes",
       "placement_finalizations",
@@ -911,9 +990,21 @@ export class Directory extends DurableObject<Env> {
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM shard_home_bind_claim_marker`).one().n;
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM shard_invite_bind_marker`).one().n;
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM shard_invite_target_close_marker`).one().n;
+    count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM shard_invite_create_marker`).one().n;
+    for (const table of ["invite_revocation_barrier", "invite_revocation_mutation_marker", "invite_registration_marker", "invite_delete_authorizations_v4"]) {
+      count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`).one().n;
+    }
+    count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invite_revocation_claims
+      WHERE (state='created' AND (user_id IS NULL OR vault_id IS NULL)) OR (vault_id=? AND (user_id IS NULL OR user_id<>?))`, vaultId, userId).one().n;
     count += this.sql.exec<{ n: number }>(
       `SELECT COUNT(*) AS n FROM shard_invite_target_seals WHERE vault_id=? AND user_id<>?`, vaultId, userId,
     ).one().n;
+    count += this.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM shard_revoked_invite_claims WHERE vault_id=? AND (user_id IS NULL OR user_id<>?)`, vaultId, userId,
+    ).one().n;
+    count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM shard_revoked_invite_claims
+      WHERE (state='created' AND (user_id IS NULL OR user_id='' OR vault_id IS NULL OR vault_id=''))
+         OR (state IN ('absent','closed') AND (user_id IS NOT NULL OR vault_id IS NOT NULL))`).one().n;
     count += this.sql.exec<{ n: number }>(
       `SELECT COUNT(*) AS n FROM shard_home_invite_claims c LEFT JOIN identity_homes h ON h.provider=c.provider AND h.subject=c.subject
        WHERE c.user_id IS NULL OR h.provider IS NULL OR h.user_id IS NULL OR h.user_id<>c.user_id`,
@@ -1379,34 +1470,38 @@ export class Directory extends DurableObject<Env> {
   }
 
   /** A distinct RPC makes older unconditional finalizers fail closed. */
-  async removeInviteV2(email: string): Promise<void> {
-    const normalized = email.trim().toLowerCase();
-    this.ctx.storage.transactionSync(() => this.deleteInvite(normalized));
+  async removeInviteV2(_email: string): Promise<void> {
+    throw new AppError("unavailable", "invitation service is updating; try again");
   }
 
   /** Execute only inside the transaction that authorized this particular deletion. */
   private deleteInvite(email: string, generation?: string): void {
-    this.sql.exec(`INSERT INTO invite_delete_authorizations_v3(email) VALUES (?)`, email);
+    this.sql.exec(`INSERT INTO invite_delete_authorizations_v4(email) VALUES (?)`, email);
     try {
-      this.sql.exec(`INSERT INTO invite_delete_authorizations_v2(email) VALUES (?)`, email);
+      this.sql.exec(`INSERT INTO invite_delete_authorizations_v3(email) VALUES (?)`, email);
       try {
-        this.sql.exec(`INSERT INTO invite_delete_authorizations(email) VALUES (?)`, email);
+        this.sql.exec(`INSERT INTO invite_delete_authorizations_v2(email) VALUES (?)`, email);
         try {
-          this.sql.exec(`INSERT INTO invite_delete_permits(email) VALUES (?)`, email);
+          this.sql.exec(`INSERT INTO invite_delete_authorizations(email) VALUES (?)`, email);
           try {
-            if (generation === undefined) this.sql.exec(`DELETE FROM invites WHERE email=?`, email);
-            else this.sql.exec(`DELETE FROM invites WHERE email=? AND generation=?`, email, generation);
+            this.sql.exec(`INSERT INTO invite_delete_permits(email) VALUES (?)`, email);
+            try {
+              if (generation === undefined) this.sql.exec(`DELETE FROM invites WHERE email=?`, email);
+              else this.sql.exec(`DELETE FROM invites WHERE email=? AND generation=?`, email, generation);
+            } finally {
+              this.sql.exec(`DELETE FROM invite_delete_permits WHERE email=?`, email);
+            }
           } finally {
-            this.sql.exec(`DELETE FROM invite_delete_permits WHERE email=?`, email);
+            this.sql.exec(`DELETE FROM invite_delete_authorizations WHERE email=?`, email);
           }
         } finally {
-          this.sql.exec(`DELETE FROM invite_delete_authorizations WHERE email=?`, email);
+          this.sql.exec(`DELETE FROM invite_delete_authorizations_v2 WHERE email=?`, email);
         }
       } finally {
-        this.sql.exec(`DELETE FROM invite_delete_authorizations_v2 WHERE email=?`, email);
+        this.sql.exec(`DELETE FROM invite_delete_authorizations_v3 WHERE email=?`, email);
       }
     } finally {
-      this.sql.exec(`DELETE FROM invite_delete_authorizations_v3 WHERE email=?`, email);
+      this.sql.exec(`DELETE FROM invite_delete_authorizations_v4 WHERE email=?`, email);
     }
   }
 
@@ -1613,7 +1708,7 @@ export class Directory extends DurableObject<Env> {
     // such call; a final harmless idle alarm is allowed to consume itself.
     const billingAt = this.billing.nextPendingAt();
     if (
-      (this.isGlobal && this.inviteCoordinator.active()) ||
+      (this.isGlobal && (this.inviteCoordinator.active() || this.inviteRevocation.active())) ||
       this.vaultsIn("deleting").length > 0 ||
       this.vaultsIn("swept").length > 0 ||
       this.sql.exec(`SELECT vault_id FROM retired_vaults LIMIT 1`).toArray().length > 0
@@ -1625,6 +1720,9 @@ export class Directory extends DurableObject<Env> {
     // request as settled; the alarm still awaits it before rescheduling.
     const inventory = this.isGlobal && this.inviteCoordinator.active()
       ? this.inviteCoordinator.resume().catch(() => { console.error("invitation inventory pending", { code: "inventory_unavailable" }); })
+      : Promise.resolve();
+    const revocation = this.isGlobal && this.inviteRevocation.active()
+      ? this.inviteRevocation.resume().catch(() => { console.error("invitation revocation pending", { code: "revocation_unavailable" }); })
       : Promise.resolve();
     const billing = this.billing.reconcile().catch(() => {
       console.error("billing reconciliation pending", {
@@ -1681,7 +1779,7 @@ export class Directory extends DurableObject<Env> {
       for (const id of afterRetirement) attempted.add(id);
       return attempted;
     })();
-    const outcomes = await Promise.allSettled([billing, deletion, retirement, finalization, inventory]);
+    const outcomes = await Promise.allSettled([billing, deletion, retirement, finalization, inventory, revocation]);
     const failure = outcomes.find((outcome) => outcome.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
     const attempted = (outcomes[3] as PromiseFulfilledResult<Set<string>>).value;
@@ -2048,7 +2146,7 @@ export class Directory extends DurableObject<Env> {
   private async scheduleNext(): Promise<void> {
     const now = Date.now();
     const candidates: number[] = [];
-    if (this.isGlobal && this.inviteCoordinator.active()) candidates.push(now + RETRY_MS);
+    if (this.isGlobal && (this.inviteCoordinator.active() || this.inviteRevocation.active())) candidates.push(now + RETRY_MS);
     if (
       this.sql.exec(`SELECT vault_id FROM retired_vaults LIMIT 1`).toArray()
         .length

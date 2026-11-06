@@ -155,3 +155,5 @@ Extracted organization and title fields must be nonempty and appear at word boun
 An absent credential, budget, binding, benchmark, consented dataset or retention decision is **pending**, never passed. In particular, an offline extraction harness report is not a promoted extractor, and a successful HTTP health check is not a complete production acceptance run.
 
 See [the operations runbook](seeker-operations.md) for commands and deployment variables and [the threat model](seeker-threat-model.md) for the security review checklist. Historic architecture documents describe broader future work; this delivery is limited to the job seeker scope and the choices recorded in the implementation.
+
+Administrative invitation revocation now uses an idempotent, durable per-email operation that fences unbound shard claims before reporting completion. It is disabled until the same independently verified drain required by invitation inventory. A target account already created before the fence leaves revocation pending; a safe orphan-reconciliation path and a deployed drain drill remain open. The operations guide describes the retry key and polling endpoint.
