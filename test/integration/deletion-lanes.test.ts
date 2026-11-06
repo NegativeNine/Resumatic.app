@@ -28,6 +28,143 @@ function heldListing(bucket: R2Bucket, prefix: string) {
   return { files, ready, release };
 }
 
+it("continues past a stalled deletion without waiting for its batch", async () => {
+  const directory = env.DIRECTORY.getByName(`deletion-pool-${crypto.randomUUID()}`);
+  const users = await Promise.all(Array.from({ length: 5 }, () => account(directory)));
+  await runInDurableObject(directory, async (instance, state) => {
+    const local = (instance as unknown as { env: Env }).env;
+    const oldDelay = local.SWEEP_DELAY_MS, oldFiles = local.FILES;
+    local.SWEEP_DELAY_MS = "3600000";
+    let running: Promise<void> | undefined;
+    let release: (() => void) | undefined;
+    try {
+      for (const user of users) await instance.deleteAccount(user.userId, user.vaultId);
+      const rows = state.storage.sql.exec<{ vault_id: string }>(`SELECT v.vault_id FROM vaults v JOIN users u ON u.user_id=v.user_id WHERE v.state='deleting'`).toArray();
+      const held = heldListing(oldFiles, vaultPrefix(rows[0]!.vault_id));
+      local.FILES = held.files;
+      release = held.release;
+      running = instance.alarm();
+      await held.ready;
+      for (let i = 0; i < 200 && state.storage.sql.exec<{ state: string }>(`SELECT state FROM vaults WHERE vault_id=?`, rows[4]!.vault_id).one().state !== "swept"; i++)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(state.storage.sql.exec<{ state: string }>(`SELECT state FROM vaults WHERE vault_id=?`, rows[4]!.vault_id).one().state).toBe("swept");
+      expect(state.storage.sql.exec<{ state: string }>(`SELECT state FROM vaults WHERE vault_id=?`, rows[0]!.vault_id).one().state).toBe("deleting");
+    } finally {
+      release?.();
+      await running;
+      local.FILES = oldFiles;
+      local.SWEEP_DELAY_MS = oldDelay;
+    }
+  });
+}, 30_000);
+
+it("continues retiring independent vaults while another retirement is stalled", async () => {
+  const directory = env.DIRECTORY.getByName(`retirement-pool-${crypto.randomUUID()}`);
+  const users = await Promise.all([account(directory), account(directory)]);
+  const ids = [env.VAULT.newUniqueId(), env.VAULT.newUniqueId()];
+  await Promise.all(ids.map((id, i) => env.VAULT.get(id).init(users[i]!.userId)));
+  await runInDurableObject(directory, async (instance, state) => {
+    const local = (instance as unknown as { env: Env }).env;
+    const oldDelay = local.SWEEP_DELAY_MS, oldFiles = local.FILES;
+    local.SWEEP_DELAY_MS = "3600000";
+    let running: Promise<void> | undefined;
+    let release: (() => void) | undefined;
+    try {
+      ids.forEach((id, i) => state.storage.sql.exec(`INSERT INTO retired_vaults(vault_id,user_id) VALUES (?,?)`, id.toString(), users[i]!.userId));
+      const rows = state.storage.sql.exec<{ vault_id: string }>(`SELECT vault_id FROM retired_vaults`).toArray();
+      const held = heldListing(oldFiles, vaultPrefix(rows[0]!.vault_id));
+      local.FILES = held.files;
+      release = held.release;
+      running = instance.alarm();
+      await held.ready;
+      for (let i = 0; i < 200 && state.storage.sql.exec<{ state: string }>(`SELECT state FROM retired_vaults WHERE vault_id=?`, rows[1]!.vault_id).one().state !== "awaiting_final_sweep"; i++)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(state.storage.sql.exec<{ state: string }>(`SELECT state FROM retired_vaults WHERE vault_id=?`, rows[1]!.vault_id).one().state).toBe("awaiting_final_sweep");
+      expect(state.storage.sql.exec<{ state: string }>(`SELECT state FROM retired_vaults WHERE vault_id=?`, rows[0]!.vault_id).one().state).toBe("deleting");
+    } finally {
+      release?.();
+      await running;
+      local.FILES = oldFiles;
+      local.SWEEP_DELAY_MS = oldDelay;
+    }
+  });
+}, 30_000);
+
+it("keeps an owner pending until both concurrently retired vaults finish", async () => {
+  const directory = env.DIRECTORY.getByName(`retirement-owner-${crypto.randomUUID()}`);
+  const user = await account(directory);
+  const ids = [env.VAULT.newUniqueId(), env.VAULT.newUniqueId()];
+  await Promise.all(ids.map((id) => env.VAULT.get(id).init(user.userId)));
+  await runInDurableObject(directory, async (instance, state) => {
+    const local = (instance as unknown as { env: Env }).env;
+    const oldDelay = local.SWEEP_DELAY_MS, oldFiles = local.FILES;
+    local.SWEEP_DELAY_MS = "3600000";
+    let running: Promise<void> | undefined;
+    let release: (() => void) | undefined;
+    try {
+      for (const id of ids) state.storage.sql.exec(`INSERT INTO retired_vaults(vault_id,user_id) VALUES (?,?)`, id.toString(), user.userId);
+      await instance.deleteAccount(user.userId, user.vaultId);
+      await instance.alarm();
+      const rows = state.storage.sql.exec<{ vault_id: string }>(`SELECT vault_id FROM retired_vaults`).toArray();
+      expect(rows).toHaveLength(2);
+      local.SWEEP_DELAY_MS = "0";
+      const held = heldListing(oldFiles, vaultPrefix(rows[0]!.vault_id));
+      local.FILES = held.files;
+      release = held.release;
+      running = instance.alarm();
+      await held.ready;
+      for (let i = 0; i < 200 && state.storage.sql.exec(`SELECT vault_id FROM retired_vaults WHERE vault_id=?`, rows[1]!.vault_id).toArray().length; i++)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(state.storage.sql.exec(`SELECT vault_id FROM retired_vaults WHERE vault_id=?`, rows[1]!.vault_id).toArray()).toHaveLength(0);
+      expect(state.storage.sql.exec(`SELECT vault_id FROM retired_vaults WHERE vault_id=?`, rows[0]!.vault_id).toArray()).toHaveLength(1);
+      expect(state.storage.sql.exec(`SELECT user_id FROM users WHERE user_id=?`, user.userId).toArray()).toHaveLength(1);
+      release();
+      release = undefined;
+      await running;
+      running = undefined;
+      expect(state.storage.sql.exec(`SELECT user_id FROM users WHERE user_id=?`, user.userId).toArray()).toHaveLength(0);
+    } finally {
+      release?.();
+      await running;
+      local.FILES = oldFiles;
+      local.SWEEP_DELAY_MS = oldDelay;
+    }
+  });
+}, 30_000);
+
+it("continues finalizing independent accounts while another final sweep is stalled", async () => {
+  const directory = env.DIRECTORY.getByName(`finalization-pool-${crypto.randomUUID()}`);
+  const users = await Promise.all([account(directory), account(directory)]);
+  await runInDurableObject(directory, async (instance, state) => {
+    const local = (instance as unknown as { env: Env }).env;
+    const oldDelay = local.SWEEP_DELAY_MS, oldFiles = local.FILES;
+    local.SWEEP_DELAY_MS = "3600000";
+    let running: Promise<void> | undefined;
+    let release: (() => void) | undefined;
+    try {
+      for (const user of users) await instance.deleteAccount(user.userId, user.vaultId);
+      await instance.alarm();
+      const rows = state.storage.sql.exec<{ vault_id: string; user_id: string }>(`SELECT v.vault_id,v.user_id FROM vaults v JOIN users u ON u.user_id=v.user_id WHERE v.state='swept'`).toArray();
+      expect(rows).toHaveLength(2);
+      local.SWEEP_DELAY_MS = "0";
+      const held = heldListing(oldFiles, vaultPrefix(rows[0]!.vault_id));
+      local.FILES = held.files;
+      release = held.release;
+      running = instance.alarm();
+      await held.ready;
+      for (let i = 0; i < 200 && state.storage.sql.exec(`SELECT user_id FROM users WHERE user_id=?`, rows[1]!.user_id).toArray().length; i++)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(state.storage.sql.exec(`SELECT user_id FROM users WHERE user_id=?`, rows[1]!.user_id).toArray()).toHaveLength(0);
+      expect(state.storage.sql.exec(`SELECT user_id FROM users WHERE user_id=?`, rows[0]!.user_id).toArray()).toHaveLength(1);
+    } finally {
+      release?.();
+      await running;
+      local.FILES = oldFiles;
+      local.SWEEP_DELAY_MS = oldDelay;
+    }
+  });
+}, 30_000);
+
 it("finishes a previously swept account while an unrelated deleting vault is stalled", async () => {
   const directory = env.DIRECTORY.getByName(`deletion-lanes-${crypto.randomUUID()}`);
   const first = await account(directory), second = await account(directory);

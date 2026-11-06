@@ -91,17 +91,62 @@ test("compares a private local ledger by keyed fingerprint without modifying it 
     assert.equal(report.local.status, "pending");
     assert.equal(report.local.sharedOnly, 1);
     assert.deepEqual(report.local.attempts.map((row) => [row.idMac, row.comparison]), [
-      [mac("attempt-one"), "matching_amount_and_state"], [mac("attempt-two"), "local_only"],
+      [mac("attempt-one"), "matching_reservation_and_state"], [mac("attempt-two"), "local_only"],
     ]);
-    assert.ok(report.local.limitations.includes("local_attempt_call_weights_unavailable"));
+    assert.equal(report.local.attempts[0].reservedCalls, 6);
+    assert.ok(!report.local.limitations.includes("local_attempt_call_weights_unavailable"));
     assert.ok(report.local.limitations.includes("snapshots_not_atomic"));
     assert.equal(hash(), before);
     assert.doesNotMatch(JSON.stringify(report), /attempt-one|attempt-two|other-host|synthetic-pilot-key/);
+    snapshot.attempts[0].reservedCalls = 5;
+    snapshot.totals.reservedCalls = 6;
+    const differentCalls = await inspectPilotAttempts({ env: { ...env, PILOT_LOCAL_LEDGER: local.file }, providerFetch,
+      pilotFetch: async () => Response.json(snapshot) }, dependencies);
+    assert.equal(differentCalls.local.attempts[0].comparison, "different");
+    snapshot.attempts[0].reservedCalls = 6;
+    snapshot.totals.reservedCalls = 7;
     snapshot.attempts[0].actualMicros = 6;
     const changed = await inspectPilotAttempts({ env: { ...env, PILOT_LOCAL_LEDGER: local.file }, providerFetch,
       pilotFetch: async () => Response.json(snapshot) }, dependencies);
     assert.equal(changed.local.attempts[0].comparison, "different");
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("legacy ledger retains unknown individual weights without inventing a match", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pilot-legacy-"));
+  try {
+    const local = createPilotLedger(dir, 10_000_000, 50);
+    reservePilotLedger(local.file, "extraction", local.extraction.micros, local.extraction.calls, 7, 6, "legacy-attempt");
+    const db = new DatabaseSync(local.file);
+    db.exec("ALTER TABLE attempts DROP COLUMN reserved_calls; UPDATE meta SET version=2");
+    db.close();
+    assert.throws(() => reservePilotLedger(local.file, "extraction", local.extraction.micros, local.extraction.calls, 7, 1, "new-attempt"), /live_eval_ledger_unavailable/);
+    const sharedAttempt = { idMac: createHmac("sha256", key).update("resumatic-pilot-attempt-v1:legacy-attempt").digest("hex"),
+      reservedMicros: 7, reservedCalls: 1, state: "pending", actualMicros: null };
+    const snapshot = { totals: { ...totals(), reservedCalls: 1 }, attempts: [sharedAttempt] };
+    const report = await inspectPilotAttempts({ env: { ...env, PILOT_LOCAL_LEDGER: local.file }, providerFetch,
+      pilotFetch: async () => Response.json(snapshot) }, dependencies);
+    assert.equal(report.local.attempts[0].reservedCalls, null);
+    assert.equal(report.local.attempts[0].comparison, "matching_amount_and_state_calls_unknown");
+    assert.ok(report.local.limitations.includes("local_attempt_call_weights_unavailable"));
+    assert.equal(auditPilotLedger(local.file).budgets[0].reservedCalls, 6);
+    settlePilotAttempt(local.file, "extraction", "legacy-attempt", 5);
+    assert.equal(auditPilotLedger(local.file).attempts[0].actualMicros, 5);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("rejects malformed or inconsistent per-attempt call reservations", () => {
+  for (const value of [0, -1, "invalid", 5, 7]) {
+    const dir = mkdtempSync(join(tmpdir(), "pilot-call-weight-"));
+    try {
+      const local = createPilotLedger(dir, 10_000_000, 50);
+      reservePilotLedger(local.file, "extraction", local.extraction.micros, local.extraction.calls, 1, 6, "attempt");
+      const db = new DatabaseSync(local.file);
+      db.prepare("UPDATE attempts SET reserved_calls=?").run(value);
+      db.close();
+      assert.throws(() => auditPilotLedger(local.file), /live_eval_ledger_unavailable/);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
 });
 
 test("a corrupt or non-private local ledger stays unavailable without exposing its contents", async () => {

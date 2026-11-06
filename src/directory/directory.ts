@@ -15,6 +15,17 @@ import { PlacementFence, syntheticPlacementIdentity, type PlacementAttempt } fro
 /** How soon a failed deletion is retried. */
 const RETRY_MS = 60_000;
 
+/** Bounded, work-conserving lanes: a stuck item consumes one slot, not a whole batch. */
+async function eachConcurrent<T>(items: readonly T[], task: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(4, items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next++]!;
+      await task(item);
+    }
+  }));
+}
+
 function parseCheckoutIds(value: string): string[] {
   try {
     const ids: unknown = JSON.parse(value);
@@ -1109,31 +1120,25 @@ export class Directory extends DurableObject<Env> {
         row.generation = generation;
       }
     }
-    // One stalled account should not prevent the other accounts in this
-    // bounded batch from starting their own independent deletion work.
-    const deletion = (async () => {
-      for (let offset = 0; offset < deleting.length; offset += 4) {
-        await Promise.all(deleting.slice(offset, offset + 4).map(async (v) => {
-          try {
-            await this.erase(v.vault_id);
-          } catch (e) {
-            console.error("deletion step failed", {
-              vaultId: v.vault_id,
-              code: logErrorCode(e),
-            });
-          }
-        }));
+    // Each unresolved operation occupies one slot; the remaining slots keep
+    // processing independent accounts without treating it as settled.
+    const deletion = eachConcurrent(deleting, async (v) => {
+      try {
+        await this.erase(v.vault_id);
+      } catch (e) {
+        console.error("deletion step failed", {
+          vaultId: v.vault_id,
+          code: logErrorCode(e),
+        });
       }
-    })();
-    const retirement = (async () => {
-      for (const retired of retiredBefore) {
-        try {
-          await this.retireVault(retired);
-        } catch {
-          console.error("retirement pending", { vaultId: retired.vault_id });
-        }
+    });
+    const retirement = eachConcurrent(retiredBefore, async (retired) => {
+      try {
+        await this.retireVault(retired);
+      } catch {
+        console.error("retirement pending", { vaultId: retired.vault_id });
       }
-    })();
+    });
     // Existing swept accounts can complete independently of a stalled active
     // deletion or retirement. Neither lane may settle another lane's fence.
     const finalization = (async () => {
@@ -1235,11 +1240,11 @@ export class Directory extends DurableObject<Env> {
   private async finalizeSwept(vaults: VaultDbRow[]): Promise<Set<string>> {
     const attempted = new Set<string>();
     const due = Date.now() - this.sweepDelay();
-    for (const v of vaults) {
+    await eachConcurrent(vaults, async (v) => {
       if (!validSweepTime(v.swept_at)) {
         attempted.add(v.vault_id);
         console.error("final sweep pending", { vaultId: v.vault_id, code: "invalid_sweep_time" });
-        continue;
+        return;
       }
       if (
         v.swept_at > due ||
@@ -1251,7 +1256,7 @@ export class Directory extends DurableObject<Env> {
           )
           .toArray().length
       )
-        continue;
+        return;
       attempted.add(v.vault_id);
       try {
         this.requireFinalizationUnchanged(v.vault_id, v.user_id, v.swept_at);
@@ -1350,7 +1355,7 @@ export class Directory extends DurableObject<Env> {
           code: logErrorCode(e),
         });
       }
-    }
+    });
     return attempted;
   }
 

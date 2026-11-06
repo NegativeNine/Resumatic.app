@@ -13,12 +13,14 @@ export function reconcilePilotAttempts(file, key, shared) {
     localMacs.add(idMac);
     const remote = byMac.get(idMac);
     const comparison = !remote ? "local_only" : remote.reservedMicros !== row.reservedMicros ||
-      remote.state !== row.state || remote.actualMicros !== row.actualMicros ? "different" : "matching_amount_and_state";
-    return { idMac, suite: row.suite, reservedMicros: row.reservedMicros,
+      (row.reservedCalls !== null && remote.reservedCalls !== row.reservedCalls) ||
+      remote.state !== row.state || remote.actualMicros !== row.actualMicros ? "different" :
+      row.reservedCalls === null ? "matching_amount_and_state_calls_unknown" : "matching_reservation_and_state";
+    return { idMac, suite: row.suite, reservedMicros: row.reservedMicros, reservedCalls: row.reservedCalls,
       state: row.state, actualMicros: row.actualMicros, comparison };
   });
   return { status: "pending", totalMicros: local.totalMicros, totalCalls: local.totalCalls,
     frozen: local.frozen, budgets: local.budgets, attempts,
     sharedOnly: shared.filter((attempt) => !localMacs.has(attempt.idMac)).length,
-    limitations: ["snapshots_not_atomic", "local_attempt_call_weights_unavailable", "provider_outcomes_unverified"] };
+    limitations: ["snapshots_not_atomic", ...(local.attempts.some((row) => row.reservedCalls === null) ? ["local_attempt_call_weights_unavailable"] : []), "provider_outcomes_unverified"] };
 }

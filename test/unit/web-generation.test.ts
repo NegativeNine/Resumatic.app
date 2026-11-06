@@ -4,6 +4,37 @@ import { api } from "../../src/web/api";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("generation request keys", () => {
+  it.each([
+    ["empty response", () => new Response(null, { status: 204 })],
+    ["non-JSON response", () => new Response("upstream error", { status: 200 })],
+    ["missing ID", () => Response.json({})],
+    ["empty ID", () => Response.json({ factId: "" })],
+    ["wrong ID type", () => Response.json({ factId: 42 })],
+  ])("keeps the fact creation key after a successful HTTP status with %s", async (_name, invalidResponse) => {
+    const keys: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_path: RequestInfo | URL, init?: RequestInit) => {
+      keys.push((init?.headers as Record<string, string>)["idempotency-key"]!);
+      return keys.length === 1 ? invalidResponse() : Response.json({ factId: "saved-fact" });
+    }));
+    const fact = { roleId: null, kind: "accomplishment" as const, text: crypto.randomUUID(), level: null };
+    await expect(api.addFact(fact)).rejects.toThrow();
+    await expect(api.addFact(fact)).resolves.toEqual({ factId: "saved-fact" });
+    await expect(api.addFact(fact)).resolves.toEqual({ factId: "saved-fact" });
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
+  });
+
+  it("requires every document response identifier before clearing the key", async () => {
+    const keys: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_path: RequestInfo | URL, init?: RequestInit) => {
+      keys.push((init?.headers as Record<string, string>)["idempotency-key"]!);
+      return Response.json(keys.length === 1 ? { documentId: "doc" } : { documentId: "doc", runId: "run" });
+    }));
+    const application = crypto.randomUUID();
+    await expect(api.startDocument(application, { kind: "letter" })).rejects.toThrow();
+    await expect(api.startDocument(application, { kind: "letter" })).resolves.toEqual({ documentId: "doc", runId: "run" });
+    expect(keys[1]).toBe(keys[0]);
+  });
   it("keeps an uncertain key through a rate-limited retry, then clears it on success", async () => {
     const keys: string[] = [];
     let call = 0;

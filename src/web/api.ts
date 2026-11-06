@@ -106,14 +106,26 @@ async function request<T>(
 // An uncertain network response reuses the same key if the person retries the same action.
 // Keys live only for the current page session; successful requests clear them.
 const generationKeys = new Map<string, string>();
-async function generate<T>(path: string, body?: unknown): Promise<T> {
+function requireResponseFields<T>(result: T, fields: readonly (keyof T)[]): T {
+  if (
+    !result || typeof result !== "object" ||
+    fields.some((field) => typeof result[field] !== "string" || !(result[field] as string).trim())
+  ) {
+    // A successful status alone doesn't prove that the browser received the
+    // result. The server may already have committed the operation.
+    throw new ApiError(502, "unavailable", "The response was incomplete.");
+  }
+  return result;
+}
+
+async function generate<T>(path: string, body: unknown, fields: readonly (keyof T)[]): Promise<T> {
   const fingerprint = JSON.stringify([path, body]);
   const key = generationKeys.get(fingerprint) ?? crypto.randomUUID();
   generationKeys.set(fingerprint, key);
   // A later rejection does not establish whether an earlier request reached
   // the server. Keep the original key across every failure until a response
   // confirms the result, including a 4xx received while another attempt runs.
-  const result = await request<T>("POST", path, body, key);
+  const result = requireResponseFields(await request<T>("POST", path, body, key), fields);
   if (generationKeys.get(fingerprint) === key) generationKeys.delete(fingerprint);
   return result;
 }
@@ -125,12 +137,12 @@ async function uploadSource(
 ): Promise<{ sourceId: string }> {
   const form = new FormData();
   form.append("file", file);
-  return request<{ sourceId: string }>(
+  return requireResponseFields(await request<{ sourceId: string }>(
     "POST",
     "/api/sources",
     form,
     requestKey,
-  );
+  ), ["sourceId"]);
 }
 
 const versionQuery = (version?: number) =>
@@ -152,7 +164,7 @@ export const api = {
   uploadSource,
   sources: () => request<{ sources: SourceView[] }>("GET", "/api/sources"),
   retryRun: (runId: string) =>
-    generate<{ runId: string; targetId: string }>(`/api/runs/${encodeURIComponent(runId)}/retry`),
+    generate<{ runId: string; targetId: string }>(`/api/runs/${encodeURIComponent(runId)}/retry`, undefined, ["runId", "targetId"]),
   sourceText: (sourceId: string) =>
     request<{ markdown: string; revisionId: string }>(
       "GET",
@@ -167,15 +179,16 @@ export const api = {
     generate<{ sourceId: string }>(
       `/api/sources/${encodeURIComponent(sourceId)}/ocr`,
       body,
+      ["sourceId"],
     ),
   sourceFileUrl: (sourceId: string) =>
     `/api/sources/${encodeURIComponent(sourceId)}/file`,
 
   roles: () => request<{ roles: RoleView[] }>("GET", "/api/roles"),
   addRole: (role: NewRole) =>
-    generate<{ roleId: string }>("/api/v3/roles", role),
+    generate<{ roleId: string }>("/api/v3/roles", role, ["roleId"]),
   addRoleV2: (role: NewRole) =>
-    generate<{ roleId: string }>("/api/v3/roles", role),
+    generate<{ roleId: string }>("/api/v3/roles", role, ["roleId"]),
   updateRole: (id: string, patch: RolePatch) =>
     request<void>("PATCH", `/api/roles/${encodeURIComponent(id)}`, patch),
   updateRoleV2: (id: string, patch: RolePatch) =>
@@ -193,15 +206,16 @@ export const api = {
     generate<{ factId: string }>(
       `/api/documents/${encodeURIComponent(documentId)}/questions/${encodeURIComponent(questionId)}/answer`,
       body,
+      ["factId"],
     ),
   addFact: (fact: NewFact) =>
-    generate<{ factId: string }>("/api/v2/facts", fact),
+    generate<{ factId: string }>("/api/v2/facts", fact, ["factId"]),
   editFact: (id: string, patch: FactPatch) =>
     request<void>("PATCH", `/api/facts/${encodeURIComponent(id)}`, patch),
   review: (r: ReviewRequest) => request<void>("POST", "/api/review", r),
 
   addApplication: (jdText: string) =>
-    generate<{ applicationId: string }>("/api/v2/applications", { jdText }),
+    generate<{ applicationId: string }>("/api/v2/applications", { jdText }, ["applicationId"]),
   applications: () =>
     request<{ applications: ApplicationView[] }>("GET", "/api/applications"),
   updateApplication: (
@@ -221,6 +235,8 @@ export const api = {
   tailor: (applicationId: string) =>
     generate<{ resumeId: string }>(
       `/api/applications/${encodeURIComponent(applicationId)}/resumes`,
+      undefined,
+      ["resumeId"],
     ),
   documents: (applicationId: string) =>
     request<{ documents: DocumentView[] }>(
@@ -233,6 +249,7 @@ export const api = {
     generate<{ documentId: string; runId: string }>(
       `/api/applications/${encodeURIComponent(applicationId)}/documents`,
       options,
+      ["documentId", "runId"],
     ),
   cancelRun: (id: string) =>
     request<void>("POST", `/api/runs/${encodeURIComponent(id)}/cancel`),
@@ -270,7 +287,7 @@ export const api = {
     `/api/resumes/${encodeURIComponent(resumeId)}/preview${versionQuery(version)}`,
   billing: () => request<BillingView>("GET", "/api/billing"),
   checkout: (planId: string) =>
-    generate<{ url: string }>("/api/billing/checkout", { planId }),
+    generate<{ url: string }>("/api/billing/checkout", { planId }, ["url"]),
   cancelCheckout: () => request<void>("POST", "/api/billing/checkout/cancel"),
   billingPortal: () => request<{ url: string }>("POST", "/api/billing/portal"),
   shares: () => request<{ grants: ShareGrant[] }>("GET", "/api/shares"),

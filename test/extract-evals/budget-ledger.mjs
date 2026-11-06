@@ -76,10 +76,10 @@ export function createPilotLedger(directory, budgetMicros, maxCalls, extractionC
   try {
     db = new DatabaseSync(file);
     db.exec(
-      "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; BEGIN IMMEDIATE; CREATE TABLE meta (version INTEGER NOT NULL, total_micros INTEGER NOT NULL, total_calls INTEGER NOT NULL, frozen INTEGER NOT NULL DEFAULT 0); CREATE TABLE budgets (suite TEXT PRIMARY KEY, max_micros INTEGER NOT NULL, max_calls INTEGER NOT NULL, used_micros INTEGER NOT NULL DEFAULT 0, used_calls INTEGER NOT NULL DEFAULT 0); CREATE TABLE attempts (id TEXT PRIMARY KEY, suite TEXT NOT NULL, reserved_micros INTEGER NOT NULL, actual_micros INTEGER, state TEXT NOT NULL CHECK(state IN ('pending','settled','unknown')));",
+      "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; BEGIN IMMEDIATE; CREATE TABLE meta (version INTEGER NOT NULL, total_micros INTEGER NOT NULL, total_calls INTEGER NOT NULL, frozen INTEGER NOT NULL DEFAULT 0); CREATE TABLE budgets (suite TEXT PRIMARY KEY, max_micros INTEGER NOT NULL, max_calls INTEGER NOT NULL, used_micros INTEGER NOT NULL DEFAULT 0, used_calls INTEGER NOT NULL DEFAULT 0); CREATE TABLE attempts (id TEXT PRIMARY KEY, suite TEXT NOT NULL, reserved_micros INTEGER NOT NULL, reserved_calls INTEGER NOT NULL, actual_micros INTEGER, state TEXT NOT NULL CHECK(state IN ('pending','settled','unknown')));",
     );
     db.prepare(
-      "INSERT INTO meta (version,total_micros,total_calls) VALUES (2,?,?)",
+      "INSERT INTO meta (version,total_micros,total_calls) VALUES (3,?,?)",
     ).run(budgetMicros, maxCalls);
     const insert = db.prepare(
       "INSERT INTO budgets (suite,max_micros,max_calls) VALUES (?,?,?)",
@@ -149,7 +149,7 @@ export function reservePilotLedger(
       .get();
     if (
       !meta ||
-      meta.version !== 2 ||
+      meta.version !== 3 ||
       !integer(meta.total_micros) ||
       !integer(meta.total_calls) ||
       !row ||
@@ -172,8 +172,8 @@ export function reservePilotLedger(
     )
       throw new Error("live_eval_budget_exhausted");
     db.prepare(
-      "INSERT INTO attempts (id,suite,reserved_micros,state) VALUES (?,?,?,'pending')",
-    ).run(attemptId, suite, costMicros);
+      "INSERT INTO attempts (id,suite,reserved_micros,reserved_calls,state) VALUES (?,?,?,?,'pending')",
+    ).run(attemptId, suite, costMicros, attemptWeight);
     db.prepare(
       "UPDATE budgets SET used_micros = used_micros + ?, used_calls = used_calls + ? WHERE suite = ?",
     ).run(costMicros, attemptWeight, suite);
@@ -221,7 +221,7 @@ export function settlePilotAttempt(file, suite, attemptId, actualMicros) {
         "SELECT suite,reserved_micros,actual_micros,state FROM attempts WHERE id=?",
       )
       .get(attemptId);
-    if (!meta || meta.version !== 2 || !row || row.suite !== suite)
+    if (!meta || ![2, 3].includes(meta.version) || !row || row.suite !== suite)
       throw new Error(CANT_OPEN);
     if (row.state !== "pending") {
       if (
@@ -269,7 +269,7 @@ export function finishPilotSuite(file, suite, succeeded) {
         "SELECT COUNT(*) AS n FROM attempts WHERE suite=? AND state='pending'",
       )
       .get(suite);
-    if (!meta || meta.version !== 2 || !pending) throw new Error(CANT_OPEN);
+    if (!meta || ![2, 3].includes(meta.version) || !pending) throw new Error(CANT_OPEN);
     if (!succeeded || pending.n > 0)
       db.prepare("UPDATE meta SET frozen=1").run();
     db.exec("COMMIT");
@@ -294,7 +294,7 @@ export function freezePilotLedger(file) {
       "PRAGMA busy_timeout=10000; PRAGMA synchronous=FULL; BEGIN IMMEDIATE",
     );
     const meta = db.prepare("SELECT version FROM meta").get();
-    if (!meta || meta.version !== 2) throw new Error(CANT_OPEN);
+    if (!meta || ![2, 3].includes(meta.version)) throw new Error(CANT_OPEN);
     db.prepare("UPDATE meta SET frozen=1").run();
     db.exec("COMMIT");
   } catch {
@@ -339,11 +339,13 @@ export function auditPilotLedger(file) {
     const text = (name, maxBytes) => `CASE WHEN typeof(${name})='text' AND length(CAST(${name} AS BLOB))<=${maxBytes} THEN ${name} ELSE NULL END AS ${name}`;
     const metaRows = db.prepare(`SELECT ${["version", "total_micros", "total_calls", "frozen"].map(number).join(",")} FROM meta LIMIT 2`).all();
     const budgets = db.prepare(`SELECT ${text("suite", 10)},${["max_micros", "max_calls", "used_micros", "used_calls"].map(number).join(",")} FROM budgets LIMIT 3`).all();
-    const rows = db.prepare(`SELECT ${text("id", 100)},${text("suite", 10)},${number("reserved_micros")},${nullableNumber("actual_micros")},${text("state", 16)} FROM attempts LIMIT 51`).all();
-    budgets.sort((a, b) => typeof a.suite === "string" && typeof b.suite === "string" ? (a.suite < b.suite ? -1 : a.suite > b.suite ? 1 : 0) : 0);
     const m = metaRows[0];
+    if (metaRows.length !== 1 || ![2, 3].includes(m.version)) throw new Error();
+    const calls = m.version === 3 ? number("reserved_calls") : "NULL AS reserved_calls";
+    const rows = db.prepare(`SELECT ${text("id", 100)},${text("suite", 10)},${number("reserved_micros")},${calls},${nullableNumber("actual_micros")},${text("state", 16)} FROM attempts LIMIT 51`).all();
+    budgets.sort((a, b) => typeof a.suite === "string" && typeof b.suite === "string" ? (a.suite < b.suite ? -1 : a.suite > b.suite ? 1 : 0) : 0);
     const nonnegative = (n) => Number.isSafeInteger(n) && n >= 0;
-    if (metaRows.length !== 1 || m.version !== 2 || !integer(m.total_micros) || m.total_micros > 10_000_000 ||
+    if (!integer(m.total_micros) || m.total_micros > 10_000_000 ||
         !integer(m.total_calls) || m.total_calls > 50 || ![0, 1].includes(m.frozen) ||
         budgets.length !== 2 || budgets[0].suite !== "extraction" || budgets[1].suite !== "tailoring" ||
         budgets.some((b) => !integer(b.max_micros) || !integer(b.max_calls) || !nonnegative(b.used_micros) ||
@@ -351,7 +353,7 @@ export function auditPilotLedger(file) {
         budgets.reduce((n, b) => n + b.max_micros, 0) !== m.total_micros ||
         budgets.reduce((n, b) => n + b.max_calls, 0) !== m.total_calls || rows.length > 50 ||
         rows.some((row) => typeof row.id !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(row.id) || !SUITES.has(row.suite) ||
-          !integer(row.reserved_micros) || !["pending", "settled", "unknown"].includes(row.state) ||
+          !integer(row.reserved_micros) || (m.version === 3 && !integer(row.reserved_calls)) || !["pending", "settled", "unknown"].includes(row.state) ||
           (row.actual_micros !== null && !nonnegative(row.actual_micros)) ||
           (row.state === "settled" && row.actual_micros === null) ||
           (row.state !== "settled" && row.actual_micros !== null)) ||
@@ -360,13 +362,14 @@ export function auditPilotLedger(file) {
         budgets.some((b) => {
           const group = rows.filter((row) => row.suite === b.suite);
           return group.reduce((n, row) => n + row.reserved_micros, 0) !== b.used_micros ||
-            b.used_calls < group.length || (group.length === 0 && b.used_calls !== 0);
+            (m.version === 3 ? group.reduce((n, row) => n + row.reserved_calls, 0) !== b.used_calls :
+              b.used_calls < group.length || (group.length === 0 && b.used_calls !== 0));
         })) throw new Error();
     db.exec("COMMIT");
     rows.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
     return { totalMicros: m.total_micros, totalCalls: m.total_calls, frozen: m.frozen === 1,
       budgets: budgets.map((b) => ({ suite: b.suite, reservedMicros: b.used_micros, reservedCalls: b.used_calls })),
-      attempts: rows.map((row) => ({ id: row.id, suite: row.suite, reservedMicros: row.reserved_micros,
+      attempts: rows.map((row) => ({ id: row.id, suite: row.suite, reservedMicros: row.reserved_micros, reservedCalls: row.reserved_calls,
         state: row.state === "settled" && row.actual_micros > row.reserved_micros ? "overrun" : row.state,
         actualMicros: row.actual_micros })) };
   } catch {

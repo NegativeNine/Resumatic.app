@@ -35,6 +35,6 @@ export function auditPilotLedger(file: string): {
   totalCalls: number;
   frozen: boolean;
   budgets: { suite: "extraction" | "tailoring"; reservedMicros: number; reservedCalls: number }[];
-  attempts: { id: string; suite: "extraction" | "tailoring"; reservedMicros: number;
+  attempts: { id: string; suite: "extraction" | "tailoring"; reservedMicros: number; reservedCalls: number | null;
     state: "pending" | "settled" | "unknown" | "overrun"; actualMicros: number | null }[];
 };
