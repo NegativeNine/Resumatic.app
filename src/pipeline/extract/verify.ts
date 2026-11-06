@@ -333,13 +333,16 @@ export function verifyExtraction(
       drop("fact", "instruction");
       continue;
     }
-    if (!checkClaim(fact.text, [{ text: quote }]).ok) {
+    // Non-skill proposals are replaced by the complete source line below, so
+    // an inverted model paraphrase must not discard otherwise useful evidence.
+    // Skills keep their proposed text and therefore retain every claim check.
+    if (!checkClaim(fact.text, [{ text: quote }], { detectDirection: fact.kind === "skill" }).ok) {
       drop("fact", "unsupported_claim");
       continue;
     }
-    // Deterministic number/name/scope checks do not prove semantic entailment:
-    // e.g. "increased churn" passes against "reduced churn". Retain the user's
-    // entire source line rather than a prefix that may omit a qualifier.
+    // Deterministic checks do not prove semantic entailment. Retain the user's
+    // entire source line rather than a model paraphrase or a prefix that may
+    // omit a qualifier.
     // Skills are individual literal items from a sometimes wider evidence line.
     const before = markdown.slice(0, span[0]).split("\n").filter((s) => s.trim());
     const precedingLine = before.at(-1) ?? "";

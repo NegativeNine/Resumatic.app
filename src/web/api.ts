@@ -156,8 +156,8 @@ export const api = {
 
   me: () => request<Me>("GET", "/api/me"),
   profile: () => request<Profile>("GET", "/api/profile"),
-  updateProfile: (patch: Partial<Profile>) =>
-    request<Profile>("PUT", "/api/profile", patch),
+  updateProfile: (patch: Partial<Profile>, expectedRevision: number) =>
+    request<Profile>("PUT", "/api/v2/profile", { ...patch, expectedRevision }),
   signOutEverywhere: () =>
     request<void>("POST", "/api/account/sign-out-everywhere"),
 

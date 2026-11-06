@@ -1,12 +1,13 @@
 import { useId, useState, type ChangeEvent } from "react";
 import type { Profile } from "../../shared/api";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { ActionError, Field, PageHeader } from "../components/ui";
 import { BillingTools, CoachSharingTools } from "../components/AccountTools";
 import { ConnectedApps } from "../components/ConnectedApps";
 import { useAction } from "../hooks";
 import { href } from "../router";
 import { useSession } from "../session";
+import { isProfileSnapshot, profileWriteObserved } from "../profile-save";
 
 const CONFIRM_PHRASE = "delete my account";
 const DELETION_NOTE =
@@ -78,11 +79,42 @@ function ProfileForm() {
         .filter(Boolean),
     };
     const ok = await run(async () => {
-      const stored = (await api.updateProfile(profile)) ?? profile;
+      const revision = draft.revision;
+      if (!Number.isSafeInteger(revision) || revision! < 1 || revision! >= Number.MAX_SAFE_INTEGER)
+        throw new ApiError(409, "conflict", "Load the saved profile before saving your changes.");
+      let stored: Profile;
+      try {
+        stored = await api.updateProfile(profile, revision!);
+        if (!profileWriteObserved(stored, revision, profile))
+          throw new ApiError(502, "unavailable", "The response was incomplete.");
+      } catch (error) {
+        if (error instanceof ApiError && (error.status === 401 || error.status === 410)) throw error;
+        // A failed reply can follow a committed update. Only accept a fresh
+        // read at the next revision with exactly the submitted values.
+        let current: Profile;
+        try { current = await api.profile(); }
+        catch (readError) {
+          if (readError instanceof ApiError && (readError.status === 401 || readError.status === 410)) throw readError;
+          throw error;
+        }
+        if (!profileWriteObserved(current, revision, profile)) throw error;
+        stored = current;
+      }
       updateMe((current) => ({ ...current, profile: stored }));
       setDraft(toDraft(stored));
     });
     if (ok) setSaved(true);
+  }
+
+  async function loadSaved() {
+    await run(async () => {
+      const current = await api.profile();
+      if (!isProfileSnapshot(current))
+        throw new ApiError(502, "unavailable", "The response was incomplete.");
+      updateMe((me) => ({ ...me, profile: current }));
+      setDraft(toDraft(current));
+      setSaved(false);
+    });
   }
 
   return (
@@ -160,12 +192,16 @@ function ProfileForm() {
         <button type="submit" className="primary" disabled={pending}>
           {pending ? "Saving…" : "Save profile"}
         </button>
+        <button type="button" disabled={pending} onClick={() => void loadSaved()}>
+          Load saved profile
+        </button>
         {saved && (
           <p className="success inline" role="status">
             Profile saved.
           </p>
         )}
       </div>
+      <p className="hint">Loading the saved profile replaces your unsaved changes in this form.</p>
       <ActionError message={error} />
     </form>
   );

@@ -446,6 +446,26 @@ describe("scope", () => {
     expect(checkClaim("Led the migration", [{ text: "My colleague never led the migration" }]).ok).toBe(false);
   });
 
+  it.each([
+    ["Increased latency by 50%", "Reduced latency by 50%"],
+    ["Reduced customer retention by 20%", "Increased customer retention by 20%"],
+    ["Boosted throughput by 25%", "Cut throughput by 25%"],
+    ["Cut the response time by 10%", "Raised the response time by 10%"],
+  ])("rejects the reversed outcome in %s against %s", (claim, text) => {
+    const result = checkClaim(claim, [{ text, level: "founded" }]);
+    expect(result.ok).toBe(false);
+    expect(result.problems.some((problem) => problem.startsWith("outcome direction contradicted"))).toBe(true);
+    expect(checkClaim(text, [{ text, level: "founded" }]).ok).toBe(true);
+  });
+
+  it("does not infer a direction reversal across different or ambiguous objects", () => {
+    expect(checkClaim("Increased throughput by 20%", [{ text: "Reduced latency by 20%", level: "founded" }]).ok).toBe(true);
+    expect(checkClaim("Increased latency by 20%", [{ text: "Reduced latency by 20%, then increased latency by 20%", level: "founded" }]).ok).toBe(true);
+    expect(checkClaim("Increased latency by 20%", [{ text: "Did not reduce latency by 20%", level: "founded" }]).problems.some((problem) => problem.startsWith("outcome direction contradicted"))).toBe(false);
+    expect(checkClaim("Increased cost of infrastructure by 20%", [{ text: "Reduced cost of operations by 20%", level: "founded" }]).ok).toBe(true);
+    expect(checkClaim("Increased investments in training by 20%", [{ text: "Reduced investments in hiring by 20%", level: "founded" }]).problems.some((problem) => problem.startsWith("outcome direction contradicted"))).toBe(false);
+  });
+
   it("reports every problem at once", () => {
     const result = checkClaim("Led a Rust rewrite that cut costs by 50%", [{ text: "Helped with a Go rewrite", level: "contributed" }]);
     expect(result.ok).toBe(false);
@@ -484,6 +504,12 @@ describe("checkLine", () => {
   it("rejects a cited line that adds a leading-dot decimal or scientific quantity", () => {
     expect(checkLine({ roleId: "r1", text: "Built the billing API and reduced cost by .5%", factIds: ["a"] }, facts, selected).ok).toBe(false);
     expect(checkLine({ roleId: "r1", text: "Built the billing API serving 1e6 requests", factIds: ["a"] }, facts, selected).ok).toBe(false);
+  });
+
+  it("rejects a cited line that reverses an outcome", () => {
+    const supporting = fact("latency", "r1", "Reduced latency by 20%");
+    const result = checkLine({ roleId: "r1", text: "Increased latency by 20%", factIds: [supporting.id] }, new Map([[supporting.id, supporting]]), new Set([supporting.id]));
+    expect(result.problems.some((problem) => problem.startsWith("outcome direction contradicted"))).toBe(true);
   });
 
   it("needs citations, from the selection, of the line's own role", () => {

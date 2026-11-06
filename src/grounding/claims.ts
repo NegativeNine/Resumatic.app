@@ -2,6 +2,7 @@ import type { Level } from "../shared/api";
 import { scaledNumbers } from "./scaled-numbers";
 import { numberQualifier } from "./number-qualifier";
 import { numberRanges } from "./number-ranges";
+import { contradictedDirections } from "./direction";
 
 // Deterministic checks that a claim says nothing its evidence does not: numbers, names and scope.
 // They are deliberately strict; the judge model catches what they cannot see.
@@ -603,7 +604,7 @@ export interface CheckResult {
 }
 
 /** Checks one claim against its evidence: numbers, names and scope. */
-export function checkClaim(claim: string, evidence: Evidence[]): CheckResult {
+export function checkClaim(claim: string, evidence: Evidence[], options: { detectDirection?: boolean } = {}): CheckResult {
   const corpus = evidence.map((e) => [e.text, e.quote ?? ""].join("\n")).join("\n");
   const problems: string[] = [];
   const numbers = unsupportedNumbers(claim, corpus);
@@ -612,6 +613,10 @@ export function checkClaim(claim: string, evidence: Evidence[]): CheckResult {
   if (names.length) problems.push(`names not in the evidence: ${names.join(", ")}`);
   const denied = contradictedActions(claim, evidence);
   if (denied.length) problems.push(`actions contradicted by the evidence: ${denied.join(", ")}`);
+  if (options.detectDirection !== false) {
+    const reversed = contradictedDirections(claim, evidence.flatMap((item) => [item.text, item.quote ?? ""]));
+    if (reversed.length) problems.push(`outcome direction contradicted by the evidence: ${reversed.join(", ")}`);
+  }
   const claimed = scopeRank(claim);
   const supported = Math.max(
     ...evidence.map((e) => Math.max(rankOf(e.level), scopeRank(e.text), scopeRank(e.quote ?? ""))),

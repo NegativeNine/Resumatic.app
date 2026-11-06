@@ -981,7 +981,7 @@ export class Directory extends DurableObject<Env> {
     // retirement alarm. The alarm remains responsible for retry and cleanup.
     // Attempt every Vault even if another one is unavailable.
     const results = await Promise.allSettled([
-      ...toQuiesce.active.map(async (id) => this.env.VAULT.get(this.env.VAULT.idFromString(id)).quiesce()),
+      ...toQuiesce.active.map(async (id) => this.env.VAULT.get(this.env.VAULT.idFromString(id)).quiesceForAccountDeletion(userId)),
       ...toQuiesce.targets.map(async (id) => this.env.VAULT.get(this.env.VAULT.idFromString(id)).quiesceForRetirement(userId)),
     ]);
     const failed = results.find((result) => result.status === "rejected");
@@ -1359,10 +1359,19 @@ export class Directory extends DurableObject<Env> {
     return attempted;
   }
 
+  private requireDeletingUnchanged(vaultId: string, userId: string): void {
+    if (!this.sql.exec(`SELECT v.vault_id FROM vaults v JOIN users u ON u.user_id=v.user_id WHERE v.vault_id=? AND v.user_id=? AND v.state='deleting' AND u.state='deleting'`, vaultId, userId).toArray().length)
+      throw new AppError("unavailable", "account deletion changed; retry cleanup");
+  }
+
   private async erase(vaultId: string): Promise<void> {
     const id = this.env.VAULT.idFromString(vaultId);
     if (id.toString() !== vaultId) throw new AppError("unavailable", "vault identity requires review");
-    await this.env.VAULT.get(id).quiesce();
+    const owner = this.sql.exec<{ user_id: string }>(`SELECT user_id FROM vaults WHERE vault_id=? AND state='deleting'`, vaultId).toArray()[0];
+    if (!owner) throw new AppError("unavailable", "account deletion changed; retry cleanup");
+    this.requireDeletingUnchanged(vaultId, owner.user_id);
+    await this.env.VAULT.get(id).quiesceForAccountDeletion(owner.user_id);
+    this.requireDeletingUnchanged(vaultId, owner.user_id);
     // Do not let an unrelated unresolved dispatch indefinitely postpone
     // cancellation of already-known billing or removal of visible objects.
     // These attempts are provisional: they cannot settle a fence or mark a
@@ -1370,12 +1379,16 @@ export class Directory extends DurableObject<Env> {
     // repeated only after close succeeds. Use separate stubs so a failed RPC
     // does not poison another concurrent operation.
     const [billingAttempt, sweepAttempt, runsAttempt, closeAttempt] = await Promise.allSettled([
-      this.preliminaryBillingCleanup(vaultId),
+      this.preliminaryBillingCleanup(vaultId, owner.user_id),
       deletePrefix(this.env.FILES, vaultPrefix(vaultId)),
-      (async () => stopKnownVaultRuns(this.env, await this.env.VAULT.get(id).knownRunsForDeletion()))(),
+      (async () => {
+        const known = await this.env.VAULT.get(id).knownRunsForAccountDeletion(owner.user_id);
+        this.requireDeletingUnchanged(vaultId, owner.user_id);
+        await stopKnownVaultRuns(this.env, known);
+      })(),
       (async () => {
         this.requireInitializationSettled(vaultId);
-        return this.env.VAULT.get(id).close();
+        return this.env.VAULT.get(id).closeForAccountDeletion(owner.user_id);
       })(),
     ]);
     if (billingAttempt.status === "rejected")
@@ -1385,10 +1398,13 @@ export class Directory extends DurableObject<Env> {
     if (runsAttempt.status === "rejected")
       console.error("preliminary workflow cleanup pending", { code: logErrorCode(runsAttempt.reason) });
     if (closeAttempt.status === "rejected") throw closeAttempt.reason;
+    this.requireDeletingUnchanged(vaultId, owner.user_id);
     const runs = closeAttempt.value;
     const stub = this.env.VAULT.get(id);
-    const customer = await stub.billingCustomerForDeletion();
-    const newCheckoutIds = await stub.billingCheckoutSessionsForDeletion();
+    const customer = await stub.billingCustomerForAccountDeletion(owner.user_id);
+    this.requireDeletingUnchanged(vaultId, owner.user_id);
+    const newCheckoutIds = await stub.billingCheckoutSessionsForAccountDeletion(owner.user_id);
+    this.requireDeletingUnchanged(vaultId, owner.user_id);
     const previous = this.sql.exec<{ stripe_customer: string | null; stripe_checkout_sessions: string }>(
       `SELECT stripe_customer, stripe_checkout_sessions FROM vaults WHERE vault_id=?`, vaultId,
     ).one();
@@ -1404,17 +1420,18 @@ export class Directory extends DurableObject<Env> {
     if (!knownCustomer && checkoutIds.length)
       throw new AppError("unavailable", "checkout customer requires operator review");
     if (knownCustomer) await cleanupBillingCustomer(this.env, knownCustomer, fetch, checkoutIds);
+    this.requireDeletingUnchanged(vaultId, owner.user_id);
     await stopVaultRuns(this.env, runs);
-    const owner = this.sql
-      .exec<{ user_id: string }>(
-        `SELECT user_id FROM vaults WHERE vault_id = ?`,
-        vaultId,
-      )
-      .one();
+    this.requireDeletingUnchanged(vaultId, owner.user_id);
     await revokeOAuthUserGrants(this.env, owner.user_id);
+    this.requireDeletingUnchanged(vaultId, owner.user_id);
+    await stub.quiesceForAccountDeletion(owner.user_id);
+    this.requireDeletingUnchanged(vaultId, owner.user_id);
     await deletePrefix(this.env.FILES, vaultPrefix(vaultId));
+    this.requireDeletingUnchanged(vaultId, owner.user_id);
     // The vault goes last, so a retry after any failure above can still ask it which runs to stop.
-    await stub.destroy();
+    await stub.destroyForAccountDeletion(owner.user_id);
+    this.requireDeletingUnchanged(vaultId, owner.user_id);
     this.sql.exec(
       `UPDATE vaults SET state = 'swept', swept_at = ?, updated_at = ? WHERE vault_id = ?`,
       Date.now(),
@@ -1424,9 +1441,10 @@ export class Directory extends DurableObject<Env> {
   }
 
   /** Best effort only: never create or infer an unknown billing customer. */
-  private async preliminaryBillingCleanup(vaultId: string): Promise<void> {
+  private async preliminaryBillingCleanup(vaultId: string, userId: string): Promise<void> {
     const id = this.env.VAULT.idFromString(vaultId);
-    const known = await this.env.VAULT.get(id).knownBillingForDeletion();
+    const known = await this.env.VAULT.get(id).knownBillingForAccountDeletion(userId);
+    this.requireDeletingUnchanged(vaultId, userId);
     const previous = this.sql.exec<{ stripe_customer: string | null; stripe_checkout_sessions: string }>(
       `SELECT stripe_customer, stripe_checkout_sessions FROM vaults WHERE vault_id=?`, vaultId,
     ).one();

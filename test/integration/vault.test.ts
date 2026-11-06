@@ -44,6 +44,27 @@ async function uploadResume(user: User): Promise<string> {
 }
 
 describe("profile", () => {
+  it("guards profile saves against concurrent and legacy edits", async () => {
+    const user = await signIn();
+    const first = await user.send("PUT", "/api/v2/profile", { name: "First", expectedRevision: 1 });
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({ name: "First", revision: 2 });
+    const stale = await user.send("PUT", "/api/v2/profile", { name: "Stale", expectedRevision: 1 });
+    expect(stale.status).toBe(409);
+    expect((await user.json("/api/profile")).name).toBe("First");
+    expect((await user.send("PUT", "/api/v2/profile", { name: "No revision" })).status).toBe(422);
+    expect((await user.send("PUT", "/api/profile", { phone: "555" })).status).toBe(200);
+    expect((await user.send("PUT", "/api/v2/profile", { name: "Older", expectedRevision: 2 })).status).toBe(409);
+    const concurrent = await Promise.all([
+      user.send("PUT", "/api/v2/profile", { name: "A", expectedRevision: 3 }),
+      user.send("PUT", "/api/v2/profile", { name: "B", expectedRevision: 3 }),
+    ]);
+    expect(concurrent.map((response) => response.status).sort()).toEqual([200, 409]);
+    const final = await user.json("/api/profile");
+    expect(["A", "B"]).toContain(final.name);
+    expect(final).toMatchObject({ revision: 4, phone: "555" });
+  });
+
   it("starts empty and saves edits", async () => {
     const user = await signIn();
     expect(await user.json("/api/profile")).toEqual({

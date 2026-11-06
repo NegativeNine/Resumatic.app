@@ -1,5 +1,6 @@
 import { AppError } from "../shared/errors";
 import { modelAttempt, type ModelObservers } from "./usage";
+import { rerankScores } from "./rerank";
 
 const EMBED_MODEL = "@cf/baai/bge-m3";
 const RERANK_MODEL = "@cf/baai/bge-reranker-base";
@@ -73,6 +74,7 @@ export async function rerankTexts(
   const inputs: Ai_Cf_Baai_Bge_Reranker_Base_Input & { query: string } = {
     query,
     contexts: texts.map((text) => ({ text })),
+    top_k: texts.length,
   };
   const res = await modelAttempt(
     {
@@ -88,12 +90,7 @@ export async function rerankTexts(
       }),
     (response) => (response as { usage?: unknown }).usage,
   );
-  const scores = new Array<number>(texts.length).fill(0);
-  for (const r of res.response ?? []) {
-    if (typeof r.id === "number" && typeof r.score === "number")
-      scores[r.id] = r.score;
-  }
-  return scores;
+  return rerankScores(res, texts.length);
 }
 
 /** PDF or DOCX to Markdown with Workers AI. */

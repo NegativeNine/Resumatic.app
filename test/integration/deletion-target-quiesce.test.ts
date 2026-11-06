@@ -91,7 +91,7 @@ it("attempts target quiescence when the active Vault fails, and leaves durable d
     local.VAULT = {
       idFromString: (id: string) => original.idFromString(id),
       get: (id: DurableObjectId) => id.toString() === vid
-        ? { quiesce: async () => { throw new Error("synthetic source outage"); } }
+        ? { quiesceForAccountDeletion: async () => { throw new Error("synthetic source outage"); } }
         : original.get(id),
     } as unknown as typeof original;
     try {

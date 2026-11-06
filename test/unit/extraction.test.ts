@@ -192,6 +192,8 @@ describe("strategy verification", () => {
       text: markdown,
       quote: markdown,
     });
+    raw.facts[0]!.text = "Increased customer churn by 50%";
+    expect(verifyExtraction(markdown, raw).extraction.facts).toHaveLength(0);
   });
   it("preserves the complete source line when a proposed prefix omits context", () => {
     const quote = "Led the migration of 40 services, cutting deployment time";

@@ -7,6 +7,7 @@ import {
   parseFieldResult,
 } from "../../src/ai/fields";
 import { reportUsage, type UsageObserver } from "../../src/ai/usage";
+import { rerankScores } from "../../src/ai/rerank";
 import { EvalBudget, evalBudgetFromEnv } from "../extract-evals/budget";
 import { sharedPilotFromEnv, type SharedPilot } from "./shared-pilot.mjs";
 
@@ -242,23 +243,20 @@ export function restModels(
     },
     async rerank(query, texts) {
       if (texts.length === 0) return [];
-      const { response } = await workersAi<{
-        response: { id: number; score: number }[];
-      }>(
+      const result = await workersAi<unknown>(
         creds,
         "@cf/baai/bge-reranker-base",
         {
           query,
           contexts: texts.map((text) => ({ text })),
+          top_k: texts.length,
         },
         budget,
         pilot,
         onUsage,
         "rerank",
       );
-      const scores = new Array<number>(texts.length).fill(0);
-      for (const r of response) scores[r.id] = r.score;
-      return scores;
+      return rerankScores(result, texts.length);
     },
     async toMarkdown(name, blob) {
       // Conversion pricing is not token-based; keep fixture acquisition an explicit live task.

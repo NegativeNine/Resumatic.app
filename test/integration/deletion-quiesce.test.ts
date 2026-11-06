@@ -24,11 +24,11 @@ describe("deletion access revocation", () => {
     let entered!: () => void, release!: () => void;
     const ready = new Promise<void>((resolve) => { entered = resolve; });
     const hold = new Promise<void>((resolve) => { release = resolve; });
-    const original = Vault.prototype.quiesce;
-    const spy = vi.spyOn(Vault.prototype, "quiesce").mockImplementation(async function (this: Vault) {
+    const original = Vault.prototype.quiesceForAccountDeletion;
+    const spy = vi.spyOn(Vault.prototype, "quiesceForAccountDeletion").mockImplementation(async function (this: Vault, userId: string) {
       entered();
       await hold;
-      return original.call(this);
+      return original.call(this, userId);
     });
     let running: Promise<boolean> | undefined;
     try {
@@ -117,7 +117,7 @@ describe("deletion access revocation", () => {
       const original = local.VAULT;
       local.VAULT = {
         idFromString: (value: string) => original.idFromString(value),
-        get: () => ({ quiesce: async () => { throw new Error("synthetic RPC failure"); } }),
+        get: () => ({ quiesceForAccountDeletion: async () => { throw new Error("synthetic RPC failure"); } }),
       } as unknown as typeof original;
       try {
         await expect(instance.deleteAccount(account.userId, account.vaultId)).rejects.toThrow("synthetic RPC failure");

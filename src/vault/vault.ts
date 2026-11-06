@@ -382,6 +382,51 @@ export class Vault extends DurableObject<Env> {
     return this.destroy();
   }
 
+  /** Account deletion, like retirement, must prove the persisted owner before touching the Vault. */
+  private requireDeletionOwner(userId: string): void {
+    if (typeof userId !== "string" || !userId || this.gone || !this.initialised || this.meta("user_id") !== userId)
+      throw new AppError("unavailable", "account vault ownership requires review");
+  }
+
+  quiesceForAccountDeletion(userId: string): void {
+    this.requireDeletionOwner(userId);
+    this.quiesce();
+  }
+
+  knownRunsForAccountDeletion(userId: string): ReturnType<Vault["knownRunsForDeletion"]> {
+    this.requireDeletionOwner(userId);
+    return this.knownRunsForDeletion();
+  }
+
+  closeForAccountDeletion(userId: string): ReturnType<Vault["close"]> {
+    this.requireDeletionOwner(userId);
+    return this.close();
+  }
+
+  destroyForAccountDeletion(userId: string): ReturnType<Vault["destroy"]> {
+    this.requireDeletionOwner(userId);
+    if (this.destroying || this.meta("state") !== "closing")
+      throw new AppError("conflict", "account vault must be closed before destruction");
+    return this.destroy();
+  }
+
+  knownBillingForAccountDeletion(userId: string): ReturnType<Vault["knownBillingForDeletion"]> {
+    this.requireDeletionOwner(userId);
+    return this.knownBillingForDeletion();
+  }
+
+  async billingCustomerForAccountDeletion(userId: string): Promise<string | null> {
+    this.requireDeletionOwner(userId);
+    const customer = await this.billingCustomerForDeletion();
+    this.requireDeletionOwner(userId);
+    return customer;
+  }
+
+  billingCheckoutSessionsForAccountDeletion(userId: string): string[] {
+    this.requireDeletionOwner(userId);
+    return this.billingCheckoutSessionsForDeletion();
+  }
+
   /** Refuses new work and lists the runs to stop. Safe to repeat, and safe on an empty vault. */
   async close(): Promise<{
     distill: string[];
@@ -618,6 +663,17 @@ export class Vault extends DurableObject<Env> {
       JSON.stringify(next.links),
     );
     return this.readProfile();
+  }
+
+  /** Reject a stale editor rather than replacing contact details saved elsewhere. */
+  async updateProfileChecked(who: Who, patch: Partial<Profile>, expectedRevision: number): Promise<Profile> {
+    this.requireOwner(who);
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1 ||
+        this.readProfile().revision !== expectedRevision)
+      throw new AppError("conflict", "your profile changed; review the saved details before trying again");
+    // updateProfile executes its write before returning its promise. There is
+    // no await between the revision check and the write in this object.
+    return this.updateProfile(who, patch);
   }
 
   // ---------------------------------------------------------------- sources (user)

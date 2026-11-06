@@ -22,7 +22,7 @@ if (!browser?.startsWith("/")) {
   const state = { signedIn: false, source: false, sourceRunning: false, sourceCancel: false, sourceFailed: false, sourceRetryKeys: [], documentRetryKeys: [], roleState: "proposed", factState: "proposed", manualFact: null, manualFactKeys: [], manualRoles: [], manualRoleKeys: [], uploadKeys: [], applications: [], documents: [], tailored: false, resumeRunning: false, resumeCancel: false, resumeUncited: false, resumeLegacy: false, resumeNeedsGroundingReview: false, legacyChecked: false, legacyHeadersReady: false, legacyFinalized: false, legacyExtraLine: false, resumeText: "Built 12 payment services", resumeVersion: 1, manualEdits: [], manualDocument: null };
   const role = { id: "role-1", kind: "job", org: "Acme Example", title: "Engineer", startDate: "2021", endDate: null, state: "proposed", quote: "Acme Example — Engineer", sourceId: "source-1", revision: 1 };
   const fact = { id: "fact-1", roleId: "role-1", kind: "accomplishment", text: "Built 12 payment services", level: null, levelNeedsReview: true, previousLevel: "led", origin: "user", state: "proposed", quote: "Built 12 payment services", sourceId: "source-1", revision: 1 };
-  const me = { userId: "synthetic-user", profile: { name: "Avery Example", email: "avery@example.test", phone: "", location: "", links: [] }, quota: { used: 0, limit: 3, month: "2026-11" } };
+  const me = { userId: "synthetic-user", profile: { revision: 1, name: "Avery Example", email: "avery@example.test", phone: "", location: "", links: [] }, quota: { used: 0, limit: 3, month: "2026-11" } };
   const send = (res, status, value) => { res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" }); res.end(value === undefined ? "" : JSON.stringify(value)); };
   const read = async (req) => { const chunks = []; let bytes = 0; for await (const chunk of req) { bytes += chunk.length; if (bytes > 20_000) throw new Error("request_too_large"); chunks.push(chunk); } return Buffer.concat(chunks); };
   const standin = async (req, res, next) => {
@@ -45,14 +45,18 @@ if (!browser?.startsWith("/")) {
     if (!path.startsWith("/api/")) return next();
     if (path === "/api/me") return state.signedIn ? send(res, 200, me) : send(res, 401, { error: "unauthenticated", message: "sign in" });
     if (!state.signedIn) return send(res, 401, { error: "unauthenticated" });
-    if (path === "/api/profile" && req.method === "PUT") {
+    if (path === "/api/profile" && req.method === "GET") return send(res, 200, me.profile);
+    if (path === "/api/v2/profile" && req.method === "PUT") {
       const body = JSON.parse((await read(req)).toString("utf8"));
       state.profileRequests ??= [];
       state.profileRequests.push(body);
       await new Promise((resolve) => { releaseProfile = resolve; });
       if (state.profileRequests.length === 1) return send(res, 503, { error: "unavailable" });
-      me.profile = body;
-      return send(res, 200, body);
+      if (body.expectedRevision !== me.profile.revision) return send(res, 409, { error: "conflict", message: "your profile changed; review the saved details before trying again" });
+      const { expectedRevision, ...profile } = body;
+      me.profile = { ...profile, revision: expectedRevision + 1 };
+      if (state.profileRequests.length === 4) return send(res, 503, { error: "unavailable" });
+      return send(res, 200, me.profile);
     }
     if (path === "/api/shares" && req.method === "GET") return send(res, 200, { grants: [{ id: "legacy-grant", epoch: "synthetic", createdAt: Date.now(), expiresAt: Date.now() + 60_000, revokedAt: null, factCount: 0, resumeCount: 1, available: false }] });
     if (path === "/api/sources" && req.method === "GET") {
@@ -486,6 +490,24 @@ if (!browser?.startsWith("/")) {
     finishProfile();
     await wait(`document.body?.innerText.includes('Profile saved.')`);
     if (state.profileRequests.length !== 2 || state.profileRequests.some((body) => body.name !== "Avery Example Senior") || !await evalPage(`document.querySelector('input[autocomplete="name"]')?.value === 'Avery Example Senior' && !document.querySelector('input[autocomplete="name"]')?.readOnly && document.activeElement === document.querySelector('input[autocomplete="name"]')`)) throw new Error("PROFILE_SAVE_RESULT_WRONG");
+    stage = "profile_concurrent_edit";
+    me.profile = { ...me.profile, name: "Changed elsewhere", revision: me.profile.revision + 1 };
+    await call("Input.insertText", { text: " Local" });
+    await clickText("button", "Save profile");
+    finishProfile = await waitForRelease(() => releaseProfile); releaseProfile = undefined;
+    finishProfile();
+    await wait(`!!document.querySelector('form[aria-labelledby="profile-heading"] [role="alert"]') && !document.querySelector('input[autocomplete="name"]')?.readOnly`);
+    if (state.profileRequests[2].expectedRevision !== 2 || !await evalPage(`document.querySelector('input[autocomplete="name"]')?.value === 'Avery Example Senior Local'`)) throw new Error("PROFILE_STALE_DRAFT_LOST");
+    await clickText("button", "Load saved profile");
+    await wait(`document.querySelector('input[autocomplete="name"]')?.value === 'Changed elsewhere'`);
+    stage = "profile_lost_response";
+    await evalPage(`(() => { const e = document.querySelector('input[autocomplete="name"]'); e.focus(); e.setSelectionRange(e.value.length, e.value.length); })()`);
+    await call("Input.insertText", { text: " Reconciled" });
+    await clickText("button", "Save profile");
+    finishProfile = await waitForRelease(() => releaseProfile); releaseProfile = undefined;
+    finishProfile();
+    await wait(`document.body?.innerText.includes('Profile saved.')`);
+    if (me.profile.revision !== 4 || me.profile.name !== "Changed elsewhere Reconciled" || !await evalPage(`document.querySelector('input[autocomplete="name"]')?.value === 'Changed elsewhere Reconciled'`)) throw new Error("PROFILE_LOST_RESPONSE_NOT_RECONCILED");
     await wait(`document.body?.innerText.includes('This link is currently unavailable.')`);
     if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Revoke link')`)) throw new Error("SHARE_REVOKE_MISSING");
     if (!await evalPage(`!!document.querySelector('a[href="/api/export/archive"]')`)) throw new Error("ARCHIVE_LINK_MISSING");
@@ -507,7 +529,7 @@ if (!browser?.startsWith("/")) {
     await call("Page.navigate", { url: `${origin}/share?invalid=1#synthetic-invalid` });
     await wait(`document.body?.innerText.includes('Share unavailable')`);
     if (await evalPage(`location.hash !== '' || !![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Try again')`)) throw new Error("EXPIRED_SHARE_NOT_TERMINAL");
-    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, pollRecovery: true, pollNonTransient: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, factLevelReview: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, jobRetryKey: true, profileSubmissionLock: true, applicationTracking: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, checkedLineRemoval: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true, stableResourceReload: true, shareRetry: true, expiredShare: true } }));
+    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, pollRecovery: true, pollNonTransient: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, factLevelReview: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, jobRetryKey: true, profileSubmissionLock: true, profileConcurrentEdit: true, profileLostResponse: true, applicationTracking: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, checkedLineRemoval: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true, stableResourceReload: true, shareRetry: true, expiredShare: true } }));
   } catch {
     console.log(JSON.stringify({ status: "failed", reason: "BROWSER_SMOKE_FAILED", stage, promotionEligible: false })); process.exitCode = 1;
   } finally {

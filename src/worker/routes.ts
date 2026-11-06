@@ -488,6 +488,12 @@ api.put("/profile", JSON_LIMIT, async (c) =>
   ),
 );
 
+api.put("/v2/profile", JSON_LIMIT, async (c) => {
+  const { expectedRevision, ...patch } = await jsonBody(c,
+    ProfilePatch.extend({ expectedRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER - 1) }).strict());
+  return c.json(await myVault(c).updateProfileChecked(c.get("who"), patch, expectedRevision));
+});
+
 api.post("/account/sign-out-everywhere", async (c) => {
   await myVault(c).signOutEverywhere(c.get("who"));
   c.header("set-cookie", clearSessionCookie());
