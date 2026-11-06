@@ -273,6 +273,8 @@ export const api = {
     request<{ version: number }>("POST", `/api/resumes/${encodeURIComponent(id)}/legacy-remove-line`, { lineId, expectedVersion }),
   removeLegacySection: (id: string, sectionIndex: number, expectedVersion: number) =>
     request<{ version: number }>("POST", `/api/resumes/${encodeURIComponent(id)}/legacy-remove-section`, { sectionIndex, expectedVersion }),
+  removeLegacySkill: (id: string, skillIndex: number, expectedVersion: number) =>
+    request<{ version: number }>("POST", `/api/resumes/${encodeURIComponent(id)}/legacy-remove-skill`, { skillIndex, expectedVersion }),
   removeResumeLine: (id: string, lineId: string, expectedVersion: number) =>
     request<{ version: number }>("POST", `/api/resumes/${encodeURIComponent(id)}/remove-line`, { lineId, expectedVersion }),
   beginResumeReview: (id: string, expectedVersion: number) =>

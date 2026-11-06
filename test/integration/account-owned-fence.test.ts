@@ -110,8 +110,83 @@ it("leaves account deletion pending when the owner-bound destroy acknowledgement
     try {
       await instance.alarm();
     } finally { local.VAULT = original; }
-    expect(state.storage.sql.exec<{state:string}>(`SELECT state FROM vaults WHERE vault_id=?`, user.vaultId).one().state).toBe("deleting");
+    expect(state.storage.sql.exec<{state:string}>(`SELECT state FROM vaults WHERE vault_id=?`, user.vaultId).one().state).toBe("swept");
+    expect(state.storage.sql.exec<{phase:string}>(`SELECT phase FROM account_final_sweeps WHERE vault_id=?`, user.vaultId).one().phase).toBe("awaiting");
     await instance.alarm();
-    expect(state.storage.sql.exec<{state:string}>(`SELECT state FROM vaults WHERE vault_id=?`, user.vaultId).one().state).toBe("deleting");
+    expect(state.storage.sql.exec<{state:string}>(`SELECT state FROM vaults WHERE vault_id=?`, user.vaultId).one().state).toBe("swept");
+    expect(state.storage.sql.exec<{phase:string}>(`SELECT phase FROM account_final_sweeps WHERE vault_id=?`, user.vaultId).one().phase).toBe("awaiting");
+  });
+});
+
+it("keeps legacy swept records pending without sweeping a Vault whose owner cannot be proved", async () => {
+  const home = env.DIRECTORY.getByName(`legacy-final-sweep-${crypto.randomUUID()}`);
+  const user = await account(home);
+  const key = `${vaultPrefix(user.vaultId)}sources/synthetic`;
+  await env.FILES.put(key, "synthetic source");
+  await runInDurableObject(home, async (instance, state) => {
+    // Simulate an old swept row: never invent a proof from current storage.
+    state.storage.sql.exec(`UPDATE users SET state='deleting' WHERE user_id=?`, user.userId);
+    state.storage.sql.exec(`UPDATE vaults SET state='swept',swept_at=1 WHERE vault_id=?`, user.vaultId);
+    expect(() => state.storage.sql.exec(`DELETE FROM vaults WHERE vault_id=?`, user.vaultId)).toThrow(/account_finalization_requires_destroy/);
+    await instance.alarm();
+    expect(state.storage.sql.exec(`SELECT user_id FROM users WHERE user_id=?`, user.userId).toArray()).toHaveLength(1);
+    expect(state.storage.sql.exec(`SELECT vault_id FROM account_final_sweeps WHERE vault_id=?`, user.vaultId).toArray()).toHaveLength(0);
+    expect(await state.storage.getAlarm()).toBeGreaterThan(Date.now());
+  });
+  expect(await env.FILES.get(key)).not.toBeNull();
+});
+
+it("checks persisted ownership again before the delayed final sweep", async () => {
+  const home = env.DIRECTORY.getByName(`wrong-final-owner-${crypto.randomUUID()}`);
+  const other = env.DIRECTORY.getByName(`final-sweep-victim-${crypto.randomUUID()}`);
+  const user = await account(home), victim = await account(other);
+  const victimVault = env.VAULT.get(env.VAULT.idFromString(victim.vaultId));
+  const key = `${vaultPrefix(victim.vaultId)}sources/synthetic`;
+  await env.FILES.put(key, "synthetic source");
+  await runInDurableObject(home, async (instance, state) => {
+    const local = (instance as unknown as { env: Env }).env, oldDelay = local.SWEEP_DELAY_MS;
+    local.SWEEP_DELAY_MS = "3600000";
+    try {
+      await instance.deleteAccount(user.userId, user.vaultId);
+      await instance.alarm();
+      expect(state.storage.sql.exec<{phase:string}>(`SELECT phase FROM account_final_sweeps WHERE vault_id=?`, user.vaultId).one().phase).toBe("awaiting");
+      expect(() => state.storage.sql.exec(`DELETE FROM vaults WHERE vault_id=?`, user.vaultId)).toThrow(/account_finalization_requires_destroy/);
+      // Even a coherent but corrupt Directory mapping is no proof of the
+      // target Vault's actual owner.
+      state.storage.sql.exec(`UPDATE vaults SET vault_id=? WHERE vault_id=?`, victim.vaultId, user.vaultId);
+      state.storage.sql.exec(`UPDATE account_final_sweeps SET vault_id=? WHERE vault_id=?`, victim.vaultId, user.vaultId);
+      local.SWEEP_DELAY_MS = "0";
+      await instance.alarm();
+      expect(state.storage.sql.exec<{phase:string}>(`SELECT phase FROM account_final_sweeps WHERE vault_id=?`, victim.vaultId).one().phase).toBe("awaiting");
+    } finally { local.SWEEP_DELAY_MS = oldDelay; }
+  });
+  expect(await env.FILES.get(key)).not.toBeNull();
+  expect(await runInDurableObject(victimVault, (_vault, state) =>
+    state.storage.sql.exec<{value:string}>(`SELECT value FROM meta WHERE key='state'`).one().value,
+  )).toBe("open");
+});
+
+it("resumes finalization after an acknowledged destroy and a later control-plane failure", async () => {
+  const home = env.DIRECTORY.getByName(`acknowledged-destroy-${crypto.randomUUID()}`);
+  const user = await account(home);
+  await home.deleteAccount(user.userId, user.vaultId);
+  await runInDurableObject(home, async (instance, state) => {
+    const local = (instance as unknown as { env: Env }).env;
+    const original = local.DIRECTORY, oldDelay = local.SWEEP_DELAY_MS;
+    local.SWEEP_DELAY_MS = "0";
+    local.DIRECTORY = {
+      idFromName: (name: string) => original.idFromName(name),
+      get: () => ({ removeInvite: async () => { throw new Error("synthetic directory outage"); } }),
+    } as unknown as typeof original;
+    try {
+      await instance.alarm();
+      expect(state.storage.sql.exec<{phase:string}>(`SELECT phase FROM account_final_sweeps WHERE vault_id=?`, user.vaultId).one().phase).toBe("destroyed");
+      expect(state.storage.sql.exec(`SELECT user_id FROM users WHERE user_id=?`, user.userId).toArray()).toHaveLength(1);
+    } finally { local.DIRECTORY = original; }
+    try {
+      await instance.alarm();
+      expect(state.storage.sql.exec(`SELECT user_id FROM users WHERE user_id=?`, user.userId).toArray()).toHaveLength(0);
+      expect(state.storage.sql.exec(`SELECT vault_id FROM account_final_sweeps WHERE vault_id=?`, user.vaultId).toArray()).toHaveLength(0);
+    } finally { local.SWEEP_DELAY_MS = oldDelay; }
   });
 });

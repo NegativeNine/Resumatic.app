@@ -11,6 +11,58 @@ beforeEach(() => setModels(() => fakeModels()));
 afterEach(() => setModels(null));
 
 describe("historical share grounding", () => {
+  it.each(["missing skill evidence", "non-skill evidence", "duplicate line ID"])("blocks %s while keeping the version available for owner review", async (variant) => {
+    const user = await signIn();
+    const upload = await user.upload("synthetic.pdf", RESUME);
+    const { sourceId } = await upload.json() as { sourceId: string };
+    await waitForSource(user, sourceId);
+    const { facts } = await user.json<{ facts: FactView[] }>("/api/facts");
+    const { roles } = await user.json<{ roles: RoleView[] }>("/api/roles");
+    expect((await user.send("POST", "/api/review", { confirm: [...facts, ...roles].map((item) => item.id), reject: [] })).status).toBe(204);
+    const { applicationId } = await (await user.send("POST", "/api/applications", { jdText: JOB_DESCRIPTION })).json() as { applicationId: string };
+    const { resumeId } = await (await user.send("POST", `/api/applications/${applicationId}/resumes`)).json() as { resumeId: string };
+    await waitForResume(user, resumeId);
+    const share = await user.send("POST", "/api/shares", { factIds: [], resumes: [{ id: resumeId, version: 1 }] });
+    expect(share.status).toBe(201);
+    const { grant, url } = await share.json() as { grant: { id: string }; url: string };
+    const exchange = await call("/share/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: new URL(url).hash.slice(1) }) });
+    const cookie = cookieFrom(exchange, "__Host-share")!;
+    const payload = user.cookie.slice("__Host-session=".length).split(".")[0]!;
+    const { vid } = JSON.parse(new TextDecoder().decode(fromBase64url(payload))) as { vid: string };
+    await runInDurableObject(vault(env, vid), (_instance, state) => {
+      const sql = state.storage.sql;
+      const saved = JSON.parse(sql.exec<{ data: string }>(`SELECT data FROM resume_versions WHERE resume_id=? AND version=1`, resumeId).one().data);
+      const shared = JSON.parse(sql.exec<{ snapshot: string }>(`SELECT snapshot FROM share_grants WHERE id=?`, grant.id).one().snapshot);
+      if (variant === "duplicate line ID") {
+        const line = saved.render.body.sections[0].lines[0];
+        saved.render.body.sections[0].lines.push(structuredClone(line));
+        shared.resumes[0].sections[0].lines.push(structuredClone(shared.resumes[0].sections[0].lines[0]));
+      } else {
+        let skill = "SyntheticUnprovenSkill";
+        if (variant === "missing skill evidence") saved.facts.synthetic_skill = { text: skill, quote: skill };
+        else {
+          const id = saved.render.body.sections[0].lines[0].factIds[0];
+          expect(saved.evidence[id].kind).not.toBe("skill");
+          skill = saved.facts[id].text;
+        }
+        saved.render.body.skills.push(skill);
+        shared.resumes[0].skills.push(skill);
+      }
+      sql.exec(`UPDATE resume_versions SET data=? WHERE resume_id=? AND version=1`, JSON.stringify(saved), resumeId);
+      sql.exec(`UPDATE resumes SET body=? WHERE id=?`, JSON.stringify(saved.render.body), resumeId);
+      sql.exec(`UPDATE share_grants SET snapshot=? WHERE id=?`, JSON.stringify(shared), grant.id);
+    });
+    const before = await user.json<{ needsGroundingReview: boolean; body: unknown }>(`/api/resumes/${resumeId}`);
+    expect(before.needsGroundingReview).toBe(true);
+    expect(before.body).toBeTruthy();
+    for (const suffix of ["pdf", "docx", "preview"])
+      expect((await user.fetch(`/api/resumes/${resumeId}/${suffix}`)).status).toBe(409);
+    expect((await call("/share/snapshot", { cookie })).status).toBe(410);
+    expect((await user.send("POST", "/api/shares", { factIds: [], resumes: [{ id: resumeId, version: 1 }] })).status).toBe(409);
+    expect((await user.send("POST", `/api/resumes/${resumeId}/grounding-review`, { expectedVersion: 1 })).status).toBe(200);
+    expect((await user.json<{ provenance: string }>(`/api/resumes/${resumeId}`)).provenance).toBe("legacy");
+  }, 30_000);
+
   it.each(["missing role evidence", "forged heading"])('blocks %s on export and an existing share while preserving owner review', async (variant) => {
     const user = await signIn();
     const upload = await user.upload("synthetic.pdf", RESUME);

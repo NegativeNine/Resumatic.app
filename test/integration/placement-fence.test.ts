@@ -357,13 +357,17 @@ describe("experimental synthetic placement fencing", () => {
     await home.deleteAccount(account.userId, account.vaultId);
     // Model completed vault erasure and an outbox commit before the process
     // lost its global release response. The opaque release receipt is durable.
-    await vault(env, account.vaultId).quiesce();
-    await vault(env, account.vaultId).destroy();
+    await vault(env, account.vaultId).quiesceForAccountDeletion(account.userId);
+    await vault(env, account.vaultId).closeForAccountDeletion(account.userId);
+    await vault(env, account.vaultId).destroyForAccountDeletion(account.userId);
     expect(await directory(env).closePlacementHome(p.provider, p.subject, generation, account.userId)).toEqual([]);
     await runInDurableObject(home, (_instance, state) => {
       const sql = state.storage.sql;
       state.storage.transactionSync(() => {
         sql.exec(`UPDATE vaults SET state='swept',swept_at=1 WHERE vault_id=?`, account.vaultId);
+        // The current finalizer retains this proof only after an owner-bound
+        // destroy returned successfully. Legacy rows are tested separately.
+        sql.exec(`INSERT INTO account_final_sweeps(vault_id,user_id,generation,swept_at,phase) VALUES (?,?,?,1,'destroyed')`, account.vaultId, account.userId, crypto.randomUUID());
         sql.exec(`INSERT INTO placement_finalizations(user_id,vault_id,provider,subject,generation) VALUES (?,?,?,?,?)`, account.userId, account.vaultId, p.provider, p.subject, generation);
         sql.exec(`DELETE FROM placement_identities WHERE provider=? AND subject=?`, p.provider, p.subject);
         sql.exec(`DELETE FROM identities WHERE user_id=?`, account.userId);

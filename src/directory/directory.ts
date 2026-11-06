@@ -54,6 +54,8 @@ type VaultDbRow = {
   state: string;
   swept_at: number | null;
   updated_at: number;
+  final_generation: string | null;
+  final_phase: string | null;
 };
 
 type RetiredVaultDbRow = {
@@ -611,6 +613,7 @@ export class Directory extends DurableObject<Env> {
       "billing_delivery_retries",
       "vault_replacements",
       "retired_vaults",
+      "account_final_sweeps",
       "identity_homes",
       "placement_finalizations",
       "placement_receipts",
@@ -668,6 +671,9 @@ export class Directory extends DurableObject<Env> {
         userId,
       )
       .one().n;
+    count += this.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM account_final_sweeps WHERE vault_id=? AND user_id<>?`, vaultId, userId,
+    ).one().n;
     return count;
   }
   async forgetIdentityHome(
@@ -1078,9 +1084,9 @@ export class Directory extends DurableObject<Env> {
   }
 
   /**
-   * Erases deleting vaults: close the vault, stop its runs, delete its files, destroy it. After
-   * SWEEP_DELAY_MS the files are swept once more, for any upload that raced the deletion, and then
-   * the Directory rows go. Each vault is handled on its own, so one failure never blocks the others.
+   * Close deleting vaults and sweep their files. After SWEEP_DELAY_MS, check
+   * the stored owner again, sweep once more, then destroy the Vault and remove
+   * the Directory rows. Unresolved operations remain pending for retry.
    */
   async alarm(): Promise<void> {
     // An external call can remain unresolved. Keep a durable retry before any
@@ -1226,10 +1232,15 @@ export class Directory extends DurableObject<Env> {
       row.vault_id, row.user_id, row.generation);
   }
 
-  private requireFinalizationUnchanged(vaultId: string, userId: string, sweptAt: number | null): void {
-    if (!validSweepTime(sweptAt) || this.env.VAULT.idFromString(vaultId).toString() !== vaultId || !this.sql.exec(
-      `SELECT vault_id FROM vaults WHERE vault_id=? AND user_id=? AND state='swept' AND swept_at=?`,
-      vaultId, userId, sweptAt,
+  private requireFinalizationUnchanged(row: VaultDbRow): void {
+    const { vault_id: vaultId, user_id: userId, swept_at: sweptAt, final_generation: generation, final_phase: phase } = row;
+    if (!validSweepTime(sweptAt) || this.env.VAULT.idFromString(vaultId).toString() !== vaultId ||
+        !generation || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(generation) ||
+        (phase !== "awaiting" && phase !== "destroyed") || !this.sql.exec(
+      `SELECT v.vault_id FROM vaults v JOIN users u ON u.user_id=v.user_id JOIN account_final_sweeps a ON a.vault_id=v.vault_id
+       WHERE v.vault_id=? AND v.user_id=? AND u.state='deleting' AND v.state='swept' AND v.swept_at=?
+       AND a.user_id=? AND a.swept_at=? AND a.generation=? AND a.phase=?`,
+      vaultId, userId, sweptAt, userId, sweptAt, generation, phase,
     ).toArray().length || this.sql.exec(
       `SELECT vault_id FROM retired_vaults WHERE user_id=? OR vault_id=?`,
       userId, vaultId,
@@ -1259,7 +1270,24 @@ export class Directory extends DurableObject<Env> {
         return;
       attempted.add(v.vault_id);
       try {
-        this.requireFinalizationUnchanged(v.vault_id, v.user_id, v.swept_at);
+        this.requireFinalizationUnchanged(v);
+        if (v.final_phase === "awaiting") {
+          const stub = this.env.VAULT.get(this.env.VAULT.idFromString(v.vault_id));
+          await stub.quiesceForAccountDeletion(v.user_id);
+          this.requireFinalizationUnchanged(v);
+          await deletePrefix(this.env.FILES, vaultPrefix(v.vault_id));
+          this.requireFinalizationUnchanged(v);
+          // Persist only an acknowledged destruction. If its reply is lost,
+          // an empty Vault does not prove ownership and the row remains pending.
+          await stub.destroyForAccountDeletion(v.user_id);
+          this.ctx.storage.transactionSync(() => {
+            this.requireFinalizationUnchanged(v);
+            this.sql.exec(`UPDATE account_final_sweeps SET phase='destroyed' WHERE vault_id=? AND user_id=? AND generation=? AND swept_at=? AND phase='awaiting'`,
+              v.vault_id, v.user_id, v.final_generation, v.swept_at);
+          });
+          v.final_phase = "destroyed";
+        }
+        this.requireFinalizationUnchanged(v);
         let finalizations = this.sql.exec<{ provider: string; subject: string; generation: string }>(
           `SELECT provider,subject,generation FROM placement_finalizations WHERE user_id=?`, v.user_id,
         ).toArray();
@@ -1271,10 +1299,9 @@ export class Directory extends DurableObject<Env> {
         else if (parseCheckoutIds(v.stripe_checkout_sessions).length)
           throw new AppError("unavailable", "checkout customer requires operator review");
         await revokeOAuthUserGrants(this.env, v.user_id);
-        await deletePrefix(this.env.FILES, vaultPrefix(v.vault_id));
         // A newly discovered retirement must stop before initiating any
         // identity-home release. An in-flight release cannot be recalled.
-        this.requireFinalizationUnchanged(v.vault_id, v.user_id, v.swept_at);
+        this.requireFinalizationUnchanged(v);
         if (fenced) {
           // Remove the target identity before releasing its global claim. The
           // durable outbox keeps the user's deletion retryable across a crash.
@@ -1290,7 +1317,7 @@ export class Directory extends DurableObject<Env> {
           finalizations = fenced;
         }
         for (const identity of finalizations) {
-          this.requireFinalizationUnchanged(v.vault_id, v.user_id, v.swept_at);
+          this.requireFinalizationUnchanged(v);
           await directory(this.env).releasePlacementHome(identity.provider, identity.subject, identity.generation, v.user_id);
         }
         // Release only after the other external cleanup has succeeded. This
@@ -1302,10 +1329,10 @@ export class Directory extends DurableObject<Env> {
               `SELECT provider,subject FROM identities WHERE user_id=?`, v.user_id,
             ).toArray())
             if (identity.provider === "google") {
-              this.requireFinalizationUnchanged(v.vault_id, v.user_id, v.swept_at);
+              this.requireFinalizationUnchanged(v);
               await this.releaseGoogleShardHome(v.user_id, identity.subject, Number(shard[1]));
             } else {
-              this.requireFinalizationUnchanged(v.vault_id, v.user_id, v.swept_at);
+              this.requireFinalizationUnchanged(v);
               await directory(this.env).forgetIdentityHome(identity.provider, identity.subject, Number(shard[1]), v.user_id);
             }
         }
@@ -1313,7 +1340,7 @@ export class Directory extends DurableObject<Env> {
           // External cleanup yields. A newly observed retired vault or a
           // changed account must prevent this stale finalization snapshot
           // from removing the Directory rows.
-          this.requireFinalizationUnchanged(v.vault_id, v.user_id, v.swept_at);
+          this.requireFinalizationUnchanged(v);
           // A newly observed Google identity must also have an acknowledged
           // release; never let a stale scan authorize its deletion.
           if (this.isShard && this.sql.exec(`SELECT i.subject FROM identities i WHERE i.user_id=? AND i.provider='google' AND NOT EXISTS (SELECT 1 FROM shard_deletion_releases r WHERE r.user_id=i.user_id AND r.provider=i.provider AND r.subject=i.subject AND r.state='acknowledged' AND r.fence_epoch > 0)`, v.user_id).toArray().length)
@@ -1339,6 +1366,8 @@ export class Directory extends DurableObject<Env> {
             );
             this.sql.exec(`DELETE FROM identities WHERE user_id = ?`, v.user_id);
             this.sql.exec(`DELETE FROM vaults WHERE vault_id = ?`, v.vault_id);
+            this.sql.exec(`DELETE FROM account_final_sweeps WHERE vault_id=? AND user_id=? AND generation=? AND phase='destroyed'`,
+              v.vault_id, v.user_id, v.final_generation);
             this.sql.exec(`DELETE FROM users WHERE user_id = ?`, v.user_id);
             this.sql.exec(`DELETE FROM placement_finalizations WHERE user_id=?`, v.user_id);
             this.sql.exec(`DELETE FROM shard_deletion_releases WHERE user_id=?`, v.user_id);
@@ -1429,15 +1458,17 @@ export class Directory extends DurableObject<Env> {
     this.requireDeletingUnchanged(vaultId, owner.user_id);
     await deletePrefix(this.env.FILES, vaultPrefix(vaultId));
     this.requireDeletingUnchanged(vaultId, owner.user_id);
-    // The vault goes last, so a retry after any failure above can still ask it which runs to stop.
-    await stub.destroyForAccountDeletion(owner.user_id);
-    this.requireDeletingUnchanged(vaultId, owner.user_id);
-    this.sql.exec(
-      `UPDATE vaults SET state = 'swept', swept_at = ?, updated_at = ? WHERE vault_id = ?`,
-      Date.now(),
-      Date.now(),
-      vaultId,
-    );
+    // Preserve the persisted owner through the delayed second sweep.  The
+    // proof row and phase change commit together; a legacy swept row cannot
+    // be backfilled from an already destroyed Vault.
+    const sweptAt = Date.now(), generation = crypto.randomUUID();
+    this.ctx.storage.transactionSync(() => {
+      this.requireDeletingUnchanged(vaultId, owner.user_id);
+      this.sql.exec(`INSERT INTO account_final_sweeps(vault_id,user_id,generation,swept_at,phase) VALUES (?,?,?,?,'awaiting')`,
+        vaultId, owner.user_id, generation, sweptAt);
+      this.sql.exec(`UPDATE vaults SET state='swept',swept_at=?,updated_at=? WHERE vault_id=? AND user_id=? AND state='deleting'`,
+        sweptAt, sweptAt, vaultId, owner.user_id);
+    });
   }
 
   /** Best effort only: never create or infer an unknown billing customer. */
@@ -1499,8 +1530,9 @@ export class Directory extends DurableObject<Env> {
   private vaultsIn(state: "deleting" | "swept"): VaultDbRow[] {
     return this.sql
       .exec<VaultDbRow>(
-        `SELECT v.vault_id, v.user_id, u.email, v.hint, v.state, v.swept_at, v.updated_at, v.stripe_customer, v.stripe_checkout_sessions
-         FROM vaults v JOIN users u ON u.user_id = v.user_id WHERE v.state = ?`,
+        `SELECT v.vault_id, v.user_id, u.email, v.hint, v.state, v.swept_at, v.updated_at, v.stripe_customer, v.stripe_checkout_sessions,
+                a.generation AS final_generation, a.phase AS final_phase
+         FROM vaults v JOIN users u ON u.user_id = v.user_id LEFT JOIN account_final_sweeps a ON a.vault_id=v.vault_id WHERE v.state = ?`,
         state,
       )
       .toArray();

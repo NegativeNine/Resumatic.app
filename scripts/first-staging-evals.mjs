@@ -22,7 +22,7 @@ import { sharedPilotFromEnv, SHARED_PILOT_IDENTITY_VERIFIED } from "../test/eval
 import { gatewayPrivacyObserved } from "./lib/gateway-privacy.mjs";
 
 const PROJECT = fileURLToPath(new URL("../", import.meta.url));
-const TAILORING_CASE = "scope and numbers";
+const TAILORING_CASE = "confirmed-facts tailoring";
 const validStrategy = (s) =>
   s === "clairic" ||
   s === "llm:default" ||
@@ -50,16 +50,19 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
   )
     fail("PILOT_AUTHORIZATION_INVALID");
   if (!validStrategy(options.strategy)) fail("PILOT_STRATEGY_INVALID");
-  // One extractor call and one judge call reserve six upstream attempts each.
-  // Clairic's outline and one role use nine field passes instead of one chat
-  // call; the judge add-on adds another chat call. Extra fields or schema
-  // retries may still exhaust the allocation, which is reported incomplete.
+  // Each gateway request reserves six upstream attempts. Clairic may use one
+  // internal pass per field: five outline, four role and one accomplishment
+  // field are needed even for a one-role case. The independent judge uses six
+  // further attempts; the judge add-on adds another six. Multiple sections or
+  // schema retries may still exhaust the allocation, reported as incomplete.
   const judged = options.strategy.startsWith("judge:");
   const baseStrategy = options.strategy.replace(/^judge:/, "");
-  const extractionCalls = (baseStrategy === "clairic" ? 15 : 12) + (judged ? 6 : 0);
-  // A useful tailoring pass needs four chat calls (24 reserved attempts) and
-  // two embeddings, before reranking or repairs. Never start an impossible run.
-  if (options.maxCalls < extractionCalls + 26)
+  const extractionCalls = (baseStrategy === "clairic" ? 66 : 12) + (judged ? 6 : 0);
+  // Tailoring starts from an independent synthetic confirmed fact. It needs
+  // analyze, write and judge, two embedding requests and at least one rerank:
+  // six gateway requests of six attempts each, before any retries or repairs.
+  const tailoringCalls = 36;
+  if (options.maxCalls < extractionCalls + tailoringCalls)
     fail("PILOT_CALL_BUDGET_TOO_SMALL");
   if (!env.CF_ACCOUNT_ID || !env.CF_AI_TOKEN || !env.AI_GATEWAY_ID)
     fail("PILOT_CREDENTIALS_REQUIRED");
@@ -222,7 +225,7 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
   // forecast that the actual model prices will fit. Concurrent consumers can
   // still spend the remaining capacity after this read; reservations enforce
   // the hard cap when each attempt begins.
-  if (shared.maxCalls - shared.reservedCalls < extractionCalls + 26 ||
+  if (shared.maxCalls - shared.reservedCalls < extractionCalls + tailoringCalls ||
       shared.maxMicros - shared.reservedMicros < 2)
     fail("PILOT_SHARED_BUDGET_TOO_SMALL");
 
@@ -330,7 +333,7 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
     invoke(
       "tailoring",
       ledger.tailoring,
-      "test/evals/no-fabrication.eval.ts",
+      "test/evals/pilot-tailor.eval.ts",
       TAILORING_CASE,
       [TAILORING_CASE],
     );
@@ -341,6 +344,7 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
       extraction && tailoring && tailoringSafe ? "completed" : "incomplete",
     promotionEligible: false,
     profile: "exploratory-pilot",
+    coverage: { extraction: "separate-synthetic-case", tailoring: "confirmed-synthetic-facts", conversion: "not-run", workflows: "not-run" },
     extractionCases: 1,
     tailoringCases: 1,
     budgetUsd: options.budgetUsd,

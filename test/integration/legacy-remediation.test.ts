@@ -66,6 +66,58 @@ async function checkLine(user: User, applicationId: string, resumeId: string, ve
 }
 
 describe("legacy resume remediation", () => {
+  it("removes a specific skill from a review version while preserving receipts and immutable history", async () => {
+    const { user, applicationId, resumeId, original, version, stub } = await fixture("legacy");
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      const saved = JSON.parse(sql.exec<{ data: string }>(`SELECT data FROM resume_versions WHERE resume_id=? AND version=?`, resumeId, version).one().data);
+      saved.render.body.skills = ["Unconfirmed", "Unconfirmed", "Other unconfirmed"];
+      sql.exec(`UPDATE resume_versions SET data=? WHERE resume_id=? AND version=?`, JSON.stringify(saved), resumeId, version);
+      sql.exec(`UPDATE resumes SET body=? WHERE id=?`, JSON.stringify(saved.render.body), resumeId);
+    });
+    expect((await checkLine(user, applicationId, resumeId, version, original.id, original.text, original.factIds)).state).toBe("ready");
+    const before = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(before.legacyReview).toMatchObject({ verifiedLineIds: [original.id], skillsReady: false });
+    const path = `/api/resumes/${resumeId}/legacy-remove-skill`;
+    const stranger = await signIn();
+    expect((await stranger.send("POST", path, { skillIndex: 0, expectedVersion: before.version })).status).toBe(404);
+    expect((await user.send("POST", path, { skillIndex: 9, expectedVersion: before.version })).status).toBe(409);
+    const requests = [0, 2].map((skillIndex) => ({ skillIndex, expectedVersion: before.version }));
+    const responses = await Promise.all(requests.map((body) => user.send("POST", path, body)));
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    const winner = responses.findIndex((response) => response.status === 200);
+    expect(await (await user.send("POST", path, requests[winner])).json()).toEqual({ version: before.version + 1 });
+    expect((await user.send("POST", path, requests[1 - winner])).status).toBe(409);
+    const after = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(after.body!.skills).toHaveLength(2);
+    expect(after.legacyReview?.verifiedLineIds).toEqual([original.id]);
+    expect((await user.json<ResumeView>(`/api/resumes/${resumeId}?version=${before.version}`)).body).toEqual(before.body);
+    expect((await user.fetch(`/api/resumes/${resumeId}/preview`)).status).toBe(409);
+    for (let index = 0; index < 2; index++) {
+      const current = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+      expect((await user.send("POST", path, { skillIndex: 0, expectedVersion: current.version })).status).toBe(200);
+    }
+    const noSkills = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(noSkills.body!.skills).toEqual([]);
+    expect(noSkills.legacyReview).toMatchObject({ verifiedLineIds: [original.id], skillsReady: true });
+    expect((await checkLine(user, applicationId, resumeId, noSkills.version, "legacy-duplicate", original.text, original.factIds)).state).toBe("ready");
+    const checked = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect((await user.send("POST", `/api/resumes/${resumeId}/legacy-finalize`, { expectedVersion: checked.version })).status).toBe(200);
+    expect((await user.fetch(`/api/resumes/${resumeId}/preview`)).status).toBe(200);
+  }, 30_000);
+
+  it("rejects skill removal on a checked version and while a run is in progress", async () => {
+    const checked = await fixture("verifiedSnapshot");
+    const path = `/api/resumes/${checked.resumeId}/legacy-remove-skill`;
+    expect((await checked.user.send("POST", path, { skillIndex: 0, expectedVersion: checked.version })).status).toBe(409);
+    const legacy = await fixture("legacy");
+    await runInDurableObject(legacy.stub, (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO runs (id,kind,target_id,request_key,input_digest,state,steps,credit_state,created_at,updated_at)
+        VALUES ('pending-skill','refine',?,'pending-skill','digest','running','[]','none',1,1)`, legacy.resumeId);
+    });
+    expect((await legacy.user.send("POST", `/api/resumes/${legacy.resumeId}/legacy-remove-skill`, { skillIndex: 0, expectedVersion: legacy.version })).status).toBe(409);
+  }, 30_000);
+
   it("fences section removal during work and serializes concurrent removals even with duplicate role IDs", async () => {
     const { user, resumeId, version, stub } = await fixture("legacy");
     await runInDurableObject(stub, (_instance, state) => {

@@ -47,7 +47,13 @@ function removeExportCacheMigration(sql: SqlStorage): void {
   sql.exec(`DROP TABLE export_cache`);
 }
 
+function removeFinalSweepMigration(sql: SqlStorage): void {
+  sql.exec(`DROP TRIGGER guard_account_finalization`);
+  sql.exec(`DROP TABLE account_final_sweeps`);
+}
+
 function removeBillingAccountStateMigration(sql: SqlStorage): void {
+  removeFinalSweepMigration(sql);
   sql.exec(`ALTER TABLE retired_vaults DROP COLUMN generation`);
   for (const trigger of ["billing_account_insert_token", "billing_account_update_token", "billing_account_delete_token"])
     sql.exec(`DROP TRIGGER ${trigger}`);
@@ -94,11 +100,32 @@ function removeGlobalAuthMigration(sql: SqlStorage): void {
 }
 
 describe("atomic schema migrations", () => {
+  it("installs the account final-sweep table and guard atomically without inventing legacy proofs", async () => {
+    const stub = env.DIRECTORY.getByName(`final-sweep-migration-${crypto.randomUUID()}`);
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      removeFinalSweepMigration(sql);
+      sql.exec(`INSERT INTO users(user_id,email,state,created_at) VALUES ('u','legacy@example.test','deleting',1)`);
+      sql.exec(`INSERT INTO vaults(vault_id,user_id,hint,state,swept_at,updated_at) VALUES ('v','u','enam','swept',1,1)`);
+      const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((q) => q.includes("CREATE TABLE account_final_sweeps")));
+      expect(previous).toBeGreaterThan(0);
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrateDirectory(failAtTrigger(sql, "guard_account_finalization"), tx)).toThrow(/synthetic migration interruption/);
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name IN ('account_final_sweeps','guard_account_finalization')`).toArray()).toEqual([]);
+      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(previous));
+      migrateDirectory(sql, tx);
+      expect(sql.exec(`SELECT * FROM account_final_sweeps`).toArray()).toEqual([]);
+      expect(() => sql.exec(`DELETE FROM vaults WHERE vault_id='v'`)).toThrow(/account_finalization_requires_destroy/);
+      expect(sql.exec<{ state: string }>(`SELECT state FROM vaults WHERE vault_id='v'`).one().state).toBe("swept");
+    });
+  });
   it("rolls back retired generation migration and preserves legacy retirement rows", async () => {
     const stub = env.DIRECTORY.getByName(`retired-generation-${crypto.randomUUID()}`);
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
       sql.exec(`INSERT INTO retired_vaults(vault_id,user_id,state,swept_at) VALUES ('v','u','swept',123)`);
+      removeFinalSweepMigration(sql);
       sql.exec(`ALTER TABLE retired_vaults DROP COLUMN generation`);
       const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((q) => q.includes("retired_vaults ADD COLUMN generation")));
       sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));

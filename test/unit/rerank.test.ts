@@ -33,15 +33,16 @@ describe("reranker response validation", () => {
     expect(env.AI.run).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ top_k: 2 }), expect.anything());
 
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ result: incomplete })));
-    const budget = new EvalBudget({ usd: 1, maxCalls: 2 });
+    const budget = new EvalBudget({ usd: 1, maxCalls: 6 });
     const pilot = { reserve: vi.fn(async () => {}), settle: vi.fn(async () => {}), freeze: vi.fn(async () => {}) };
     const models = restModels({ accountId: "example", token: "unused", gatewayId: "test" }, {}, { budget, pilot });
     await expect(models.rerank("query", ["first", "second"]))
       .rejects.toThrow("rerank_response_shape");
     const request = vi.mocked(fetch).mock.calls[0]![1]!;
     expect(JSON.parse(request.body as string)).toMatchObject({ top_k: 2 });
+    expect(request.headers).toMatchObject({ "cf-aig-gateway-id": "test", "cf-aig-collect-log-payload": "false", "cf-aig-skip-cache": "true", "cf-aig-max-attempts": "1" });
     // The provider call was still made and its known usage is accounted for.
-    expect(budget.calls).toBe(1);
+    expect(budget.calls).toBe(6);
     expect(pilot.settle).toHaveBeenCalledOnce();
   });
 });

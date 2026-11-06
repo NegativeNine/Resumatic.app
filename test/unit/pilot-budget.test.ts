@@ -11,6 +11,36 @@ const testPilot = {
 };
 
 describe("pilot cost reservations", () => {
+  it("requires an explicitly named gateway for evaluation credentials", async () => {
+    const { vi } = await import("vitest");
+    const { credentials, restModels } = await import("../evals/rest-models");
+    vi.stubEnv("CF_ACCOUNT_ID", "account");
+    vi.stubEnv("CF_AI_TOKEN", "secret");
+    vi.stubEnv("AI_GATEWAY_ID", "");
+    try {
+      expect(credentials()).toBeNull();
+      expect(() => restModels({ accountId: "account", token: "secret", gatewayId: "" }, {})).toThrow("evaluation_gateway_required");
+      vi.stubEnv("AI_GATEWAY_ID", "test-gateway");
+      expect(credentials()?.gatewayId).toBe("test-gateway");
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("reserves every Clairic field against the gateway retry bound before dispatch", async () => {
+    const { vi } = await import("vitest");
+    const { restModels } = await import("../evals/rest-models");
+    const budget = new EvalBudget({ usd: 1, maxCalls: 11 });
+    const pilot = { reserve: vi.fn(), settle: vi.fn(), freeze: vi.fn() };
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      const models = restModels({ accountId: "account", token: "secret", gatewayId: "test" }, {}, { budget, pilot });
+      await expect(models.extractFields!("synthetic source", { one: { type: "text" }, two: { type: "text" } }, "2026-11-06"))
+        .rejects.toThrow("live_eval_budget_exhausted");
+      expect(budget.calls).toBe(0);
+      expect(pilot.reserve).not.toHaveBeenCalled();
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
+  });
   it("prices the reranker at the reviewed rate", () => {
     expect(reportUsage("rerank", "@cf/baai/bge-reranker-base", { input_tokens: 1_000_000 }).costUsd).toBeCloseTo(0.00311, 10);
   });
@@ -288,7 +318,7 @@ it("does not follow a Workers AI redirect or issue another request", async () =>
     await expect(model.embed(["test"])).rejects.toThrow(/HTTP 307/);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher.mock.calls[0]![1]!.redirect).toBe("error");
-    expect(budget.calls).toBe(1);
+    expect(budget.calls).toBe(6);
   } finally {
     vi.unstubAllGlobals();
   }

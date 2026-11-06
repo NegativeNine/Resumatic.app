@@ -43,6 +43,47 @@ describe("immutable resume evidence", () => {
     expect(() => assertGroundedResume(render, facts, "snapshot", evidenceForFacts([{ ...fact, roleId: "other-role" }]), roles)).toThrow(/unverified/);
     expect(() => assertGroundedResume(render, facts, "snapshot", evidenceForFacts([fact]), roles)).not.toThrow();
   });
+
+  it("requires a matching captured skill record for each printed skill", () => {
+    const render: RenderData = {
+      profile: { name: "A User", email: "", phone: "", location: "", links: [] },
+      body: { summary: null, sections: [], skills: ["TypeScript"] },
+      version: 1, company: null, title: null,
+    };
+    const skill: FactRecord = { ...fact, id: "skill-1", kind: "skill", roleId: null,
+      text: "TypeScript", level: null, quote: "TypeScript" };
+    const stored = { [skill.id]: { text: skill.text, quote: skill.quote } };
+    // Legacy facts alone do not say whether this was a confirmed skill.
+    expect(() => assertGroundedResume(render, stored, "snapshot")).toThrow(/unverified/);
+    expect(() => assertGroundedResume(render, stored, "snapshot", evidenceForFacts([{ ...skill, kind: "accomplishment" }]))).toThrow(/unverified/);
+    expect(() => assertGroundedResume(render, stored, "snapshot", evidenceForFacts([{ ...skill, quote: "different source" }]))).toThrow(/unverified/);
+    expect(() => assertGroundedResume(render, stored, "snapshot", evidenceForFacts([skill]))).not.toThrow();
+    for (const quote of [null, "", "  "] as const) {
+      const incomplete = { ...skill, quote };
+      expect(() => assertGroundedResume(render, { [skill.id]: { text: skill.text, quote } }, "snapshot", { [skill.id]: incomplete })).toThrow(/unverified/);
+      expect(() => evidenceForFacts([incomplete])).toThrow(/incomplete/);
+    }
+    // A valid captured skill with the same spelling may support the output.
+    const other = { ...skill, id: "skill-2", origin: "user" as const, quote: null };
+    expect(() => assertGroundedResume(render, { ...stored, [other.id]: { text: other.text, quote: other.quote } }, "snapshot", evidenceForFacts([{ ...skill, kind: "credential" }, other]))).not.toThrow();
+  });
+
+  it("rejects repeated or missing line IDs across the summary and sections", () => {
+    const role: RoleRecord = { id: "role-1", revision: 1, kind: "job", org: "Employer", title: null, startDate: null, endDate: null };
+    const line = { id: "same", text: fact.text, factIds: [fact.id], status: "kept" as const };
+    const render: RenderData = {
+      profile: { name: "A User", email: "", phone: "", location: "", links: [] },
+      body: { summary: { ...line }, sections: [{ roleId: role.id, kind: role.kind, org: role.org, title: null, startDate: null, endDate: null, lines: [{ ...line }] }], skills: [] },
+      version: 1, company: null, title: null,
+    };
+    const stored = { [fact.id]: { text: fact.text, quote: fact.quote } };
+    const captured = evidenceForFacts([fact]), roles = evidenceForRoles([role]);
+    expect(() => assertGroundedResume(render, stored, "snapshot", captured, roles)).toThrow(/unverified/);
+    render.body.sections[0]!.lines[0]!.id = "second";
+    expect(() => assertGroundedResume(render, stored, "snapshot", captured, roles)).not.toThrow();
+    render.body.sections[0]!.lines[0]!.id = "";
+    expect(() => assertGroundedResume(render, stored, "snapshot", captured, roles)).toThrow(/unverified/);
+  });
   it("captures a detached copy of all verification-relevant fields", () => {
     const captured = evidenceForFacts([fact]);
     expect(captured[fact.id]).toEqual(fact);

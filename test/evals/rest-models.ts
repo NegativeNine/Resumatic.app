@@ -23,11 +23,12 @@ export interface EvalCredentials {
 export function credentials(): EvalCredentials | null {
   const accountId = process.env.CF_ACCOUNT_ID;
   const token = process.env.CF_AI_TOKEN;
-  if (!accountId || !token) return null;
+  const gatewayId = process.env.AI_GATEWAY_ID;
+  if (!accountId || !token || !gatewayId || !/^[a-z0-9-]{1,64}$/.test(gatewayId)) return null;
   return {
     accountId,
     token,
-    gatewayId: process.env.AI_GATEWAY_ID || "resumatic-staging",
+    gatewayId,
   };
 }
 
@@ -75,13 +76,18 @@ async function workersAi<T>(
   passes = 1,
 ): Promise<T> {
   for (let attempt = 0; ; attempt++) {
-    // Clairic may make up to one internal extraction pass per requested field.
+    // Every call is routed through the configured gateway. Until the live
+    // retry policy is established, reserve for the platform's documented
+    // maximum of five retries in addition to the initial request. Clairic may
+    // also make one internal extraction pass per requested field.
+    const gatewayAttempts = 6;
+    const bound = passes * gatewayAttempts;
     const attemptId = await reserveBoth(budget, pilot,
       model,
       JSON.stringify(body),
       0,
-      passes,
-      passes,
+      bound,
+      bound,
     );
     let res: Response;
     try {
@@ -93,6 +99,10 @@ async function workersAi<T>(
           headers: {
             authorization: `Bearer ${creds.token}`,
             "content-type": "application/json",
+            "cf-aig-gateway-id": creds.gatewayId,
+            "cf-aig-collect-log-payload": "false",
+            "cf-aig-skip-cache": "true",
+            "cf-aig-max-attempts": "1",
           },
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(60_000),
@@ -144,6 +154,8 @@ export function restModels(
   vars: Record<string, string>,
   opts: { onUsage?: UsageObserver; budget?: EvalBudget; pilot?: SharedPilot } = {},
 ): Models {
+  if (!/^[a-z0-9-]{1,64}$/.test(creds.gatewayId))
+    throw new Error("evaluation_gateway_required");
   const env = vars as unknown as Env;
   // A supervised pilot must never accidentally replace its durable ledger with
   // an independently constructed, process-local budget.

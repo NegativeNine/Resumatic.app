@@ -15,9 +15,10 @@ describe("shared pilot reservations for the direct evaluator", () => {
     const pilot = { reserve: vi.fn(async () => hold), settle: vi.fn(async () => {}), freeze: vi.fn(async () => {}) };
     const provider = vi.fn(async () => Response.json({ choices: [{ message: { content: '{"ok":true}' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }));
     vi.stubGlobal("fetch", provider);
+    let result: Promise<{ ok: boolean }> | undefined;
     try {
       const model = restModels(creds, vars, { budget: new EvalBudget({ usd: 1, maxCalls: 10 }), pilot });
-      const result = model.complete("write", [{ role: "user", content: "private test career text" }], schema);
+      result = model.complete("write", [{ role: "user", content: "private test career text" }], schema);
       await vi.waitFor(() => expect(pilot.reserve).toHaveBeenCalledTimes(1));
       expect(provider).not.toHaveBeenCalled();
       const [id, micros, calls] = pilot.reserve.mock.calls[0] as unknown as [string, number, number];
@@ -29,7 +30,7 @@ describe("shared pilot reservations for the direct evaluator", () => {
       await expect(result).resolves.toEqual({ ok: true });
       expect(pilot.settle).toHaveBeenCalledWith(id, 1);
       expect(provider).toHaveBeenCalledTimes(1);
-    } finally { release(); vi.unstubAllGlobals(); }
+    } finally { release(); await result?.catch(() => {}); vi.unstubAllGlobals(); }
   });
 
   it("never dispatches when the shared reservation is unavailable", async () => {
@@ -45,23 +46,24 @@ describe("shared pilot reservations for the direct evaluator", () => {
     } finally { vi.unstubAllGlobals(); }
   });
 
-  it("reserves each direct Workers AI attempt before fetching", async () => {
+  it("reserves the gateway retry bound for Workers AI before fetching", async () => {
     let release!: () => void;
     const hold = new Promise<void>((resolve) => { release = resolve; });
     const pilot = { reserve: vi.fn(async () => hold), settle: vi.fn(async () => {}), freeze: vi.fn(async () => {}) };
     const provider = vi.fn(async () => Response.json({ result: { data: [[1, 0]], usage: { input_tokens: 1 } } }));
     vi.stubGlobal("fetch", provider);
+    let result: Promise<number[][]> | undefined;
     try {
       const model = restModels(creds, {}, { budget: new EvalBudget({ usd: 1, maxCalls: 10 }), pilot });
-      const result = model.embed(["private embedding text"]);
+      result = model.embed(["private embedding text"]);
       await vi.waitFor(() => expect(pilot.reserve).toHaveBeenCalledTimes(1));
       expect(provider).not.toHaveBeenCalled();
-      expect((pilot.reserve.mock.calls[0] as unknown as [string, number, number])[2]).toBe(1);
+      expect((pilot.reserve.mock.calls[0] as unknown as [string, number, number])[2]).toBe(6);
       expect(JSON.stringify(pilot.reserve.mock.calls)).not.toContain("private embedding text");
       release();
       await expect(result).resolves.toEqual([[1, 0]]);
       expect(pilot.settle).toHaveBeenCalledTimes(1);
-    } finally { release(); vi.unstubAllGlobals(); }
+    } finally { release(); await result?.catch(() => {}); vi.unstubAllGlobals(); }
   });
 
   it("freezes on unknown provider usage and never exposes the response", async () => {

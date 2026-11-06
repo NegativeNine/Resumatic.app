@@ -146,6 +146,16 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
   BILLING_EVENT_INCARNATION_MIGRATIONS,
   BILLING_ACCOUNT_STATE_MIGRATIONS,
   [`ALTER TABLE retired_vaults ADD COLUMN generation TEXT`],
+  [
+    // The active Vault remains closed until its delayed final R2 sweep. Older
+    // swept rows have no owner proof and are intentionally not backfilled.
+    `CREATE TABLE account_final_sweeps (vault_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, generation TEXT NOT NULL, swept_at INTEGER NOT NULL, phase TEXT NOT NULL CHECK(phase IN ('awaiting','destroyed')))`,
+    // An older finalizer must not remove the Directory's last account link
+    // for a swept Vault whose current destruction has not been acknowledged.
+    `CREATE TRIGGER guard_account_finalization BEFORE DELETE ON vaults
+     WHEN OLD.state='swept' AND NOT EXISTS(SELECT 1 FROM account_final_sweeps a WHERE a.vault_id=OLD.vault_id AND a.user_id=OLD.user_id AND a.swept_at=OLD.swept_at AND a.phase='destroyed')
+     BEGIN SELECT RAISE(ABORT, 'account_finalization_requires_destroy'); END`,
+  ],
 ];
 
 export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T, global = false, shard = false): void {

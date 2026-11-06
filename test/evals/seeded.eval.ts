@@ -56,7 +56,7 @@ afterAll(() => {
       "representative-production-regression-cases",
     ],
     measurement:
-      "Planted-claim signatures plus deterministic post-checks; ambiguous action rewrites are not counted as catches. This is not an independent semantic audit.",
+      "Planted-claim signatures plus deterministic post-checks; ambiguous action and outcome rewrites are not counted as catches. This is not an independent semantic audit.",
     budget: budget
       ? {
           calls: budget.calls,

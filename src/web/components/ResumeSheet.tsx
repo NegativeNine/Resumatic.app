@@ -166,7 +166,7 @@ export function ResumeSheet({
                     ? "Some headings don't match confirmed roles."
                     : "Some skills don't match confirmed facts."}{" "}
                 Review your confirmed experience in <a href={href.sources}>Sources &amp; facts</a>, then return and refresh this page.
-                You can also remove a section from this review version below.
+                You can also remove a section or skill from this review version below.
               </p>
             )}
             <button type="button" className="primary" disabled={!readyToFinalize || finalization.pending}
@@ -226,7 +226,22 @@ export function ResumeSheet({
           {body.skills.length > 0 && (
             <section className="paper-section">
               <h2>Skills</h2>
-              <p>{body.skills.join(" · ")}</p>
+              {!readOnly && review ? (
+                <ul className="plain-list">
+                  {body.skills.map((skill, index) => (
+                    <li key={index}>
+                      <span>{skill}</span>{" "}
+                      <button type="button" className="small" disabled={finalization.pending} aria-label={`Remove skill ${skill}`}
+                        onClick={() => void finalization.run(async () => {
+                          await api.removeLegacySkill(resume.id, index, resume.version);
+                          await reload();
+                        })}>
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p>{body.skills.join(" · ")}</p>}
             </section>
           )}
         </article>

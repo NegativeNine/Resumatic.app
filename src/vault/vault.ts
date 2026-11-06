@@ -2206,6 +2206,41 @@ export class Vault extends DurableObject<Env> {
     return result;
   }
 
+  /** Remove a skill from a new review version, retaining prior versions and receipts. */
+  removeLegacySkill(who: Who, resumeId: string, skillIndex: number, expectedVersion: number): { version: number } {
+    this.requireOwner(who);
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || expectedVersion >= Number.MAX_SAFE_INTEGER || !Number.isSafeInteger(skillIndex) || skillIndex < 0)
+      throw new AppError("invalid", "the skill and resume version are required");
+    const result = this.ctx.storage.transactionSync(() => {
+      this.requireOwner(who);
+      const row = this.resumeRow(resumeId);
+      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "the resume is not ready");
+      if (row.version === expectedVersion + 1) {
+        const saved = this.snapshots.read(resumeId, row.version);
+        if (saved?.provenance === "legacy" && saved.legacySkillRemoved?.fromVersion === expectedVersion && saved.legacySkillRemoved.skillIndex === skillIndex)
+          return { version: row.version };
+      }
+      if (row.version !== expectedVersion) throw new AppError("conflict", "the resume changed; refresh and try again");
+      if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
+        throw new AppError("conflict", "wait for the current document to finish");
+      const base = this.resumeVersion(row);
+      if (base.provenance !== "legacy") throw new AppError("conflict", "only a review version can remove a skill");
+      const body = structuredClone(base.render.body);
+      if (!Array.isArray(body.skills) || skillIndex >= body.skills.length)
+        throw new AppError("conflict", "the review skill is missing");
+      body.skills.splice(skillIndex, 1);
+      const version = row.version + 1;
+      this.snapshots.save(resumeId, version, {
+        ...base, render: { ...base.render, body, version },
+        legacySkillRemoved: { fromVersion: expectedVersion, skillIndex },
+      });
+      this.sql.exec(`UPDATE resumes SET body=?,version=? WHERE id=?`, JSON.stringify(body), version, resumeId);
+      return { version };
+    });
+    this.broadcast("resume", resumeId);
+    return result;
+  }
+
   /** Remove a line from a checked resume in a new, independently printable version. */
   removeResumeLine(who: Who, resumeId: string, lineId: string, expectedVersion: number): { version: number } {
     this.requireOwner(who);

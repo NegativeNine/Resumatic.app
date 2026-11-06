@@ -361,6 +361,8 @@ describe("Directory initialization fence", () => {
       ctx.storage.sql.exec(`ALTER TABLE identity_homes DROP COLUMN generation`);
       ctx.storage.sql.exec(`ALTER TABLE identity_homes DROP COLUMN placement_state`);
       ctx.storage.sql.exec(`DROP TABLE vault_initializations`);
+      ctx.storage.sql.exec(`DROP TRIGGER guard_account_finalization`);
+      ctx.storage.sql.exec(`DROP TABLE account_final_sweeps`);
       ctx.storage.sql.exec(`ALTER TABLE vaults DROP COLUMN stripe_checkout_sessions`);
       const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((statement) => statement.includes("CREATE TABLE vault_initializations")));
       expect(previous).toBeGreaterThan(0);

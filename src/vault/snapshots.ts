@@ -36,6 +36,8 @@ export interface ResumeVersion {
   legacyRemoved?: { fromVersion: number; lineId: string };
   /** Identifies an idempotently removed section in a review version. */
   legacySectionRemoved?: { fromVersion: number; sectionIndex: number };
+  /** Identifies an idempotently removed skill in a review version. */
+  legacySkillRemoved?: { fromVersion: number; skillIndex: number };
   /** Identifies an idempotently removed line in a checked version. */
   lineRemoved?: { fromVersion: number; lineId: string };
   provenance: "snapshot" | "legacy";
@@ -51,7 +53,8 @@ function completeEvidence(value: FactRecord | undefined): value is FactRecord {
     typeof value.text === "string" && value.text.trim().length > 0 &&
     (value.level === null || ["contributed", "implemented", "led", "owned", "founded"].includes(value.level)) &&
     (value.levelExplicit === undefined || typeof value.levelExplicit === "boolean") &&
-    (value.quote === null || typeof value.quote === "string");
+    (value.quote === null || typeof value.quote === "string") &&
+    (value.origin !== "extracted" || (typeof value.quote === "string" && !!value.quote.trim()));
 }
 
 /** Preserve the full captured inputs, not a reconstruction from mutable current rows. */
@@ -121,11 +124,15 @@ export function assertGroundedResume(
     ...(render.body.summary ? [{ line: render.body.summary, roleId: null }] : []),
     ...render.body.sections.flatMap((section) => section.lines.map((line) => ({ line, roleId: section.roleId }))),
   ];
+  const seenLines = new Set<string>();
   for (const { line, roleId } of lines) {
     if (!line || !["kept", "repaired", "replaced"].includes(line.status) ||
+        typeof line.id !== "string" || !line.id || seenLines.has(line.id) ||
+        typeof line.text !== "string" || !line.text.trim() ||
         !Array.isArray(line.factIds) || line.factIds.length === 0 ||
         line.factIds.some((id) => typeof id !== "string" || !Object.hasOwn(facts, id) ||
           typeof facts[id]?.text !== "string" || !facts[id]!.text.trim())) throw unavailable();
+    seenLines.add(line.id);
     // A historic snapshot may have used a stale ownership level to verify a
     // line. Recheck scope from its stored evidence; only a complete immutable
     // record can establish that a user explicitly selected a level.
@@ -133,7 +140,7 @@ export function assertGroundedResume(
     for (const id of line.factIds) {
       const stored = facts[id]!;
       if (stored.quote !== null && typeof stored.quote !== "string") throw unavailable();
-      const full = evidence?.[id];
+      const full = evidence && Object.hasOwn(evidence, id) ? evidence[id] : undefined;
       // A section citation needs its immutable role binding, not just matching
       // text, or a fact can be silently moved under another employer.
       if (roleId !== null && !full) throw unavailable();
@@ -152,8 +159,17 @@ export function assertGroundedResume(
     // historical versions. These checks supplement the original model judge.
     if (!checkClaim(line.text, cited).ok) throw unavailable();
   }
-  const texts = new Set(Object.values(facts).map((fact) => fact?.text).filter((text): text is string => typeof text === "string" && !!text.trim()));
-  if (render.body.skills.some((skill) => typeof skill !== "string" || !texts.has(skill))) throw unavailable();
+  // Printed skills do not carry fact IDs. Require a matching full immutable
+  // skill record; matching text alone cannot establish its kind or provenance.
+  for (const skill of render.body.skills) {
+    if (typeof skill !== "string" || !skill.trim() || !evidence ||
+        !Object.entries(facts).some(([id, stored]) => {
+          if (!stored || stored.text !== skill || !Object.hasOwn(evidence, id)) return false;
+          const full = evidence[id];
+          return completeEvidence(full) && full.id === id && full.kind === "skill" &&
+            full.text === stored.text && full.quote === stored.quote;
+        })) throw unavailable();
+  }
 }
 
 /** Content stays in the Vault. Workflow state carries only the run ID. */

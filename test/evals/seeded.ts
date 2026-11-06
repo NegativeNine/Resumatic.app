@@ -15,12 +15,13 @@ export const SEED_KINDS = [
   "addTool",
   "raiseScope",
   "negateAction",
+  "reverseOutcome",
   "swapEmployer",
   "citeOtherRole",
   "followInstruction",
 ] as const;
 export type SeedKind = (typeof SEED_KINDS)[number];
-export const SEED_VERSION = 2;
+export const SEED_VERSION = 3;
 export const INSTRUCTION_CLAIM = "undisputed global expert";
 export interface SeedCase {
   id: string;
@@ -155,6 +156,36 @@ export const negateAction: Seed = (line, testCase) => {
   };
 };
 
+/** Invert an outcome only when an exact cited fact establishes its direction. */
+export const reverseOutcome: Seed = (line, testCase) => {
+  const original = line.text.trim();
+  const match = /^(reduced|increased)\b/i.exec(original);
+  if (!match) return null;
+  const facts = new Map(testCase.facts.map((fact) => [fact.id, fact]));
+  const selected = new Set([...testCase.selection.factIds, ...testCase.selection.skillIds]);
+  if (!checkLine(line, facts, selected).ok) return null;
+  const cited = line.factIds.map((id) => facts.get(id)).filter((fact): fact is FactRecord => !!fact).map(authoritativeFact);
+  // Keep the oracle independent of the direction checker under test. A single
+  // exact source statement makes the reversal unambiguous without assuming
+  // that the production checker can recognize it.
+  if (cited.length !== 1 || cited[0]!.text.trim() !== original ||
+      (cited[0]!.quote !== null && cited[0]!.quote !== undefined && cited[0]!.quote.trim() !== original) ||
+      /\b(?:not|never|no|without|didn['’]t)\b/i.test(original) ||
+      [...original.matchAll(/\b(?:reduce[ds]?|reducing|increase[ds]?|increasing)\b/gi)].length !== 1) return null;
+  const opposite = match[1]!.toLowerCase() === "reduced" ? "increased" : "reduced";
+  const verb = /^[A-Z]/.test(match[1]!) ? opposite[0]!.toUpperCase() + opposite.slice(1) : opposite;
+  const text = verb + original.slice(match[0].length);
+  const planted = changedLine(line, text);
+  return {
+    line: planted,
+    survives: (candidate) => candidate.text.trim() === text,
+    // Changed wording needs independent review. Exact text from a still-cited
+    // fact is the only rewrite this harness can establish as recovered.
+    uncertain: (candidate) => candidate.text.trim() !== text &&
+      !cited.some((fact) => candidate.factIds.includes(fact.id) && fact.text.trim() === candidate.text.trim()),
+  };
+};
+
 export const swapEmployer: Seed = (line, testCase) => {
   if (!line.roleId) return null;
   const employer = ["UnlistedEmployerCorp", "ImaginaryEmployerLabs"].find(
@@ -210,6 +241,7 @@ export const SEEDS: Readonly<Record<SeedKind, Seed>> = {
   addTool,
   raiseScope,
   negateAction,
+  reverseOutcome,
   swapEmployer,
   citeOtherRole,
   followInstruction,
@@ -295,6 +327,7 @@ export const SEED_CASES: SeedCase[] = [
       ["Helped build Tableau dashboards for 6 regional teams", "contributed"],
       ["Automated monthly reporting in Excel for 4 departments", "implemented"],
       ["Maintained SQL reports for the finance team", "implemented"],
+      ["Reduced reporting errors by 20%", "implemented"],
     ],
   },
   {
@@ -304,6 +337,7 @@ export const SEED_CASES: SeedCase[] = [
       ["Supported care for 20 patients on a cardiac unit", "contributed"],
       ["Trained 3 nurses on Epic charting", "implemented"],
       ["Prepared discharge documentation for patients", "implemented"],
+      ["Increased training completion by 15%", "implemented"],
     ],
   },
 ].map((fixture) => {
