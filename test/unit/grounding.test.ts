@@ -30,6 +30,34 @@ describe("quoteIsVerbatim", () => {
 });
 
 describe("numbers", () => {
+  it("does not turn either of two alternative quantities into a definite count", () => {
+    for (const evidence of ["Managed 5 or 10 people", "Managed five or ten people", "Managed 5 or 10 million people"]) {
+      for (const value of ["5", "10"])
+        expect(unsupportedNumbers(`Managed ${value} people`, evidence), `${value} / ${evidence}`).not.toEqual([]);
+      expect(unsupportedNumbers(evidence, evidence)).toEqual([]);
+    }
+    expect(unsupportedNumbers("Managed 5 or 10 people", "Managed 5 or 11 people")).not.toEqual([]);
+    expect(unsupportedNumbers("Managed 5 people or 10 projects", "Managed 5 people or 10 projects")).toEqual([]);
+    expect(unsupportedNumbers("Managed 10 people", "Managed 10 or more people")).not.toEqual([]);
+  });
+  it("keeps all alternatives together, including comma lists and mixed bounds", () => {
+    for (const choice of [
+      "5 or 10 or 15", "5, 10 or 15", "5, 10, or 15", "5 or 10, 15",
+      "about 5 or at least 10 or fewer than 15", "5 or 10 or 15 million",
+    ]) {
+      for (const value of ["5", "10", "15"])
+        expect(unsupportedNumbers(`Managed ${value} people`, `Managed ${choice} people`), `${value} / ${choice}`).not.toEqual([]);
+      expect(unsupportedNumbers(`Managed ${choice} people`, `Managed ${choice} people`)).toEqual([]);
+    }
+    expect(unsupportedNumbers("Managed 10 people", "Managed 5 or 10 or more people")).not.toEqual([]);
+    expect(unsupportedNumbers("Managed 10 people", "Managed 10 or more people")).not.toEqual([]);
+  });
+  it("fails closed for excessive alternative expressions and comma prefixes", () => {
+    const many = "1 or 2; ".repeat(5000) + "managed 5 people";
+    const commaPrefix = "1, ".repeat(5000) + "2 or 3 people";
+    for (const text of [many, commaPrefix])
+      expect(unsupportedNumbers("Managed 1 person", text)).not.toEqual([]);
+  });
   it("keeps malformed and locale-ambiguous numeric literals from supporting their pieces", () => {
     for (const source of ["1,00", "1,,000", "1,000,00", "1.2.3", ".5,00", ".5.6", "1,00e-3", "1,00e--3", "1e--3", "1e3.1", "1.000e3,4", "1e3e5", "1e--3 million", "1e--3 to 5", "1,00/2", "1,00 million", "1,00/2 million", "2021.03.01,00", "v1,00"]) {
       for (const count of ["-3000000", "-3", "0", "1", "2", "3", "4", "5", "6", "50", "100", "1000", "3000000"])

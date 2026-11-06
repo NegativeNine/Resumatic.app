@@ -26,14 +26,23 @@ const quantity = `${group}(?:${join}(?:thousand|million|billion)(?:${join}(?:and
 const endpointCore = `(?:[+\\-−]${space}*)?(?:[$€£]|USD\\b|EUR\\b|GBP\\b)?${space}*(?:[+\\-−]${space}*)?${quantity}(?:${gap}${unit})?`;
 const endpoint = `(?:\\(${space}*${endpointCore}${space}*\\)|${endpointCore})`;
 // Hyphens between English words can instead form one compound number (for
-// example twenty-five), so word endpoints require "to" or "between ... and".
+// example twenty-five), so word endpoints require "to", "or", or "between ... and".
 const digitFraction = "(?:\\d+[⁄∕/]\\d+|\\d*[¼½¾⅐-⅞])";
 const digitEndpointCore = `(?:[+\\-−]${space}*)?(?:[$€£]|USD\\b|EUR\\b|GBP\\b)?${space}*(?:[+\\-−]${space}*)?(?:${digitFraction}|${literal})(?:${gap}${unit})?`;
 const digitEndpoint = `(?:\\(${space}*${digitEndpointCore}${space}*\\)|${digitEndpointCore})`;
 const range = new RegExp(
-  `(?<![\\p{L}\\p{N}_.,/⁄∕])(?:between${requiredGap}(${endpoint})${requiredGap}and${requiredGap}(${endpoint})|(${endpoint})${requiredGap}(?:to|through)${requiredGap}(${endpoint})|(${digitEndpoint})${gap}[-–—]${gap}(${digitEndpoint})|(${endpoint})${gap}[–—]${gap}(${endpoint}))(?![\\p{L}\\p{N}_])`,
+  `(?<![\\p{L}\\p{N}_.,/⁄∕])(?:between${requiredGap}(${endpoint})${requiredGap}and${requiredGap}(${endpoint})|(${endpoint})${requiredGap}(?:to|through|or)${requiredGap}(${endpoint})|(${digitEndpoint})${gap}[-–—]${gap}(${digitEndpoint})|(${endpoint})${gap}[–—]${gap}(${endpoint}))(?![\\p{L}\\p{N}_])`,
   "giu",
 );
+// An option may itself have an explicit bound or approximation. Keep its
+// qualifier inside the alternative expression instead of exposing a later
+// endpoint as an independent exact value.
+const choiceQualifier = `(?:(?:about|around|approximately|roughly|nearly|almost|at${requiredGap}(?:least|most)|(?:more|less|greater|fewer)${requiredGap}than|over|under|above|below|up${requiredGap}to|no${requiredGap}(?:more|less)${requiredGap}than)${requiredGap})?`;
+const choiceItem = `${choiceQualifier}${endpoint}`;
+const choice = new RegExp(`(?<![\\p{L}\\p{N}_.,/⁄∕])(${choiceItem})(?:${requiredGap}|${gap},${requiredGap})or${requiredGap}(${choiceItem})(?![\\p{L}\\p{N}_])`, "giu");
+const precedingChoice = new RegExp(`(?<![\\p{L}\\p{N}_.,/⁄∕])(${choiceItem})${gap},${gap}$`, "iu");
+const followingChoice = new RegExp(`^${gap}(?:,${gap})?(?:or${requiredGap}|,${gap})(${choiceItem})(?![\\p{L}\\p{N}_])`, "iu");
+const ambiguousChoiceSuffix = new RegExp(`^(?:${requiredGap}or${requiredGap}(?:more|less|fewer)\\b|${space}*\\+)`, "iu");
 // A partially parsed scale, fraction, or non-ASCII numeral can change the
 // endpoint. Consume it as part of an unmatchable range instead of silently
 // presenting the shorter prefix as evidence.
@@ -45,10 +54,52 @@ const continuation = new RegExp(
 /** Existing date components are excluded so ISO dates are not split as ranges. */
 export function numberRanges(text: string, dateSpans: [number, number][]): NumberRange[] {
   const result: NumberRange[] = [];
-  for (const match of text.matchAll(range)) {
-    const start = match.index;
-    const extra = continuation.exec(text.slice(start + match[0].length));
-    const end = start + match[0].length + (extra?.[0].length ?? 0);
+  const excessive = (): NumberRange[] => [{ start: 0, end: text.length, raw: text, key: "excessive-ranges", valid: false }];
+  const candidates: { match: RegExpMatchArray; choice: boolean }[] = [];
+  for (const [pattern, isChoice] of [[choice, true], [range, false]] as const) {
+    for (const match of text.matchAll(pattern)) {
+      candidates.push({ match, choice: isChoice });
+      // Avoid quadratic overlap checks and unbounded repeated suffix/prefix
+      // scans. An unmatchable token for the whole input fails closed instead
+      // of exposing components when the input contains excessive ranges.
+      if (candidates.length > 256)
+        return excessive();
+    }
+  }
+  // matchAll always provides an index, although RegExpMatchArray types it as
+  // optional for arrays produced by other APIs.
+  candidates.sort((a, b) => a.match.index! - b.match.index! || Number(b.choice) - Number(a.choice));
+  for (const candidate of candidates) {
+    const { match } = candidate;
+    let start = match.index!;
+    let end = start + match[0].length;
+    let ambiguousSuffix = false;
+    if (candidate.choice) {
+      // Expand comma-prefixed and trailing alternatives; the same span is
+      // then masked from all component scanners. Keep work bounded by the
+      // length of the text: each successful extension consumes characters.
+      let extensions = 0;
+      for (;;) {
+        const offset = Math.max(0, start - 512);
+        const previous = precedingChoice.exec(text.slice(offset, start));
+        if (!previous) break;
+        if (offset && previous.index === 0) return excessive();
+        if (++extensions > 256) return excessive();
+        start -= previous[0].length;
+      }
+      for (;;) {
+        const next = followingChoice.exec(text.slice(end, end + 512));
+        if (!next) break;
+        if (next[0].length === 512 && end + 512 < text.length) return excessive();
+        if (++extensions > 256) return excessive();
+        end += next[0].length;
+      }
+      const suffix = ambiguousChoiceSuffix.exec(text.slice(end));
+      if (suffix) { end += suffix[0].length; ambiguousSuffix = true; }
+    }
+    if (result.some((item) => start < item.end && end > item.start)) continue;
+    const extra = continuation.exec(text.slice(end));
+    end += extra?.[0].length ?? 0;
     if (dateSpans.some(([a, b]) => start < b && end > a)) continue;
     const left = match[1] ?? match[3] ?? match[5] ?? match[7]!;
     const right = match[2] ?? match[4] ?? match[6] ?? match[8]!;
@@ -67,7 +118,11 @@ export function numberRanges(text: string, dateSpans: [number, number][]): Numbe
     // Do not make inconsistent currencies or unrepresentable literals
     // usable simply because the same malformed text appears twice.
     const numbers = [...raw.matchAll(/(?:\d[\d,.]*|\.\d+)(?:e[+\-−]?\d+)?/gi)];
-    const representable = numbers.every(({ 0: value }) => {
+    const representable = numbers.every(({ 0: captured, index }) => {
+      // A comma between list items is punctuation, not a malformed numeric
+      // literal. Malformed internal grouping remains unmatchable.
+      const value = captured.endsWith(",") && /\s/.test(raw[index! + captured.length] ?? "")
+        ? captured.slice(0, -1) : captured;
       const [mantissa] = value.toLowerCase().split("e");
       const significant = mantissa!.replace(/[.,]/g, "").replace(/^0+/, "").replace(/0+$/, "");
       const n = Number(value.replace(/,/g, "").replace("−", "-"));
@@ -80,7 +135,7 @@ export function numberRanges(text: string, dateSpans: [number, number][]): Numbe
     // A dash at the start of the next line may be a bullet or a negative
     // quantity, rather than a range separator. Do not infer which it is.
     const ambiguousDash = /(?:\r\n|[\r\n\u2028\u2029])[^\S\r\n\u2028\u2029]*[-–—]/u.test(raw);
-    result.push({ start, end, raw, key, valid: !extra && !hasFraction && !ambiguousDash && currencies.size <= 1 && !(percent && (currencies.size > 0 || multiplier)) && !(multiplier && currencies.size > 0) && ordinal.test(left) === ordinal.test(right) && representable });
+    result.push({ start, end, raw, key, valid: !extra && !ambiguousSuffix && !hasFraction && !ambiguousDash && currencies.size <= 1 && !(percent && (currencies.size > 0 || multiplier)) && !(multiplier && currencies.size > 0) && ordinal.test(left) === ordinal.test(right) && representable });
   }
   return result;
 }
