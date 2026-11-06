@@ -26,12 +26,14 @@ export function AccountPage() {
         <section className="card" aria-labelledby="data-heading">
           <h2 id="data-heading">Your data</h2>
           <p className="card-text">
-            Download your vault data as a JSON file, including your profile,
-            source text, roles, facts with their quotes, applications and resumes.
-            Original uploaded files are not included in the JSON. Download each
-            one from <a href={href.sources}>Sources &amp; facts</a> while your account
-            is active.
+            Download your vault data and source files together as a ZIP archive.
+            The archive supports up to 128 source files and 100 MiB of data.
+            For larger vaults, download the JSON and individual files from
+            {" "}<a href={href.sources}>Sources &amp; facts</a> while your account is active.
           </p>
+          <a className="button primary" href={api.exportArchiveUrl} download>
+            Download vault archive (ZIP)
+          </a>{" "}
           <a className="button" href={api.exportUrl} download>
             Download vault data (JSON)
           </a>

@@ -142,7 +142,8 @@ if (!browser?.startsWith("/")) {
     if (!state.resumeCancel) throw new Error("RESUME_CANCEL_NOT_SENT");
     stage = "export_disclosure";
     await clickText("nav a", "Account");
-    await wait(`document.body?.innerText.includes('Original uploaded files are not included in the JSON')`);
+    await wait(`document.body?.innerText.includes('up to 128 source files and 100 MiB')`);
+    if (!await evalPage(`!!document.querySelector('a[href="/api/export/archive"]')`)) throw new Error("ARCHIVE_LINK_MISSING");
     if (!await evalPage(`!!document.querySelector('a[href="/api/export"]') && [...document.querySelectorAll('a[href="#/sources"]')].some(x => x.textContent.includes('Sources & facts'))`)) throw new Error("EXPORT_DOWNLOAD_LINKS_MISSING");
     console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, roleAndFactReview: true, applicationCreation: true, applicationTracking: true, coverLetterDisplay: true, tailoredResumeDisplay: true, uncertainDocumentCancellation: true, uncertainResumeCancellation: true, exportDisclosure: true } }));
   } catch {

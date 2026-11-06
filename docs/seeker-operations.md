@@ -113,6 +113,8 @@ Queries weight rows by `_sample_interval`; these are sampled operational measure
 
 Answers to generated experience questions are saved as confirmed user-authored facts, without consuming an output credit. The vault also retains the originating question and the exact original answer as history. Editing the fact changes the claim used for generation; the original answer remains visible as history and is never used to override the correction. Interview provenance is included in the owner's data export and fenced replacement transfer, excluded from coach shares and MCP tools, and removed with the vault.
 
+`GET /api/export/archive` streams a ZIP containing `vault.json` and the source objects referenced by that snapshot. It accepts at most 128 source records and 100 MiB of member data, plus ZIP overhead. The JSON snapshot is assembled before streaming, so a large vault may reach Worker memory or RPC limits before the archive limit is checked. Source objects are checked by ETag; a missing or changed object, interrupted connection, or failed session check during streaming errors the download rather than completing a partial ZIP. Session checks cannot recall bytes already delivered. Verify streaming and deletion races against deployed R2 before relying on those checks. The existing JSON export and individual source downloads remain available for vaults over the archive limits.
+
 ## Release evidence
 
 CI runs local type checks, tests, build and dependency auditing. `LIVE_EVALS_ENABLED` and `STAGING_DEPLOY_ENABLED` opt in the respective GitHub jobs. Missing live evidence cannot pass production promotion.

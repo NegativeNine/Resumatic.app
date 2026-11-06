@@ -1094,6 +1094,10 @@ export class Vault extends DurableObject<Env> {
 
   async listRoles(who: Who): Promise<RoleView[]> {
     this.requireOwner(who);
+    return this.readRoles();
+  }
+
+  private readRoles(): RoleView[] {
     return this.sql
       .exec<RoleRow>(
         `SELECT r.id, r.kind, r.org, r.title, r.start_date, r.end_date, r.unknown_end_start_date, r.state, r.source_id, r.revision, e.quote, e.start, e.end
@@ -1204,6 +1208,10 @@ export class Vault extends DurableObject<Env> {
 
   async listFacts(who: Who, state?: ReviewState): Promise<FactView[]> {
     this.requireOwner(who);
+    return this.readFacts(state);
+  }
+
+  private readFacts(state?: ReviewState): FactView[] {
     const where = state ? `WHERE f.state = ?` : ``;
     const params = state ? [state] : [];
     return this.sql
@@ -2435,6 +2443,22 @@ export class Vault extends DurableObject<Env> {
   // ---------------------------------------------------------------- export
 
   async exportAll(who: Who): Promise<VaultExport> {
+    return this.exportSnapshot(who);
+  }
+
+  /** Capture the rows and original-object keys in one synchronous object turn. */
+  exportArchiveSnapshot(who: Who): { data: VaultExport; files: { id: string; filename: string; origin: string; key: string }[] } {
+    const data = this.exportSnapshot(who);
+    const files = data.sources.map((source) => {
+      const row = this.sourceRow(source.id);
+      if (!row.r2_key.startsWith(`vaults/${this.vaultId}/sources/`))
+        throw new AppError("unavailable", "a source file has an invalid storage key");
+      return { id: row.id, filename: row.filename, origin: row.origin, key: row.r2_key };
+    });
+    return { data, files };
+  }
+
+  private exportSnapshot(who: Who): VaultExport {
     this.requireOwner(who);
     return {
       format: 2,
@@ -2524,8 +2548,8 @@ export class Vault extends DurableObject<Env> {
           conversionImageCount: s.origin === "ocr" ? s.ocr_image_count : null,
           file: `/api/sources/${s.id}/file`,
         })),
-      roles: await this.listRoles(who),
-      facts: await this.listFacts(who),
+      roles: this.readRoles(),
+      facts: this.readFacts(),
       applications: this.sql
         .exec<ApplicationRow>(`SELECT * FROM applications ORDER BY created_at`)
         .toArray()

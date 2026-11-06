@@ -261,4 +261,5 @@ export const api = {
   revokeShare: (id: string) =>
     request<void>("DELETE", `/api/shares/${encodeURIComponent(id)}`),
   exportUrl: "/api/export",
+  exportArchiveUrl: "/api/export/archive",
 };

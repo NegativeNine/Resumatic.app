@@ -32,6 +32,7 @@
 //   GET    /api/resumes/:id/preview    text/html: exactly what the PDF prints
 //   GET    /api/export                 application/json attachment: everything in the vault, with
 //                                       links to the original uploads
+//   GET    /api/export/archive         streamed ZIP: vault.json and source objects (bounded)
 //
 // Errors are JSON: { error: ErrorCode, message: string }. A 4xx message is written for the user.
 // /auth/callback reports failures as /?error=<code>: "unauthenticated" (cancelled, expired or not
