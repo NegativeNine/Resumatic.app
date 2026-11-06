@@ -107,6 +107,79 @@ export const INVITE_REVOCATION_MIGRATIONS: string[] = [
   }),
 ];
 
+/** Detached, immutable per-email fences let unrelated operations make progress. */
+export const INVITE_QUARANTINE_MIGRATIONS: string[] = [
+  `CREATE TABLE invite_revocation_quarantines (
+    operation_id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, email_fingerprint TEXT NOT NULL,
+    generation TEXT, created_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE invite_quarantine_marker (slot INTEGER PRIMARY KEY CHECK(slot=1), operation_id TEXT NOT NULL)`,
+  ...["INSERT", "UPDATE", "DELETE"].map((action) => {
+    const id = action === "INSERT" ? "NEW" : "OLD";
+    const guard = action === "UPDATE" ? "1" : action === "INSERT"
+      ? `NOT EXISTS(SELECT 1 FROM invite_quarantine_marker m JOIN invite_revocation_barrier b ON b.operation_id=m.operation_id
+          WHERE b.operation_id=NEW.operation_id AND b.email=NEW.email AND b.email_fingerprint=NEW.email_fingerprint
+            AND b.generation IS NEW.generation AND b.created_at=NEW.created_at)`
+      : `NOT EXISTS(SELECT 1 FROM invite_quarantine_marker WHERE operation_id=${id}.operation_id)`;
+    return `CREATE TRIGGER invite_quarantine_${action.toLowerCase()} BEFORE ${action} ON invite_revocation_quarantines
+      WHEN ${guard} BEGIN SELECT RAISE(ABORT, 'invite_quarantine_marker_required'); END`;
+  }),
+  `CREATE VIEW invite_revocation_fences AS
+    SELECT operation_id,email,email_fingerprint,generation,created_at FROM invite_revocation_barrier
+    UNION ALL SELECT operation_id,email,email_fingerprint,generation,created_at FROM invite_revocation_quarantines`,
+  ...["inventory_guard", "registration_guard", "home_insert", ...["invites", "claim", "token"].flatMap((t) => ["insert", "update", "delete"].map((a) => `${t}_${a}`)), "user_insert", "user_email", "home_update", "home_delete"]
+    .map((name) => `DROP TRIGGER invite_revocation_${name}`),
+  // An inventory is globally exclusive with active sealing, but detached
+  // quarantines only block inventories for their own email.
+  `CREATE TRIGGER invite_revocation_inventory_guard BEFORE INSERT ON invite_inventory_barrier
+   WHEN EXISTS(SELECT 1 FROM invite_revocation_barrier) OR EXISTS(SELECT 1 FROM invite_revocation_quarantines WHERE email=NEW.email)
+   BEGIN SELECT RAISE(ABORT, 'invite_revocation_active'); END`,
+  `CREATE TRIGGER invite_revocation_registration_guard BEFORE INSERT ON invite_registration_marker
+   WHEN EXISTS(SELECT 1 FROM invite_revocation_fences WHERE email=NEW.email)
+   BEGIN SELECT RAISE(ABORT, 'invite_revocation_active'); END`,
+  `CREATE TRIGGER invite_revocation_home_insert BEFORE INSERT ON identity_homes
+   WHEN EXISTS(SELECT 1 FROM invite_revocation_fences)
+     AND NOT EXISTS(SELECT 1 FROM invite_registration_marker r WHERE NOT EXISTS(SELECT 1 FROM invite_revocation_fences b WHERE b.email=r.email))
+   BEGIN SELECT RAISE(ABORT, 'invite_registration_required'); END`,
+  ...["invites", "shard_home_invite_claims"].flatMap((table) => ["INSERT", "UPDATE", "DELETE"].map((action) => {
+    const changed = action === "INSERT" ? "b.email=NEW.email" : action === "DELETE" ? "b.email=OLD.email" : "(b.email=OLD.email OR b.email=NEW.email)";
+    const name = table === "invites" ? "invites" : "claim";
+    return `CREATE TRIGGER invite_revocation_${name}_${action.toLowerCase()} BEFORE ${action} ON ${table}
+      WHEN EXISTS(SELECT 1 FROM invite_revocation_fences b WHERE ${changed}
+        AND NOT EXISTS(SELECT 1 FROM invite_revocation_mutation_marker m WHERE m.operation_id=b.operation_id))
+      BEGIN SELECT RAISE(ABORT, 'invite_revocation_active'); END`;
+  })),
+  `CREATE TRIGGER invite_revocation_user_insert BEFORE INSERT ON users
+   WHEN EXISTS(SELECT 1 FROM invite_revocation_fences WHERE email=NEW.email)
+   BEGIN SELECT RAISE(ABORT, 'invite_revocation_active'); END`,
+  `CREATE TRIGGER invite_revocation_user_email BEFORE UPDATE OF email ON users
+   WHEN EXISTS(SELECT 1 FROM invite_revocation_fences WHERE email=OLD.email OR email=NEW.email)
+   BEGIN SELECT RAISE(ABORT, 'invite_revocation_active'); END`,
+  ...["UPDATE", "DELETE"].map((action) => {
+    const identityChanged = action === "UPDATE" ? "OR NEW.provider IS NOT OLD.provider OR NEW.subject IS NOT OLD.subject" : "";
+    const unbound = action === "UPDATE" ? "(OLD.user_id IS NULL OR NEW.user_id IS NULL)" : "OLD.user_id IS NULL";
+    return `CREATE TRIGGER invite_revocation_home_${action.toLowerCase()} BEFORE ${action} ON identity_homes
+      WHEN EXISTS(SELECT 1 FROM invite_revocation_fences b WHERE (
+        EXISTS(SELECT 1 FROM shard_home_invite_claims c WHERE c.provider=OLD.provider AND c.subject=OLD.subject AND c.email=b.email)
+        ${identityChanged}
+        OR (${unbound} AND NOT EXISTS(SELECT 1 FROM shard_home_invite_claims c WHERE c.provider=OLD.provider AND c.subject=OLD.subject)))
+        AND NOT EXISTS(SELECT 1 FROM invite_revocation_mutation_marker m WHERE m.operation_id=b.operation_id))
+      BEGIN SELECT RAISE(ABORT, 'invite_revocation_active'); END`;
+  }),
+  ...["INSERT", "UPDATE", "DELETE"].map((action) => {
+    const ids = action === "INSERT" ? ["NEW"] : action === "DELETE" ? ["OLD"] : ["OLD", "NEW"];
+    const affected = ids.map((id) => `(EXISTS(SELECT 1 FROM shard_home_invite_claims c
+      WHERE c.provider=${id}.provider AND c.subject=${id}.subject AND c.email=b.email)
+      OR (EXISTS(SELECT 1 FROM identity_homes h WHERE h.provider=${id}.provider AND h.subject=${id}.subject AND h.user_id IS NULL
+        AND NOT EXISTS(SELECT 1 FROM shard_home_invite_claims c WHERE c.provider=h.provider AND c.subject=h.subject))
+        AND NOT EXISTS(SELECT 1 FROM invite_registration_marker r WHERE NOT EXISTS(SELECT 1 FROM invite_revocation_fences f WHERE f.email=r.email))))`).join(" OR ");
+    return `CREATE TRIGGER invite_revocation_token_${action.toLowerCase()} BEFORE ${action} ON shard_home_claim_tokens
+      WHEN EXISTS(SELECT 1 FROM invite_revocation_fences b WHERE (${affected})
+        AND NOT EXISTS(SELECT 1 FROM invite_revocation_mutation_marker m WHERE m.operation_id=b.operation_id))
+      BEGIN SELECT RAISE(ABORT, 'invite_revocation_active'); END`;
+  }),
+];
+
 type Barrier = { operation_id: string; email: string; email_fingerprint: string; generation: string | null };
 type ClaimRow = RevokedShardClaim & { state: "pending" | "absent" | "created" | "closed"; user_id: string | null; vault_id: string | null } & Record<string, SqlStorageValue>;
 type Deps = {
@@ -138,13 +211,15 @@ export class InviteRevocation {
     return this.d.sql.exec<Barrier>(`SELECT operation_id,email,email_fingerprint,generation FROM invite_revocation_barrier WHERE slot=1`).toArray()[0];
   }
   active(): boolean { return !!this.row(); }
+  activeOperation(operation: string): boolean { return this.row()?.operation_id === operation; }
   private validateOperation(operation: string): void {
     if (typeof operation !== "string" || !uuid.test(operation)) throw new AppError("invalid", "invalid invitation revocation");
   }
 
   status(operation: string): InviteRevocationStatus {
     this.validateOperation(operation);
-    const row = this.row();
+    const active = this.row();
+    const row = active?.operation_id === operation ? active : this.d.sql.exec<Barrier>(`SELECT operation_id,email,email_fingerprint,generation FROM invite_revocation_quarantines WHERE operation_id=?`, operation).toArray()[0];
     if (row?.operation_id === operation) {
       const counts = this.d.sql.exec<{ remaining: number; orphans: number }>(`SELECT count(*) AS remaining,
         coalesce(sum(CASE WHEN state='created' THEN 1 ELSE 0 END),0) AS orphans
@@ -210,6 +285,14 @@ export class InviteRevocation {
       ).toArray()[0];
       if (receipt) {
         if (receipt.email_fingerprint !== fingerprint) throw new AppError("conflict", "invitation revocation changed");
+        return;
+      }
+      const quarantined = this.d.sql.exec<{ operation_id: string; email: string; email_fingerprint: string }>(
+        `SELECT operation_id,email,email_fingerprint FROM invite_revocation_quarantines WHERE operation_id=? OR email=?`, operation, email,
+      ).toArray();
+      if (quarantined.length) {
+        if (quarantined.length !== 1 || quarantined[0]!.operation_id !== operation || quarantined[0]!.email !== email || quarantined[0]!.email_fingerprint !== fingerprint)
+          throw new AppError("conflict", "invitation revocation changed");
         return;
       }
       const existing = this.row();
@@ -282,7 +365,22 @@ export class InviteRevocation {
       this.d.verifyRollout();
       const current = this.row();
       if (!current || current.operation_id !== operation || current.email !== barrier.email || current.email_fingerprint !== barrier.email_fingerprint || current.generation !== barrier.generation) return;
-      if (this.d.sql.exec(`SELECT token FROM invite_revocation_claims WHERE operation_id=? AND state<>'closed' LIMIT 1`, operation).toArray().length) return;
+      const unsettled = this.d.sql.exec<{ state: string; user_id: string | null; vault_id: string | null }>(
+        `SELECT state,user_id,vault_id FROM invite_revocation_claims WHERE operation_id=? AND state<>'closed'`, operation,
+      ).toArray();
+      if (unsettled.length) {
+        // Unknown and absent-but-not-yet-closed dispatches stay active. A
+        // discovered account stays quarantined; neither its data nor its
+        // permanent shard token tombstone is removed here.
+        if (unsettled.some((r) => r.state !== "created" || !r.user_id || !r.vault_id)) return;
+        this.d.sql.exec(`INSERT INTO invite_quarantine_marker(slot,operation_id) VALUES (1,?)`, operation);
+        try {
+          this.d.sql.exec(`INSERT INTO invite_revocation_quarantines(operation_id,email,email_fingerprint,generation,created_at)
+            SELECT operation_id,email,email_fingerprint,generation,created_at FROM invite_revocation_barrier WHERE operation_id=?`, operation);
+          this.d.sql.exec(`DELETE FROM invite_revocation_barrier WHERE slot=1 AND operation_id=?`, operation);
+        } finally { this.d.sql.exec(`DELETE FROM invite_quarantine_marker WHERE slot=1`); }
+        return;
+      }
       const grant = this.d.sql.exec<{ generation: string | null }>(`SELECT generation FROM invites WHERE email=?`, barrier.email).toArray()[0];
       if (grant && (typeof grant.generation !== "string" || !/^[a-f0-9]{32}$/.test(grant.generation)))
         throw new AppError("unavailable", "invitation requires review");

@@ -75,6 +75,9 @@ it("keeps a created target pending and fences reissue and binding", async () => 
     // Keep this shared integration Durable Object available to later tests.
     sql.exec(`DELETE FROM invite_revocation_claims WHERE operation_id=?`, op);
     sql.exec(`DELETE FROM invite_revocation_barrier WHERE operation_id=?`, op);
+    sql.exec(`INSERT INTO invite_quarantine_marker(slot,operation_id) VALUES (1,?)`, op);
+    sql.exec(`DELETE FROM invite_revocation_quarantines WHERE operation_id=?`, op);
+    sql.exec(`DELETE FROM invite_quarantine_marker WHERE slot=1`);
   });
 });
 

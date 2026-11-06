@@ -158,7 +158,7 @@ export class Directory extends DurableObject<Env> {
     if (!this.isGlobal) throw new AppError("invalid", "invitation revocation requires the coordinator");
     const started = await this.inviteRevocation.begin(email, operation);
     if (started.state === "complete") return started;
-    await this.inviteRevocation.resume();
+    if (this.inviteRevocation.activeOperation(operation)) await this.inviteRevocation.resume();
     return this.inviteRevocation.status(operation);
   }
 
@@ -991,7 +991,7 @@ export class Directory extends DurableObject<Env> {
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM shard_invite_bind_marker`).one().n;
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM shard_invite_target_close_marker`).one().n;
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM shard_invite_create_marker`).one().n;
-    for (const table of ["invite_revocation_barrier", "invite_revocation_mutation_marker", "invite_registration_marker", "invite_delete_authorizations_v4"]) {
+    for (const table of ["invite_revocation_barrier", "invite_revocation_quarantines", "invite_quarantine_marker", "invite_revocation_mutation_marker", "invite_registration_marker", "invite_delete_authorizations_v4"]) {
       count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`).one().n;
     }
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invite_revocation_claims

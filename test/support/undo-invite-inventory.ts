@@ -1,5 +1,20 @@
+import { INVITE_REVOCATION_MIGRATIONS } from "../../src/directory/invite-revocation";
+
+/** Restore the prior one-barrier trigger set before removing quarantine. */
+export function undoInviteQuarantineMigration(sql: SqlStorage): void {
+  if (!sql.exec(`SELECT name FROM sqlite_master WHERE type='view' AND name='invite_revocation_fences'`).toArray().length) return;
+  for (const trigger of ["inventory_guard", "registration_guard", "home_insert", ...["invites", "claim", "token"].flatMap((t) => ["insert", "update", "delete"].map((a) => `${t}_${a}`)), "user_insert", "user_email", "home_update", "home_delete"])
+    sql.exec(`DROP TRIGGER IF EXISTS invite_revocation_${trigger}`);
+  sql.exec(`DROP VIEW invite_revocation_fences`);
+  for (const action of ["insert", "update", "delete"]) sql.exec(`DROP TRIGGER IF EXISTS invite_quarantine_${action}`);
+  sql.exec(`DROP TABLE invite_revocation_quarantines`);
+  sql.exec(`DROP TABLE invite_quarantine_marker`);
+  for (const statement of INVITE_REVOCATION_MIGRATIONS) if (/^CREATE TRIGGER invite_revocation_/.test(statement)) sql.exec(statement);
+}
+
 /** Restore an older Directory schema for migration-interruption tests. */
 export function undoInviteRevocationMigration(sql: SqlStorage): void {
+  undoInviteQuarantineMigration(sql);
   // The revocation migration replaces these earlier release guards. Restore
   // their prior definitions before dropping the tables the replacements use.
   const oldGuards = [
