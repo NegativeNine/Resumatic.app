@@ -6,6 +6,7 @@ import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { durableReadResult } from "./rpc-read";
 import { completeReservedUpload } from "./upload-cleanup";
+import { settleAcknowledgedSourceWrite } from "./source-write";
 import { unwrapResult } from "../shared/result";
 import { rateLimitRequest, httpRoute } from "./limits";
 import { OcrImagesSchema, validateTranscriptionInput } from "../ai/transcribe";
@@ -529,7 +530,7 @@ api.post("/sources", UPLOAD_LIMIT, async (c) => {
     httpMetadata: { contentType }, customMetadata: { resumatic_cache_attempt: attemptId },
   });
   // A rejected or lost put acknowledgement remains fenced: it may arrive later.
-  await myVault(c).finishCacheWrite(c.get("who").userId, attemptId);
+  await settleAcknowledgedSourceWrite(() => myVault(c), c.get("who").userId, attemptId);
   return c.json(
     await completeReservedUpload(c.env.FILES, descriptor.r2Key, () =>
       myVault(c).completeUpload(c.get("who"), descriptor), {
@@ -595,7 +596,7 @@ api.post(
     await c.env.FILES.put(descriptor.r2Key, JSON.stringify(input), {
       httpMetadata: { contentType: "application/json" }, customMetadata: { resumatic_cache_attempt: attemptId },
     });
-    await myVault(c).finishCacheWrite(c.get("who").userId, attemptId);
+    await settleAcknowledgedSourceWrite(() => myVault(c), c.get("who").userId, attemptId);
     return c.json(
       await completeReservedUpload(c.env.FILES, descriptor.r2Key, () =>
         myVault(c).completeUpload(c.get("who"), descriptor), {

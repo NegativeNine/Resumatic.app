@@ -133,3 +133,57 @@ it("defers expiry cleanup until a late put settles, including if its Worker then
     expect(state.storage.sql.exec<{ cleaned_at: number | null }>(`SELECT cleaned_at FROM upload_intents WHERE request_key=?`, input.requestKey).one().cleaned_at).not.toBeNull();
   });
 });
+
+it("cleans unrelated expired uploads while preserving linked and unattributed write fences", async () => {
+  const stub = env.VAULT.get(env.VAULT.newUniqueId());
+  const who = { userId: "expiry-isolation-owner", gen: 1 };
+  await stub.init(who.userId);
+  const first = descriptor(stub.id.toString());
+  const second = { ...first, requestKey: "second", r2Key: `vaults/${stub.id}/sources/second` };
+  const third = { ...first, requestKey: "third", r2Key: `vaults/${stub.id}/sources/third` };
+  for (const input of [first, second, third]) await stub.reserveUpload(who, input);
+  await runInDurableObject(stub, async (instance, state) => {
+    const linked = crypto.randomUUID();
+    instance.beginSourceWrite(who, first, linked, "b".repeat(64));
+    for (const input of [first, second, third]) {
+      state.storage.sql.exec(`UPDATE upload_intents SET expires_at=0 WHERE request_key=?`, input.requestKey);
+      await env.FILES.put(input.r2Key, "synthetic");
+    }
+    await instance.alarm();
+    expect(await env.FILES.head(first.r2Key)).not.toBeNull();
+    expect(await env.FILES.head(second.r2Key)).toBeNull();
+    expect(await env.FILES.head(third.r2Key)).toBeNull();
+    expect(state.storage.sql.exec(`SELECT source_id FROM source_write_links WHERE attempt_id=?`, linked).toArray()).toHaveLength(1);
+    instance.finishCacheWrite(who.userId, linked);
+    expect(state.storage.sql.exec(`SELECT source_id FROM source_write_links WHERE attempt_id=?`, linked).toArray()).toHaveLength(0);
+    await instance.alarm();
+    expect(await env.FILES.head(first.r2Key)).toBeNull();
+
+    const fourth = { ...first, requestKey: "fourth", r2Key: `vaults/${stub.id}/sources/fourth` };
+    await instance.reserveUpload(who, fourth);
+    state.storage.sql.exec(`UPDATE upload_intents SET expires_at=0 WHERE request_key=?`, fourth.requestKey);
+    await env.FILES.put(fourth.r2Key, "synthetic");
+    const old = crypto.randomUUID();
+    // A legacy or copy attempt has no trusted source link, even if it has a digest.
+    instance.beginCacheWrite(who, old, "source", "c".repeat(64));
+    await instance.alarm();
+    expect(await env.FILES.head(fourth.r2Key)).not.toBeNull();
+    instance.finishCacheWrite(who.userId, old);
+    await instance.alarm();
+    expect(await env.FILES.head(fourth.r2Key)).toBeNull();
+  });
+});
+
+it("does not authorize a put if recording its reservation link fails", async () => {
+  const stub = env.VAULT.get(env.VAULT.newUniqueId());
+  const who = { userId: "link-rollback-owner", gen: 1 };
+  await stub.init(who.userId);
+  const input = descriptor(stub.id.toString());
+  await stub.reserveUpload(who, input);
+  await runInDurableObject(stub, (instance, state) => {
+    state.storage.sql.exec(`CREATE TRIGGER fail_source_link BEFORE INSERT ON source_write_links BEGIN SELECT RAISE(ABORT, 'synthetic link failure'); END`);
+    expect(() => instance.beginSourceWrite(who, input, crypto.randomUUID(), "b".repeat(64))).toThrow("synthetic link failure");
+    expect(state.storage.sql.exec(`SELECT attempt_id FROM r2_cache_dispatches`).toArray()).toHaveLength(0);
+    expect(state.storage.sql.exec(`SELECT attempt_id FROM source_write_links`).toArray()).toHaveLength(0);
+  });
+});

@@ -24,15 +24,24 @@ export function useResource<T>(
   pollWhile?: (data: T) => boolean,
 ): Resource<T> {
   const { endSession } = useSession();
-  const [data, setData] = useState<T>();
-  const [error, setError] = useState<string | null>(null);
+  const [view, setView] = useState<{ data: T | undefined; error: string | null; sequence: number }>({
+    data: undefined, error: null, sequence: 0,
+  });
   const latest = useRef({ load, pollWhile, endSession });
   const requests = useRef({ seq: 0, timer: 0 });
-  const renderWaiters = useRef<(() => void)[]>([]);
+  const renderWaiters = useRef<{ sequence: number; resolve: (value: T | undefined) => void }[]>([]);
 
   useEffect(() => {
     latest.current = { load, pollWhile, endSession };
-    for (const resolve of renderWaiters.current.splice(0)) resolve();
+    // A waiter is satisfied only by a commit containing its response (or a
+    // later response). Unrelated renders do not unlock pending actions.
+    const waiting = renderWaiters.current;
+    renderWaiters.current = [];
+    for (const waiter of waiting) {
+      if (waiter.sequence <= view.sequence)
+        waiter.resolve(waiter.sequence === view.sequence ? view.data : undefined);
+      else renderWaiters.current.push(waiter);
+    }
   });
 
   const reload = useCallback(async function fetchLatest(): Promise<
@@ -44,24 +53,27 @@ export function useResource<T>(
     try {
       const next = await latest.current.load();
       if (seq !== r.seq) return undefined;
-      setData(next);
-      setError(null);
+      // Even an identical result must commit once: callers await this before
+      // closing an editor or restoring focus. Register before scheduling the
+      // update so a fast commit cannot overtake the waiter.
+      const committed = new Promise<T | undefined>((resolve) => {
+        renderWaiters.current.push({ sequence: seq, resolve });
+      });
+      setView({ data: next, error: null, sequence: seq });
       if (latest.current.pollWhile?.(next))
         r.timer = window.setTimeout(fetchLatest, POLL_MS);
-      await new Promise<void>((resolve) => renderWaiters.current.push(resolve));
-      return next;
+      return await committed;
     } catch (e) {
       if (seq !== r.seq) return undefined;
       const note = sessionEndNote(e);
       if (note) latest.current.endSession(note);
-      else setError(describeError(e));
+      else setView((previous) => ({ ...previous, error: describeError(e) }));
       return undefined;
     }
   }, []);
 
   useEffect(() => {
     const r = requests.current;
-    const waiters = renderWaiters.current;
     void reload();
     const onChange = () => {
       void reload();
@@ -71,11 +83,11 @@ export function useResource<T>(
       window.removeEventListener(VAULT_CHANGED, onChange);
       r.seq++;
       window.clearTimeout(r.timer);
-      for (const resolve of waiters.splice(0)) resolve();
+      for (const waiter of renderWaiters.current.splice(0)) waiter.resolve(undefined);
     };
   }, [reload]);
 
-  return { data, error, reload };
+  return { data: view.data, error: view.error, reload };
 }
 
 export interface Action {

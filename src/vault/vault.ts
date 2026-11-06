@@ -631,7 +631,10 @@ export class Vault extends DurableObject<Env> {
     if (reservation.intent.state === "complete") return { sourceId: reservation.intent.sourceId };
     // No await between the open-state check and the durable dispatch marker.
     // A Worker crash before put therefore leaves a conservative unresolved marker.
-    this.beginCacheWrite(who, attemptId, "source", keyDigest);
+    this.ctx.storage.transactionSync(() => {
+      this.recordR2Dispatch(attemptId, "source", keyDigest);
+      this.sql.exec(`INSERT INTO source_write_links (attempt_id,source_id) VALUES (?,?)`, attemptId, reservation.intent.sourceId);
+    });
     return {};
   }
   expiredUploadForCleanup(who: Who, input: UploadDescriptor): boolean {
@@ -747,8 +750,9 @@ export class Vault extends DurableObject<Env> {
 
   async listSources(who: Who): Promise<SourceView[]> {
     this.requireOwner(who);
+    await this.rearmPendingRuns();
+    this.requireOwner(who);
     await this.reconcileStaleSources();
-    await this.rearmPendingCancellation();
     this.requireOwner(who);
     return this.sql
       .exec<{
@@ -1698,7 +1702,7 @@ export class Vault extends DurableObject<Env> {
 
   async listApplications(who: Who): Promise<ApplicationView[]> {
     this.requireOwner(who);
-    await this.rearmPendingCancellation();
+    await this.rearmPendingRuns();
     this.requireOwner(who);
     const resumes = this.sql
       .exec<{
@@ -1849,7 +1853,7 @@ export class Vault extends DurableObject<Env> {
 
   async getResume(who: Who, id: string, version?: number): Promise<ResumeView> {
     this.requireOwner(who);
-    await this.rearmPendingCancellation();
+    await this.rearmPendingRuns();
     this.requireOwner(who);
     const row = this.resumeRow(id);
     const ready = row.state === "ready";
@@ -2832,7 +2836,7 @@ export class Vault extends DurableObject<Env> {
     applicationId: string,
   ): Promise<DocumentView[]> {
     this.requireOwner(who);
-    await this.rearmPendingCancellation();
+    await this.rearmPendingRuns();
     this.requireOwner(who);
     const ids = this.sql
       .exec<{ id: string }>(
@@ -2845,7 +2849,7 @@ export class Vault extends DurableObject<Env> {
 
   async getDocument(who: Who, id: string): Promise<DocumentView> {
     this.requireOwner(who);
-    await this.rearmPendingCancellation();
+    await this.rearmPendingRuns();
     this.requireOwner(who);
     return this.documentView(id);
   }
@@ -3868,6 +3872,8 @@ export class Vault extends DurableObject<Env> {
   }
   async adminRuns() {
     this.requireOpen();
+    await this.rearmPendingRuns();
+    this.requireOpen();
     return this.runs.list();
   }
 
@@ -3977,14 +3983,14 @@ export class Vault extends DurableObject<Env> {
 
   async listRuns(who: Who) {
     this.requireOwner(who);
-    await this.rearmPendingCancellation();
+    await this.rearmPendingRuns();
     this.requireOwner(who);
     return this.runs.list();
   }
 
   async runInfo(who: Who, runId: string) {
     this.requireOwner(who);
-    await this.rearmPendingCancellation();
+    await this.rearmPendingRuns();
     this.requireOwner(who);
     const run = this.runs.get(runId);
     if (!run) throw new AppError("not_found", "no such run");
@@ -4190,14 +4196,15 @@ export class Vault extends DurableObject<Env> {
     return Boolean(runId && this.runs.get(runId)?.state === "cancel_requested");
   }
 
-  /** A transient alarm failure must not strand an already accepted cancellation. */
-  private async rearmPendingCancellation(): Promise<void> {
+  /** A status poll can recover a missing alarm for an active run. */
+  private async rearmPendingRuns(): Promise<void> {
     if (
-      !this.sql.exec(`SELECT id FROM runs WHERE state = 'cancel_requested' LIMIT 1`).toArray().length
+      !this.sql.exec(`SELECT id FROM runs WHERE state IN ('starting', 'running', 'cancel_requested') LIMIT 1`).toArray().length
     ) return;
     try {
       // Keep any earlier alarm; a later authenticated poll retries if storage is
-      // unavailable. This schedules reconciliation, never settles the run.
+      // unavailable. This schedules reconciliation, never settles a run or
+      // clears a possibly in-flight Workflow dispatch.
       await this.scheduleRunAlarm(Date.now() + 60_000);
     } catch {
       // Status remains readable and a future poll can attempt to rearm again.
@@ -4242,12 +4249,16 @@ export class Vault extends DurableObject<Env> {
       Date.now() - REFINE_CACHE_TTL_MS,
     );
     for (const intent of uploadsToClean) {
-      // An expired intent can no longer authorize a new source put, but an
-      // earlier put may still arrive. Do not mark cleanup complete while any
-      // such outcome is unknown; an acknowledged late put could otherwise
-      // recreate an object after cleanup and a subsequent Worker crash.
-      if (this.sql.exec(`SELECT attempt_id FROM r2_cache_dispatches WHERE kind = 'source' LIMIT 1`).toArray().length)
-        break;
+      // Expiry prevents another authorization for this reservation. New
+      // attempts have an atomic server-generated reservation link; old or
+      // unlinked attempts cannot be attributed and conservatively block all
+      // cleanup. Never use the diagnostic key digest as proof of attribution.
+      if (this.sql.exec(
+        `SELECT d.attempt_id FROM r2_cache_dispatches d
+         LEFT JOIN source_write_links l ON l.attempt_id = d.attempt_id
+         WHERE d.kind = 'source' AND (l.attempt_id IS NULL OR l.source_id = ?) LIMIT 1`,
+        intent.sourceId,
+      ).toArray().length) continue;
       try {
         await this.env.FILES.delete(intent.r2Key);
         if (!canContinue()) return;

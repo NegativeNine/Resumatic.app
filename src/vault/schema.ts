@@ -148,6 +148,13 @@ export const MIGRATIONS: readonly string[][] = [
     `CREATE TABLE application_create_requests (request_key TEXT PRIMARY KEY, input_digest TEXT NOT NULL, application_id TEXT NOT NULL REFERENCES applications(id))`,
   ],
   [...EXPORT_CACHE_MIGRATIONS],
+  [
+    // New source puts bind their opaque attempt to the Vault's own reservation.
+    // Markers created by older code have no link and remain globally blocking.
+    `CREATE TABLE source_write_links (attempt_id TEXT PRIMARY KEY, source_id TEXT NOT NULL)`,
+    `CREATE TRIGGER clear_source_write_link AFTER DELETE ON r2_cache_dispatches
+       BEGIN DELETE FROM source_write_links WHERE attempt_id = OLD.attempt_id; END`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
