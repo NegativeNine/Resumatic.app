@@ -255,12 +255,13 @@ export class UploadStore {
     );
   }
 
-  nextAlarm(): number | null {
+  nextAlarm(options: { skipExpired?: boolean } = {}): number | null {
     const row = this.sql
       .exec<{ at: number | null }>(
         `SELECT MIN(CASE WHEN state = 'expired' THEN ? ELSE expires_at END) AS at FROM upload_intents
-       WHERE state = 'pending' OR (state = 'expired' AND cleaned_at IS NULL)`,
+       WHERE state = 'pending' OR (? = 0 AND state = 'expired' AND cleaned_at IS NULL)`,
         this.now(),
+        options.skipExpired ? 1 : 0,
       )
       .one();
     return row.at === null ? null : Math.max(this.now(), row.at);

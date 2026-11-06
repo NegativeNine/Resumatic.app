@@ -413,9 +413,14 @@ export class Vault extends DurableObject<Env> {
   }
 
   /** Record a cache write before the Worker can send it to R2. */
-  beginCacheWrite(who: Who, attemptId: string, kind: "pdf" | "docx", keyDigest?: string): void {
+  beginCacheWrite(who: Who, attemptId: string, kind: "pdf" | "docx" | "source", keyDigest?: string): void {
     this.requireOwner(who);
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(attemptId) || !["pdf", "docx"].includes(kind) || (keyDigest !== undefined && !/^[0-9a-f]{64}$/.test(keyDigest)))
+    this.recordR2Dispatch(attemptId, kind, keyDigest);
+  }
+
+  /** The caller must make its lifecycle check without yielding before this insert. */
+  private recordR2Dispatch(attemptId: string, kind: "pdf" | "docx" | "source", keyDigest?: string): void {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(attemptId) || !["pdf", "docx", "source"].includes(kind) || (keyDigest !== undefined && !/^[0-9a-f]{64}$/.test(keyDigest)))
       throw new AppError("invalid", "invalid cache write attempt");
     if (this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM r2_cache_dispatches`).one().n >= MAX_CACHE_WRITE_ATTEMPTS)
       throw new AppError("unavailable", "too many export cache writes are unresolved");
@@ -618,6 +623,16 @@ export class Vault extends DurableObject<Env> {
     // its current durable state so the Worker neither writes an expired key
     // nor repeats a put after another retry already committed the source.
     return { ...reservation, intent: store.reserve(input).intent };
+  }
+  /** Fence one R2 put, including a retry for the same upload request. */
+  beginSourceWrite(who: Who, input: UploadDescriptor, attemptId: string, keyDigest: string): { sourceId?: string } {
+    this.requireOwner(who);
+    const reservation = this.uploads.reserve(input);
+    if (reservation.intent.state === "complete") return { sourceId: reservation.intent.sourceId };
+    // No await between the open-state check and the durable dispatch marker.
+    // A Worker crash before put therefore leaves a conservative unresolved marker.
+    this.beginCacheWrite(who, attemptId, "source", keyDigest);
+    return {};
   }
   expiredUploadForCleanup(who: Who, input: UploadDescriptor): boolean {
     this.requireOwner(who);
@@ -3192,7 +3207,7 @@ export class Vault extends DurableObject<Env> {
       ownerId: this.meta("user_id")!,
       meta: this.sql
         .exec<{ key: string; value: string }>(
-          `SELECT key,value FROM meta WHERE key IN ('stripe_customer','billing_customer_requested','billing_customer_requested_at','billing_checkout_sessions','entitlement','entitlement_revision','checkout_intent','quota_month','quota_used')`,
+          `SELECT key,value FROM meta WHERE key IN ('stripe_customer','billing_customer_requested','billing_customer_requested_at','billing_checkout_sessions','entitlement','entitlement_revision','checkout_intent','quota_month','quota_used') OR key GLOB 'legacy_quota_import:*'`,
         )
         .toArray(),
       quota: this.sql
@@ -3233,6 +3248,8 @@ export class Vault extends DurableObject<Env> {
       JSON.parse(operation.manifest).sourceVaultId !== sourceVaultId
     )
       throw new AppError("conflict", "wrong source vault");
+    const existing = this.operations.importStatus(operationId);
+    if (existing.state === "ready") return existing;
     const source = vaultStub(this.env, sourceVaultId);
     const control = await source.controlCheckpoint();
     this.requireMaintenanceAccess();
@@ -3257,11 +3274,23 @@ export class Vault extends DurableObject<Env> {
       this.requireMaintenanceAccess();
       const digest = await crypto.subtle.digest("SHA-256", bytes);
       this.requireMaintenanceAccess();
+      const keyHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(row.r2_key));
+      this.requireMaintenanceAccess();
+      const current = this.operations.importStatus(operationId);
+      if (current.state === "ready") return current;
+      const attemptId = crypto.randomUUID();
+      const keyDigest = Array.from(new Uint8Array(keyHash), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      // No await between the final lifecycle/operation checks and this marker.
+      // Every retry has its own marker; a rejected put remains unresolved.
+      this.recordR2Dispatch(attemptId, "source", keyDigest);
       await this.env.FILES.put(row.r2_key, bytes, {
         sha256: digest,
         httpMetadata: object.httpMetadata,
-        customMetadata: object.customMetadata,
+        customMetadata: { ...object.customMetadata, resumatic_cache_attempt: attemptId },
       });
+      // Only this put's acknowledged response can release its own marker.
+      // It remains safe to record the acknowledgement after quiescence.
+      this.sql.exec(`DELETE FROM r2_cache_dispatches WHERE attempt_id=?`, attemptId);
       this.requireMaintenanceAccess();
       const check = await this.env.FILES.head(row.r2_key);
       this.requireMaintenanceAccess();
@@ -3276,6 +3305,7 @@ export class Vault extends DurableObject<Env> {
           "a source file did not verify after copying",
         );
     }
+    this.requireNoUnsettledDispatches();
     return this.operations.finishImport(
       operationId,
       crypto.randomUUID(),
@@ -3402,6 +3432,7 @@ export class Vault extends DurableObject<Env> {
 
   /** The caller holds a transaction, including when publishing an entitlement. */
   private quotaInTransaction(): Quota {
+    this.settleLegacyQuotaImports();
     const month = monthOf(Date.now());
     const bucket = this.quotaBucket();
     const existed = !!this.runs.quota(bucket.key);
@@ -3419,6 +3450,25 @@ export class Vault extends DurableObject<Env> {
         bucket.key,
       );
       balance = this.runs.quota(bucket.key)!;
+      // Only a newly created bucket proves which legacy counter was imported.
+      // Capture the still-running legacy resumes in this same transaction;
+      // current-ledger runs reserve their own credit and must not be included.
+      const pending = this.sql.exec<{ id: string }>(
+        `SELECT id FROM resumes WHERE state = 'running' AND quota_month = ? AND run_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.id = resumes.run_id)`,
+        month,
+      ).toArray();
+      // Older ledger-backed failure code could decrement the legacy counter
+      // even though that newer run never incremented it. Once such history
+      // exists, the aggregate alone cannot prove the pending charges remain.
+      const hasLedgerHistory = this.sql.exec(
+        `SELECT 1 FROM runs WHERE kind = 'tailor' LIMIT 1`,
+      ).toArray().length > 0;
+      // Inconsistent historical counters cannot establish which run was paid
+      // for. Preserve the imported count for manual reconciliation instead.
+      if (!hasLedgerHistory && Number.isSafeInteger(legacy) && legacy >= pending.length) {
+        for (const row of pending) this.setMeta(`legacy_quota_import:${row.id}`, bucket.key);
+      }
     }
     return {
       used: balance.used,
@@ -3427,6 +3477,26 @@ export class Vault extends DurableObject<Env> {
       month,
       periodEnd: balance.endAt,
     };
+  }
+
+  /** Refund a marked historical charge once after an observed failed resume. */
+  private settleLegacyQuotaImports(): void {
+    const imports = this.sql.exec<{ key: string; bucket: string; state: string | null; month: string | null }>(
+      `SELECT m.key, m.value AS bucket, r.state, r.quota_month AS month FROM meta m
+       LEFT JOIN resumes r ON r.id = substr(m.key, length('legacy_quota_import:') + 1)
+       WHERE m.key GLOB 'legacy_quota_import:*'`,
+    ).toArray();
+    for (const marker of imports) {
+      if (!marker.month || marker.bucket !== `free:${marker.month}`) continue;
+      if (marker.state === 'ready') {
+        this.sql.exec(`DELETE FROM meta WHERE key = ?`, marker.key);
+      } else if (marker.state === 'failed') {
+        const balance = this.runs.quota(marker.bucket);
+        if (!balance || balance.used < 1) continue;
+        this.sql.exec(`UPDATE quota_buckets SET used = used - 1 WHERE bucket_key = ?`, marker.bucket);
+        this.sql.exec(`DELETE FROM meta WHERE key = ?`, marker.key);
+      }
+    }
   }
 
   async setPlan(revision: number, plan: Entitlement): Promise<void> {
@@ -4077,6 +4147,8 @@ export class Vault extends DurableObject<Env> {
   }
 
   private requireNoUnsettledDispatches(): void {
+    if (this.sql.exec(`SELECT attempt_id FROM r2_cache_dispatches WHERE kind = 'source' LIMIT 1`).toArray().length)
+      throw new AppError("unavailable", "source write is unresolved; operator review is required");
     if (this.sql.exec(`SELECT attempt_id FROM r2_cache_dispatches LIMIT 1`).toArray().length)
       throw new AppError("unavailable", "export cache write is unresolved; operator review is required");
     if (this.sql.exec(`SELECT run_id FROM workflow_dispatches UNION ALL SELECT run_id FROM workflow_redispatches LIMIT 1`).toArray().length)
@@ -4165,6 +4237,12 @@ export class Vault extends DurableObject<Env> {
       Date.now() - REFINE_CACHE_TTL_MS,
     );
     for (const intent of uploadsToClean) {
+      // An expired intent can no longer authorize a new source put, but an
+      // earlier put may still arrive. Do not mark cleanup complete while any
+      // such outcome is unknown; an acknowledged late put could otherwise
+      // recreate an object after cleanup and a subsequent Worker crash.
+      if (this.sql.exec(`SELECT attempt_id FROM r2_cache_dispatches WHERE kind = 'source' LIMIT 1`).toArray().length)
+        break;
       try {
         await this.env.FILES.delete(intent.r2Key);
         if (!canContinue()) return;
@@ -4264,7 +4342,10 @@ export class Vault extends DurableObject<Env> {
     const candidates = [
       this.runs.listPending().length ? Date.now() + 60_000 : null,
       expiry,
-      this.uploads.nextAlarm(),
+      // An unresolved source write blocks expiry cleanup. Do not turn its
+      // immediate retry into a one-second alarm loop; the retry already
+      // installed at the top of this alarm remains scheduled.
+      this.uploads.nextAlarm({ skipExpired: this.sql.exec(`SELECT attempt_id FROM r2_cache_dispatches WHERE kind = 'source' LIMIT 1`).toArray().length > 0 }),
       this.sql
         .exec<{ at: number | null }>(
           `SELECT MIN(created_at) + ? AS at FROM refine_cache`,
@@ -4494,12 +4575,13 @@ export class Vault extends DurableObject<Env> {
         error,
         resumeId,
       );
-      if (row.quota_month && row.quota_month === this.meta("quota_month")) {
+      if (!run && row.quota_month && row.quota_month === this.meta("quota_month")) {
         this.setMeta(
           "quota_used",
           String(Math.max(0, Number(this.meta("quota_used") ?? 0) - 1)),
         );
       }
+      if (!run) this.settleLegacyQuotaImports();
     });
   }
 

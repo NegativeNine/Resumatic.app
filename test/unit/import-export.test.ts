@@ -150,6 +150,17 @@ describe("DOCX generation", () => {
       ),
     ).toContain("Built 12 APIs.");
   });
+  it("preserves line breaks and tabs as Word run elements in resumes and documents", () => {
+    const value = structuredClone(data);
+    value.body.sections[0]!.lines[0]!.text = "Built <safe> APIs\r\nthen\tled\rwork\nfinished";
+    const resume = strFromU8(unzipSync(renderDocx(value))["word/document.xml"]!);
+    const letter = strFromU8(unzipSync(textDocx("Letter", ["Built <safe> APIs\r\nthen\tled\rwork\nfinished"]))["word/document.xml"]!);
+    for (const xml of [resume, letter]) {
+      expect(xml).toContain('Built &lt;safe&gt; APIs</w:t><w:br/><w:t xml:space="preserve">then</w:t><w:tab/><w:t xml:space="preserve">led</w:t><w:br/><w:t xml:space="preserve">work</w:t><w:br/><w:t xml:space="preserve">finished');
+      expect(xml.match(/<w:br\/>/g)).toHaveLength(3);
+      expect(xml.match(/<w:tab\/>/g)).toHaveLength(1);
+    }
+  });
   it("renders a start with unknown end without claiming the role is current", () => {
     const value = structuredClone(data);
     value.body.sections[0]!.startDate = null;

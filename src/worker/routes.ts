@@ -56,7 +56,7 @@ import {
 } from "../shared/stubs";
 import type { SignInInput, Who } from "../shared/types";
 import { verifyAccess } from "./access";
-import { sameSecret } from "./crypto";
+import { sameSecret, sha256 } from "./crypto";
 import { beginLogin, clearOidcCookie, finishLogin, OIDC_COOKIE } from "./oidc";
 import {
   clearSessionCookie,
@@ -521,9 +521,15 @@ api.post("/sources", UPLOAD_LIMIT, async (c) => {
   const reserved = await myVault(c).reserveUpload(c.get("who"), descriptor);
   if (reserved.intent.state === "complete")
     return c.json({ sourceId: reserved.intent.sourceId }, 201);
+  const attemptId = crypto.randomUUID();
+  const keyDigest = Array.from(new Uint8Array(await sha256(descriptor.r2Key)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const authorized = await myVault(c).beginSourceWrite(c.get("who"), descriptor, attemptId, keyDigest);
+  if (authorized.sourceId) return c.json({ sourceId: authorized.sourceId }, 201);
   await c.env.FILES.put(descriptor.r2Key, bytes, {
-    httpMetadata: { contentType },
+    httpMetadata: { contentType }, customMetadata: { resumatic_cache_attempt: attemptId },
   });
+  // A rejected or lost put acknowledgement remains fenced: it may arrive later.
+  await myVault(c).finishCacheWrite(c.get("who").userId, attemptId);
   return c.json(
     await completeReservedUpload(c.env.FILES, descriptor.r2Key, () =>
       myVault(c).completeUpload(c.get("who"), descriptor), {
@@ -576,6 +582,10 @@ api.post(
     const reserved = await myVault(c).reserveUpload(c.get("who"), descriptor);
     if (reserved.intent.state === "complete")
       return c.json({ sourceId: reserved.intent.sourceId }, 202);
+    const attemptId = crypto.randomUUID();
+    const keyDigest = Array.from(new Uint8Array(await sha256(descriptor.r2Key)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const authorized = await myVault(c).beginSourceWrite(c.get("who"), descriptor, attemptId, keyDigest);
+    if (authorized.sourceId) return c.json({ sourceId: authorized.sourceId }, 202);
     const input = {
       ...images,
       referenceDate: new Date(reserved.intent.createdAt)
@@ -583,8 +593,9 @@ api.post(
         .slice(0, 10),
     };
     await c.env.FILES.put(descriptor.r2Key, JSON.stringify(input), {
-      httpMetadata: { contentType: "application/json" },
+      httpMetadata: { contentType: "application/json" }, customMetadata: { resumatic_cache_attempt: attemptId },
     });
+    await myVault(c).finishCacheWrite(c.get("who").userId, attemptId);
     return c.json(
       await completeReservedUpload(c.env.FILES, descriptor.r2Key, () =>
         myVault(c).completeUpload(c.get("who"), descriptor), {

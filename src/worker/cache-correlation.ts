@@ -25,7 +25,7 @@ export async function correlateCacheWrites(
   if (!Array.isArray(snapshot.attempts) || !Number.isSafeInteger(snapshot.total) || snapshot.total < snapshot.attempts.length ||
       snapshot.attempts.length > 100 || new Set(snapshot.attempts.map((item) => item?.id)).size !== snapshot.attempts.length || snapshot.attempts.some((item) =>
         !item || typeof item.id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(item.id) ||
-        !["pdf", "docx"].includes(item.kind) || !Number.isSafeInteger(item.createdAt) || item.createdAt < 0 ||
+        !["pdf", "docx", "source"].includes(item.kind) || !Number.isSafeInteger(item.createdAt) || item.createdAt < 0 ||
         (item.keyDigest !== null && (typeof item.keyDigest !== "string" || !/^[a-f0-9]{64}$/.test(item.keyDigest)))))
     return {
       status: "pending" as const, fenceSnapshot: "invalid" as const,
@@ -39,7 +39,11 @@ export async function correlateCacheWrites(
     observation: (item.keyDigest ? "not-observed" : "no-digest") as Observation,
   }));
   // R2 keys are built from the canonical lowercase Durable Object ID.
-  const prefix = `${vaultPrefix(vaultId.toLowerCase())}exports/`;
+  const hasSources = attempts.some((item) => item.kind === "source" && item.keyDigest);
+  const hasExports = attempts.some((item) => item.kind !== "source" && item.keyDigest);
+  // Mixed snapshots scan the vault prefix; all observations remain bounded
+  // and are never evidence that an earlier in-flight write has settled.
+  const prefix = `${vaultPrefix(vaultId.toLowerCase())}${hasSources ? (hasExports ? "" : "sources/") : "exports/"}`;
   const matches = new Map<string, string>();
   let scan: "not-scanned" | "exhausted" | "limited" | "unavailable" = "not-scanned";
   let scanned = 0;

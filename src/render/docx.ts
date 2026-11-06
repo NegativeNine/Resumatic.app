@@ -19,8 +19,16 @@ const esc = (s: string) =>
           "'": "&apos;",
         })[c]!,
     );
+// Word represents line breaks and tabs as run elements, not literal
+// whitespace inside w:t. Treat CRLF as one break and preserve each tab.
+const runText = (text: string) =>
+  text.split(/(\r\n|\r|\n|\t)/).map((part) => {
+    if (part === "\t") return "<w:tab/>";
+    if (part === "\r\n" || part === "\r" || part === "\n") return "<w:br/>";
+    return `<w:t xml:space="preserve">${esc(part)}</w:t>`;
+  }).join("");
 const paragraph = (text: string, style = "Normal") =>
-  `<w:p><w:pPr><w:pStyle w:val="${style}"/></w:pPr><w:r><w:t xml:space="preserve">${esc(text)}</w:t></w:r></w:p>`;
+  `<w:p><w:pPr><w:pStyle w:val="${style}"/></w:pPr><w:r>${runText(text)}</w:r></w:p>`;
 
 /** Minimal standard WordprocessingML: no external relationships, tables, macros or model-generated markup. */
 export function renderDocx(data: RenderData): Uint8Array<ArrayBuffer> {

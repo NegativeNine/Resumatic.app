@@ -12,7 +12,7 @@ export function pdfKey(vaultId: string, resumeId: string, version: number, unkno
 }
 
 export function docxKey(vaultId: string, resumeId: string, version: number, unknownEndDates = false): string {
-  return `${vaultPrefix(vaultId)}exports/${resumeId}-${version}-word1${unknownEndDates ? "-dates-v2" : ""}.docx`;
+  return `${vaultPrefix(vaultId)}exports/${resumeId}-${version}-word2${unknownEndDates ? "-dates-v2" : ""}.docx`;
 }
 
 /** A malformed or repeated continuation cannot prove a prefix was fully scanned. */

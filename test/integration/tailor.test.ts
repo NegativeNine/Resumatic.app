@@ -345,7 +345,7 @@ describe("editing and PDF export", () => {
     } finally { put.mockRestore(); }
   });
 
-  it("reads legacy R2 PDF and DOCX cache entries without rendering or writing R2", async () => {
+  it("reads matching R2 PDF and DOCX cache entries without rendering or writing R2", async () => {
     const user = await readyUser();
     const resume = await tailor(user, await newApplication(user));
     const vid = JSON.parse(atob(user.cookie.slice("__Host-session=".length).split(".")[0]!.replace(/-/g, "+").replace(/_/g, "/"))).vid;
@@ -359,6 +359,22 @@ describe("editing and PDF export", () => {
       expect(put).not.toHaveBeenCalled();
       expect(rendered).toHaveLength(0);
     } finally { put.mockRestore(); }
+  });
+
+  it("regenerates DOCX instead of serving an older formatting version from either cache", async () => {
+    const user = await readyUser();
+    const resume = await tailor(user, await newApplication(user));
+    const session = JSON.parse(atob(user.cookie.slice("__Host-session=".length).split(".")[0]!.replace(/-/g, "+").replace(/_/g, "/")));
+    const key = docxKey(session.vid, resume.id, resume.version, resume.body.sections.some((s: { unknownEndStartDate?: string }) => !!s.unknownEndStartDate));
+    const oldKey = key.replace("-word2", "-word1");
+    const who = { userId: session.uid, gen: session.gen, epoch: session.epoch };
+    await vault(env, session.vid).putExportCache(who, oldKey, new TextEncoder().encode("old-vault-docx"));
+    await env.FILES.put(oldKey, new TextEncoder().encode("old-r2-docx"));
+    const response = await user.fetch(`/api/resumes/${resume.id}/docx`);
+    expect(response.status).toBe(200);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    expect(bytes.slice(0, 4)).toEqual(new Uint8Array([0x50, 0x4b, 0x03, 0x04]));
+    expect(await vault(env, session.vid).readExportCache(who, key)).toEqual(bytes);
   });
 
   it("rejects direct unverified edits and keeps the cached resume unchanged", async () => {

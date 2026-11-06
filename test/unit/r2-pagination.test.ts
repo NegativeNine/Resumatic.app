@@ -2,11 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { deletePrefix, docxKey, pdfKey } from "../../src/shared/r2";
 
 describe("R2 prefix deletion", () => {
-  it("keeps legacy export keys stable and isolates unknown-end date variants", () => {
+  it("uses the current export format keys and isolates unknown-end date variants", () => {
     expect(pdfKey("vault", "resume", 3)).toBe("vaults/vault/exports/resume-3.pdf");
-    expect(docxKey("vault", "resume", 3)).toBe("vaults/vault/exports/resume-3-word1.docx");
+    expect(docxKey("vault", "resume", 3)).toBe("vaults/vault/exports/resume-3-word2.docx");
     expect(pdfKey("vault", "resume", 3, true)).toBe("vaults/vault/exports/resume-3-dates-v2.pdf");
-    expect(docxKey("vault", "resume", 3, true)).toBe("vaults/vault/exports/resume-3-word1-dates-v2.docx");
+    expect(docxKey("vault", "resume", 3, true)).toBe("vaults/vault/exports/resume-3-word2-dates-v2.docx");
   });
   it("deletes all pages before reporting completion", async () => {
     const list = vi.fn()

@@ -10,6 +10,19 @@ const marker = (index: number, keyDigest: string | null) => ({ id: uuid(index), 
 const bucket = (list: unknown, head: unknown) => ({ list, head } as unknown as Pick<R2Bucket, "list" | "head">);
 
 describe("cache-write correlation", () => {
+  it("correlates source attempts without treating an observed object as settlement", async () => {
+    const key = `vaults/${vid}/sources/private-upload.pdf`;
+    const list = vi.fn(async () => ({ objects: [{ key }], truncated: false }));
+    const head = vi.fn(async () => ({ key, customMetadata: { resumatic_cache_attempt: uuid(1) } }));
+    const report = await correlateCacheWrites(bucket(list, head), vid, {
+      status: "available", total: 1,
+      attempts: [{ id: uuid(1), kind: "source", createdAt: 1, keyDigest: await digest(key) }],
+    });
+    expect(report).toMatchObject({ status: "pending", scan: "exhausted", observations: [{ observation: "current-match" }] });
+    expect(list).toHaveBeenCalledWith({ prefix: `vaults/${vid}/sources/`, limit: 100, cursor: undefined });
+    expect(JSON.stringify(report)).not.toContain("private-upload");
+  });
+
   it("reports only opaque hints while retaining every marker", async () => {
     const key = `${prefix}private-resume.pdf`;
     const hash = await digest(key);
