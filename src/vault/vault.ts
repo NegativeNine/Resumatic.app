@@ -3250,6 +3250,11 @@ export class Vault extends DurableObject<Env> {
       throw new AppError("conflict", "wrong source vault");
     const existing = this.operations.importStatus(operationId);
     if (existing.state === "ready") return existing;
+    // Fix the source inventory before the first await. Once every table is
+    // complete, importPage accepts only identical replays and cannot add a
+    // source after the copy list has been read.
+    if (existing.completedTables !== existing.totalTables)
+      throw new AppError("conflict", "the content import is incomplete");
     const source = vaultStub(this.env, sourceVaultId);
     const control = await source.controlCheckpoint();
     this.requireMaintenanceAccess();

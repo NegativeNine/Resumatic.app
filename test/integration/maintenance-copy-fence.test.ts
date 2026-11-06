@@ -3,7 +3,10 @@ import { env } from "cloudflare:workers";
 import { expect, it } from "vitest";
 import type { Vault } from "../../src/vault/vault";
 
-async function withImport(check: (instance: Vault, state: DurableObjectState, files: R2Bucket, operationId: string, sourceId: string) => Promise<void>) {
+async function withImport(
+  check: (instance: Vault, state: DurableObjectState, files: R2Bucket, operationId: string, sourceId: string, deferred: Awaited<ReturnType<Vault["transferPage"]>>[]) => Promise<void>,
+  options: { pauseSources?: boolean } = {},
+) {
   const source = env.VAULT.get(env.VAULT.newUniqueId());
   const target = env.VAULT.get(env.VAULT.newUniqueId());
   await source.init("copy-owner");
@@ -15,17 +18,20 @@ async function withImport(check: (instance: Vault, state: DurableObjectState, fi
     const before = local.RESTORE_FENCE_IDS;
     local.RESTORE_FENCE_IDS = ids;
     state.storage.sql.exec(`INSERT INTO sources (id,filename,r2_key,state,created_at) VALUES ('s','resume.pdf',?,'ready',1)`, `vaults/${sourceId}/sources/s`);
+    if (options.pauseSources)
+      state.storage.sql.exec(`INSERT INTO sources (id,filename,r2_key,state,created_at) VALUES ('s2','second.pdf',?,'ready',2)`, `vaults/${sourceId}/sources/s2`);
     return before;
   });
   try {
     await env.FILES.put(`vaults/${sourceId}/sources/s`, "synthetic source");
+    if (options.pauseSources) await env.FILES.put(`vaults/${sourceId}/sources/s2`, "second synthetic source");
     const { manifest, pages } = await runInDurableObject(source, async (instance) => {
       const manifest = await instance.transferManifest("copy-fence");
       const pages = [];
       for (const table of manifest.tables) {
         let after = 0;
         for (;;) {
-          const page = await instance.transferPage(manifest.operationId, table.name, after, 50);
+          const page = await instance.transferPage(manifest.operationId, table.name, after, options.pauseSources && table.name === "sources" ? 1 : 50);
           pages.push(page);
           if (page.done) break;
           after = page.lastRowid;
@@ -40,8 +46,14 @@ async function withImport(check: (instance: Vault, state: DurableObjectState, fi
       local.RESTORE_FENCE_IDS = ids;
       try {
         await instance.importManifest(manifest);
-        for (const page of pages) await instance.importPage(page);
-        await check(instance, state, files, manifest.operationId, sourceId);
+        const deferred: typeof pages = [];
+        let paused = false;
+        for (const page of pages) {
+          if (options.pauseSources && page.table === "sources" && page.after > 0) paused = true;
+          if (paused) deferred.push(page);
+          else await instance.importPage(page);
+        }
+        await check(instance, state, files, manifest.operationId, sourceId, deferred);
       } finally {
         local.FILES = files;
         local.RESTORE_FENCE_IDS = oldFence;
@@ -79,6 +91,34 @@ it("blocks target deletion until an in-flight copy acknowledges, then rejects co
       await expect(instance.close()).resolves.toEqual({ distill: [], tailor: [] });
     } finally { release(); await pending; }
   });
+}, 30_000);
+
+it("does not finalize an import while a later source page can still arrive", async () => {
+  await withImport(async (instance, state, files, operationId, sourceId, deferred) => {
+    const local = (instance as unknown as { env: Env }).env;
+    let release!: () => void, entered!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let reads = 0;
+    local.FILES = {
+      get: async (key: string) => { if (++reads === 1) { entered(); await held; } return files.get(key); },
+      put: (key: string, bytes: ArrayBuffer, options: R2PutOptions) => files.put(key, bytes, options),
+      head: (key: string) => files.head(key),
+    } as unknown as R2Bucket;
+    const first = instance.finishImport(operationId, sourceId).then(() => null, (error: Error) => error);
+    try {
+      // Without the early completeness gate, finishImport reaches its first
+      // source read using a list that omits the still-unimported second row.
+      const early = await Promise.race([first.then((error) => ({ error })), started.then(() => ({ error: null }))]);
+      for (const page of deferred) await instance.importPage(page);
+      release();
+      expect((early.error ?? await first)?.message).toMatch(/content import is incomplete/);
+      expect(await instance.finishImport(operationId, sourceId)).toMatchObject({ state: "ready" });
+      const rows = state.storage.sql.exec<{ r2_key: string }>(`SELECT r2_key FROM sources ORDER BY id`).toArray();
+      expect(rows).toHaveLength(2);
+      for (const row of rows) expect(await files.head(row.r2_key)).not.toBeNull();
+    } finally { release(); await first; }
+  }, { pauseSources: true });
 }, 30_000);
 
 it("keeps a lost copy acknowledgement fenced even if a later copy succeeds", async () => {
