@@ -55,12 +55,19 @@ export interface Group {
 
 /** Roles in the given state or holding facts in it, each with those facts; loose facts come last. */
 export function groupByRole(vault: Vault, state: ReviewState): Group[] {
-  const facts = vault.facts.filter((f) => f.state === state);
-  const roleIds = new Set(vault.roles.map((r) => r.id));
-  const groups: Group[] = vault.roles
-    .map((role) => ({ role, facts: facts.filter((f) => f.roleId === role.id) }))
-    .filter((group) => group.role.state === state || group.facts.length > 0);
-  const loose = facts.filter((f) => f.roleId === null || !roleIds.has(f.roleId));
+  const byRole = new Map(vault.roles.map((role) => [role.id, [] as FactView[]]));
+  const loose: FactView[] = [];
+  for (const fact of vault.facts) {
+    if (fact.state !== state) continue;
+    const group = fact.roleId === null ? undefined : byRole.get(fact.roleId);
+    if (group) group.push(fact);
+    else loose.push(fact);
+  }
+  const groups: Group[] = [];
+  for (const role of vault.roles) {
+    const facts = byRole.get(role.id)!;
+    if (role.state === state || facts.length > 0) groups.push({ role, facts });
+  }
   if (loose.length > 0) groups.push({ role: null, facts: loose });
   return groups;
 }

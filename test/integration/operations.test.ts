@@ -328,7 +328,7 @@ describe("versioned re-embedding", () => {
       expect(() => embed.begin("reembed-1", "@cf/different/embed", 2)).toThrow(
         "cannot change",
       );
-      for (const vector of [[0, 0], [1], [1, Infinity], [1, 1e300]])
+      for (const vector of [[0, 0], [1], [1, Infinity], [1, 1e300], [1e-100, 1e-100]])
         expect(() =>
           embed.saveBatch("reembed-1", [{ id: "fact", revision: 1, vector }]),
         ).toThrow();

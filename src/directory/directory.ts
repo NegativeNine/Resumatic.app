@@ -691,6 +691,7 @@ export class Directory extends DurableObject<Env> {
       WHERE (state IN ('captured','removed') AND (user_id IS NULL OR user_id='' OR vault_id IS NULL OR vault_id='' OR email IS NULL OR email=''))
          OR (state='closed' AND (user_id IS NOT NULL OR vault_id IS NOT NULL OR email IS NOT NULL OR generation IS NOT NULL))`).one().n;
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invite_delete_permits`).one().n;
+    count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invite_delete_authorizations`).one().n;
     return count;
   }
   async forgetIdentityHome(
@@ -1075,12 +1076,17 @@ export class Directory extends DurableObject<Env> {
 
   /** Execute only inside the transaction that authorized this particular deletion. */
   private deleteInvite(email: string, generation?: string): void {
-    this.sql.exec(`INSERT INTO invite_delete_permits(email) VALUES (?)`, email);
+    this.sql.exec(`INSERT INTO invite_delete_authorizations(email) VALUES (?)`, email);
     try {
-      if (generation === undefined) this.sql.exec(`DELETE FROM invites WHERE email=?`, email);
-      else this.sql.exec(`DELETE FROM invites WHERE email=? AND generation=?`, email, generation);
+      this.sql.exec(`INSERT INTO invite_delete_permits(email) VALUES (?)`, email);
+      try {
+        if (generation === undefined) this.sql.exec(`DELETE FROM invites WHERE email=?`, email);
+        else this.sql.exec(`DELETE FROM invites WHERE email=? AND generation=?`, email, generation);
+      } finally {
+        this.sql.exec(`DELETE FROM invite_delete_permits WHERE email=?`, email);
+      }
     } finally {
-      this.sql.exec(`DELETE FROM invite_delete_permits WHERE email=?`, email);
+      this.sql.exec(`DELETE FROM invite_delete_authorizations WHERE email=?`, email);
     }
   }
 
@@ -1137,7 +1143,16 @@ export class Directory extends DurableObject<Env> {
       if (row.state === "removed") return;
       if (row.generation !== null) {
         if (!/^[a-f0-9]{32}$/.test(row.generation)) throw new AppError("unavailable", "invite requires operator review");
-        this.deleteInvite(normalized, row.generation);
+        if (directoryNameForUser(userId) !== "global") {
+          // Sharded capture occurs after the local deletion commits. An
+          // unchanged generation could already be a reissue, so never delete
+          // it on that evidence. Admin reissue or revocation changes the
+          // condition and allows cleanup to finish on a later retry.
+          if (this.sql.exec(`SELECT email FROM invites WHERE email=? AND generation=?`, normalized, row.generation).toArray().length)
+            throw new AppError("unavailable", "sharded invite requires operator review");
+        } else {
+          this.deleteInvite(normalized, row.generation);
+        }
       }
       this.sql.exec(`UPDATE invite_deletion_receipts SET state='removed' WHERE operation_id=? AND state='captured'`, operationId);
     });

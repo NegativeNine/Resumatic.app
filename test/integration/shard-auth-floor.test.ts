@@ -23,6 +23,8 @@ async function account() {
 it("rejects a pre-migration create after a previously erased shard wakes", async () => {
   const f = await account();
   await f.home.deleteAccount(f.current.userId, f.current.vaultId);
+  // Resolve the sharded invitation before testing identity-floor erasure.
+  await f.global.removeInviteV2(f.input.email);
   await runDurableObjectAlarm(f.home);
   await eventually(async () => !(await f.home.existingIdentity("google", f.input.subject)), "identity erasure");
   expect(await f.global.googleAuthEpoch()).toBeGreaterThan(f.input.authEpoch!);
@@ -35,6 +37,8 @@ it("rejects a pre-migration create after a previously erased shard wakes", async
     state.storage.sql.exec(`DELETE FROM meta WHERE key='shard_rollout_epoch'`);
     for (const trigger of ["assign_invite_generation", "rotate_reissued_invite", "guard_invite_delete"])
       state.storage.sql.exec(`DROP TRIGGER ${trigger}`);
+    state.storage.sql.exec(`DROP TRIGGER guard_invite_delete_permit`);
+    state.storage.sql.exec(`DROP TABLE invite_delete_authorizations`);
     for (const table of ["invite_delete_permits", "invite_deletion_receipts", "account_invite_deletions"])
       state.storage.sql.exec(`DROP TABLE ${table}`);
     state.storage.sql.exec(`ALTER TABLE invites DROP COLUMN generation`);
@@ -121,6 +125,8 @@ it("fails closed when the global rollout barrier is unavailable", async () => {
 it("rejects a previously dispatched shard create after deletion and a new global placement", async () => {
   const f = await account();
   await f.home.deleteAccount(f.current.userId, f.current.vaultId);
+  // Resolve the sharded invitation before testing identity-floor erasure.
+  await f.global.removeInviteV2(f.input.email);
   await runDurableObjectAlarm(f.home);
   await eventually(async () => !(await f.home.existingIdentity("google", f.input.subject)), "identity erasure");
   await f.global.addInvite(f.input.email);
@@ -138,6 +144,8 @@ it("rejects a previously dispatched shard create after deletion and a new global
 it("rejects a stale invited shard create after deletion even without a replacement", async () => {
   const f = await account();
   await f.home.deleteAccount(f.current.userId, f.current.vaultId);
+  // Resolve the sharded invitation before testing identity-floor erasure.
+  await f.global.removeInviteV2(f.input.email);
   await runDurableObjectAlarm(f.home);
   await eventually(async () => !(await f.home.existingIdentity("google", f.input.subject)), "identity erasure");
   await runInDurableObject(f.home, async (instance) => {
@@ -190,6 +198,8 @@ it("raises the shard floor at erasure and forces unrelated older callbacks to re
   const f = await account();
   const oldEpoch = f.input.authEpoch!;
   await f.home.deleteAccount(f.current.userId, f.current.vaultId);
+  // Resolve the sharded invitation before testing identity-floor erasure.
+  await f.global.removeInviteV2(f.input.email);
   await runDurableObjectAlarm(f.home);
   await eventually(async () => !(await f.home.existingIdentity("google", f.input.subject)), "identity erasure");
   const floor = await runInDurableObject(f.home, (_instance, state) => Number(state.storage.sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='shard_auth_floor'`).one().value));
@@ -208,6 +218,7 @@ it("reissues a legacy acknowledgement that has no epoch", async () => {
     await (instance as unknown as { releaseGoogleShardHome(userId: string, subject: string, shard: number): Promise<void> }).releaseGoogleShardHome(f.current.userId, f.input.subject, shard);
     expect(state.storage.sql.exec<{state:string;fence_epoch:number}>(`SELECT state,fence_epoch FROM shard_deletion_releases WHERE user_id=?`, f.current.userId).one()).toEqual({ state: "acknowledged", fence_epoch: expect.any(Number) });
   });
+  await f.global.removeInviteV2(f.input.email);
   await runDurableObjectAlarm(f.home);
   await eventually(async () => !(await f.home.existingIdentity("google", f.input.subject)), "legacy acknowledgement erasure");
 });

@@ -1,6 +1,7 @@
 import { AppError } from "../shared/errors";
 import { modelAttempt, type ModelObservers } from "./usage";
 import { rerankScores } from "./rerank";
+import { usableEmbedding } from "../shared/embedding";
 
 const EMBED_MODEL = "@cf/baai/bge-m3";
 const RERANK_MODEL = "@cf/baai/bge-reranker-base";
@@ -46,12 +47,7 @@ export async function embedTexts(
     if (
       !res.data ||
       res.data.length !== batch.length ||
-      res.data.some(
-        (v) =>
-          !Array.isArray(v) ||
-          v.length === 0 ||
-          v.some((n) => !Number.isFinite(n)),
-      ) ||
+      res.data.some((v) => !usableEmbedding(v)) ||
       res.data.some(
         (v) => v.length !== (out[0]?.length ?? res.data![0]!.length),
       )

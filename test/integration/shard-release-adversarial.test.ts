@@ -101,6 +101,9 @@ describe("sharded Google home release: adversarial ordering", () => {
     await g.bindIdentityHome("google", subject, account.userId, p.authEpoch, undefined, false, target.input.shardClaimToken);
     const shard = directoryForUser(env, account.userId);
     await shard.deleteAccount(account.userId, account.vaultId);
+    // Explicitly resolve the captured invite so this test reaches the
+    // independent shard-release race it is exercising.
+    await g.removeInviteV2(subject);
 
     const original = Directory.prototype.forgetGoogleShardHomeV3;
     let calls = 0;
@@ -157,6 +160,9 @@ describe("sharded Google home release: adversarial ordering", () => {
     await g.bindIdentityHome("google", subject, account.userId, p.authEpoch, undefined, false, target.input.shardClaimToken);
     const shard = directoryForUser(env, account.userId);
     await shard.deleteAccount(account.userId, account.vaultId);
+    // Explicitly resolve the captured invite so this test reaches the
+    // independent shard-release race it is exercising.
+    await g.removeInviteV2(subject);
     await runInDurableObject(shard, (_instance, state) => {
       expect(() => state.storage.sql.exec(`DELETE FROM identities WHERE provider='google' AND subject=?`, subject))
         .toThrow(/(?:shard_deletion_barrier_required|shard_auth_floor_required)/);
@@ -208,6 +214,9 @@ describe("sharded Google home release: adversarial ordering", () => {
     await g.bindIdentityHome("google", subject, account.userId, p.authEpoch, undefined, false, target.input.shardClaimToken);
     const shard = directoryForUser(env, account.userId);
     await shard.deleteAccount(account.userId, account.vaultId);
+    // Explicitly resolve the captured invite so this test reaches the
+    // independent shard-release race it is exercising.
+    await g.removeInviteV2(subject);
 
     let entered!: () => void, release!: () => void;
     const ready = new Promise<void>((resolve) => { entered = resolve; });

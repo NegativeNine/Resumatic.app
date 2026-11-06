@@ -1,4 +1,5 @@
 import { AppError } from "../shared/errors";
+import { floatEmbedding } from "../shared/embedding";
 import {
   contentDigest,
   TRANSFER_TABLES,
@@ -606,15 +607,14 @@ export class ReembedStore {
       let saved = 0;
       let stale = 0;
       for (const row of rows) {
-        if (
-          row.vector.length !== job.dimensions ||
-          row.vector.some((n) => !Number.isFinite(n)) ||
-          row.vector.every((n) => n === 0)
-        )
+        if (row.vector.length !== job.dimensions)
           throw new AppError(
             "invalid",
             "embedding vector has invalid dimensions or values",
           );
+        let vector: Float32Array;
+        try { vector = floatEmbedding(row.vector); }
+        catch { throw new AppError("invalid", "embedding vector has invalid dimensions or values"); }
         const current = this.sql
           .exec<{ revision: number }>(
             `SELECT revision FROM facts WHERE id = ?`,
@@ -625,12 +625,6 @@ export class ReembedStore {
           stale++;
           continue;
         }
-        const vector = Float32Array.from(row.vector);
-        if (Array.from(vector).some((n) => !Number.isFinite(n)))
-          throw new AppError(
-            "invalid",
-            "embedding vector exceeds float precision",
-          );
         this.sql.exec(
           `INSERT INTO embedding_staging (job_id, fact_id, revision, vector) VALUES (?, ?, ?, ?) ON CONFLICT(job_id, fact_id) DO UPDATE SET revision = excluded.revision, vector = excluded.vector`,
           id,

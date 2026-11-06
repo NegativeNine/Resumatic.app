@@ -21,7 +21,10 @@ export function Review({ vault, reload }: { vault: Vault; reload: () => Promise<
   async function showAdded(factId: string) {
     const next = await reload();
     const fact = next?.facts.find((f) => f.id === factId);
-    if (fact) setFilter(fact.state);
+    // A manual fact starts confirmed. If a refresh fails or a newer refresh
+    // supersedes this one, still show the tab where it was created. The
+    // refresh error remains visible and can be retried.
+    setFilter(fact?.state ?? "confirmed");
   }
 
   return (

@@ -188,6 +188,15 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
      WHEN OLD.state='swept' AND NOT EXISTS(SELECT 1 FROM account_final_sweeps a WHERE a.vault_id=OLD.vault_id AND a.user_id=OLD.user_id AND a.swept_at=OLD.swept_at AND a.phase='destroyed' AND a.invite_closed=1)
      BEGIN SELECT RAISE(ABORT, 'account_finalization_requires_destroy'); END`,
   ],
+  [
+    // Older finalizers could create the original permit and then delete an
+    // invitation captured after it was reissued. Only the current code can
+    // create the additional, transaction-scoped authorization.
+    `CREATE TABLE invite_delete_authorizations (email TEXT PRIMARY KEY)`,
+    `CREATE TRIGGER guard_invite_delete_permit BEFORE INSERT ON invite_delete_permits
+     WHEN NOT EXISTS(SELECT 1 FROM invite_delete_authorizations WHERE email=NEW.email)
+     BEGIN SELECT RAISE(ABORT, 'invite_delete_authorization_required'); END`,
+  ],
 ];
 
 export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T, global = false, shard = false): void {

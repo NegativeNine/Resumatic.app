@@ -26,6 +26,9 @@ describe("sharded account invitation claims", () => {
     await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, initial.input.shardClaimToken);
     const home = directoryForUser(env, account.userId);
     await home.deleteAccount(account.userId, account.vaultId);
+    // Sharded invite cleanup is held until an operator resolves the captured
+    // generation. Here explicit revocation makes the original invite absent.
+    await global.removeInviteV2(p.email);
     await runDurableObjectAlarm(home);
     await eventually(async () => !(await home.existingIdentity(p.provider, p.subject)), "sharded identity erasure");
     expect((await global.listInvites()).some((invite) => invite.email === p.email)).toBe(false);

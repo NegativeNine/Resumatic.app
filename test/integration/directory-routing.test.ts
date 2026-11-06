@@ -90,6 +90,9 @@ describe("Directory placement in Durable Objects", () => {
     await directory(env).bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, target.input.shardClaimToken);
     const home = directoryForUser(env, account.userId);
     await home.deleteAccount(account.userId, account.vaultId);
+    // Resolve the sharded account's ambiguous invitation before testing
+    // placement-claim erasure.
+    await directory(env).removeInviteV2(p.email);
     await runDurableObjectAlarm(home);
     await eventually(
       async () => (await home.existingIdentity(p.provider, p.subject)) === null,
@@ -127,6 +130,7 @@ describe("Directory placement in Durable Objects", () => {
       expect(stale.input.expectedUserId).toBe(old.userId);
       const home = directoryForUser(env, old.userId);
       await home.deleteAccount(old.userId, old.vaultId);
+      if (old.userId.startsWith("s")) await directory(env).removeInviteV2(p.email);
       await runDurableObjectAlarm(home);
       await eventually(
         async () => (await home.existingIdentity(p.provider, p.subject)) === null,

@@ -8,6 +8,7 @@ import {
 } from "../../src/ai/fields";
 import { reportUsage, type UsageObserver } from "../../src/ai/usage";
 import { rerankScores } from "../../src/ai/rerank";
+import { usableEmbedding } from "../../src/shared/embedding";
 import { EvalBudget, evalBudgetFromEnv } from "../extract-evals/budget";
 import { sharedPilotFromEnv, type SharedPilot } from "./shared-pilot.mjs";
 
@@ -241,12 +242,7 @@ export function restModels(
         if (
           !Array.isArray(data) ||
           data.length !== texts.slice(i, i + 50).length ||
-          data.some(
-            (v) =>
-              !Array.isArray(v) ||
-              v.length === 0 ||
-              v.some((n) => !Number.isFinite(n)),
-          ) ||
+          data.some((v) => !usableEmbedding(v)) ||
           data.some((v) => v.length !== (out[0]?.length ?? data[0]!.length))
         )
           throw new Error("embedding_response_shape");

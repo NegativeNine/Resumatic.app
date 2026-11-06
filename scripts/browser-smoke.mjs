@@ -351,8 +351,13 @@ if (!browser?.startsWith("/")) {
     finishManualFact();
     await wait(`!!document.querySelector('.add-fact-form [role="alert"]')`);
     if (!await evalPage(`(() => { const f = document.querySelector('form.add-fact-form'); return f?.querySelector('textarea')?.value === 'Built an accessible application' && [...f.querySelectorAll('textarea, select')].every(e => !e.disabled); })()`)) throw new Error("MANUAL_FACT_RETRY_INPUT_LOST");
+    // A saved fact starts confirmed even if its subsequent snapshot read fails.
+    state.sourcePollFailures = 1;
     await clickText(".add-fact-form button", "Add fact");
     await wait(`document.body?.innerText.includes('Fact added.')`);
+    if (!await evalPage(`document.querySelector('input[name="review-filter"]:checked')?.parentElement?.innerText.includes('Confirmed')`)) throw new Error("MANUAL_FACT_FILTER_NOT_SELECTED_AFTER_READ_FAILURE");
+    await clickText('[role="alert"] button', "Try again");
+    await wait(`document.body?.innerText.includes('Built an accessible application')`);
     if (state.manualFactKeys.length !== 2 || state.manualFactKeys[0] !== state.manualFactKeys[1]) throw new Error("MANUAL_FACT_RETRY_KEY_MISMATCH");
     await clickText(".add-fact-form button", "Close");
     await wait(`document.activeElement?.textContent.trim() === 'Add a fact yourself'`);

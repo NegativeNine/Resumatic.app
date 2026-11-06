@@ -52,6 +52,8 @@ function removeInviteDeletionMigration(sql: SqlStorage): void {
   sql.exec(`ALTER TABLE account_final_sweeps DROP COLUMN invite_closed`);
   for (const trigger of ["assign_invite_generation", "rotate_reissued_invite", "guard_invite_delete"])
     sql.exec(`DROP TRIGGER ${trigger}`);
+  sql.exec(`DROP TRIGGER guard_invite_delete_permit`);
+  sql.exec(`DROP TABLE invite_delete_authorizations`);
   for (const table of ["invite_delete_permits", "invite_deletion_receipts", "account_invite_deletions"])
     sql.exec(`DROP TABLE ${table}`);
   sql.exec(`ALTER TABLE invites DROP COLUMN generation`);

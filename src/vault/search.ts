@@ -1,7 +1,8 @@
 import type { Candidate } from "../shared/types";
+import { floatEmbedding } from "../shared/embedding";
 
 export function toUnit(values: ArrayLike<number>): Float32Array {
-  const v = Float32Array.from(values);
+  const v = floatEmbedding(values);
   let norm = 0;
   for (const x of v) norm += x * x;
   norm = Math.sqrt(norm);
@@ -39,7 +40,7 @@ export function topMatches(
 }
 
 export function packVector(values: number[]): ArrayBuffer {
-  return Float32Array.from(values).buffer as ArrayBuffer;
+  return floatEmbedding(values).buffer as ArrayBuffer;
 }
 
 export function unpackVector(blob: ArrayBuffer): Float32Array {
