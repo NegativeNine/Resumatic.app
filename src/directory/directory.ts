@@ -435,7 +435,14 @@ export class Directory extends DurableObject<Env> {
   /** Marks the account for deletion; alarm() does the work and retries until it is done. */
   async deleteAccount(userId: string): Promise<void> {
     const now = Date.now();
-    this.ctx.storage.transactionSync(() => {
+    // Keep the deletion state and its first alarm in the same SQLite-backed
+    // storage transaction. If scheduling fails, the account remains active
+    // and the caller can retry with the same session.
+    const active = await this.ctx.storage.transaction(async () => {
+      const active = this.sql.exec<{ vault_id: string }>(
+        `SELECT vault_id FROM vaults WHERE user_id = ? AND state IN ('active', 'deleting')`,
+        userId,
+      ).toArray();
       this.sql.exec(
         `UPDATE users SET state = 'deleting' WHERE user_id = ?`,
         userId,
@@ -449,8 +456,15 @@ export class Directory extends DurableObject<Env> {
         now,
         userId,
       );
+      const existing = await this.ctx.storage.getAlarm();
+      if (existing === null || existing > now + RETRY_MS)
+        await this.ctx.storage.setAlarm(now + RETRY_MS);
+      return active;
     });
-    await this.scheduleAt(now);
+    // Creating vaults cannot have issued a session. Active or already deleting
+    // vaults may have copied cookies; the durable alarm retries failed RPCs.
+    for (const v of active)
+      await this.env.VAULT.get(this.env.VAULT.idFromString(v.vault_id)).quiesce();
   }
 
   async listVaults(p: { after?: string; limit: number }): Promise<VaultRow[]> {
@@ -528,10 +542,13 @@ export class Directory extends DurableObject<Env> {
       .toArray()) {
       try {
         if (retired.state === "deleting") {
-          this.requireInitializationSettled(retired.vault_id);
           const stub = this.env.VAULT.get(
             this.env.VAULT.idFromString(retired.vault_id),
           );
+          // Revocation can proceed even while an old init acknowledgement is
+          // unresolved. Destruction must still wait for that durable fence.
+          await stub.quiesce();
+          this.requireInitializationSettled(retired.vault_id);
           const runs = await stub.close();
           await stopVaultRuns(this.env, runs);
           await deletePrefix(this.env.FILES, vaultPrefix(retired.vault_id));
@@ -609,8 +626,9 @@ export class Directory extends DurableObject<Env> {
   }
 
   private async erase(vaultId: string): Promise<void> {
-    this.requireInitializationSettled(vaultId);
     const stub = this.env.VAULT.get(this.env.VAULT.idFromString(vaultId));
+    await stub.quiesce();
+    this.requireInitializationSettled(vaultId);
     const runs = await stub.close();
     const customer = await stub.billingCustomerForDeletion();
     if (customer) {

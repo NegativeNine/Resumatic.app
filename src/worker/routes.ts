@@ -176,6 +176,9 @@ app.delete("/auth/account", requireSession(), async (c) => {
   // A revoked cookie must not be able to delete the account.
   await vault(c.env, s.vid).checkSession(c.get("who"));
   await directoryForUser(c.env, s.uid).deleteAccount(s.uid);
+  // Do not acknowledge deletion while a copied session can still use an
+  // initialized vault. Inventory and destruction remain asynchronous.
+  await vault(c.env, s.vid).quiesce();
   c.header("set-cookie", clearSessionCookie());
   return c.json({ deleting: true }, 202);
 });

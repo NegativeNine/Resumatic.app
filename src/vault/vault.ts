@@ -332,16 +332,22 @@ export class Vault extends DurableObject<Env> {
     });
   }
 
+  /** Revoke access independently of whether the run inventory is settled. */
+  quiesce(): void {
+    if (this.gone || !this.initialised) return;
+    this.closing = true;
+    this.setMeta("state", "closing");
+    for (const ws of this.ctx.getWebSockets()) ws.close(1008, "Account closed");
+  }
+
   /** Refuses new work and lists the runs to stop. Safe to repeat, and safe on an empty vault. */
   async close(): Promise<{
     distill: string[];
     tailor: string[];
     other?: { kind: string; id: string }[];
   }> {
+    this.quiesce();
     if (this.gone || !this.initialised) return { distill: [], tailor: [] };
-    this.closing = true;
-    this.setMeta("state", "closing");
-    for (const ws of this.ctx.getWebSockets()) ws.close(1008, "Account closed");
     this.requireNoUnsettledDispatches();
     const distill = this.sql
       .exec<{ run_id: string }>(

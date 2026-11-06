@@ -24,7 +24,8 @@
     "check:release": "node scripts/check-release.mjs",
     "audit:deletion": "node scripts/audit-deletion.mjs",
     "check:ats": "node scripts/ats-smoke.mjs",
-    "check:render-local": "node scripts/local-render-smoke.mjs"
+    "check:render-local": "node scripts/local-render-smoke.mjs",
+    "check:browser-local": "node scripts/browser-smoke.mjs"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "1.2.4",
