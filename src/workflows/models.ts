@@ -3,6 +3,7 @@ import { MODEL_PRICES, type ModelAttempt } from "../ai/usage";
 import { AppError } from "../shared/errors";
 import { vault } from "../shared/stubs";
 import { stagingPilotBudget } from "../worker/pilot/access";
+import type { PilotIdentityPath } from "../worker/pilot/ledger";
 import { sharedPilotSafetyReady } from "./pilot-readiness";
 
 // AI Gateway documents up to five retries. Until live verification proves
@@ -17,6 +18,7 @@ export function runModels(
   vaultId: string,
   runId: string,
   step: string,
+  identityPath: PilotIdentityPath | null = null,
 ): Models {
   const v = vault(env, vaultId);
   const started = new Map<string, number>();
@@ -26,6 +28,10 @@ export function runModels(
   const pilot = env.PILOT_SHARED_BUDGET === "true" ? stagingPilotBudget(env) : null;
   const base = models(env, {
     async onAttemptStart(attempt) {
+      // An authenticated diagnostic can observe only real call sites, with no
+      // provider request. The nonce stays in the ledger, not Workflow state.
+      if (pilot && identityPath && await pilot.observeIdentity(identityPath, vaultId, runId, step, env.PILOT_VERSION_METADATA?.id ?? ""))
+        throw new AppError("unavailable", "pilot identity observation complete; no model call was made");
       if (pilot && !sharedPilotSafetyReady())
         throw new AppError("unavailable", "shared pilot identity and provider bounds are not verified");
       const cap = Number(env.DAILY_SPEND_CAP_USD);
@@ -34,7 +40,9 @@ export function runModels(
       const price = prices[attempt.model];
       // Workers AI bindings and conversion have unverified hidden attempts or
       // usage bounds. A flat configured amount is not a proven provider cap.
-      if (pilot && (!PILOT_CHAT_ROUTES.has(attempt.route) || !price))
+      // Workers AI models may also be reached through the chat endpoint. A
+      // chat-shaped request does not establish their billing or retry bounds.
+      if (pilot && (!PILOT_CHAT_ROUTES.has(attempt.route) || attempt.model.startsWith("@") || !price))
         throw new AppError("unavailable", "this model route is not bounded for the shared pilot");
       if (price && (price[0] <= 0 || (attempt.maxOutputTokens > 0 && price[1] <= 0)))
         throw new AppError(

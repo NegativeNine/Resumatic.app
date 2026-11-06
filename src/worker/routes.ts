@@ -11,7 +11,7 @@ import { OcrImagesSchema, validateTranscriptionInput } from "../ai/transcribe";
 import { revokeOAuthGrant } from "./mcp";
 import { uploadDescriptorDigest } from "../vault/uploads";
 import { renderPdf } from "../render/pdf";
-import { PILOT_MAX_CALLS, PILOT_MAX_MICROS } from "./pilot/ledger";
+import { PILOT_IDENTITY_PATHS, PILOT_MAX_CALLS, PILOT_MAX_MICROS } from "./pilot/ledger";
 import { stagingPilotBudget } from "./pilot/access";
 import { createArchive, MAX_ARCHIVE_BYTES, type ArchiveEntry } from "../render/archive";
 import { billingConfig } from "../shared/billing";
@@ -247,6 +247,34 @@ app.post("/auth/test/pilot-budget/freeze", async (c) => {
   return c.body(null, 204);
 });
 app.get("/auth/test/pilot-budget/status", async (c) => c.json(await pilotBudget(c).status()));
+
+// This diagnostic uses a server-generated public nonce and metadata only. An
+// authenticated caller cannot submit an observation: only a real model-call
+// path writes the witness, before the paid-dispatch safety gate rejects it.
+app.post("/auth/test/pilot-budget/identity/begin", JSON_LIMIT, async (c) => {
+  const pilot = pilotBudget(c);
+  // The diagnostic deliberately triggers a real model-attempt path. Refuse to
+  // create a challenge unless that path is configured to fail before dispatch.
+  if (c.env.PILOT_SHARED_BUDGET !== "true")
+    throw new AppError("unavailable", "the shared pilot mode is required for identity diagnostics");
+  const body = await jsonBody(c, z.object({
+    path: z.enum(PILOT_IDENTITY_PATHS),
+    vaultId: z.string().regex(/^[0-9a-f]{64}$/i),
+  }).strict());
+  const version = c.env.PILOT_VERSION_METADATA?.id;
+  if (!version) throw new AppError("unavailable", "worker version metadata is unavailable");
+  return c.json(await pilot.beginIdentity(crypto.randomUUID(), body.path, body.vaultId, version), 201);
+});
+app.post("/auth/test/pilot-budget/identity/status", JSON_LIMIT, async (c) => {
+  const pilot = pilotBudget(c);
+  const body = await jsonBody(c, z.object({ nonce: z.uuid() }).strict());
+  return c.json(await pilot.identityStatus(body.nonce));
+});
+app.post("/auth/test/pilot-budget/identity/consume", JSON_LIMIT, async (c) => {
+  const pilot = pilotBudget(c);
+  const body = await jsonBody(c, z.object({ nonce: z.uuid(), runId: PilotAttemptId }).strict());
+  return c.json(await pilot.consumeIdentity(body.nonce, body.runId));
+});
 
 async function startSession(env: Env, input: SignInInput): Promise<string> {
   if (!env.SESSION_KEY)

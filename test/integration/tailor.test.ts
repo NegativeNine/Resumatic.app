@@ -289,6 +289,30 @@ describe("roles and facts the user adds", () => {
 });
 
 describe("editing and PDF export", () => {
+  it("serves an existing PDF in shared pilot mode but blocks a new Browser Run request", async () => {
+    const user = await readyUser();
+    const resume = await tailor(user, await newApplication(user));
+    expect(await bytesOf(await user.fetch(`/api/resumes/${resume.id}/pdf`))).toBe("%PDF-1.7 fake 1");
+    const vid = JSON.parse(
+      atob(user.cookie.slice("__Host-session=".length).split(".")[0]!.replace(/-/g, "+").replace(/_/g, "/")),
+    ).vid;
+    const cached = await env.FILES.list({ prefix: `${vaultPrefix(vid)}exports/` });
+    expect(cached.objects).toHaveLength(1);
+    const previous = env.PILOT_SHARED_BUDGET;
+    try {
+      env.PILOT_SHARED_BUDGET = "true";
+      expect(await bytesOf(await user.fetch(`/api/resumes/${resume.id}/pdf`))).toBe("%PDF-1.7 fake 1");
+      expect(rendered).toHaveLength(1);
+      await env.FILES.delete(cached.objects[0]!.key);
+      const response = await user.fetch(`/api/resumes/${resume.id}/pdf`);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ error: "unavailable" });
+      expect(rendered).toHaveLength(1);
+    } finally {
+      env.PILOT_SHARED_BUDGET = previous;
+    }
+  });
+
   it("rejects direct unverified edits and keeps the cached resume unchanged", async () => {
     const user = await readyUser();
     const resume = await tailor(user, await newApplication(user));

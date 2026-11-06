@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { PILOT_SCHEMA, PilotLedger } from "./ledger";
+import { PILOT_SCHEMA, PilotLedger, type PilotIdentityPath } from "./ledger";
 
 /** Staging's one shared pilot ledger; it never receives model inputs or outputs. */
 export class PilotBudget extends DurableObject<Env> {
@@ -21,4 +21,8 @@ export class PilotBudget extends DurableObject<Env> {
   settle(id: string, actualMicros: number | null): { frozen: boolean } { return this.ledger().settle(id, actualMicros); }
   freeze(): void { this.ledger().freeze(); }
   status() { return this.ledger().status(); }
+  beginIdentity(nonce: string, path: PilotIdentityPath, vaultId: string, workerVersion: string) { return this.ledger().beginIdentity(nonce, path, vaultId, workerVersion); }
+  observeIdentity(path: PilotIdentityPath | null, vaultId: string, runId: string, step: string, runtimeVersion: string) { return this.ledger().observeIdentity(path, vaultId, runId, step, runtimeVersion); }
+  identityStatus(nonce: string) { return this.ledger().identityStatus(nonce); }
+  consumeIdentity(nonce: string, runId: string) { return this.ledger().consumeIdentity(nonce, runId); }
 }

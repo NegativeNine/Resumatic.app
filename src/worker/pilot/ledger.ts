@@ -5,6 +5,9 @@ import { AppError } from "../../shared/errors";
 export const PILOT_MAX_MICROS = 10_000_000;
 export const PILOT_MAX_CALLS = 50;
 export const PILOT_LEDGER_NAME = "first-staging-pilot-v1";
+export const PILOT_IDENTITY_PATHS = ["distill", "tailor", "document", "reembed", "vault"] as const;
+export type PilotIdentityPath = typeof PILOT_IDENTITY_PATHS[number];
+const PROBE_TTL_MS = 120_000;
 
 export const PILOT_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS pilot_meta (
@@ -20,6 +23,13 @@ export const PILOT_SCHEMA = [
     reserved_calls INTEGER NOT NULL CHECK (reserved_calls > 0),
     state TEXT NOT NULL CHECK (state IN ('pending', 'settled', 'unknown', 'overrun')),
     actual_micros INTEGER
+  )`,
+  // A public random challenge, not a credential or model payload. It is
+  // short-lived and can be consumed only once; it never resets accounting.
+  `CREATE TABLE IF NOT EXISTS pilot_identity_probe (
+    slot INTEGER PRIMARY KEY CHECK (slot = 1), nonce TEXT NOT NULL,
+    path TEXT NOT NULL, vault_id TEXT NOT NULL, worker_version TEXT NOT NULL,
+    expires_at INTEGER NOT NULL, run_id TEXT, step TEXT, runtime_version TEXT
   )`,
   `CREATE TRIGGER IF NOT EXISTS pilot_meta_no_delete BEFORE DELETE ON pilot_meta
     BEGIN SELECT RAISE(ABORT, 'pilot reset forbidden'); END`,
@@ -61,6 +71,54 @@ const validId = (id: string) => /^[A-Za-z0-9_-]{1,100}$/.test(id);
 /** SQLite-backed, one-shot shared pilot ledger. No career text enters it. */
 export class PilotLedger {
   constructor(private readonly sql: SqlStorage, private readonly transaction: <T>(fn: () => T) => T) {}
+
+  beginIdentity(nonce: string, path: PilotIdentityPath, vaultId: string, workerVersion: string): { nonce: string; expiresAt: number } {
+    if (!/^[0-9a-f-]{36}$/i.test(nonce) || !PILOT_IDENTITY_PATHS.includes(path) ||
+        !/^[0-9a-f]{64}$/i.test(vaultId) || !validId(workerVersion))
+      throw new AppError("invalid", "invalid identity probe");
+    return this.transaction(() => {
+      const now = Date.now();
+      this.sql.exec(`DELETE FROM pilot_identity_probe WHERE expires_at <= ?`, now);
+      if (this.sql.exec(`SELECT slot FROM pilot_identity_probe WHERE slot=1`).toArray().length)
+        throw new AppError("conflict", "an identity probe is already pending");
+      this.sql.exec(`INSERT INTO pilot_identity_probe (slot,nonce,path,vault_id,worker_version,expires_at) VALUES (1,?,?,?,?,?)`, nonce, path, vaultId, workerVersion, now + PROBE_TTL_MS);
+      return { nonce, expiresAt: now + PROBE_TTL_MS };
+    });
+  }
+
+  /** Called from the real model-attempt path, never exposed as an HTTP operation. */
+  observeIdentity(path: PilotIdentityPath | null, vaultId: string, runId: string, step: string, runtimeVersion: string): boolean {
+    return this.transaction(() => {
+      const row = this.sql.exec<{ path: string; vault_id: string; expires_at: number; run_id: string | null }>(
+        `SELECT path,vault_id,expires_at,run_id FROM pilot_identity_probe WHERE slot=1`,
+      ).toArray()[0];
+      if (!row || row.expires_at <= Date.now() || row.run_id !== null || row.path !== path || row.vault_id !== vaultId) return false;
+      if (!validId(runId) || !/^[A-Za-z0-9 _:-]{1,100}$/.test(step) || !validId(runtimeVersion))
+        throw new AppError("unavailable", "identity probe metadata is unavailable");
+      this.sql.exec(`UPDATE pilot_identity_probe SET run_id=?,step=?,runtime_version=? WHERE slot=1 AND run_id IS NULL`, runId, step, runtimeVersion);
+      return true;
+    });
+  }
+
+  identityStatus(nonce: string): { state: "waiting" | "observed" } {
+    if (!/^[0-9a-f-]{36}$/i.test(nonce)) throw new AppError("invalid", "invalid identity probe");
+    const row = this.sql.exec<{ run_id: string | null; expires_at: number }>(`SELECT run_id,expires_at FROM pilot_identity_probe WHERE slot=1 AND nonce=?`, nonce).toArray()[0];
+    if (!row || row.expires_at <= Date.now()) throw new AppError("gone", "identity probe expired or consumed");
+    return { state: row.run_id === null ? "waiting" : "observed" };
+  }
+
+  consumeIdentity(nonce: string, runId: string): { path: string; vaultId: string; runId: string; step: string; workerVersion: string; runtimeVersion: string } {
+    if (!/^[0-9a-f-]{36}$/i.test(nonce) || !validId(runId)) throw new AppError("invalid", "invalid identity probe");
+    return this.transaction(() => {
+      const row = this.sql.exec<{ path: string; vault_id: string; worker_version: string; expires_at: number; run_id: string | null; step: string | null; runtime_version: string | null }>(
+        `SELECT path,vault_id,worker_version,expires_at,run_id,step,runtime_version FROM pilot_identity_probe WHERE slot=1 AND nonce=?`, nonce,
+      ).toArray()[0];
+      if (!row || row.expires_at <= Date.now()) throw new AppError("gone", "identity probe expired or consumed");
+      if (row.run_id !== runId || !row.step || !row.runtime_version) throw new AppError("conflict", "identity observation does not match this run");
+      this.sql.exec(`DELETE FROM pilot_identity_probe WHERE slot=1 AND nonce=?`, nonce);
+      return { path: row.path, vaultId: row.vault_id, runId, step: row.step, workerVersion: row.worker_version, runtimeVersion: row.runtime_version };
+    });
+  }
 
   initialize(maxMicros: number, maxCalls: number): void {
     if (!positive(maxMicros) || maxMicros > PILOT_MAX_MICROS || !positive(maxCalls) || maxCalls > PILOT_MAX_CALLS)

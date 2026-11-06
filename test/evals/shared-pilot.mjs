@@ -5,6 +5,7 @@ export const SHARED_PILOT_IDENTITY_VERIFIED = false;
 
 /** Authenticated, fixed-name staging coordinator. Never sends model inputs or outputs. */
 export class SharedPilotBudget {
+  #identityProbes = new Map();
   constructor(origin, key, fetcher = fetch) {
     let url;
     try { url = new URL(origin); } catch { throw new Error("shared_pilot_configuration_required"); }
@@ -48,6 +49,41 @@ export class SharedPilotBudget {
   async status() {
     const response = await this.#call("status");
     try { return await response.json(); } catch { throw new Error("shared_pilot_unavailable"); }
+  }
+
+  /** Diagnostic only. A result proves one observed invocation, not account ownership or future versions. */
+  async beginIdentity(path, vaultId) {
+    if (!new Set(["distill", "tailor", "document", "reembed", "vault"]).has(path) || !/^[0-9a-f]{64}$/i.test(vaultId))
+      throw new Error("shared_pilot_identity_invalid");
+    const response = await this.#call("identity/begin", { path, vaultId });
+    let value;
+    try { value = await response.json(); } catch { throw new Error("shared_pilot_unavailable"); }
+    if (response.status !== 201 || !value || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.nonce) ||
+        !Number.isSafeInteger(value.expiresAt)) throw new Error("shared_pilot_unavailable");
+    this.#identityProbes.set(value.nonce, { path, vaultId });
+    return value;
+  }
+  async identityStatus(nonce) {
+    if (!this.#identityProbes.has(nonce)) throw new Error("shared_pilot_identity_invalid");
+    const response = await this.#call("identity/status", { nonce });
+    let value;
+    try { value = await response.json(); } catch { throw new Error("shared_pilot_unavailable"); }
+    if (!value || !["waiting", "observed"].includes(value.state)) throw new Error("shared_pilot_unavailable");
+    return value;
+  }
+  async consumeIdentity(nonce, runId) {
+    const expected = this.#identityProbes.get(nonce);
+    if (!expected || !/^[A-Za-z0-9_-]{1,100}$/.test(runId)) throw new Error("shared_pilot_identity_invalid");
+    // Never retry a consumed challenge on an ambiguous response.
+    this.#identityProbes.delete(nonce);
+    const response = await this.#call("identity/consume", { nonce, runId });
+    let value;
+    try { value = await response.json(); } catch { throw new Error("shared_pilot_unavailable"); }
+    if (!value || value.path !== expected.path || value.vaultId !== expected.vaultId || value.runId !== runId ||
+        !/^[A-Za-z0-9 _:-]{1,100}$/.test(value.step) ||
+        !/^[A-Za-z0-9_-]{1,100}$/.test(value.workerVersion) || !/^[A-Za-z0-9_-]{1,100}$/.test(value.runtimeVersion))
+      throw new Error("shared_pilot_identity_mismatch");
+    return value;
   }
 }
 export function sharedPilotFromEnv(env = process.env) {

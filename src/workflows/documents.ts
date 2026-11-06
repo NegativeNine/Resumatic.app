@@ -64,7 +64,7 @@ export class DocumentWorkflow extends WorkflowEntrypoint<Env, DocumentParams> {
           const plan =
             input.plan ??
             (await planDocument(
-              runModels(this.env, vaultId, runId, "plan"),
+              runModels(this.env, vaultId, runId, "plan", "document"),
               input,
               (queries, k) => v.searchFacts(queries, k, runId),
             ));
@@ -86,7 +86,7 @@ export class DocumentWorkflow extends WorkflowEntrypoint<Env, DocumentParams> {
             input.draft ??
             (await v.cachedRefinement(runId)) ??
             (await writeDocument(
-              runModels(this.env, vaultId, runId, "write"),
+              runModels(this.env, vaultId, runId, "write", "document"),
               input,
               input.plan,
             ));
@@ -104,7 +104,7 @@ export class DocumentWorkflow extends WorkflowEntrypoint<Env, DocumentParams> {
           const result =
             input.result ??
             (await verifyDocument(
-              runModels(this.env, vaultId, runId, "verify"),
+              runModels(this.env, vaultId, runId, "verify", "document"),
               input,
               input.plan,
               input.draft,

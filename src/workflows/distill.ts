@@ -51,7 +51,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
               "not_found",
               "the uploaded file is missing; upload it again",
             );
-          const m = runModels(this.env, vaultId, event.instanceId, "convert");
+          const m = runModels(this.env, vaultId, event.instanceId, "convert", "distill");
           let markdown: string;
           let ocrImageCount: number | undefined;
           if (info.origin === "ocr") {
@@ -94,7 +94,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
           const markdown = await v.sourceText(sourceId);
           const info = await v.sourceInfo(sourceId);
           const extractor = extractorById(progress.extractor);
-          const m = runModels(this.env, vaultId, event.instanceId, "extract");
+          const m = runModels(this.env, vaultId, event.instanceId, "extract", "distill");
           const referenceDate = new Date(info.createdAt)
             .toISOString()
             .slice(0, 10);
@@ -161,6 +161,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
             vaultId,
             event.instanceId,
             "embed",
+            "distill",
           ).embed(
             pending.map((f) => f.text),
             { model: embeddingModel },

@@ -51,6 +51,8 @@ interface ResumaticSecrets {
   /** Separate staging-only secret and binding for the one-shot pilot ledger. */
   PILOT_BUDGET_KEY?: string;
   PILOT_BUDGET?: DurableObjectNamespace<import("./worker/pilot/object").PilotBudget>;
+  /** Worker version under observation; configured only for staging probes. */
+  PILOT_VERSION_METADATA?: WorkerVersionMetadata;
   /** Staging-wide opt-in; no request or user can choose a different mode. */
   PILOT_SHARED_BUDGET?: string;
 }

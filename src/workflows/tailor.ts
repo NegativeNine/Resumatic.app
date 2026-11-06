@@ -29,7 +29,7 @@ export class TailorWorkflow extends WorkflowEntrypoint<Env, TailorParams> {
     const { vaultId, resumeId } = event.payload;
     const v = vault(this.env, vaultId);
     const m = (step: string) =>
-      runModels(this.env, vaultId, event.instanceId, step);
+      runModels(this.env, vaultId, event.instanceId, step, "tailor");
     try {
       await step.do(
         "claim",

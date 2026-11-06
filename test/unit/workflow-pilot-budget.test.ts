@@ -138,4 +138,16 @@ describe("shared staging pilot workflow accounting", () => {
     env.PILOT_SHARED_BUDGET = "true"; env.ALLOW_TEST_SIGNIN = "false";
     expect(() => runModels(env, "vault", "run", "verify")).toThrow("staging pilot ledger is unavailable");
   });
+
+  it("rejects a Workers AI model on a chat route even with a configured price", async () => {
+    const { env, pilot, vault } = fixture();
+    env.MODEL_JUDGE = "@cf/openai/gpt-oss-120b";
+    env.MODEL_PRICES_JSON = JSON.stringify({ [env.MODEL_JUDGE]: [1, 1] });
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    await expect(runModels(env, "vault", "run", "verify").complete("judge", [], schema))
+      .rejects.toThrow("not bounded for the shared pilot");
+    expect(pilot.reserve).not.toHaveBeenCalled();
+    expect(vault.reserveModelAttempt).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
 });

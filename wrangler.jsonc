@@ -107,6 +107,7 @@
     // Build with CLOUDFLARE_ENV=staging, then run wrangler deploy. Deploys as the Worker "resumatic-staging".
     // Bindings, Workflows and vars are not inherited, so they are repeated with staging names.
     "staging": {
+      "version_metadata": { "binding": "PILOT_VERSION_METADATA" },
       "durable_objects": {
         "bindings": [
           { "name": "DIRECTORY", "class_name": "Directory" },

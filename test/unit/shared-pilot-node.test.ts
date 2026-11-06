@@ -101,3 +101,38 @@ describe("shared pilot reservations for the direct evaluator", () => {
     } finally { vi.unstubAllGlobals(); }
   });
 });
+
+describe("pilot ledger identity diagnostic", () => {
+  it("checks the server observation and refuses replay without enabling reservations", async () => {
+    const nonce = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const vaultId = "a".repeat(64);
+    const version = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string);
+      expect(init.headers).toMatchObject({ "x-pilot-budget-key": "k".repeat(32) });
+      if (url.endsWith("/begin")) return Response.json({ nonce, expiresAt: Date.now() + 10000 }, { status: 201 });
+      if (url.endsWith("/status")) return Response.json({ state: "observed" });
+      expect(body).toEqual({ nonce, runId: "run-1" });
+      return Response.json({ path: "distill", vaultId, runId: "run-1", step: "convert", workerVersion: version, runtimeVersion: version });
+    });
+    const pilot = new SharedPilotBudget("https://staging.example.com", "k".repeat(32), fetcher as unknown as typeof fetch);
+    await expect(pilot.beginIdentity("distill", vaultId)).resolves.toMatchObject({ nonce });
+    await expect(pilot.identityStatus(nonce)).resolves.toEqual({ state: "observed" });
+    await expect(pilot.consumeIdentity(nonce, "run-1")).resolves.toMatchObject({ path: "distill", vaultId, workerVersion: version });
+    await expect(pilot.consumeIdentity(nonce, "run-1")).rejects.toThrow("shared_pilot_identity_invalid");
+    await expect(pilot.reserve("id", 1, 1)).rejects.toThrow("shared_pilot_identity_unverified");
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects a mismatched response and never reuses an ambiguous challenge", async () => {
+    const nonce = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const fetcher = vi.fn(async (url: string) => url.endsWith("/begin")
+      ? Response.json({ nonce, expiresAt: Date.now() + 10000 }, { status: 201 })
+      : Response.json({ path: "tailor", vaultId: "a".repeat(64), runId: "run-1", step: "convert", workerVersion: "version", runtimeVersion: "version" }));
+    const pilot = new SharedPilotBudget("https://staging.example.com", "k".repeat(32), fetcher as unknown as typeof fetch);
+    await pilot.beginIdentity("distill", "a".repeat(64));
+    await expect(pilot.consumeIdentity(nonce, "run-1")).rejects.toThrow("shared_pilot_identity_mismatch");
+    await expect(pilot.consumeIdentity(nonce, "run-1")).rejects.toThrow("shared_pilot_identity_invalid");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+});

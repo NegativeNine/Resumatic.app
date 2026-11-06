@@ -28,6 +28,7 @@ export class ReembedWorkflow extends WorkflowEntrypoint<Env, ReembedParams> {
               vaultId,
               runId,
               `batch ${page}`,
+              "reembed",
             ).embed(
               items.map((i) => i.text),
               { model },

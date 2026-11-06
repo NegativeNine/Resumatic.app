@@ -3959,7 +3959,7 @@ export class Vault extends DurableObject<Env> {
     let vector: number[] | undefined;
     try {
       this.requireOpen();
-      [vector] = await runModels(this.env, this.vaultId, id, "embed").embed(
+      [vector] = await runModels(this.env, this.vaultId, id, "embed", "vault").embed(
         [text],
         { model: embeddingModel },
       );
