@@ -568,9 +568,9 @@ api.post("/sources/:id/cancel", async (c) => {
   return c.body(null, 202);
 });
 
-/** The original upload, as the user sent it. */
+/** The source's stored object; image-transcription sources contain JSON input. */
 api.get("/sources/:id/file", async (c) => {
-  const { r2Key, filename } = await myVault(c).sourceFile(
+  const { r2Key, filename, origin } = await myVault(c).sourceFile(
     c.get("who"),
     c.req.param("id"),
   );
@@ -578,11 +578,14 @@ api.get("/sources/:id/file", async (c) => {
   if (!object) throw new AppError("not_found", "the file is no longer stored");
   await myVault(c).checkSession(c.get("who"));
   const extension = filename.split(".").pop()?.toLowerCase() ?? "";
-  const name = `${fileName(filename.replace(/\.[^.]*$/, ""))}${ALLOWED_UPLOADS[extension] ? `.${extension}` : ""}`;
+  const name = origin === "ocr"
+    ? `${fileName(filename.replace(/\s*\(image transcription\)$/i, "").replace(/\.[^.]*$/, ""))}-image-inputs.json`
+    : `${fileName(filename.replace(/\.[^.]*$/, ""))}${ALLOWED_UPLOADS[extension] ? `.${extension}` : ""}`;
   return new Response(object.body, {
     headers: {
-      "content-type":
-        object.httpMetadata?.contentType ?? "application/octet-stream",
+      "content-type": origin === "ocr"
+        ? "application/json"
+        : object.httpMetadata?.contentType ?? "application/octet-stream",
       "content-disposition": `attachment; filename="${name}"`,
       "cache-control": "private, no-store",
     },

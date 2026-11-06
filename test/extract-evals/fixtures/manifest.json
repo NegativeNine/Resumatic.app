@@ -615,6 +615,21 @@
       "conversionStatus": "not-run",
       "promotionEligible": false,
       "sha256": "d4074c8b13b5a4baace462caff505ba2e4e9086638f8bd122ef2eb3a5c781e83"
+    },
+    {
+      "name": "synthetic-scan-dev.pdf",
+      "id": "synthetic-scan-dev",
+      "split": "dev",
+      "format": "pdf",
+      "language": "en",
+      "layout": "image-only-single-column",
+      "pages": 1,
+      "origin": "synthetic",
+      "pdfTextTransform": "ascii-uppercase-raster",
+      "goldOffsets": "none",
+      "conversionStatus": "not-run",
+      "promotionEligible": false,
+      "sha256": "868c0f376bd95e11cdbcea9114f1e33e52fda9316ffdf757e2a946c90ee703df"
     }
   ]
 }

@@ -186,11 +186,25 @@ describe("extraction commit integrity", () => {
         "/api/sources",
       )
     ).sources;
-    expect(listed.find((s) => s.id === sourceId)?.conversionImageCount).toBe(2);
+    expect(listed.find((s) => s.id === sourceId)).toMatchObject({
+      origin: "ocr",
+      parentSourceId: originalId,
+      conversionImageCount: 2,
+    });
     expect(
       listed.find((s) => s.id === originalId)?.conversionImageCount,
     ).toBeNull();
     expect(options.calls?.toMarkdown).toBe(1);
+    const originalDownload = await user.fetch(`/api/sources/${originalId}/file`);
+    expect(originalDownload.status).toBe(200);
+    expect(originalDownload.headers.get("content-disposition")).toMatch(/\.pdf"$/);
+    expect(new TextDecoder().decode(await originalDownload.arrayBuffer())).toBe(RESUME);
+    const imageDownload = await user.fetch(`/api/sources/${sourceId}/file`);
+    expect(imageDownload.status).toBe(200);
+    expect(imageDownload.headers.get("content-type")).toBe("application/json");
+    expect(imageDownload.headers.get("content-disposition")).toMatch(/-image-inputs\.json"$/);
+    expect(await imageDownload.json()).toMatchObject({ referenceDate: "2026-11-06" });
+    expect((await (await signIn()).fetch(`/api/sources/${originalId}/file`)).status).toBe(404);
     expect((await user.json(`/api/sources/${originalId}/text`)).origin).toBe(
       "upload",
     );

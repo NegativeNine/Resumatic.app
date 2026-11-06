@@ -74,7 +74,12 @@ function SourceRow({
           </p>
           <p className="meta">
             Uploaded {formatDate(source.createdAt)} ·{" "}
-            <a href={api.sourceFileUrl(source.id)}>Download source</a>
+            <a href={api.sourceFileUrl(source.id)}>
+              {source.origin === "ocr" ? "Download image inputs (JSON)" : "Download source"}
+            </a>
+            {source.origin === "ocr" && source.parentSourceId && (
+              <> · <a href={api.sourceFileUrl(source.parentSourceId)}>Download original PDF</a></>
+            )}
           </p>
           {source.origin === "ocr" && (
             <p className="meta">

@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { strFromU8, unzipSync } from "fflate";
+import { strFromU8, unzipSync, unzlibSync } from "fflate";
 import { describe, expect, it } from "vitest";
-import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { getDocument, OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { CASES } from "../extract-evals/cases";
 import { makeFixtures } from "../extract-evals/fixture-files.mjs";
 
@@ -65,7 +65,7 @@ describe("synthetic source document fixtures", () => {
   });
   it("reproduces every checked-in byte and marks conversion and promotion pending", () => {
     const generated = makeFixtures();
-    expect(generated).toHaveLength(41);
+    expect(generated).toHaveLength(42);
     const manifest = JSON.parse(
       readFileSync(resolve(root, "manifest.json"), "utf8"),
     ) as {
@@ -114,6 +114,31 @@ describe("synthetic source document fixtures", () => {
       } finally {
         await loading.destroy();
       }
+    }
+  });
+  it("contains a real image-only development PDF without selectable text", async () => {
+    const bytes = readFileSync(resolve(root, "synthetic-scan-dev.pdf"));
+    const header = bytes.toString("latin1");
+    const object = /\/Subtype \/Image[^\n]*\/Width (\d+) \/Height (\d+)[^\n]*\/Length (\d+) >>\nstream\n/.exec(header);
+    expect(object).not.toBeNull();
+    const [, width, height, length] = object!;
+    const imageStart = object!.index + object![0].length;
+    const pixels = unzlibSync(bytes.subarray(imageStart, imageStart + Number(length)));
+    expect(pixels.length).toBe(Number(width) * Number(height));
+    // The image must contain ink as well as the synthetic page background.
+    expect(pixels.some((pixel) => pixel < 64)).toBe(true);
+    expect(pixels.some((pixel) => pixel > 240)).toBe(true);
+    const fixture = makeFixtures().find((item) => item.name === "synthetic-scan-dev.pdf")!;
+    expect(fixture.meta).toMatchObject({ split: "dev", goldOffsets: "none", conversionStatus: "not-run", promotionEligible: false });
+    const loading = getDocument({ data: new Uint8Array(bytes), useSystemFonts: true });
+    try {
+      const pdf = await loading.promise;
+      expect(pdf.numPages).toBe(1);
+      const page = await pdf.getPage(1);
+      expect((await page.getTextContent()).items).toHaveLength(0);
+      expect((await page.getOperatorList()).fnArray).toContain(OPS.paintImageXObject);
+    } finally {
+      await loading.destroy();
     }
   });
   it("provides valid cross-reference offsets, multi-column pages, and a five-page stress input", () => {

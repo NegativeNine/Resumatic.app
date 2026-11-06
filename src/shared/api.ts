@@ -15,7 +15,7 @@
 //   POST   /api/account/sign-out-everywhere   204
 //   POST   /api/sources                multipart field "file" (PDF or DOCX, at most 10 MB) -> 201 { sourceId }
 //   GET    /api/sources                { sources: SourceView[] }
-//   GET    /api/sources/:id/file       the original upload, as an attachment
+//   GET    /api/sources/:id/file       source object as an attachment (OCR sources contain JSON input)
 //   POST   /api/sources/:id/cancel     request cancellation of the current reading run
 //   GET    /api/roles                  { roles: RoleView[] }
 //   POST   /api/roles                  NewRole -> 201 { roleId }   (a role the uploads missed)
@@ -117,6 +117,8 @@ export interface SourceView {
   conversionImageCount?: number | null;
   conversionWarnings?: ("little-text" | "short-lines" | "no-structure")[];
   origin?: "upload" | "ocr";
+  /** Original upload used to create an image-transcription source, if known. */
+  parentSourceId?: string | null;
   extractor?: string | null;
   id: string;
   filename: string;

@@ -705,12 +705,13 @@ export class Vault extends DurableObject<Env> {
         created_at: number;
         proposed: number;
         origin: "upload" | "ocr";
+        parent_source_id: string | null;
         extractor: string | null;
         markdown: string | null;
         ocr_image_count: number | null;
         run_id: string | null;
       }>(
-        `SELECT s.id, s.filename, s.state, s.error, s.created_at, s.origin, s.extractor, s.markdown, s.ocr_image_count, s.run_id,
+        `SELECT s.id, s.filename, s.state, s.error, s.created_at, s.origin, s.parent_source_id, s.extractor, s.markdown, s.ocr_image_count, s.run_id,
            (SELECT COUNT(*) FROM facts f WHERE f.source_id = s.id AND f.state = 'proposed') AS proposed
          FROM sources s ORDER BY s.created_at DESC`,
       )
@@ -728,6 +729,7 @@ export class Vault extends DurableObject<Env> {
         createdAt: r.created_at,
         proposed: r.proposed,
         origin: r.origin,
+        parentSourceId: r.parent_source_id,
         extractor: r.extractor,
         conversionImageCount: r.origin === "ocr" ? r.ocr_image_count : null,
         conversionWarnings:
@@ -742,14 +744,14 @@ export class Vault extends DurableObject<Env> {
       }));
   }
 
-  /** Where the user's original upload is stored, for downloading it again. */
+  /** Where this source's stored object can be downloaded. OCR sources contain image input JSON. */
   async sourceFile(
     who: Who,
     sourceId: string,
-  ): Promise<{ r2Key: string; filename: string }> {
+  ): Promise<{ r2Key: string; filename: string; origin: "upload" | "ocr" }> {
     this.requireOwner(who);
     const row = this.sourceRow(sourceId);
-    return { r2Key: row.r2_key, filename: row.filename };
+    return { r2Key: row.r2_key, filename: row.filename, origin: row.origin };
   }
 
   // ---------------------------------------------------------------- sources (Distill)
