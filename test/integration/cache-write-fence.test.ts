@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { vault } from "../../src/shared/stubs";
 import { readSession } from "../../src/worker/session";
 import { sha256 } from "../../src/worker/crypto";
@@ -152,7 +152,7 @@ it("correlates unknown puts without treating overwritten metadata as proof", asy
   }
 });
 
-it.each(["pdf", "docx"] as const)("fences the real %s route before an in-flight cache put", async (kind) => {
+it.each(["pdf", "docx"] as const)("does not write or return a new %s cache after closure during the legacy R2 lookup", async (kind) => {
   const user = await signIn();
   const session = await readSession(env.SESSION_KEY, user.cookie.slice("__Host-session=".length));
   if (!session) throw new Error("missing synthetic session");
@@ -173,21 +173,20 @@ it.each(["pdf", "docx"] as const)("fences the real %s route before an in-flight 
   let notify!: () => void;
   const waiting = new Promise<void>((resolve) => { release = resolve; });
   const entered = new Promise<void>((resolve) => { notify = resolve; });
-  const files = {
-    get: async () => null,
-    put: async () => { notify(); await waiting; return null; },
-    delete: async () => {},
-  };
+  const put = vi.fn(async () => null);
+  const files = { get: async () => { notify(); await waiting; return null; }, put, delete: async () => {} };
   const bindings = { ...env, FILES: files, R2_CACHE_FENCE_ENABLED: "true" } as unknown as Env;
   const request = Promise.resolve(app.fetch(new Request(`https://resumatic.test/api/resumes/${resumeId}/${kind}`, { headers: { cookie: user.cookie } }), bindings));
   try {
-    await within(Promise.race([entered, request.then((response) => { throw new Error(`request finished before put: ${response.status}`); })]), "cache put");
+    await within(Promise.race([entered, request.then((response) => { throw new Error(`request finished before lookup: ${response.status}`); })]), "legacy cache lookup");
     await stub.quiesce();
-    await runInDurableObject(stub, async (instance) => {
-      await expect(instance.close()).rejects.toThrow("export cache write is unresolved");
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM r2_cache_dispatches`).one().n).toBe(0);
+      expect(state.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM export_cache`).one().n).toBe(0);
     });
     release();
     expect((await within(request, "cache response")).status).toBe(410);
+    expect(put).not.toHaveBeenCalled();
     expect(await stub.close()).toEqual({ distill: [sourceId], tailor: [resumeId] });
   } finally {
     release();
