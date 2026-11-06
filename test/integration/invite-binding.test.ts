@@ -68,20 +68,24 @@ it("does not upgrade an earlier ambiguous capture into a trusted account binding
   await d.addInvite(email);
   const user = await d.signIn({ provider: "test", subject: id, email, hint: "enam" });
   await d.addInvite(email);
-  const op = crypto.randomUUID();
-  // An earlier worker wrote a receipt without the binding_verified column.
-  await runInDurableObject(d, (_instance, state) => state.storage.sql.exec(
-    `INSERT INTO invite_deletion_receipts(operation_id,user_id,vault_id,email,generation,state)
-     SELECT ?,?,?,email,generation,'captured' FROM invites WHERE email=?`,
-    op, user.userId, user.vaultId, email,
-  ));
+  await d.deleteAccount(user.userId, user.vaultId);
+  const finalGeneration = crypto.randomUUID(), sweptAt = Date.now();
+  // Model the durable state of a final sweep and an older receipt that had no
+  // binding proof. The public removal now checks this owner and incarnation.
+  const op = await runInDurableObject(d, (_instance, state) => state.storage.transactionSync(() => {
+    const op = state.storage.sql.exec<{ operation_id: string }>(`SELECT operation_id FROM account_invite_deletions WHERE user_id=?`, user.userId).one().operation_id;
+    state.storage.sql.exec(`UPDATE invite_deletion_receipts SET generation=(SELECT generation FROM invites WHERE email=?),binding_verified=0 WHERE operation_id=?`, email, op);
+    state.storage.sql.exec(`UPDATE vaults SET state='swept',swept_at=? WHERE vault_id=?`, sweptAt, user.vaultId);
+    state.storage.sql.exec(`INSERT INTO account_final_sweeps(vault_id,user_id,generation,swept_at,phase,invite_closed) VALUES (?,?,?,?,'destroyed',0)`, user.vaultId, user.userId, finalGeneration, sweptAt);
+    return op;
+  }));
   await d.captureInviteForDeletion(op, user.userId, user.vaultId, email);
   await runInDurableObject(d, async (instance) => {
-    await expect((instance as Directory).removeCapturedInvite(op, user.userId, user.vaultId, email))
+    await expect((instance as Directory).removeCapturedInvite(op, user.userId, user.vaultId, email, finalGeneration))
       .rejects.toThrow("invitation generation requires operator review");
   });
   await d.addInvite(email);
-  await d.removeCapturedInvite(op, user.userId, user.vaultId, email);
+  await d.removeCapturedInvite(op, user.userId, user.vaultId, email, finalGeneration);
   await d.closeInviteDeletion(op, user.userId, user.vaultId, email);
   expect((await d.listInvites()).some((row) => row.email === email)).toBe(true);
 });

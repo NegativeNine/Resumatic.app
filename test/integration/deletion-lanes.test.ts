@@ -2,6 +2,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { expect, it } from "vitest";
 import { vaultPrefix } from "../../src/shared/r2";
+import { aliasAsGlobal } from "../support/alias-global-directory";
 
 async function account(directory: ReturnType<typeof env.DIRECTORY.getByName>) {
   const email = `${crypto.randomUUID()}@example.test`;
@@ -97,6 +98,7 @@ it("keeps an owner pending until both concurrently retired vaults finish", async
   await Promise.all(ids.map((id) => env.VAULT.get(id).init(user.userId)));
   await runInDurableObject(directory, async (instance, state) => {
     const local = (instance as unknown as { env: Env }).env;
+    const restoreDirectory = aliasAsGlobal(instance, state);
     const oldDelay = local.SWEEP_DELAY_MS, oldFiles = local.FILES;
     local.SWEEP_DELAY_MS = "3600000";
     let running: Promise<void> | undefined;
@@ -128,6 +130,7 @@ it("keeps an owner pending until both concurrently retired vaults finish", async
       await running;
       local.FILES = oldFiles;
       local.SWEEP_DELAY_MS = oldDelay;
+      restoreDirectory();
     }
   });
 }, 30_000);
@@ -137,6 +140,7 @@ it("continues finalizing independent accounts while another final sweep is stall
   const users = await Promise.all([account(directory), account(directory)]);
   await runInDurableObject(directory, async (instance, state) => {
     const local = (instance as unknown as { env: Env }).env;
+    const restoreDirectory = aliasAsGlobal(instance, state);
     const oldDelay = local.SWEEP_DELAY_MS, oldFiles = local.FILES;
     local.SWEEP_DELAY_MS = "3600000";
     let running: Promise<void> | undefined;
@@ -161,6 +165,7 @@ it("continues finalizing independent accounts while another final sweep is stall
       await running;
       local.FILES = oldFiles;
       local.SWEEP_DELAY_MS = oldDelay;
+      restoreDirectory();
     }
   });
 }, 30_000);
@@ -170,6 +175,7 @@ it("finishes a previously swept account while an unrelated deleting vault is sta
   const first = await account(directory), second = await account(directory);
   await runInDurableObject(directory, async (instance, state) => {
     const local = (instance as unknown as { env: Env }).env;
+    const restoreDirectory = aliasAsGlobal(instance, state);
     const oldDelay = local.SWEEP_DELAY_MS, oldFiles = local.FILES;
     local.SWEEP_DELAY_MS = "3600000";
     let running: Promise<void> | undefined;
@@ -194,6 +200,7 @@ it("finishes a previously swept account while an unrelated deleting vault is sta
       await running;
       local.FILES = oldFiles;
       local.SWEEP_DELAY_MS = oldDelay;
+      restoreDirectory();
     }
   });
 }, 30_000);
@@ -205,6 +212,7 @@ it("finishes a previously swept account while an unrelated retirement is stalled
   await env.VAULT.get(retiredId).init(other.userId);
   await runInDurableObject(directory, async (instance, state) => {
     const local = (instance as unknown as { env: Env }).env;
+    const restoreDirectory = aliasAsGlobal(instance, state);
     const oldDelay = local.SWEEP_DELAY_MS, oldFiles = local.FILES;
     local.SWEEP_DELAY_MS = "3600000";
     let running: Promise<void> | undefined;
@@ -229,6 +237,7 @@ it("finishes a previously swept account while an unrelated retirement is stalled
       await running;
       local.FILES = oldFiles;
       local.SWEEP_DELAY_MS = oldDelay;
+      restoreDirectory();
     }
   });
 }, 30_000);
@@ -240,6 +249,7 @@ it("finishes a previously swept account after its own retirement without waiting
   await env.VAULT.get(retiredId).init(first.userId);
   await runInDurableObject(directory, async (instance, state) => {
     const local = (instance as unknown as { env: Env }).env;
+    const restoreDirectory = aliasAsGlobal(instance, state);
     const oldDelay = local.SWEEP_DELAY_MS, oldFiles = local.FILES;
     local.SWEEP_DELAY_MS = "3600000";
     let running: Promise<void> | undefined;
@@ -267,6 +277,7 @@ it("finishes a previously swept account after its own retirement without waiting
       await running;
       local.FILES = oldFiles;
       local.SWEEP_DELAY_MS = oldDelay;
+      restoreDirectory();
     }
   });
 }, 30_000);
@@ -278,6 +289,7 @@ it("does not finalize an account until its own retired vault has completed the s
   await retired.init(user.userId);
   await runInDurableObject(directory, async (instance, state) => {
     const local = (instance as unknown as { env: Env }).env;
+    const restoreDirectory = aliasAsGlobal(instance, state);
     const oldDelay = local.SWEEP_DELAY_MS, oldFiles = local.FILES;
     local.SWEEP_DELAY_MS = "3600000";
     let running: Promise<void> | undefined;
@@ -312,6 +324,7 @@ it("does not finalize an account until its own retired vault has completed the s
       await running;
       local.FILES = oldFiles;
       local.SWEEP_DELAY_MS = oldDelay;
+      restoreDirectory();
     }
   });
 }, 30_000);

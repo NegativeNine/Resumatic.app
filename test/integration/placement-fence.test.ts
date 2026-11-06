@@ -386,8 +386,10 @@ describe("experimental synthetic placement fencing", () => {
   }, 30_000);
 
   it("quarantines an untracked synthetic creation and resumes legacy cleanup only after opting out", async () => {
-    const p = input();
-    const stub = env.DIRECTORY.getByName(`placement-test-${crypto.randomUUID()}`);
+    // Deletion ownership is proved only for the canonical global or sharded
+    // homes; a made-up Directory name with a global-form user ID cannot prove it.
+    const stub = directory(env);
+    const p = { ...input(), authEpoch: await stub.googleAuthEpoch() };
     await runInDurableObject(stub, async (instance, state) => {
       const local = (instance as unknown as { env: Env }).env;
       const prior = local.PLACEMENT_FENCE_ENABLED;
@@ -401,6 +403,8 @@ describe("experimental synthetic placement fencing", () => {
         const account = await (instance as Directory).signIn(legacy);
         state.storage.sql.exec(`UPDATE identities SET subject=? WHERE provider=? AND subject=?`, p.subject, legacy.provider, legacy.subject);
         state.storage.sql.exec(`UPDATE users SET email=? WHERE user_id=?`, p.email, account.userId);
+        // This models an account created before invitation binding existed.
+        state.storage.sql.exec(`DELETE FROM account_invite_bindings WHERE user_id=?`, account.userId);
         local.PLACEMENT_FENCE_ENABLED = "true";
         await (instance as Directory).deleteAccount(account.userId, account.vaultId);
         await (instance as Directory).alarm();

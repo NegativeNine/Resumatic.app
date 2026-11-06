@@ -5,10 +5,11 @@ import { directory } from "../../src/shared/stubs";
 
 it("preserves a reissued invite and same-email replacement account through old-account cleanup", async () => {
   const global = directory(env);
-  const home = env.DIRECTORY.getByName(`invite-delete-home-${crypto.randomUUID()}`);
+  // The production coordinator only accepts canonical global and shard homes.
+  const home = env.DIRECTORY.getByName("directory-0");
   const email = `${crypto.randomUUID()}@example.test`;
   await global.addInvite(email);
-  const old = await home.signIn({ provider: "test", subject: `old-${crypto.randomUUID()}`, email, hint: "enam" });
+  const old = await home.signIn({ provider: "test", subject: `old-${crypto.randomUUID()}`, email, hint: "enam", homeShard: 0, authEpoch: await global.googleAuthEpoch() });
   await home.deleteAccount(old.userId, old.vaultId);
   const op = await runInDurableObject(home, (_instance, state) => state.storage.sql.exec<{operation_id:string}>(
     `SELECT operation_id FROM account_invite_deletions WHERE user_id=?`, old.userId,
@@ -18,7 +19,7 @@ it("preserves a reissued invite and same-email replacement account through old-a
   await global.addInvite(email);
   const after = await runInDurableObject(global, (_instance, state) => state.storage.sql.exec<{generation:string}>(`SELECT generation FROM invites WHERE email=?`, email).one().generation);
   expect(after).not.toBe(before);
-  const replacement = await global.signIn({ provider: "test", subject: `new-${crypto.randomUUID()}`, email, hint: "enam" });
+  const replacement = await global.signIn({ provider: "test", subject: `new-${crypto.randomUUID()}`, email, hint: "enam", authEpoch: await global.googleAuthEpoch() });
   await runInDurableObject(home, async (instance) => {
     const local = (instance as unknown as { env: Env }).env;
     const delay = local.SWEEP_DELAY_MS;
@@ -42,12 +43,17 @@ it("preserves a reissued invite and same-email replacement account through old-a
 it("retries a lost capture without adopting a newer or previously absent invite", async () => {
   const global = directory(env);
   const email = `${crypto.randomUUID()}@example.test`;
-  const user = crypto.randomUUID(), vault = env.VAULT.newUniqueId().toString(), op = crypto.randomUUID();
-  await global.captureInviteForDeletion(op, user, vault, email);
+  const account = await global.signIn({ provider: "test", subject: `old-${crypto.randomUUID()}`, email, hint: "enam", authEpoch: await global.googleAuthEpoch() });
+  await global.deleteAccount(account.userId, account.vaultId);
+  const op = await runInDurableObject(global, (_instance, state) => state.storage.sql.exec<{operation_id:string}>(
+    `SELECT operation_id FROM account_invite_deletions WHERE user_id=?`, account.userId,
+  ).one().operation_id);
   await global.addInvite(email);
-  await global.captureInviteForDeletion(op, user, vault, email);
-  await global.removeCapturedInvite(op, user, vault, email);
-  await global.closeInviteDeletion(op, user, vault, email);
+  await global.captureInviteForDeletion(op, account.userId, account.vaultId, email);
+  await runInDurableObject(global, async (instance) => { await instance.alarm(); });
+  expect(await global.deletionProbe(account.userId, account.vaultId)).toBe(0);
+  await global.captureInviteForDeletion(op, account.userId, account.vaultId, email);
+  await global.removeCapturedInvite(op, account.userId, account.vaultId, email);
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(true);
   await global.removeInviteV2(email);
 });
@@ -55,7 +61,7 @@ it("retries a lost capture without adopting a newer or previously absent invite"
 it("captures a global-home invite atomically at deletion initiation", async () => {
   const global = directory(env), email = `${crypto.randomUUID()}@example.test`;
   await global.addInvite(email);
-  const old = await global.signIn({ provider: "test", subject: `old-${crypto.randomUUID()}`, email, hint: "enam" });
+  const old = await global.signIn({ provider: "test", subject: `old-${crypto.randomUUID()}`, email, hint: "enam", authEpoch: await global.googleAuthEpoch() });
   await global.deleteAccount(old.userId, old.vaultId);
   const captured = await runInDurableObject(global, (_instance, state) => state.storage.sql.exec<{generation:string;operation_id:string}>(
     `SELECT r.generation,r.operation_id FROM invite_deletion_receipts r JOIN account_invite_deletions a ON a.operation_id=r.operation_id WHERE a.user_id=?`, old.userId,

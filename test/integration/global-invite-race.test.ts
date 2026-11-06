@@ -63,7 +63,8 @@ describe("global-home invite authorization", () => {
       }
     });
     const email = `test-${crypto.randomUUID()}@example.test`;
-    expect((await global.signIn({ provider: "test", subject: email, email, hint: "enam" })).userId).toBeTruthy();
+    // Test login reads a fresh epoch before routing, just like the Worker.
+    expect((await global.signIn({ provider: "test", subject: email, email, hint: "enam", authEpoch: await global.googleAuthEpoch() })).userId).toBeTruthy();
   }, 30_000);
 
   it("preserves control-plane authorization for a new sharded account", async () => {

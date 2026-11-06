@@ -2,6 +2,7 @@ import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { expect, it } from "vitest";
 import { vaultPrefix } from "../../src/shared/r2";
+import { aliasAsGlobal } from "../support/alias-global-directory";
 
 async function account(directory: ReturnType<typeof env.DIRECTORY.getByName>) {
   const email = `${crypto.randomUUID()}@example.test`;
@@ -183,10 +184,11 @@ it("resumes finalization after an acknowledged destroy and a later control-plane
       expect(state.storage.sql.exec<{phase:string}>(`SELECT phase FROM account_final_sweeps WHERE vault_id=?`, user.vaultId).one().phase).toBe("destroyed");
       expect(state.storage.sql.exec(`SELECT user_id FROM users WHERE user_id=?`, user.userId).toArray()).toHaveLength(1);
     } finally { local.DIRECTORY = original; }
+    const restoreDirectory = aliasAsGlobal(instance, state);
     try {
       await instance.alarm();
       expect(state.storage.sql.exec(`SELECT user_id FROM users WHERE user_id=?`, user.userId).toArray()).toHaveLength(0);
       expect(state.storage.sql.exec(`SELECT vault_id FROM account_final_sweeps WHERE vault_id=?`, user.vaultId).toArray()).toHaveLength(0);
-    } finally { local.SWEEP_DELAY_MS = oldDelay; }
+    } finally { local.SWEEP_DELAY_MS = oldDelay; restoreDirectory(); }
   });
 });

@@ -1,6 +1,8 @@
 import { BILLING_MIGRATIONS, BILLING_DEFERRED_MIGRATIONS, BILLING_DELIVERY_RETRY_MIGRATIONS, BILLING_EVENT_INCARNATION_MIGRATIONS, BILLING_ACCOUNT_STATE_MIGRATIONS } from "./billing";
 import { PLACEMENT_FENCE_MIGRATIONS } from "./placement-fence";
 import { INVITE_BINDING_MIGRATIONS } from "./invite-binding";
+import { INVITE_INVENTORY_MIGRATIONS } from "./invite-inventory";
+import { INVITE_COORDINATOR_MIGRATIONS } from "./invite-coordinator";
 // Directory tables. Holds identities and the vault directory; never career data.
 
 export const DIRECTORY_MIGRATIONS: readonly string[][] = [
@@ -199,6 +201,8 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
      BEGIN SELECT RAISE(ABORT, 'invite_delete_authorization_required'); END`,
   ],
   INVITE_BINDING_MIGRATIONS,
+  INVITE_INVENTORY_MIGRATIONS,
+  INVITE_COORDINATOR_MIGRATIONS,
 ];
 
 export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T, global = false, shard = false): void {

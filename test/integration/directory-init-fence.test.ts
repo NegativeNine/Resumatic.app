@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import { DIRECTORY_MIGRATIONS } from "../../src/directory/schema";
 import { Vault } from "../../src/vault/vault";
 import { uniqueEmail } from "./support";
+import { undoInviteInventoryMigrations } from "../support/undo-invite-inventory";
+import { aliasAsGlobal } from "../support/alias-global-directory";
 
 const isolated = () => env.DIRECTORY.getByName(`init-fence-${crypto.randomUUID()}`);
 const identity = () => {
@@ -135,6 +137,7 @@ describe("Directory initialization fence", () => {
     const d = isolated();
     const input = identity();
     await runInDurableObject(d, async (instance, ctx) => {
+      const restoreDirectory = aliasAsGlobal(instance, ctx);
       const local = (instance as unknown as { env: Env }).env;
       const original = local.VAULT;
       let entered!: () => void;
@@ -170,6 +173,7 @@ describe("Directory initialization fence", () => {
         await attempt;
         if (concurrent) await concurrent;
         local.VAULT = original;
+        restoreDirectory();
       }
     });
   });
@@ -286,6 +290,7 @@ describe("Directory initialization fence", () => {
     const d = isolated();
     const { vaultId, userId } = await d.signIn(identity());
     await runInDurableObject(d, async (instance, ctx) => {
+      const restoreDirectory = aliasAsGlobal(instance, ctx);
       const local = (instance as unknown as { env: Env }).env;
       const original = local.VAULT;
       let entered!: () => void;
@@ -318,6 +323,7 @@ describe("Directory initialization fence", () => {
         release();
         await pending;
         local.VAULT = original;
+        restoreDirectory();
       }
     });
   });
@@ -328,6 +334,7 @@ describe("Directory initialization fence", () => {
     const target = env.VAULT.newUniqueId().toString();
     const retired = env.VAULT.newUniqueId().toString();
     await runInDurableObject(d, (_instance, ctx) => {
+      undoInviteInventoryMigrations(ctx.storage.sql);
       for (const trigger of ["assign_invite_generation", "rotate_reissued_invite", "guard_invite_delete"])
         ctx.storage.sql.exec(`DROP TRIGGER ${trigger}`);
       ctx.storage.sql.exec(`DROP TRIGGER guard_invite_delete_permit`);

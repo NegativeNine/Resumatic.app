@@ -11,6 +11,8 @@ import { deletePrefix, vaultPrefix } from "../shared/r2";
 import type { SignInInput, VaultRow } from "../shared/types";
 import { migrateDirectory } from "./schema";
 import { PlacementFence, syntheticPlacementIdentity, type PlacementAttempt } from "./placement-fence";
+import { InviteInventory, type ShardInviteInventory } from "./invite-inventory";
+import { InviteCoordinator, type InventoryIdentity } from "./invite-coordinator";
 
 /** How soon a failed deletion is retried. */
 const RETRY_MS = 60_000;
@@ -108,8 +110,24 @@ export class Directory extends DurableObject<Env> {
     return false;
   }
 
+  /** A shard receipt alone never authorizes removal of an invitation. */
+  async sealInviteInventory(operation: string, email: string, excludedUserId: string, epoch: number): Promise<ShardInviteInventory> {
+    if (!this.isShard) throw new AppError("invalid", "invitation inventory requires a shard");
+    return new InviteInventory(this.sql, (fn) => this.ctx.storage.transactionSync(fn), () => this.readShardAuthFloor(),
+      (userId) => this.ctx.id.equals(this.env.DIRECTORY.idFromName(directoryNameForUser(userId))))
+      .seal(operation, email, excludedUserId, epoch);
+  }
+
+  async closeInviteInventory(operation: string, sealEpoch: number, closeEpoch: number): Promise<void> {
+    if (!this.isShard) throw new AppError("invalid", "invitation inventory requires a shard");
+    new InviteInventory(this.sql, (fn) => this.ctx.storage.transactionSync(fn), () => this.readShardAuthFloor(),
+      (userId) => this.ctx.id.equals(this.env.DIRECTORY.idFromName(directoryNameForUser(userId))))
+      .close(operation, sealEpoch, closeEpoch);
+  }
+
   async googleAuthEpoch(): Promise<number> {
     if (!this.isGlobal) throw new AppError("invalid", "sign-in coordinator is invalid");
+    if (this.inviteCoordinator.active()) throw new AppError("unavailable", "sign-in is temporarily unavailable");
     return this.readGoogleAuthEpoch();
   }
 
@@ -161,14 +179,14 @@ export class Directory extends DurableObject<Env> {
   /** The check and authorized writes share one non-interleaving SQL transaction. */
   private googleWrite<T>(provider: string, epoch: number | undefined, action: () => T): T {
     return this.ctx.storage.transactionSync(() => {
-      if (this.isGlobal && provider === "google") {
+      if (this.isGlobal && (provider === "google" || this.sql.exec(`SELECT key FROM meta WHERE key='invite_inventory_epoch_guard' AND value='1'`).toArray().length > 0)) {
         const text = this.sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='global_auth_epoch'`).one().value;
         if (!Number.isSafeInteger(epoch) || epoch! < 0 || !/^(?:0|[1-9]\d*)$/.test(text) || Number(text) !== epoch)
           throw new AppError("conflict", "sign-in is stale; try again");
         this.sql.exec(`INSERT INTO global_auth_marker(slot,epoch) VALUES (1,?)`, epoch!);
         try { return action(); } finally { this.sql.exec(`DELETE FROM global_auth_marker WHERE slot=1`); }
       }
-      if (this.isShard && provider === "google") {
+      if (this.isShard && (provider === "google" || this.sql.exec(`SELECT key FROM meta WHERE key='shard_invite_epoch_guard' AND value='1'`).toArray().length > 0)) {
         if (!Number.isSafeInteger(epoch) || epoch! < this.readShardAuthFloor())
           throw new AppError("conflict", "sign-in is stale; try again");
         this.sql.exec(`INSERT INTO shard_auth_marker(slot,epoch) VALUES (1,?)`, epoch!);
@@ -180,6 +198,64 @@ export class Directory extends DurableObject<Env> {
 
   private get sql(): SqlStorage {
     return this.ctx.storage.sql;
+  }
+
+  private inviteInventoryEnabled(): boolean {
+    // Operator assertion, not proof: enable only after an independently
+    // verified drain of older coordinator and shard runtimes.
+    return (this.env as Env & { INVITE_INVENTORY_DRAIN_VERIFIED?: string }).INVITE_INVENTORY_DRAIN_VERIFIED === "verified-v1";
+  }
+
+  private requireInventoryOwner(b: InventoryIdentity): void {
+    if (!this.isGlobal || directoryNameForUser(b.userId) !== "global" || !this.sql.exec(
+      `SELECT v.vault_id FROM vaults v JOIN users u ON u.user_id=v.user_id
+       JOIN account_final_sweeps a ON a.vault_id=v.vault_id AND a.user_id=u.user_id
+       JOIN account_invite_deletions i ON i.vault_id=v.vault_id AND i.user_id=u.user_id
+       WHERE v.vault_id=? AND v.user_id=? AND u.email=? AND u.state='deleting' AND v.state='swept'
+       AND v.swept_at=a.swept_at AND a.generation=? AND a.phase='destroyed' AND a.invite_closed=0 AND i.operation_id=?`,
+      b.vaultId, b.userId, b.email, b.finalGeneration, b.operationId,
+    ).toArray().length || this.sql.exec(`SELECT vault_id FROM retired_vaults WHERE user_id=? OR vault_id=?`, b.userId, b.vaultId).toArray().length)
+      throw new AppError("unavailable", "account deletion changed; retry cleanup");
+  }
+
+  private get inviteCoordinator(): InviteCoordinator {
+    return new InviteCoordinator({
+      sql: this.sql,
+      transaction: (fn) => this.ctx.storage.transactionSync(fn),
+      storage: this.ctx.storage,
+      epoch: () => this.readGoogleAuthEpoch(),
+      seal: (shard, b, attempt, epoch) => directoryByName(this.env, `directory-${shard}`).sealInviteInventory(attempt, b.email, b.userId, epoch),
+      close: (shard, operation, sealEpoch, closeEpoch) => directoryByName(this.env, `directory-${shard}`).closeInviteInventory(operation, sealEpoch, closeEpoch),
+      validate: (b) => {
+        if (!this.inviteInventoryEnabled()) throw new AppError("unavailable", "invitation inventory rollout requires verification");
+        this.requireInventoryOwner(b);
+      },
+      decide: (b, otherUsers) => {
+        if (!this.inviteInventoryEnabled()) throw new AppError("unavailable", "invitation inventory rollout requires verification");
+        this.requireInventoryOwner(b);
+        const receipt = this.sql.exec<{ generation: string | null; binding_verified: number }>(
+          `SELECT generation,binding_verified FROM invite_deletion_receipts WHERE operation_id=? AND user_id=? AND vault_id=? AND email=? AND state='captured'`,
+          b.operationId, b.userId, b.vaultId, b.email,
+        ).toArray()[0];
+        const binding = this.sql.exec<{ email: string; generation: string | null }>(
+          `SELECT email,generation FROM account_invite_bindings WHERE user_id=?`, b.userId,
+        ).toArray()[0];
+        if (!receipt || receipt.binding_verified !== 1 || !binding || binding.email !== b.email || binding.generation !== receipt.generation)
+          throw new AppError("unavailable", "invitation binding requires review");
+        if (receipt.generation && otherUsers === 0 && !this.hasOtherLocalInviteUser(b.userId, b.email))
+          this.deleteInvite(b.email, receipt.generation);
+      },
+      finish: (b) => {
+        // Once every shard is closed, a changed finalization must not hold the
+        // global sign-in barrier indefinitely. Leave its receipt pending for
+        // reconciliation; the decision was separately checked before removal.
+        try { this.requireInventoryOwner(b); } catch { return; }
+        this.sql.exec(
+          `UPDATE invite_deletion_receipts SET state='removed' WHERE operation_id=? AND user_id=? AND vault_id=? AND email=? AND state='captured'`,
+          b.operationId, b.userId, b.vaultId, b.email,
+        );
+      },
+    });
   }
 
   private get placement(): PlacementFence {
@@ -223,7 +299,11 @@ export class Directory extends DurableObject<Env> {
       throw new AppError("invalid", "invalid account placement claim");
     // Existing identities also need the original authorization epoch: a
     // stale callback must not attach to a replacement account after erasure.
-    if ((this.isGlobal || this.isShard) && p.provider === "google") this.googleWrite(p.provider, p.authEpoch, () => {});
+    const inventoryEpochRequired = this.isGlobal
+      ? this.sql.exec(`SELECT key FROM meta WHERE key='invite_inventory_epoch_guard' AND value='1'`).toArray().length > 0
+      : this.isShard && this.sql.exec(`SELECT key FROM meta WHERE key='shard_invite_epoch_guard' AND value='1'`).toArray().length > 0;
+    if ((this.isGlobal || this.isShard) && (p.provider === "google" || inventoryEpochRequired))
+      this.googleWrite(p.provider, p.authEpoch, () => {});
     const email = p.email.trim().toLowerCase();
     let row = this.findAccount(p.provider, p.subject);
     let created = false;
@@ -632,6 +712,7 @@ export class Directory extends DurableObject<Env> {
       "invite_deletion_receipts",
       "account_invite_deletions",
       "account_invite_bindings",
+      "invite_inventory_barrier",
       "identity_homes",
       "placement_finalizations",
       "placement_receipts",
@@ -698,6 +779,12 @@ export class Directory extends DurableObject<Env> {
     count += this.sql.exec<{ n: number }>(
       `SELECT COUNT(*) AS n FROM account_invite_deletions WHERE vault_id=? AND user_id<>?`, vaultId, userId,
     ).one().n;
+    count += this.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM invite_inventory_barrier WHERE vault_id=? AND user_id<>?`, vaultId, userId,
+    ).one().n;
+    count += this.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM shard_invite_inventory WHERE excluded_user_id=?`, userId,
+    ).one().n;
     // An unattributed open receipt, or a supposedly closed receipt that still
     // carries identity, prevents any account audit from claiming zero.
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invite_deletion_receipts
@@ -706,6 +793,7 @@ export class Directory extends DurableObject<Env> {
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invite_delete_permits`).one().n;
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invite_delete_authorizations`).one().n;
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invite_delete_authorizations_v2`).one().n;
+    count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invite_delete_authorizations_v3`).one().n;
     return count;
   }
 
@@ -1122,22 +1210,27 @@ export class Directory extends DurableObject<Env> {
 
   /** Execute only inside the transaction that authorized this particular deletion. */
   private deleteInvite(email: string, generation?: string): void {
-    this.sql.exec(`INSERT INTO invite_delete_authorizations_v2(email) VALUES (?)`, email);
+    this.sql.exec(`INSERT INTO invite_delete_authorizations_v3(email) VALUES (?)`, email);
     try {
-      this.sql.exec(`INSERT INTO invite_delete_authorizations(email) VALUES (?)`, email);
+      this.sql.exec(`INSERT INTO invite_delete_authorizations_v2(email) VALUES (?)`, email);
       try {
-        this.sql.exec(`INSERT INTO invite_delete_permits(email) VALUES (?)`, email);
+        this.sql.exec(`INSERT INTO invite_delete_authorizations(email) VALUES (?)`, email);
         try {
-          if (generation === undefined) this.sql.exec(`DELETE FROM invites WHERE email=?`, email);
-          else this.sql.exec(`DELETE FROM invites WHERE email=? AND generation=?`, email, generation);
+          this.sql.exec(`INSERT INTO invite_delete_permits(email) VALUES (?)`, email);
+          try {
+            if (generation === undefined) this.sql.exec(`DELETE FROM invites WHERE email=?`, email);
+            else this.sql.exec(`DELETE FROM invites WHERE email=? AND generation=?`, email, generation);
+          } finally {
+            this.sql.exec(`DELETE FROM invite_delete_permits WHERE email=?`, email);
+          }
         } finally {
-          this.sql.exec(`DELETE FROM invite_delete_permits WHERE email=?`, email);
+          this.sql.exec(`DELETE FROM invite_delete_authorizations WHERE email=?`, email);
         }
       } finally {
-        this.sql.exec(`DELETE FROM invite_delete_authorizations WHERE email=?`, email);
+        this.sql.exec(`DELETE FROM invite_delete_authorizations_v2 WHERE email=?`, email);
       }
     } finally {
-      this.sql.exec(`DELETE FROM invite_delete_authorizations_v2 WHERE email=?`, email);
+      this.sql.exec(`DELETE FROM invite_delete_authorizations_v3 WHERE email=?`, email);
     }
   }
 
@@ -1192,44 +1285,51 @@ export class Directory extends DurableObject<Env> {
   }
 
   /** Remove only the captured incarnation; a later invitation must survive. */
-  async removeCapturedInvite(operationId: string, userId: string, vaultId: string, email: string): Promise<void> {
+  async removeCapturedInvite(operationId: string, userId: string, vaultId: string, email: string, finalGeneration?: string): Promise<void> {
     const normalized = this.inviteDeletionIdentity(operationId, userId, vaultId, email);
-    this.ctx.storage.transactionSync(() => {
+    const needsInventory = this.ctx.storage.transactionSync((): InventoryIdentity | null => {
       const row = this.sql.exec<{ user_id: string | null; vault_id: string | null; email: string | null; generation: string | null; state: string; binding_verified: number }>(
         `SELECT user_id,vault_id,email,generation,state,binding_verified FROM invite_deletion_receipts WHERE operation_id=?`, operationId,
       ).toArray()[0];
       if (!row) throw new AppError("unavailable", "invite deletion requires capture");
-      if (row.state === "closed") { this.requireRedactedInviteReceipt(row); return; }
+      if (row.state === "closed") { this.requireRedactedInviteReceipt(row); return null; }
       if (row.user_id !== userId || row.vault_id !== vaultId || row.email !== normalized || !["captured", "removed"].includes(row.state))
         throw new AppError("conflict", "invite deletion changed; retry cleanup");
-      if (row.state === "removed") return;
-      if (row.generation !== null) {
-        if (!/^[a-f0-9]{32}$/.test(row.generation)) throw new AppError("unavailable", "invite requires operator review");
-        if (directoryNameForUser(userId) !== "global") {
-          // Sharded capture occurs after the local deletion commits. An
-          // unchanged generation could already be a reissue, so never delete
-          // it on that evidence. Admin reissue or revocation changes the
-          // condition and allows cleanup to finish on a later retry.
-          if (this.sql.exec(`SELECT email FROM invites WHERE email=? AND generation=?`, normalized, row.generation).toArray().length)
-            throw new AppError("unavailable", "sharded invite requires operator review");
-        } else {
-          // A single invitation can authorize multiple global identities with
-          // the same email. Preserve that grant while another local account
-          // is active. Use sign-in normalization in JavaScript: SQLite
-          // lower() is ASCII-only.
-          const current = this.sql.exec(`SELECT email FROM invites WHERE email=? AND generation=?`, normalized, row.generation).toArray();
-          if (current.length) {
-            const binding = this.sql.exec<{ email: string; generation: string | null }>(
-              `SELECT email,generation FROM account_invite_bindings WHERE user_id=?`, userId,
-            ).toArray()[0];
-            if (row.binding_verified !== 1 || !binding || binding.email !== normalized || binding.generation !== row.generation)
-              throw new AppError("unavailable", "invitation generation requires operator review");
-            if (!this.hasOtherLocalInviteUser(userId, normalized)) this.deleteInvite(normalized, row.generation);
-          }
-        }
+      if (row.state === "removed") return null;
+      if (directoryNameForUser(userId) !== "global") {
+        // A sharded capture has no trustworthy pre-intent binding. This branch
+        // never removes a grant; the sending shard rechecks its operation and
+        // finalization incarnation after this RPC returns.
+        if (row.generation && this.sql.exec(`SELECT email FROM invites WHERE email=? AND generation=?`, normalized, row.generation).toArray().length)
+          throw new AppError("unavailable", "sharded invite requires operator review");
+        this.sql.exec(`UPDATE invite_deletion_receipts SET state='removed' WHERE operation_id=? AND state='captured'`, operationId);
+        return null;
+      }
+      if (typeof finalGeneration !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(finalGeneration))
+        throw new AppError("unavailable", "account deletion requires finalization identity");
+      const b = { operationId, userId, vaultId, email: normalized, finalGeneration };
+      // A delayed RPC must not advance an earlier finalization's receipt, even
+      // when no invitation needs removing.
+      this.requireInventoryOwner(b);
+      if (row.generation !== null && !/^[a-f0-9]{32}$/.test(row.generation))
+        throw new AppError("unavailable", "invite requires operator review");
+      const current = row.generation && this.sql.exec(`SELECT email FROM invites WHERE email=? AND generation=?`, normalized, row.generation).toArray().length;
+      if (current) {
+        const binding = this.sql.exec<{ email: string; generation: string | null }>(`SELECT email,generation FROM account_invite_bindings WHERE user_id=?`, userId).toArray()[0];
+        if (row.binding_verified !== 1 || !binding || binding.email !== normalized || binding.generation !== row.generation)
+          throw new AppError("unavailable", "invitation generation requires operator review");
+        if (!this.hasOtherLocalInviteUser(userId, normalized)) return b;
       }
       this.sql.exec(`UPDATE invite_deletion_receipts SET state='removed' WHERE operation_id=? AND state='captured'`, operationId);
+      return null;
     });
+    if (!needsInventory) return;
+    if (!this.inviteInventoryEnabled()) throw new AppError("unavailable", "invitation inventory rollout requires verification");
+    await this.inviteCoordinator.begin(needsInventory);
+    await this.inviteCoordinator.resume();
+    const row = this.sql.exec<{ state: string }>(`SELECT state FROM invite_deletion_receipts WHERE operation_id=?`, operationId).toArray()[0];
+    if (!row || (row.state !== "removed" && row.state !== "closed"))
+      throw new AppError("unavailable", "invitation inventory is pending");
   }
 
   /** Caller holds the same transaction as the captured-generation removal. */
@@ -1240,11 +1340,10 @@ export class Directory extends DurableObject<Env> {
     // needs a separately verified index or operator reconciliation.
     for (const row of this.sql.exec<{ user_id: SqlStorageValue; email: SqlStorageValue; state: SqlStorageValue }>(`SELECT user_id,email,state FROM users ORDER BY rowid LIMIT 10001`)) {
       if (++scanned > 10_000) throw new AppError("unavailable", "invitation ownership inventory requires review");
-      if (typeof row.user_id !== "string" || !row.user_id || typeof row.email !== "string")
+      if (typeof row.user_id !== "string" || !row.user_id || typeof row.email !== "string" || !row.email.trim() || row.email.length > 320 ||
+          (row.state !== "active" && row.state !== "deleting"))
         throw new AppError("unavailable", "invitation ownership requires review");
       if (row.user_id !== userId && row.email.trim().toLowerCase() === email) {
-        if (row.state !== "active" && row.state !== "deleting")
-          throw new AppError("unavailable", "invitation ownership requires review");
         if (row.state === "active") otherActive = true;
       }
     }
@@ -1329,6 +1428,7 @@ export class Directory extends DurableObject<Env> {
     // such call; a final harmless idle alarm is allowed to consume itself.
     const billingAt = this.billing.nextPendingAt();
     if (
+      (this.isGlobal && this.inviteCoordinator.active()) ||
       this.vaultsIn("deleting").length > 0 ||
       this.vaultsIn("swept").length > 0 ||
       this.sql.exec(`SELECT vault_id FROM retired_vaults LIMIT 1`).toArray().length > 0
@@ -1338,6 +1438,9 @@ export class Directory extends DurableObject<Env> {
     // it is in flight so an unrelated account's inbox cannot postpone erasure
     // or leave known subscriptions running. This does not treat that billing
     // request as settled; the alarm still awaits it before rescheduling.
+    const inventory = this.isGlobal && this.inviteCoordinator.active()
+      ? this.inviteCoordinator.resume().catch(() => { console.error("invitation inventory pending", { code: "inventory_unavailable" }); })
+      : Promise.resolve();
     const billing = this.billing.reconcile().catch(() => {
       console.error("billing reconciliation pending", {
         code: "billing_unavailable",
@@ -1393,7 +1496,7 @@ export class Directory extends DurableObject<Env> {
       for (const id of afterRetirement) attempted.add(id);
       return attempted;
     })();
-    const outcomes = await Promise.allSettled([billing, deletion, retirement, finalization]);
+    const outcomes = await Promise.allSettled([billing, deletion, retirement, finalization, inventory]);
     const failure = outcomes.find((outcome) => outcome.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
     const attempted = (outcomes[3] as PromiseFulfilledResult<Set<string>>).value;
@@ -1538,7 +1641,7 @@ export class Directory extends DurableObject<Env> {
         // using a stale owner or final-sweep incarnation.
         this.requireFinalizationUnchanged(v);
         const shard = /^s(\d+):/i.exec(v.user_id);
-        await directory(this.env).removeCapturedInvite(v.invite_operation!, v.user_id, v.vault_id, v.email);
+        await directory(this.env).removeCapturedInvite(v.invite_operation!, v.user_id, v.vault_id, v.email, v.final_generation!);
         this.requireFinalizationUnchanged(v);
         if (v.stripe_customer)
           await cleanupBillingCustomer(this.env, v.stripe_customer, fetch, parseCheckoutIds(v.stripe_checkout_sessions));
@@ -1760,6 +1863,7 @@ export class Directory extends DurableObject<Env> {
   private async scheduleNext(): Promise<void> {
     const now = Date.now();
     const candidates: number[] = [];
+    if (this.isGlobal && this.inviteCoordinator.active()) candidates.push(now + RETRY_MS);
     if (
       this.sql.exec(`SELECT vault_id FROM retired_vaults LIMIT 1`).toArray()
         .length

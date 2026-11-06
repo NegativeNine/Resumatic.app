@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { DIRECTORY_MIGRATIONS, migrateDirectory } from "../../src/directory/schema";
 import { MIGRATIONS, migrate, SCHEMA_VERSION } from "../../src/vault/schema";
+import { undoInviteCoordinatorMigration, undoInviteInventoryMigrations } from "../support/undo-invite-inventory";
 
 /** Interrupt a migration after its first DDL statement has executed. */
 function failAtTrigger(sql: SqlStorage, trigger: string): SqlStorage {
@@ -48,6 +49,7 @@ function removeExportCacheMigration(sql: SqlStorage): void {
 }
 
 function removeInviteDeletionMigration(sql: SqlStorage): void {
+  undoInviteInventoryMigrations(sql);
   sql.exec(`DROP TRIGGER guard_account_finalization`);
   sql.exec(`ALTER TABLE account_final_sweeps DROP COLUMN invite_closed`);
   for (const trigger of ["assign_invite_generation", "rotate_reissued_invite", "guard_invite_delete"])
@@ -120,6 +122,26 @@ function removeGlobalAuthMigration(sql: SqlStorage): void {
 }
 
 describe("atomic schema migrations", () => {
+  it.each([
+    { table: "shard_invite_inventory", trigger: "shard_invite_seal_insert", undo: undoInviteInventoryMigrations },
+    { table: "invite_inventory_barrier", trigger: "inventory_barrier_users_insert", undo: undoInviteCoordinatorMigration },
+  ])("rolls back the $table migration and its guards together", async ({ table, trigger, undo }) => {
+    const stub = env.DIRECTORY.getByName(`inventory-migration-${crypto.randomUUID()}`);
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      undo(sql);
+      const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((q) => q.includes(`CREATE TABLE ${table}`)));
+      expect(previous).toBeGreaterThan(0);
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrateDirectory(failAtTrigger(sql, trigger), tx)).toThrow(/synthetic migration interruption/);
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name=?`, table).toArray()).toHaveLength(0);
+      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(previous));
+      migrateDirectory(sql, tx);
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name=?`, table).toArray()).toHaveLength(1);
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name=?`, trigger).toArray()).toHaveLength(1);
+    });
+  });
   it("installs invite incarnation and guards atomically while preserving legacy invites", async () => {
     const stub = env.DIRECTORY.getByName(`invite-migration-${crypto.randomUUID()}`);
     await runInDurableObject(stub, (_instance, state) => {

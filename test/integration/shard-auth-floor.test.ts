@@ -6,6 +6,7 @@ import { directoryForSignIn } from "../../src/directory/routing";
 import { allDirectories, directory, directoryByName, directoryForUser } from "../../src/shared/stubs";
 import type { SignInInput } from "../../src/shared/types";
 import { eventually } from "./support";
+import { undoInviteInventoryMigrations } from "../support/undo-invite-inventory";
 
 async function account() {
   const global = directory(env);
@@ -35,6 +36,7 @@ it("rejects a pre-migration create after a previously erased shard wakes", async
   await runInDurableObject(f.home, (_instance, state) => {
     state.storage.sql.exec(`UPDATE meta SET value='0' WHERE key='shard_auth_floor'`);
     state.storage.sql.exec(`DELETE FROM meta WHERE key='shard_rollout_epoch'`);
+    undoInviteInventoryMigrations(state.storage.sql);
     for (const trigger of ["assign_invite_generation", "rotate_reissued_invite", "guard_invite_delete"])
       state.storage.sql.exec(`DROP TRIGGER ${trigger}`);
     state.storage.sql.exec(`DROP TRIGGER guard_invite_delete_permit`);

@@ -7,8 +7,8 @@ import { identityShard } from "../../src/shared/operations";
 import { directory } from "../../src/shared/stubs";
 import type { SignInInput } from "../../src/shared/types";
 
-// Opt-in diagnostic. Until global invitation removal is fenced, it shows
-// that a shard identity absent from the coordinator can share the invitation.
+// Opt-in diagnostic: a shard identity absent from the coordinator can share
+// the invitation, and must keep it while the global account is erased.
 it("preserves a global user's invitation when an unindexed shard identity shares it", async () => {
   const global = directory(env), id = crypto.randomUUID();
   const email = `global-orphan-${id}@example.test`;
@@ -36,4 +36,22 @@ it("preserves a global user's invitation when an unindexed shard identity shares
   });
   expect((await orphan.existingIdentity("google", otherSubject))?.userId).toBe(other.userId);
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(true);
+  expect(await global.deletionProbe(account.userId, account.vaultId)).toBe(0);
+});
+
+it("removes the grant after simultaneous global and shard deletions leave no active account", async () => {
+  const global = directory(env), token = crypto.randomUUID();
+  const email = `simultaneous-${token}@example.test`, epoch = await global.googleAuthEpoch();
+  await global.addInvite(email);
+  const home = await global.signIn({ provider: "google", subject: `global-${token}`, email, hint: "enam", authEpoch: epoch });
+  const subject = `orphan-${token}`, shard = await identityShard("google", subject);
+  const otherDirectory = env.DIRECTORY.getByName(`directory-${shard}`);
+  const other = await otherDirectory.signIn({ provider: "google", subject, email, hint: "enam", homeShard: shard, inviteAuthorized: true, authEpoch: epoch });
+  await otherDirectory.deleteAccount(other.userId, other.vaultId);
+  await global.deleteAccount(home.userId, home.vaultId);
+  await runInDurableObject(global, async (instance) => (instance as Directory).alarm());
+  await runInDurableObject(otherDirectory, async (instance) => (instance as Directory).alarm());
+  expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(false);
+  expect(await global.deletionProbe(home.userId, home.vaultId)).toBe(0);
+  expect(await otherDirectory.deletionProbe(other.userId, other.vaultId)).toBe(0);
 });

@@ -216,6 +216,9 @@ app.post("/auth/test-login", JSON_LIMIT, async (c) => {
     provider: "test",
     subject: email.toLowerCase(),
     email,
+    // Test sign-ins share the same post-inventory shard authorization floor.
+    // Read before routing so an in-flight login cannot outlive a seal.
+    authEpoch: await directory(c.env).googleAuthEpoch(),
     hint: hintFor(cfOf(c)),
   });
   c.header("set-cookie", cookie);
