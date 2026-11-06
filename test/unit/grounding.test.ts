@@ -150,6 +150,46 @@ describe("numbers", () => {
     expect(unsupportedNumbers("Worked 2019–2021", "Worked 2019 to 2021")).toEqual([]);
     expect(unsupportedNumbers("Worked 2021-03-01", "Worked 2021/03/01")).toEqual([]);
   });
+  it("keeps line-wrapped ranges and their units together", () => {
+    for (const [source, equivalent] of [
+      ["5 to\n10", "5 to 10"],
+      ["5\n to 10", "5 to 10"],
+      ["between 5\nand 10", "between 5 and 10"],
+      ["between\n5 and 10", "between 5 and 10"],
+      ["5–\n10", "5–10"],
+      ["five hundred\r\nto\r\nsix hundred", "five hundred to six hundred"],
+      ["5 through\u202810", "5 through 10"],
+      ["5 to 10\nmillion", "5 to 10 million"],
+      ["5\nmillion to 10\nmillion", "5 million to 10 million"],
+      ["5 to 10\npercent", "5 to 10 percent"],
+    ]) {
+      expect(unsupportedNumbers(`Managed ${equivalent} people`, `Managed ${source} people`), source).toEqual([]);
+      expect(unsupportedNumbers("Managed 5 people", `Managed ${source} people`), source).not.toEqual([]);
+      expect(unsupportedNumbers("Managed 10 people", `Managed ${source} people`), source).not.toEqual([]);
+    }
+    expect(unsupportedNumbers("Managed 5 to 10 people", "Managed 5 to 10\nmillion people")).not.toEqual([]);
+    expect(unsupportedNumbers("Managed 5 to 10 people", "Managed 5 to 10\npercent")).not.toEqual([]);
+    expect(unsupportedNumbers("Managed 5 to 10 people", "Managed 5 to 10\nmillionfold")).not.toEqual([]);
+    expect(unsupportedNumbers("Managed 10 people", "Managed 5 to\n10 millionfold people")).not.toEqual([]);
+    for (const continuation of ["½", "/2", "percentile"])
+      expect(unsupportedNumbers("Managed 5 to 10 people", `Managed 5 to 10\n${continuation} people`)).not.toEqual([]);
+    // A dash beginning a new line could introduce a bullet or negative number.
+    expect(unsupportedNumbers("Managed 5 -10 people", "Managed 5\n-10 people")).not.toEqual([]);
+    expect(unsupportedNumbers("Managed 5 people", "Managed 5\n-10 people")).not.toEqual([]);
+    for (const count of ["500", "600"])
+      expect(unsupportedNumbers(`Managed ${count} people`, "Managed five hundred\nto six hundred people")).not.toEqual([]);
+    expect(unsupportedNumbers("Worked 2021-03-01", "Worked 2021/03/01")).toEqual([]);
+    // A following list item is not a continuation of the preceding value.
+    expect(unsupportedNumbers("Managed 5 people", "Managed 5 people\n- Mentored 10 people")).toEqual([]);
+  });
+  it("fails closed on pathological whitespace without matching other evidence quantities", () => {
+    const gap = " ".repeat(129);
+    expect(unsupportedNumbers("Managed 5 people", `Managed 5 people${gap}unknown`)).not.toEqual([]);
+    expect(unsupportedNumbers(`Managed 5${gap}people`, "Managed 5 people")).not.toEqual([]);
+    expect(unsupportedNumbers("Managed 5 people", `Managed 5 people${" ".repeat(60_000)}unknown`)).not.toEqual([]);
+    expect(unsupportedNumbers("Managed 5 people", `${("5" + " ".repeat(128) + "unknown ").repeat(10)}Managed 5 people`)).not.toEqual([]);
+    expect(unsupportedNumbers("Managed 5 people", "Managed 5 people")).toEqual([]);
+  });
   it("treats written, numeric, and mixed scaled quantities as a single quantity", () => {
     for (const [source, expected] of [
       ["five hundred", "500"], ["one hundred and 5", "105"],

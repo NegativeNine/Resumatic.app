@@ -4,9 +4,8 @@ import { expect, it } from "vitest";
 import type { Directory } from "../../src/directory/directory";
 import { directory, vault } from "../../src/shared/stubs";
 
-// Known-unsatisfied release invariant: an invite reissued after the Vault has
-// durably accepted deletion must not be removed by that deletion. Run with
-// RESUMATIC_PLACEMENT_DIAGNOSTIC=1; this test currently fails intentionally.
+// An invite reissued after the Vault has accepted deletion must not be
+// removed by that deletion. Run with RESUMATIC_PLACEMENT_DIAGNOSTIC=1.
 it("preserves an invitation reissued after Vault deletion intent", async () => {
   const global = directory(env), id = crypto.randomUUID();
   const email = `intent-reissue-${id}@example.test`;
@@ -31,7 +30,7 @@ it("preserves an invitation reissued after Vault deletion intent", async () => {
       `SELECT generation FROM invite_deletion_receipts WHERE user_id=?`, account.userId,
     ).one().generation,
   );
-  expect(capturedGeneration).toBe(reissuedGeneration);
+  expect(capturedGeneration).toBe(originalGeneration);
   await runInDurableObject(global, async (instance) => {
     const local = (instance as unknown as { env: Env }).env, delay = local.SWEEP_DELAY_MS;
     local.SWEEP_DELAY_MS = "0";

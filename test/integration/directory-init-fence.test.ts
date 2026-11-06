@@ -331,6 +331,10 @@ describe("Directory initialization fence", () => {
       for (const trigger of ["assign_invite_generation", "rotate_reissued_invite", "guard_invite_delete"])
         ctx.storage.sql.exec(`DROP TRIGGER ${trigger}`);
       ctx.storage.sql.exec(`DROP TRIGGER guard_invite_delete_permit`);
+      ctx.storage.sql.exec(`DROP TRIGGER guard_invite_delete_authorization_v2`);
+      ctx.storage.sql.exec(`DROP TABLE invite_delete_authorizations_v2`);
+      ctx.storage.sql.exec(`DROP TRIGGER remove_account_invite_binding`);
+      ctx.storage.sql.exec(`DROP TABLE account_invite_bindings`);
       ctx.storage.sql.exec(`DROP TABLE invite_delete_authorizations`);
       for (const table of ["invite_delete_permits", "invite_deletion_receipts", "account_invite_deletions"])
         ctx.storage.sql.exec(`DROP TABLE ${table}`);

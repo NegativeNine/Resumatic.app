@@ -284,6 +284,18 @@ export class Directory extends DurableObject<Env> {
           email,
           now,
         );
+        if (this.isGlobal) {
+          // Record even the absence of a grant. This is in the same
+          // transaction as the user insert and uses sign-in's normalized
+          // email, so a later reissue is never adopted by account deletion.
+          const grant = this.sql.exec<{ generation: string | null }>(
+            `SELECT generation FROM invites WHERE email=?`, email,
+          ).toArray()[0];
+          if (grant && (typeof grant.generation !== "string" || !/^[a-f0-9]{32}$/.test(grant.generation)))
+            throw new AppError("unavailable", "invitation requires review");
+          this.sql.exec(`INSERT INTO account_invite_bindings(user_id,email,generation) VALUES (?,?,?)`,
+            userId, email, grant?.generation ?? null);
+        }
         this.sql.exec(
           `INSERT INTO identities (provider, subject, user_id) VALUES (?, ?, ?)`,
           p.provider,
@@ -619,6 +631,7 @@ export class Directory extends DurableObject<Env> {
       "account_final_sweeps",
       "invite_deletion_receipts",
       "account_invite_deletions",
+      "account_invite_bindings",
       "identity_homes",
       "placement_finalizations",
       "placement_receipts",
@@ -692,6 +705,7 @@ export class Directory extends DurableObject<Env> {
          OR (state='closed' AND (user_id IS NOT NULL OR vault_id IS NOT NULL OR email IS NOT NULL OR generation IS NOT NULL))`).one().n;
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invite_delete_permits`).one().n;
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invite_delete_authorizations`).one().n;
+    count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invite_delete_authorizations_v2`).one().n;
     return count;
   }
 
@@ -1108,17 +1122,22 @@ export class Directory extends DurableObject<Env> {
 
   /** Execute only inside the transaction that authorized this particular deletion. */
   private deleteInvite(email: string, generation?: string): void {
-    this.sql.exec(`INSERT INTO invite_delete_authorizations(email) VALUES (?)`, email);
+    this.sql.exec(`INSERT INTO invite_delete_authorizations_v2(email) VALUES (?)`, email);
     try {
-      this.sql.exec(`INSERT INTO invite_delete_permits(email) VALUES (?)`, email);
+      this.sql.exec(`INSERT INTO invite_delete_authorizations(email) VALUES (?)`, email);
       try {
-        if (generation === undefined) this.sql.exec(`DELETE FROM invites WHERE email=?`, email);
-        else this.sql.exec(`DELETE FROM invites WHERE email=? AND generation=?`, email, generation);
+        this.sql.exec(`INSERT INTO invite_delete_permits(email) VALUES (?)`, email);
+        try {
+          if (generation === undefined) this.sql.exec(`DELETE FROM invites WHERE email=?`, email);
+          else this.sql.exec(`DELETE FROM invites WHERE email=? AND generation=?`, email, generation);
+        } finally {
+          this.sql.exec(`DELETE FROM invite_delete_permits WHERE email=?`, email);
+        }
       } finally {
-        this.sql.exec(`DELETE FROM invite_delete_permits WHERE email=?`, email);
+        this.sql.exec(`DELETE FROM invite_delete_authorizations WHERE email=?`, email);
       }
     } finally {
-      this.sql.exec(`DELETE FROM invite_delete_authorizations WHERE email=?`, email);
+      this.sql.exec(`DELETE FROM invite_delete_authorizations_v2 WHERE email=?`, email);
     }
   }
 
@@ -1157,16 +1176,27 @@ export class Directory extends DurableObject<Env> {
     const invite = this.sql.exec<{ generation: string | null }>(`SELECT generation FROM invites WHERE email=?`, normalized).toArray()[0];
     if (invite && (typeof invite.generation !== "string" || !/^[a-f0-9]{32}$/.test(invite.generation)))
       throw new AppError("unavailable", "invite requires operator review");
-    this.sql.exec(`INSERT INTO invite_deletion_receipts(operation_id,user_id,vault_id,email,generation,state) VALUES (?,?,?,?,?,'captured')`,
-      operationId, userId, vaultId, normalized, invite?.generation ?? null);
+    const binding = directoryNameForUser(userId) === "global"
+      ? this.sql.exec<{ email: string; generation: string | null }>(
+          `SELECT email,generation FROM account_invite_bindings WHERE user_id=?`, userId,
+        ).toArray()[0]
+      : undefined;
+    if (binding && (binding.email !== normalized ||
+        (binding.generation !== null && (typeof binding.generation !== "string" || !/^[a-f0-9]{32}$/.test(binding.generation)))))
+      throw new AppError("unavailable", "invitation binding requires review");
+    // An absent binding is legacy/ambiguous, not proof that there was no
+    // invitation. Capture the observed generation so a later reissue permits
+    // cleanup, but never delete that captured generation without a binding.
+    this.sql.exec(`INSERT INTO invite_deletion_receipts(operation_id,user_id,vault_id,email,generation,state,binding_verified) VALUES (?,?,?,?,?,'captured',?)`,
+      operationId, userId, vaultId, normalized, binding ? binding.generation : invite?.generation ?? null, binding ? 1 : 0);
   }
 
   /** Remove only the captured incarnation; a later invitation must survive. */
   async removeCapturedInvite(operationId: string, userId: string, vaultId: string, email: string): Promise<void> {
     const normalized = this.inviteDeletionIdentity(operationId, userId, vaultId, email);
     this.ctx.storage.transactionSync(() => {
-      const row = this.sql.exec<{ user_id: string | null; vault_id: string | null; email: string | null; generation: string | null; state: string }>(
-        `SELECT user_id,vault_id,email,generation,state FROM invite_deletion_receipts WHERE operation_id=?`, operationId,
+      const row = this.sql.exec<{ user_id: string | null; vault_id: string | null; email: string | null; generation: string | null; state: string; binding_verified: number }>(
+        `SELECT user_id,vault_id,email,generation,state,binding_verified FROM invite_deletion_receipts WHERE operation_id=?`, operationId,
       ).toArray()[0];
       if (!row) throw new AppError("unavailable", "invite deletion requires capture");
       if (row.state === "closed") { this.requireRedactedInviteReceipt(row); return; }
@@ -1188,8 +1218,14 @@ export class Directory extends DurableObject<Env> {
           // is active. Use sign-in normalization in JavaScript: SQLite
           // lower() is ASCII-only.
           const current = this.sql.exec(`SELECT email FROM invites WHERE email=? AND generation=?`, normalized, row.generation).toArray();
-          if (current.length && !this.hasOtherLocalInviteUser(userId, normalized))
-            this.deleteInvite(normalized, row.generation);
+          if (current.length) {
+            const binding = this.sql.exec<{ email: string; generation: string | null }>(
+              `SELECT email,generation FROM account_invite_bindings WHERE user_id=?`, userId,
+            ).toArray()[0];
+            if (row.binding_verified !== 1 || !binding || binding.email !== normalized || binding.generation !== row.generation)
+              throw new AppError("unavailable", "invitation generation requires operator review");
+            if (!this.hasOtherLocalInviteUser(userId, normalized)) this.deleteInvite(normalized, row.generation);
+          }
         }
       }
       this.sql.exec(`UPDATE invite_deletion_receipts SET state='removed' WHERE operation_id=? AND state='captured'`, operationId);

@@ -216,6 +216,18 @@ function dateComponents(text: string): { components: DateComponent[]; numericRan
 
 /** Every number in the text, with scale words applied and percentages flagged. */
 export function numbersIn(text: string): NumberToken[] {
+  // The recognizers below contain overlapping whitespace alternatives.
+  // Pathological converted text can otherwise force quadratic backtracking.
+  // Do not truncate it or split it into apparently independent evidence:
+  // an unmatchable token makes every numeric claim against it fail closed.
+  let whitespaceCost = 0;
+  for (const match of text.matchAll(/[^\S\r\n\u2028\u2029]+/gu)) {
+    const length = match[0].length;
+    whitespaceCost += Math.max(0, length - 8) ** 2;
+    if (length > 128 || whitespaceCost > 65_536)
+      return [{ value: Infinity, percent: false, multiplier: false, ordinal: false,
+        currency: null, raw: "unrecognized numeric context", date: false, datePart: null, dateKey: null }];
+  }
   const out: NumberToken[] = [];
   const dates = dateComponents(text);
   const ranges = numberRanges(text, dates.numericRanges);

@@ -1,5 +1,6 @@
 import { BILLING_MIGRATIONS, BILLING_DEFERRED_MIGRATIONS, BILLING_DELIVERY_RETRY_MIGRATIONS, BILLING_EVENT_INCARNATION_MIGRATIONS, BILLING_ACCOUNT_STATE_MIGRATIONS } from "./billing";
 import { PLACEMENT_FENCE_MIGRATIONS } from "./placement-fence";
+import { INVITE_BINDING_MIGRATIONS } from "./invite-binding";
 // Directory tables. Holds identities and the vault directory; never career data.
 
 export const DIRECTORY_MIGRATIONS: readonly string[][] = [
@@ -197,6 +198,7 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
      WHEN NOT EXISTS(SELECT 1 FROM invite_delete_authorizations WHERE email=NEW.email)
      BEGIN SELECT RAISE(ABORT, 'invite_delete_authorization_required'); END`,
   ],
+  INVITE_BINDING_MIGRATIONS,
 ];
 
 export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T, global = false, shard = false): void {

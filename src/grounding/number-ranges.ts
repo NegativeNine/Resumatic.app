@@ -1,4 +1,4 @@
-/** An exact same-line range is evidence for that range, not its endpoints. */
+/** A range is evidence for that range, not its endpoints. */
 export interface NumberRange {
   start: number;
   end: number;
@@ -8,6 +8,10 @@ export interface NumberRange {
 }
 
 const space = "[^\\S\\r\\n\\u2028\\u2029]";
+// PDF and DOCX conversion can wrap a range at its connector or before a unit.
+// Permit one line break, never an arbitrary number of blank lines.
+const gap = `${space}*(?:(?:\\r\\n|[\\r\\n\\u2028\\u2029])${space}*)?`;
+const requiredGap = `(?:${space}+|${space}*(?:\\r\\n|[\\r\\n\\u2028\\u2029])${space}*)`;
 // The permissive final alternative captures malformed separators so that a
 // partial number cannot escape the range scanner as standalone evidence.
 const literal = "(?:(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?|\\.\\d+|\\d[\\d,.]*)(?:e[+\\-−]?\\d+)?(?:st|nd|rd|th)?";
@@ -19,22 +23,22 @@ const join = `(?:${space}+|[-‐‑‒–—])`;
 const small = `(?:${fraction}|${literal}|${word})`;
 const group = `(?:(?:${small}|a)${join}hundred(?:${join}(?:and${join})?${small})?|hundred(?:${join}(?:and${join})?${small})?|${small}|a)`;
 const quantity = `${group}(?:${join}(?:thousand|million|billion)(?:${join}(?:and${join})?${group})?)*`;
-const endpointCore = `(?:[+\\-−]${space}*)?(?:[$€£]|USD\\b|EUR\\b|GBP\\b)?${space}*(?:[+\\-−]${space}*)?${quantity}(?:${space}*${unit})?`;
+const endpointCore = `(?:[+\\-−]${space}*)?(?:[$€£]|USD\\b|EUR\\b|GBP\\b)?${space}*(?:[+\\-−]${space}*)?${quantity}(?:${gap}${unit})?`;
 const endpoint = `(?:\\(${space}*${endpointCore}${space}*\\)|${endpointCore})`;
 // Hyphens between English words can instead form one compound number (for
 // example twenty-five), so word endpoints require "to" or "between ... and".
 const digitFraction = "(?:\\d+[⁄∕/]\\d+|\\d*[¼½¾⅐-⅞])";
-const digitEndpointCore = `(?:[+\\-−]${space}*)?(?:[$€£]|USD\\b|EUR\\b|GBP\\b)?${space}*(?:[+\\-−]${space}*)?(?:${digitFraction}|${literal})(?:${space}*${unit})?`;
+const digitEndpointCore = `(?:[+\\-−]${space}*)?(?:[$€£]|USD\\b|EUR\\b|GBP\\b)?${space}*(?:[+\\-−]${space}*)?(?:${digitFraction}|${literal})(?:${gap}${unit})?`;
 const digitEndpoint = `(?:\\(${space}*${digitEndpointCore}${space}*\\)|${digitEndpointCore})`;
 const range = new RegExp(
-  `(?<![\\p{L}\\p{N}_.,/⁄∕])(?:between${space}+(${endpoint})${space}+and${space}+(${endpoint})|(${endpoint})${space}+(?:to|through)${space}+(${endpoint})|(${digitEndpoint})${space}*[-–—]${space}*(${digitEndpoint})|(${endpoint})${space}*[–—]${space}*(${endpoint}))(?![\\p{L}\\p{N}_])`,
+  `(?<![\\p{L}\\p{N}_.,/⁄∕])(?:between${requiredGap}(${endpoint})${requiredGap}and${requiredGap}(${endpoint})|(${endpoint})${requiredGap}(?:to|through)${requiredGap}(${endpoint})|(${digitEndpoint})${gap}[-–—]${gap}(${digitEndpoint})|(${endpoint})${gap}[–—]${gap}(${endpoint}))(?![\\p{L}\\p{N}_])`,
   "giu",
 );
 // A partially parsed scale, fraction, or non-ASCII numeral can change the
 // endpoint. Consume it as part of an unmatchable range instead of silently
 // presenting the shorter prefix as evidence.
 const continuation = new RegExp(
-  `^(?:[-‐‑‒–—][\\p{L}\\p{M}]+|${space}*(?:(?:hundred|thousand|million|billion|dozen)[\\p{L}]*|(?:[.,/⁄∕٫٬]\\p{N}+|[\\p{No}\\p{Nl}]+)(?:${space}*(?:hundred|thousand|million|billion|dozen)[\\p{L}]*)?)|${space}+(?:${fraction}|${literal}|${word})(?:(?:${space}+|[-‐‑‒–—])(?:${fraction}|${literal}|${word}|hundred|thousand|million|billion|dozen|and))*)`,
+  `^(?:[-‐‑‒–—][\\p{L}\\p{M}]+|${gap}(?:(?:hundred|thousand|million|billion|dozen)[\\p{L}]*|(?:percent(?:age)?|pct)[\\p{L}]+|(?:[.,/⁄∕٫٬]\\p{N}+|[\\p{No}\\p{Nl}]+)(?:${space}*(?:hundred|thousand|million|billion|dozen)[\\p{L}]*)?)|${space}+(?:${fraction}|${literal}|${word})(?:(?:${space}+|[-‐‑‒–—])(?:${fraction}|${literal}|${word}|hundred|thousand|million|billion|dozen|and))*)`,
   "iu",
 );
 
@@ -72,7 +76,11 @@ export function numberRanges(text: string, dateSpans: [number, number][]): Numbe
     });
     const hasFraction = /[⁄∕/¼½¾⅐-⅞]|\b(?:half|halves|thirds?|quarters?)\b/i.test(raw);
     const ordinal = /(?:\d(?:st|nd|rd|th)|(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth))\b/i;
-    result.push({ start, end, raw, key: raw.toLowerCase().replace(/\s+/g, " ").trim(), valid: !extra && !hasFraction && currencies.size <= 1 && !(percent && (currencies.size > 0 || multiplier)) && !(multiplier && currencies.size > 0) && ordinal.test(left) === ordinal.test(right) && representable });
+    const key = raw.toLowerCase().replace(/([–—-])[^\S\r\n\u2028\u2029]*(?:\r\n|[\r\n\u2028\u2029])[^\S\r\n\u2028\u2029]*/g, "$1").replace(/\s+/g, " ").trim();
+    // A dash at the start of the next line may be a bullet or a negative
+    // quantity, rather than a range separator. Do not infer which it is.
+    const ambiguousDash = /(?:\r\n|[\r\n\u2028\u2029])[^\S\r\n\u2028\u2029]*[-–—]/u.test(raw);
+    result.push({ start, end, raw, key, valid: !extra && !hasFraction && !ambiguousDash && currencies.size <= 1 && !(percent && (currencies.size > 0 || multiplier)) && !(multiplier && currencies.size > 0) && ordinal.test(left) === ordinal.test(right) && representable });
   }
   return result;
 }

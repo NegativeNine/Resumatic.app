@@ -38,6 +38,10 @@ it("rejects a pre-migration create after a previously erased shard wakes", async
     for (const trigger of ["assign_invite_generation", "rotate_reissued_invite", "guard_invite_delete"])
       state.storage.sql.exec(`DROP TRIGGER ${trigger}`);
     state.storage.sql.exec(`DROP TRIGGER guard_invite_delete_permit`);
+    state.storage.sql.exec(`DROP TRIGGER guard_invite_delete_authorization_v2`);
+    state.storage.sql.exec(`DROP TABLE invite_delete_authorizations_v2`);
+    state.storage.sql.exec(`DROP TRIGGER remove_account_invite_binding`);
+    state.storage.sql.exec(`DROP TABLE account_invite_bindings`);
     state.storage.sql.exec(`DROP TABLE invite_delete_authorizations`);
     for (const table of ["invite_delete_permits", "invite_deletion_receipts", "account_invite_deletions"])
       state.storage.sql.exec(`DROP TABLE ${table}`);

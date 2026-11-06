@@ -14,6 +14,13 @@ async function alarmNow(stub: ReturnType<typeof directory>) {
   });
 }
 
+async function bindSyntheticUser(stub: ReturnType<typeof directory>, userId: string, email: string) {
+  await runInDurableObject(stub, (_instance, state) => {
+    state.storage.sql.exec(`INSERT INTO account_invite_bindings(user_id,email,generation)
+      SELECT ?,email,generation FROM invites WHERE email=?`, userId, email);
+  });
+}
+
 it("preserves the shared invitation when one of two global accounts is deleted", async () => {
   const global = directory(env), id = crypto.randomUUID();
   const email = `shared-${id}@example.test`;
@@ -67,6 +74,7 @@ it("does not skip a malformed row following a known shared user", async () => {
   const global = directory(env), id = crypto.randomUUID(), email = `${id}@example.test`;
   const user = crypto.randomUUID(), vault = env.VAULT.newUniqueId().toString(), op = crypto.randomUUID();
   await global.addInvite(email);
+  await bindSyntheticUser(global, user, email);
   await global.captureInviteForDeletion(op, user, vault, email);
   await runInDurableObject(global, async (instance, state) => {
     state.storage.sql.exec(`INSERT INTO users(user_id,email,state,created_at) VALUES (?,?,'active',?)`, `first-${id}`, email, Date.now());
@@ -84,6 +92,7 @@ it("holds a same-email user whose state is unknown", async () => {
   const global = directory(env), id = crypto.randomUUID(), email = `${id}@example.test`;
   const user = crypto.randomUUID(), vault = env.VAULT.newUniqueId().toString(), op = crypto.randomUUID();
   await global.addInvite(email);
+  await bindSyntheticUser(global, user, email);
   await global.captureInviteForDeletion(op, user, vault, email);
   await runInDurableObject(global, async (instance, state) => {
     state.storage.sql.exec(`INSERT INTO users(user_id,email,state,created_at) VALUES (?,?,'unexpected',?)`, `unknown-${id}`, email, Date.now());
@@ -100,6 +109,7 @@ it("holds an oversized local inventory and can retry after it is reduced", async
   const global = directory(env), id = crypto.randomUUID(), email = `${id}@example.test`;
   const user = crypto.randomUUID(), vault = env.VAULT.newUniqueId().toString(), op = crypto.randomUUID();
   await global.addInvite(email);
+  await bindSyntheticUser(global, user, email);
   await global.captureInviteForDeletion(op, user, vault, email);
   await runInDurableObject(global, async (instance, state) => {
     state.storage.sql.exec(`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<10001)
@@ -119,6 +129,7 @@ it("holds an ambiguous malformed local email and retries without deleting a reis
   const global = directory(env), id = crypto.randomUUID(), email = `${id}@example.test`;
   const user = crypto.randomUUID(), vault = env.VAULT.newUniqueId().toString(), op = crypto.randomUUID();
   await global.addInvite(email);
+  await bindSyntheticUser(global, user, email);
   await global.captureInviteForDeletion(op, user, vault, email);
   await runInDurableObject(global, async (instance, state) => {
     state.storage.sql.exec(`INSERT INTO users(user_id,email,state,created_at) VALUES (?,x'FF','active',?)`, `malformed-${id}`, Date.now());
