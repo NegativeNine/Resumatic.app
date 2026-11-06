@@ -196,6 +196,7 @@ describe("Distill", () => {
     await vault(env, await vaultIdOf(user)).saveExtraction(
       sourceId,
       extraction,
+      sourceId,
     );
     expect((await user.json("/api/facts")).facts).toHaveLength(8);
     expect((await user.json("/api/roles")).roles).toHaveLength(3);

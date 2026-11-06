@@ -23,7 +23,7 @@ export interface DocumentParams {
   runId: string;
 }
 interface DocumentVault {
-  claimRun(id: string): Promise<unknown>;
+  claimRun(id: string, expected: { kind: "document"; targetId: string }): Promise<unknown>;
   documentInput(id: string): Promise<DocumentState>;
   cachedRefinement(id: string): Promise<DocumentDraft | null>;
   searchFacts(
@@ -51,13 +51,15 @@ export class DocumentWorkflow extends WorkflowEntrypoint<Env, DocumentParams> {
     step: WorkflowStep,
   ): Promise<{ units: number; questions: number } | { failed: true }> {
     const { vaultId, runId } = event.payload;
+    // Do not let a foreign instance's failure handler mutate the target run.
+    if (event.instanceId !== runId) return { failed: true };
     const v = vault(this.env, vaultId) as unknown as DocumentVault;
     try {
       await step.do(
         "plan",
         MODEL_STEP,
         once(async () => {
-          await v.claimRun(runId);
+          await v.claimRun(event.instanceId, { kind: "document", targetId: runId });
           const input = await v.documentInput(runId);
           const plan =
             input.plan ??

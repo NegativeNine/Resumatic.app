@@ -31,7 +31,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
         "claim",
         STEP,
         once(async () => {
-          await v.claimRun(event.instanceId);
+          await v.claimRun(event.instanceId, { kind: "distill", targetId: sourceId });
           return { ok: true };
         }),
       );
@@ -149,7 +149,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
         MODEL_STEP,
         once(async () => {
           const embeddingModel = await v.embeddingModel();
-          const pending = await v.unembeddedFacts(sourceId);
+          const pending = await v.unembeddedFacts(sourceId, event.instanceId);
           if (pending.length === 0) {
             await v.completeSourceStep(sourceId, "embed", event.instanceId);
             return { embedded: 0 };
@@ -172,6 +172,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
               }))
               .filter((x) => x.vector.length),
             embeddingModel,
+            { runId: event.instanceId, sourceId },
           );
           await v.completeSourceStep(sourceId, "embed", event.instanceId);
           return { embedded: pending.length };
@@ -200,7 +201,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
             event.instanceId,
           );
         } catch (error) {
-          if (errorCode(error) !== "gone") throw error;
+          if (errorCode(error) !== "gone" && errorCode(error) !== "not_found") throw error;
         }
         return { failed: true };
       });

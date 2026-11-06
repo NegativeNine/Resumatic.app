@@ -36,7 +36,7 @@ describe("uncertain workflow starts", () => {
         expect((await instance.listSources(who))[0]).toMatchObject({ dispatchUncertain: false });
         state.storage.sql.exec(`UPDATE runs SET updated_at = ? WHERE id = ?`, Date.now() - 31_000, sourceId);
         expect((await instance.listSources(who))[0]).toMatchObject({ dispatchUncertain: true });
-        await instance.claimRun(sourceId);
+        await instance.claimRun(sourceId, { kind: "distill", targetId: sourceId });
         expect((await instance.listSources(who))[0]).toMatchObject({ dispatchUncertain: false });
         // A late create rejection cannot make an already-started run unconfirmed.
         const inner = instance as unknown as { runs: { noteUncertain(id: string, code: string): void } };
@@ -63,7 +63,7 @@ describe("uncertain workflow starts", () => {
         expect((await instance.listApplications(who))[0]?.resumes[0]).toMatchObject({ id: resumeId, dispatchUncertain: true });
         await expect(instance.tailor(who, applicationId)).rejects.toThrow(/already being generated/);
         expect(await instance.getResume(who, resumeId)).toMatchObject({ state: "running", dispatchUncertain: true });
-        await instance.claimRun(resumeId);
+        await instance.claimRun(resumeId, { kind: "tailor", targetId: resumeId });
         expect(await instance.getResume(who, resumeId)).toMatchObject({ dispatchUncertain: false });
       } finally { local.TAILOR = original; }
     });
@@ -83,7 +83,7 @@ describe("uncertain workflow starts", () => {
         const { documentId } = await instance.startDocument(who, applicationId, { kind: "questions" }, crypto.randomUUID());
         expect(await instance.getDocument(who, documentId)).toMatchObject({ state: "running", dispatchUncertain: true });
         expect((await instance.listDocuments(who, applicationId))[0]).toMatchObject({ id: documentId, dispatchUncertain: true });
-        await instance.claimRun(documentId);
+        await instance.claimRun(documentId, { kind: "document", targetId: documentId });
         expect(await instance.getDocument(who, documentId)).toMatchObject({ dispatchUncertain: false });
       } finally { local.DOCUMENTS = original; }
     });

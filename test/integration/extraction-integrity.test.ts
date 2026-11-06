@@ -130,7 +130,7 @@ describe("extraction commit integrity", () => {
     }
     await vault(env, session(user).vid).saveSource(sourceId, {
       markdown: "replacement text",
-    });
+    }, sourceId);
     expect(await user.json(`/api/sources/${sourceId}/text`)).toEqual(evidence);
   });
 

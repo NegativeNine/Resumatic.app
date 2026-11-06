@@ -736,8 +736,8 @@ export class Vault extends DurableObject<Env> {
     const source = this.sourceRow(sourceId);
     if (source.run_id !== runId)
       throw new AppError("conflict", "this attempt was superseded");
-    const run = this.runs.get(runId);
-    if (run && !["starting", "running", "succeeded"].includes(run.state))
+    const run = this.workflowRun(runId, "distill", sourceId);
+    if (!["starting", "running", "succeeded"].includes(run.state))
       throw new AppError("conflict", "this run stopped");
     const extractor =
       source.extractor ??
@@ -794,8 +794,10 @@ export class Vault extends DurableObject<Env> {
   ): Promise<void> {
     this.requireOpen();
     const source = this.sourceRow(sourceId);
+    if (!runId) throw new AppError("invalid", "workflow identity is required");
     if (runId && source.run_id !== runId)
       throw new AppError("conflict", "this attempt was superseded");
+    if (runId) this.workflowRun(runId, "distill", sourceId);
     if (
       patch.ocrImageCount !== undefined &&
       (source.origin !== "ocr" ||
@@ -859,7 +861,8 @@ export class Vault extends DurableObject<Env> {
     this.requireOpen();
     if (this.sourceRow(sourceId).run_id !== runId)
       throw new AppError("conflict", "this attempt was superseded");
-    if (this.runs.get(runId)) this.runs.commitStep(runId, step, () => {});
+    this.workflowRun(runId, "distill", sourceId);
+    this.runs.commitStep(runId, step, () => {});
   }
 
   /** Saves proposed roles and facts. A retried step replaces its own earlier proposals. */
@@ -872,8 +875,10 @@ export class Vault extends DurableObject<Env> {
   ): Promise<{ roles: number; facts: number }> {
     this.requireOpen();
     const source = this.sourceRow(sourceId);
+    if (!runId) throw new AppError("invalid", "workflow identity is required");
     if (runId && source.run_id !== runId)
       throw new AppError("conflict", "this attempt was superseded");
+    if (runId) this.workflowRun(runId, "distill", sourceId);
     const committed = this.sql
       .exec<{ roles: number; facts: number }>(
         `SELECT roles, facts FROM extraction_commits WHERE source_id = ?`,
@@ -982,8 +987,17 @@ export class Vault extends DurableObject<Env> {
 
   async unembeddedFacts(
     sourceId: string,
+    runId?: string,
   ): Promise<{ id: string; text: string; revision: number }[]> {
     this.requireOpen();
+    if (!runId) throw new AppError("invalid", "workflow identity is required");
+    if (runId) {
+      if (this.sourceRow(sourceId).run_id !== runId)
+        throw new AppError("conflict", "this attempt was superseded");
+      const run = this.workflowRun(runId, "distill", sourceId);
+      if (!["starting", "running"].includes(run.state))
+        throw new AppError("conflict", "this run no longer accepts work");
+    }
     return this.sql
       .exec<{ id: string; text: string; revision: number }>(
         `SELECT id, text, revision FROM facts WHERE source_id = ? AND vector IS NULL`,
@@ -995,8 +1009,21 @@ export class Vault extends DurableObject<Env> {
   async saveVectors(
     vectors: { factId: string; vector: number[]; revision?: number }[],
     expectedModel?: string,
+    context?: { runId: string; sourceId: string },
   ): Promise<void> {
     this.requireOpen();
+    if (!context) throw new AppError("invalid", "workflow identity is required");
+    if (context) {
+      if (this.sourceRow(context.sourceId).run_id !== context.runId)
+        throw new AppError("conflict", "this attempt was superseded");
+      const run = this.workflowRun(context.runId, "distill", context.sourceId);
+      if (!["starting", "running"].includes(run.state))
+        throw new AppError("conflict", "this run no longer accepts work");
+      for (const vector of vectors) {
+        if (!this.sql.exec(`SELECT id FROM facts WHERE id = ? AND source_id = ?`, vector.factId, context.sourceId).toArray().length)
+          throw new AppError("conflict", "fact is not part of this source");
+      }
+    }
     if (expectedModel && expectedModel !== this.activeEmbeddingModel())
       throw new AppError("conflict", "the search index changed; try again");
     this.ctx.storage.transactionSync(() => {
@@ -1588,11 +1615,13 @@ export class Vault extends DurableObject<Env> {
 
   async tailorInput(resumeId: string, runId?: string): Promise<TailorInput> {
     this.requireOpen();
+    if (!runId) throw new AppError("invalid", "workflow identity is required");
     const row = this.resumeRow(resumeId);
     if (runId && row.run_id !== runId)
       throw new AppError("conflict", "this attempt was superseded");
     const id = row.run_id ?? resumeId;
     const run = this.runs.get(id);
+    if (runId) this.workflowRun(runId, "tailor", resumeId);
     if (
       run &&
       run.state !== "running" &&
@@ -1622,14 +1651,23 @@ export class Vault extends DurableObject<Env> {
     applicationId: string,
     a: Analysis,
     resumeId?: string,
+    runId?: string,
   ): Promise<void> {
     this.requireOpen();
-    if (resumeId)
+    if (!resumeId || !runId) throw new AppError("invalid", "workflow identity is required");
+    if (resumeId) {
+      const resume = this.resumeRow(resumeId);
+      if (resume.application_id !== applicationId || resume.run_id !== runId)
+        throw new AppError("conflict", "this attempt was superseded");
+      const run = this.workflowRun(runId, "tailor", resumeId);
+      if (!["starting", "running"].includes(run.state))
+        throw new AppError("conflict", "this run no longer accepts work");
       this.sql.exec(
         `UPDATE resumes SET run_analysis = ? WHERE id = ? AND state = 'running'`,
         JSON.stringify(a),
         resumeId,
       );
+    }
     this.sql.exec(
       `UPDATE applications SET company = ?, title = ?, requirements = ? WHERE id = ?`,
       a.company,
@@ -1659,9 +1697,11 @@ export class Vault extends DurableObject<Env> {
   ): Promise<void> {
     this.requireOpen();
     const row = this.resumeRow(resumeId);
+    if (!runId) throw new AppError("invalid", "workflow identity is required");
     if (runId && row.run_id !== runId)
       throw new AppError("conflict", "this attempt was superseded");
     const id = row.run_id ?? resumeId;
+    if (runId) this.workflowRun(runId, "tailor", resumeId);
     const write = () => {
       if (row.state !== "running")
         throw new AppError(
@@ -1721,7 +1761,12 @@ export class Vault extends DurableObject<Env> {
     runId?: string,
   ): Promise<void> {
     if (this.gone || !this.initialised) return;
+    if (!runId) return;
     if (runId && this.resumeRow(resumeId).run_id !== runId) return;
+    if (runId) {
+      const run = this.runs.get(runId);
+      if (!run || run.kind !== "tailor" || run.targetId !== resumeId) return;
+    }
     this.markResumeFailed(resumeId, error);
   }
 
@@ -2006,8 +2051,8 @@ export class Vault extends DurableObject<Env> {
     }
   > {
     this.requireOpen();
-    const run = this.runs.get(runId);
-    if (!run || !["starting", "running", "succeeded"].includes(run.state))
+    const run = this.workflowRun(runId, "document", runId);
+    if (!["starting", "running", "succeeded"].includes(run.state))
       throw new AppError("conflict", "this run no longer accepts work");
     const row = this.sql
       .exec<{
@@ -2064,6 +2109,7 @@ export class Vault extends DurableObject<Env> {
     },
   ): Promise<void> {
     this.requireOpen();
+    this.workflowRun(runId, "document", runId);
     this.runs.commitStep(runId, step, () => {
       for (const field of ["plan", "draft", "result"] as const)
         if (patch[field] !== undefined)
@@ -2077,6 +2123,7 @@ export class Vault extends DurableObject<Env> {
 
   async finishDocument(runId: string, result: DocumentResult): Promise<void> {
     this.requireOpen();
+    this.workflowRun(runId, "document", runId);
     const options = JSON.parse(
       this.sql
         .exec<{ options: string }>(
@@ -2222,7 +2269,7 @@ export class Vault extends DurableObject<Env> {
   async failDocument(runId: string, message: string): Promise<void> {
     this.requireOpen();
     const run = this.runs.get(runId);
-    if (!run || ["succeeded", "cancelled", "failed"].includes(run.state))
+    if (!run || !["refine", "letter", "prep", "questions"].includes(run.kind) || run.targetId !== runId || ["succeeded", "cancelled", "failed"].includes(run.state))
       return;
     this.ctx.storage.transactionSync(() => {
       this.runs.fail(runId, "generation_failed");
@@ -2460,6 +2507,7 @@ export class Vault extends DurableObject<Env> {
   }
   async reembedBatch(id: string) {
     this.requireOpen();
+    this.workflowRun(id, "reembed", id);
     this.runs.claim(id);
     return {
       model: this.reembeddings.status(id).model,
@@ -2471,11 +2519,13 @@ export class Vault extends DurableObject<Env> {
     items: { id: string; revision: number; vector: number[] }[],
   ) {
     this.requireOpen();
+    this.workflowRun(id, "reembed", id);
     this.runs.claim(id);
     return this.reembeddings.saveBatch(id, items);
   }
   async finishReembed(id: string) {
     this.requireOpen();
+    this.workflowRun(id, "reembed", id);
     this.runs.finish(id, () => {
       this.reembeddings.activate(id);
     });
@@ -2484,7 +2534,7 @@ export class Vault extends DurableObject<Env> {
   async failReembed(id: string) {
     this.requireOpen();
     const run = this.runs.get(id);
-    if (!run || !["starting", "running"].includes(run.state)) return;
+    if (!run || run.kind !== "reembed" || run.targetId !== id || !["starting", "running"].includes(run.state)) return;
     this.ctx.storage.transactionSync(() => {
       this.reembeddings.cancel(id);
       this.runs.fail(id, "embedding_rebuild_failed");
@@ -3013,9 +3063,28 @@ export class Vault extends DurableObject<Env> {
       );
   }
 
-  async claimRun(runId: string): Promise<void> {
+  private workflowRun(
+    runId: string,
+    kind: "distill" | "tailor" | "document" | "reembed",
+    targetId: string,
+  ): RunRecord {
+    const run = this.runs.get(runId);
+    if (!run) throw new AppError("not_found", "no such run");
+    const kinds = kind === "document" ? ["refine", "letter", "prep", "questions"] : [kind];
+    if (!kinds.includes(run.kind) || run.targetId !== targetId)
+      throw new AppError("conflict", "run does not match this workflow");
+    return run;
+  }
+
+  async claimRun(
+    runId: string,
+    expected: { kind: "distill" | "tailor" | "document"; targetId: string },
+  ): Promise<void> {
     this.requireOpen();
-    if (this.runs.get(runId)) this.runs.claim(runId);
+    if (!expected || !["distill", "tailor", "document"].includes(expected.kind))
+      throw new AppError("invalid", "workflow identity is required");
+    this.workflowRun(runId, expected.kind, expected.targetId);
+    this.runs.claim(runId);
   }
 
   async deletionProbe(): Promise<{ rows: number }> {

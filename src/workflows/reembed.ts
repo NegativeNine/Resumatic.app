@@ -12,6 +12,8 @@ export type ReembedParams = { vaultId: string; runId: string };
 export class ReembedWorkflow extends WorkflowEntrypoint<Env, ReembedParams> {
   async run(event: WorkflowEvent<ReembedParams>, step: WorkflowStep) {
     const { vaultId, runId } = event.payload;
+    // Reject a foreign instance before either work or its failure handler runs.
+    if (event.instanceId !== runId) return { failed: true };
     const v = vault(this.env, vaultId);
     try {
       for (let page = 0; page < 10000; page++) {

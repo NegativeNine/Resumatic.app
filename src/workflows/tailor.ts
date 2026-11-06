@@ -35,7 +35,7 @@ export class TailorWorkflow extends WorkflowEntrypoint<Env, TailorParams> {
         "claim",
         STEP,
         once(async () => {
-          await v.claimRun(event.instanceId);
+          await v.claimRun(event.instanceId, { kind: "tailor", targetId: resumeId });
           return { ok: true };
         }),
       );
@@ -47,7 +47,7 @@ export class TailorWorkflow extends WorkflowEntrypoint<Env, TailorParams> {
           const analysis =
             input.analysis ?? (await analyzeJob(m("analyze"), input.jdText));
           if (!input.analysis)
-            await v.saveAnalysis(input.applicationId, analysis, resumeId);
+            await v.saveAnalysis(input.applicationId, analysis, resumeId, event.instanceId);
           await v.saveStep(resumeId, "analyze", {}, event.instanceId);
           return { requirements: analysis.requirements.length };
         }),
