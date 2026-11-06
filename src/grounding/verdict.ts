@@ -11,12 +11,16 @@ import {
 export function authoritativeFact(fact: FactRecord): FactRecord {
   if (fact.origin !== "user") return fact;
   const explicitScope = scopeRank(fact.text);
+  // Historical edits can retain a level from an earlier claim. Only an
+  // explicit level selected for this revision may support scope when the
+  // wording itself has no recognizable scope verb.
+  const supported = explicitScope || (fact.levelExplicit === true ? rankOf(fact.level) : 0);
   return {
     ...fact,
     quote: null,
     level:
-      explicitScope > 0 && rankOf(fact.level) > explicitScope
-        ? levelOfRank(explicitScope)
+      rankOf(fact.level) > supported
+        ? (supported ? levelOfRank(supported) : null)
         : fact.level,
   };
 }

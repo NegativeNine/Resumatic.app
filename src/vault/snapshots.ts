@@ -1,4 +1,6 @@
 import { AppError } from "../shared/errors";
+import { DEFAULT_RANK, rankOf, scopeRank } from "../grounding/claims";
+import { authoritativeFact } from "../grounding/verdict";
 import type { Profile, ResumeBody, ResumeReport } from "../shared/api";
 import type {
   Analysis,
@@ -38,6 +40,7 @@ function completeEvidence(value: FactRecord | undefined): value is FactRecord {
     ["accomplishment", "skill", "credential"].includes(value.kind) &&
     typeof value.text === "string" && value.text.trim().length > 0 &&
     (value.level === null || ["contributed", "implemented", "led", "owned", "founded"].includes(value.level)) &&
+    (value.levelExplicit === undefined || typeof value.levelExplicit === "boolean") &&
     (value.quote === null || typeof value.quote === "string");
 }
 
@@ -57,7 +60,7 @@ export function sameEvidence(a: FactRecord | undefined, b: FactRecord | undefine
   return completeEvidence(a) && completeEvidence(b) &&
     a.id === b.id && a.revision === b.revision && a.origin === b.origin &&
     a.roleId === b.roleId && a.kind === b.kind && a.text === b.text &&
-    a.level === b.level && a.quote === b.quote;
+    a.level === b.level && a.levelExplicit === b.levelExplicit && a.quote === b.quote;
 }
 
 /** A historical version is printable only if its stored evidence remains attached. */
@@ -65,20 +68,39 @@ export function assertGroundedResume(
   render: RenderData,
   facts: ResumeVersion["facts"] | undefined,
   provenance: ResumeVersion["provenance"] | undefined,
+  evidence?: ResumeVersion["evidence"],
 ): void {
   const unavailable = () => new AppError("conflict", "this resume version contains unverified content; review it before exporting or sharing");
   if (provenance !== "snapshot" || !facts || typeof facts !== "object" || Array.isArray(facts) ||
       !render?.body || !Array.isArray(render.body.sections) || !Array.isArray(render.body.skills)) throw unavailable();
   if (render.body.sections.some((section) => !section || !Array.isArray(section.lines))) throw unavailable();
   const lines = [
-    ...(render.body.summary ? [render.body.summary] : []),
-    ...render.body.sections.flatMap((section) => section.lines),
+    ...(render.body.summary ? [{ line: render.body.summary, roleId: null }] : []),
+    ...render.body.sections.flatMap((section) => section.lines.map((line) => ({ line, roleId: section.roleId }))),
   ];
-  for (const line of lines) {
+  for (const { line, roleId } of lines) {
     if (!line || !["kept", "repaired", "replaced"].includes(line.status) ||
         !Array.isArray(line.factIds) || line.factIds.length === 0 ||
         line.factIds.some((id) => typeof id !== "string" || !Object.hasOwn(facts, id) ||
           typeof facts[id]?.text !== "string" || !facts[id]!.text.trim())) throw unavailable();
+    // A historic snapshot may have used a stale ownership level to verify a
+    // line. Recheck scope from its stored evidence; only a complete immutable
+    // record can establish that a user explicitly selected a level.
+    let supported = 0;
+    for (const id of line.factIds) {
+      const stored = facts[id]!;
+      if (stored.quote !== null && typeof stored.quote !== "string") throw unavailable();
+      const full = evidence?.[id];
+      if (full) {
+        if (!completeEvidence(full) || full.id !== id || full.text !== stored.text || full.quote !== stored.quote ||
+            (roleId !== null && full.roleId !== roleId)) throw unavailable();
+        const safe = authoritativeFact(full);
+        supported = Math.max(supported, rankOf(safe.level), scopeRank(safe.text), scopeRank(safe.quote ?? ""));
+      } else {
+        supported = Math.max(supported, scopeRank(stored.text), scopeRank(stored.quote ?? ""));
+      }
+    }
+    if (scopeRank(line.text) > (supported || DEFAULT_RANK)) throw unavailable();
   }
   const texts = new Set(Object.values(facts).map((fact) => fact?.text).filter((text): text is string => typeof text === "string" && !!text.trim()));
   if (render.body.skills.some((skill) => typeof skill !== "string" || !texts.has(skill))) throw unavailable();

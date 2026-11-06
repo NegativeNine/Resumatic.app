@@ -72,6 +72,8 @@ export interface Extraction {
 export interface FactRecord {
   revision?: number;
   origin?: "extracted" | "user";
+  /** True only when the owner explicitly selected the level for this revision. */
+  levelExplicit?: boolean;
   id: string;
   roleId: string | null;
   kind: FactKind;

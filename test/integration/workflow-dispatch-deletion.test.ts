@@ -100,7 +100,8 @@ describe("deletion and Workflow dispatch", () => {
         state.storage.sql.exec(`DROP TABLE workflow_redispatches`);
         state.storage.sql.exec(`DROP TRIGGER clear_unknown_end_start`);
         state.storage.sql.exec(`ALTER TABLE roles DROP COLUMN unknown_end_start_date`);
-        state.storage.sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(SCHEMA_VERSION - 3));
+        state.storage.sql.exec(`ALTER TABLE facts DROP COLUMN level_revision`);
+        state.storage.sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(SCHEMA_VERSION - 4));
         return [created.sourceId, oldSource, oldResume].sort();
       } finally {
         local.DISTILL = original;

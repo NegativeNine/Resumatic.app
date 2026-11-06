@@ -137,6 +137,7 @@ type FactRow = {
   kind: string;
   text: string;
   level: string | null;
+  level_revision: number | null;
   origin: string;
   state: string;
   source_id: string | null;
@@ -1221,7 +1222,7 @@ export class Vault extends DurableObject<Env> {
     const params = state ? [state] : [];
     return this.sql
       .exec<FactRow>(
-        `SELECT f.id, f.role_id, f.kind, f.text, f.level, f.origin, f.state, f.source_id, f.revision, f.confidence, f.review_reasons, e.quote, e.start, e.end, s.origin AS evidence_origin, i.document_id AS interview_document_id, i.question_id AS interview_question_id, i.question AS interview_question, i.quote AS interview_quote
+        `SELECT f.id, f.role_id, f.kind, f.text, f.level, f.level_revision, f.origin, f.state, f.source_id, f.revision, f.confidence, f.review_reasons, e.quote, e.start, e.end, s.origin AS evidence_origin, i.document_id AS interview_document_id, i.question_id AS interview_question_id, i.question AS interview_question, i.quote AS interview_quote
          FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id LEFT JOIN sources s ON s.id = f.source_id LEFT JOIN interview_answers i ON i.fact_id = f.id ${where}
          ORDER BY f.updated_at DESC`,
         ...params,
@@ -1255,7 +1256,7 @@ export class Vault extends DurableObject<Env> {
           id,
         );
         this.sql.exec(
-          `UPDATE facts SET state = 'confirmed', revision = revision + 1, updated_at = ? WHERE id = ? AND state <> 'confirmed'`,
+          `UPDATE facts SET state = 'confirmed', level_revision = CASE WHEN origin = 'user' AND level_revision = revision THEN revision + 1 ELSE level_revision END, revision = revision + 1, updated_at = ? WHERE id = ? AND state <> 'confirmed'`,
           Date.now(),
           id,
         );
@@ -1272,11 +1273,11 @@ export class Vault extends DurableObject<Env> {
           id,
         );
         this.sql.exec(
-          `UPDATE facts SET state = 'rejected', revision = revision + 1 WHERE role_id = ? AND state = 'proposed'`,
+          `UPDATE facts SET state = 'rejected', level_revision = CASE WHEN origin = 'user' AND level_revision = revision THEN revision + 1 ELSE level_revision END, revision = revision + 1 WHERE role_id = ? AND state = 'proposed'`,
           id,
         );
         this.sql.exec(
-          `UPDATE facts SET state = 'rejected', revision = revision + 1, updated_at = ? WHERE id = ? AND state <> 'rejected'`,
+          `UPDATE facts SET state = 'rejected', level_revision = CASE WHEN origin = 'user' AND level_revision = revision THEN revision + 1 ELSE level_revision END, revision = revision + 1, updated_at = ? WHERE id = ? AND state <> 'rejected'`,
           Date.now(),
           id,
         );
@@ -1399,8 +1400,8 @@ export class Vault extends DurableObject<Env> {
     this.ctx.storage.transactionSync(() => {
       const now = Date.now();
       this.sql.exec(
-        `INSERT INTO facts (id, role_id, kind, text, level, origin, state, vector, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'user', 'confirmed', ?, ?)`,
+        `INSERT INTO facts (id, role_id, kind, text, level, origin, state, vector, updated_at, level_revision)
+         VALUES (?, ?, ?, ?, ?, 'user', 'confirmed', ?, ?, ?)`,
         id,
         f.roleId,
         f.kind,
@@ -1408,6 +1409,7 @@ export class Vault extends DurableObject<Env> {
         f.level,
         packVector(vector),
         now,
+        f.level === null ? null : 1,
       );
       this.extractionFeedbackStore.manual(id, now);
     });
@@ -1422,8 +1424,8 @@ export class Vault extends DurableObject<Env> {
   async editFact(who: Who, id: string, patch: FactPatch): Promise<void> {
     this.requireOwner(who);
     const fact = this.sql
-      .exec<{ text: string; revision: number; role_id: string | null }>(
-        `SELECT text, revision, role_id FROM facts WHERE id = ?`,
+      .exec<{ text: string; revision: number; role_id: string | null; origin: string; level: string | null; level_revision: number | null }>(
+        `SELECT text, revision, role_id, origin, level, level_revision FROM facts WHERE id = ?`,
         id,
       )
       .toArray()[0];
@@ -1473,10 +1475,16 @@ export class Vault extends DurableObject<Env> {
           patch.roleId,
           id,
         );
+      const level = patch.level === undefined ? fact.level : patch.level;
+      const levelRevision = patch.level !== undefined
+        ? (patch.level === null ? null : fact.revision + 1)
+        : text !== fact.text
+          ? null
+          : fact.origin === "user" && fact.level_revision === fact.revision
+            ? fact.revision + 1 : null;
       this.sql.exec(
-        `UPDATE facts SET origin = 'user', revision = revision + 1, updated_at = ? WHERE id = ?`,
-        Date.now(),
-        id,
+        `UPDATE facts SET origin = 'user', level = ?, level_revision = ?, revision = revision + 1, updated_at = ? WHERE id = ?`,
+        level, levelRevision, Date.now(), id,
       );
     });
     this.vectorCache = null;
@@ -1638,6 +1646,11 @@ export class Vault extends DurableObject<Env> {
     const row = this.resumeRow(id);
     const ready = row.state === "ready";
     const saved = ready ? this.resumeVersion(row, version) : null;
+    let needsGroundingReview = false;
+    if (saved) {
+      try { assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence); }
+      catch { needsGroundingReview = true; }
+    }
     return {
       id: row.id,
       applicationId: row.application_id,
@@ -1652,6 +1665,7 @@ export class Vault extends DurableObject<Env> {
       report: saved?.report ?? null,
       facts: saved?.facts ?? {},
       provenance: saved?.provenance,
+      ...(needsGroundingReview ? { needsGroundingReview: true } : {}),
       ...(saved?.provenance === "legacy" ? { legacyReview: legacyReview(saved, this.usableFacts(), this.confirmedRoles()) } : {}),
     };
   }
@@ -1692,7 +1706,7 @@ export class Vault extends DurableObject<Env> {
         provenance: "snapshot",
         legacyFinalizedFrom: expectedVersion,
       };
-      assertGroundedResume(saved.render, saved.facts, saved.provenance);
+      assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence);
       this.snapshots.save(resumeId, version, saved);
       this.sql.exec(`UPDATE resumes SET version=?,body=?,report=? WHERE id=?`, version,
         JSON.stringify(saved.render.body), JSON.stringify(saved.report), resumeId);
@@ -1745,7 +1759,7 @@ export class Vault extends DurableObject<Env> {
     if (row.state !== "ready" || !row.body)
       throw new AppError("conflict", "the resume is not ready yet");
     const saved = this.resumeVersion(row, version);
-    assertGroundedResume(saved.render, saved.facts, saved.provenance);
+    assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence);
     return saved.render;
   }
 
@@ -2138,7 +2152,7 @@ export class Vault extends DurableObject<Env> {
       if (base.provenance === "legacy" && (options.manualText === undefined || !options.manualFactIds?.length))
         throw new AppError("invalid", "choose confirmed facts to verify this historical line");
       if (options.manualText === undefined)
-        assertGroundedResume(base.render, base.facts, base.provenance);
+        assertGroundedResume(base.render, base.facts, base.provenance, base.evidence);
     }
     const id = crypto.randomUUID();
     this.quota();
@@ -3984,7 +3998,7 @@ export class Vault extends DurableObject<Env> {
   private usableFacts(): FactRecord[] {
     return this.sql
       .exec<FactRow>(
-        `SELECT f.id, f.role_id, f.kind, f.text, f.level, f.origin, f.state, f.source_id, f.revision, e.quote, e.start, e.end
+        `SELECT f.id, f.role_id, f.kind, f.text, f.level, f.level_revision, f.origin, f.state, f.source_id, f.revision, e.quote, e.start, e.end
          FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id LEFT JOIN roles r ON r.id = f.role_id
          WHERE f.state = 'confirmed' AND (f.role_id IS NULL OR r.state = 'confirmed')`,
       )
@@ -4185,7 +4199,9 @@ function factView(f: FactRow): FactView {
     roleId: f.role_id,
     kind: f.kind as FactKind,
     text: f.text,
-    level: f.level as Level | null,
+    level: (f.origin === "user" && f.level_revision !== f.revision ? null : f.level) as Level | null,
+    ...(f.origin === "user" && f.level !== null && f.level_revision !== f.revision
+      ? { levelNeedsReview: true, previousLevel: f.level as Level } : {}),
     origin: f.origin as FactView["origin"],
     state: f.state as ReviewState,
     quote: f.quote,
@@ -4216,7 +4232,8 @@ function factRecord(f: FactRow): FactRecord {
     roleId: f.role_id,
     kind: f.kind as FactKind,
     text: f.text,
-    level: f.level as Level | null,
+    level: (f.origin === "user" && f.level_revision !== f.revision ? null : f.level) as Level | null,
+    ...(f.origin === "user" ? { levelExplicit: f.level !== null && f.level_revision === f.revision } : {}),
     quote: f.origin === "user" ? null : f.quote,
   };
 }

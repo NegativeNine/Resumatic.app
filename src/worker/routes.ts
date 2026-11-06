@@ -11,6 +11,8 @@ import { OcrImagesSchema, validateTranscriptionInput } from "../ai/transcribe";
 import { revokeOAuthGrant } from "./mcp";
 import { uploadDescriptorDigest } from "../vault/uploads";
 import { renderPdf } from "../render/pdf";
+import { PILOT_MAX_CALLS, PILOT_MAX_MICROS } from "./pilot/ledger";
+import { stagingPilotBudget } from "./pilot/access";
 import { createArchive, MAX_ARCHIVE_BYTES, type ArchiveEntry } from "../render/archive";
 import { billingConfig } from "../shared/billing";
 import { verifyStripe, parseStripeEvent, stripeClient } from "./billing";
@@ -203,6 +205,49 @@ app.post("/auth/test-login", JSON_LIMIT, async (c) => {
   return c.body(null, 204);
 });
 
+/** Staging-only, fixed-name budget coordinator. No model text is accepted. */
+function pilotBudget(c: C) {
+  const key = c.env.PILOT_BUDGET_KEY;
+  if (c.env.ALLOW_TEST_SIGNIN !== "true" || !c.env.PILOT_BUDGET || !key || new TextEncoder().encode(key).length < 32)
+    throw new AppError("not_found", "no such route");
+  if (!sameSecret(c.req.header("x-pilot-budget-key") ?? "", key))
+    throw new AppError("forbidden", "wrong pilot key");
+  return stagingPilotBudget(c.env);
+}
+const PilotAttemptId = z.string().regex(/^[A-Za-z0-9_-]{1,100}$/);
+app.post("/auth/test/pilot-budget/initialize", JSON_LIMIT, async (c) => {
+  const pilot = pilotBudget(c);
+  const body = await jsonBody(c, z.object({
+    maxMicros: z.number().int().positive().max(PILOT_MAX_MICROS),
+    maxCalls: z.number().int().positive().max(PILOT_MAX_CALLS),
+  }).strict());
+  await pilot.initialize(body.maxMicros, body.maxCalls);
+  return c.body(null, 204);
+});
+app.post("/auth/test/pilot-budget/reserve", JSON_LIMIT, async (c) => {
+  const pilot = pilotBudget(c);
+  const body = await jsonBody(c, z.object({
+    id: PilotAttemptId,
+    micros: z.number().int().positive().max(PILOT_MAX_MICROS),
+    calls: z.number().int().positive().max(PILOT_MAX_CALLS),
+  }).strict());
+  await pilot.reserve(body.id, body.micros, body.calls);
+  return c.body(null, 204);
+});
+app.post("/auth/test/pilot-budget/settle", JSON_LIMIT, async (c) => {
+  const pilot = pilotBudget(c);
+  const body = await jsonBody(c, z.object({
+    id: PilotAttemptId,
+    actualMicros: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
+  }).strict());
+  return c.json(await pilot.settle(body.id, body.actualMicros));
+});
+app.post("/auth/test/pilot-budget/freeze", async (c) => {
+  await pilotBudget(c).freeze();
+  return c.body(null, 204);
+});
+app.get("/auth/test/pilot-budget/status", async (c) => c.json(await pilotBudget(c).status()));
+
 async function startSession(env: Env, input: SignInInput): Promise<string> {
   if (!env.SESSION_KEY)
     throw new AppError("unavailable", "sessions are not configured");
@@ -282,11 +327,12 @@ const FactPatchBody = z
     expectedRevision: z.number().int().positive().optional(),
     text: z.string().trim().min(1).max(MAX_FACT_CHARS),
     roleId: z.string().max(64).nullable(),
+    level: z.enum(LEVELS as [Level, ...Level[]]).nullable(),
   })
   .partial()
   .refine(
-    (p) => p.text !== undefined || p.roleId !== undefined,
-    "change the text, the role, or both",
+    (p) => p.text !== undefined || p.roleId !== undefined || p.level !== undefined,
+    "change the text, role, or level",
   );
 
 const NewFactBody = z.object({

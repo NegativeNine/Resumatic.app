@@ -32,6 +32,7 @@ export interface ShareSelection {
     render: RenderData;
     provenance?: "snapshot" | "legacy";
     facts?: ResumeVersion["facts"];
+    evidence?: ResumeVersion["evidence"];
   }[];
 }
 
@@ -90,7 +91,7 @@ export function snapshotSelection(
     };
   });
   const resumes: SharedResume[] = selection.resumes.map(
-    ({ id, render, provenance, facts }) => {
+    ({ id, render, provenance, facts, evidence }) => {
       if (
         !Number.isSafeInteger(render.version) ||
         render.version < 1 ||
@@ -100,7 +101,7 @@ export function snapshotSelection(
           "invalid",
           "only finished resume versions can be shared",
         );
-      assertGroundedResume(render, facts, provenance);
+      assertGroundedResume(render, facts, provenance, evidence);
       const line = (value: ResumeLine): SharedLine => ({
         id: value.id,
         text: value.text,

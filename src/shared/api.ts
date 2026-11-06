@@ -155,6 +155,9 @@ export interface RolePatch {
 }
 
 export interface FactView {
+  /** An older level was retained for history but needs the owner's confirmation. */
+  levelNeedsReview?: boolean;
+  previousLevel?: Level;
   /** Original user-authored interview answer; it is historical after a fact edit. */
   interview?: import("./interview").InterviewProvenance | null;
   evidenceOrigin?: "upload" | "ocr";
@@ -184,11 +187,12 @@ export interface NewRole {
   unknownEndStartDate?: string | null;
 }
 
-/** At least one field. Either change makes the fact the user's own claim. */
+/** At least one field. Any change makes the fact the user's own claim. */
 export interface FactPatch {
   expectedRevision?: number;
   text?: string;
   roleId?: string | null;
+  level?: Level | null;
 }
 
 export interface NewFact {
@@ -253,6 +257,8 @@ export interface ResumeReport {
 }
 
 export interface ResumeView {
+  /** The stored version is retained for the owner but cannot currently be exported or shared. */
+  needsGroundingReview?: boolean;
   /** Fresh verification progress for an old version; earlier flags are not trusted. */
   legacyReview?: { verifiedLineIds: string[]; totalLines: number; headersReady: boolean; skillsReady: boolean };
   /** The request was saved, but starting its workflow is unconfirmed. */

@@ -162,6 +162,16 @@ describe("DOCX generation", () => {
 });
 
 describe("authoritative user corrections", () => {
+  it("does not use an unproven historic user level when the corrected wording has no scope verb", () => {
+    const old: FactRecord = {
+      id: "historic", roleId: null, kind: "accomplishment", origin: "user",
+      text: "Migration project participant", quote: null, level: "led",
+    };
+    const line = { roleId: null, text: "Led the migration project", factIds: [old.id] };
+    expect(checkLine(line, new Map([[old.id, old]]), new Set([old.id])).ok).toBe(false);
+    const confirmed = { ...old, levelExplicit: true };
+    expect(checkLine(line, new Map([[old.id, confirmed]]), new Set([old.id])).ok).toBe(true);
+  });
   it("does not let an old source quote or stronger old level override corrected text", () => {
     const fact: FactRecord = {
       id: "f1",

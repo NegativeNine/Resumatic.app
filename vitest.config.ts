@@ -39,10 +39,14 @@ export default defineConfig({
             // Keep tests hermetic: Workers AI, AI Gateway, Google and Browser Run are never called for real.
             remoteBindings: false,
             miniflare: {
+              // Production has no pilot binding; the staging-only coordinator
+              // is explicitly bound here for local runtime integration tests.
+              durableObjects: { PILOT_BUDGET: "PilotBudget" },
               bindings: {
                 // Test-only secrets and settings. None of these values exist anywhere else.
                 SESSION_KEY: "test-session-key-that-is-long-enough-0123456789",
                 TEST_SIGNIN_KEY: "test-signin-key",
+                PILOT_BUDGET_KEY: "test-pilot-key-for-local-only-1234567890",
                 ALLOW_TEST_SIGNIN: "true",
                 OIDC_CLIENT_ID: "test-client.apps.googleusercontent.com",
                 OIDC_CLIENT_SECRET: "test-client-secret",

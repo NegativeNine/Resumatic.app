@@ -30,6 +30,7 @@
   "exports": {
     "Directory": { "type": "durable-object", "storage": "sqlite" },
     "Vault": { "type": "durable-object", "storage": "sqlite" },
+    "PilotBudget": { "type": "durable-object", "storage": "sqlite" },
   },
   "workflows": [
     {
@@ -110,6 +111,7 @@
         "bindings": [
           { "name": "DIRECTORY", "class_name": "Directory" },
           { "name": "VAULT", "class_name": "Vault" },
+          { "name": "PILOT_BUDGET", "class_name": "PilotBudget" },
         ],
       },
       "workflows": [

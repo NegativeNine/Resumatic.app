@@ -47,10 +47,11 @@ describe("atomic schema migrations", () => {
       sql.exec(`DROP TABLE workflow_redispatches`);
       sql.exec(`DROP TRIGGER clear_unknown_end_start`);
       sql.exec(`ALTER TABLE roles DROP COLUMN unknown_end_start_date`);
-      sql.exec(`UPDATE meta SET value = ? WHERE key = 'schema_version'`, String(SCHEMA_VERSION - 2));
+      sql.exec(`ALTER TABLE facts DROP COLUMN level_revision`);
+      sql.exec(`UPDATE meta SET value = ? WHERE key = 'schema_version'`, String(SCHEMA_VERSION - 3));
       const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
       expect(() => migrate(failAtTrigger(sql, "keep_uncertain_dispatch"), tx)).toThrow(/synthetic migration interruption/);
-      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key = 'schema_version'`).one().value).toBe(String(SCHEMA_VERSION - 2));
+      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key = 'schema_version'`).one().value).toBe(String(SCHEMA_VERSION - 3));
       expect(sql.exec(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'workflow_redispatches'`).toArray()).toHaveLength(0);
       migrate(sql, tx);
       expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key = 'schema_version'`).one().value).toBe(String(SCHEMA_VERSION));
@@ -65,10 +66,11 @@ describe("atomic schema migrations", () => {
       const sql = state.storage.sql;
       sql.exec(`DROP TRIGGER clear_unknown_end_start`);
       sql.exec(`ALTER TABLE roles DROP COLUMN unknown_end_start_date`);
-      sql.exec(`UPDATE meta SET value = ? WHERE key = 'schema_version'`, String(SCHEMA_VERSION - 1));
+      sql.exec(`ALTER TABLE facts DROP COLUMN level_revision`);
+      sql.exec(`UPDATE meta SET value = ? WHERE key = 'schema_version'`, String(SCHEMA_VERSION - 2));
       const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
       expect(() => migrate(failAtTrigger(sql, "clear_unknown_end_start"), tx)).toThrow(/synthetic migration interruption/);
-      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key = 'schema_version'`).one().value).toBe(String(SCHEMA_VERSION - 1));
+      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key = 'schema_version'`).one().value).toBe(String(SCHEMA_VERSION - 2));
       expect(() => sql.exec(`SELECT unknown_end_start_date FROM roles`).toArray()).toThrow();
       migrate(sql, tx);
       expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key = 'schema_version'`).one().value).toBe(String(SCHEMA_VERSION));

@@ -48,6 +48,9 @@ interface ResumaticSecrets {
   /** Staging only. Enables POST /auth/test-login. Never set in production. */
   TEST_SIGNIN_KEY?: string;
   ALLOW_TEST_SIGNIN?: string;
+  /** Separate staging-only secret and binding for the one-shot pilot ledger. */
+  PILOT_BUDGET_KEY?: string;
+  PILOT_BUDGET?: DurableObjectNamespace<import("./worker/pilot/object").PilotBudget>;
 }
 
 interface Env extends ResumaticSecrets {}

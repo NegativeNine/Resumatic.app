@@ -6,6 +6,7 @@ import { app } from "./routes";
 // Every Durable Object and Workflow class must be exported from the main module.
 export { Directory } from "../directory/directory";
 export { Vault } from "../vault/vault";
+export { PilotBudget } from "./pilot/object";
 export { DistillWorkflow } from "../workflows/distill";
 export { TailorWorkflow } from "../workflows/tailor";
 export { FleetReembedWorkflow } from "../workflows/fleet";

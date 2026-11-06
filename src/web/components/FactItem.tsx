@@ -1,8 +1,10 @@
 import { useId, useRef, useState } from "react";
 import {
   MAX_FACT_CHARS,
+  LEVELS,
   type FactPatch,
   type FactView,
+  type Level,
   type RoleView,
 } from "../../shared/api";
 import { api } from "../api";
@@ -96,6 +98,9 @@ function FactItem({
           words and numbers.
         </p>
       )}
+      {fact.levelNeedsReview && (
+        <p className="hint">The earlier ownership level{fact.previousLevel ? ` (${LEVEL_LABEL[fact.previousLevel]})` : ""} needs your confirmation before it is used.</p>
+      )}
       {fact.reviewReasons?.includes("strategy_disagreement") && (
         <p className="hint">
           This passage was interpreted differently on a second reading. Check
@@ -171,6 +176,8 @@ function FactEditor(props: {
   const { fact, roles, reload, onClose } = props;
   const [text, setText] = useState(fact.text);
   const [roleId, setRoleId] = useState(fact.roleId ?? "");
+  const [level, setLevel] = useState<Level | "">(fact.level ?? "");
+  const [levelTouched, setLevelTouched] = useState(false);
   const [baseRevision] = useState(fact.revision ?? 1);
   const { run, pending, error } = useAction();
   const id = useId();
@@ -181,7 +188,8 @@ function FactEditor(props: {
   const patch: FactPatch = { expectedRevision: baseRevision };
   if (trimmed !== fact.text) patch.text = trimmed;
   if ((roleId || null) !== fact.roleId) patch.roleId = roleId || null;
-  const changed = patch.text !== undefined || patch.roleId !== undefined;
+  if (levelTouched) patch.level = level || null;
+  const changed = patch.text !== undefined || patch.roleId !== undefined || patch.level !== undefined;
 
   async function save() {
     const ok = await run(async () => {
@@ -226,10 +234,24 @@ function FactEditor(props: {
           </option>
         ))}
       </select>
+      <label htmlFor={`${id}-level`}>Ownership level (optional)</label>
+      <select id={`${id}-level`} value={level} onChange={(e) => {
+        setLevel(e.target.value as Level | "");
+        setLevelTouched(true);
+      }}>
+        <option value="">Not specified</option>
+        {LEVELS.map((value) => <option key={value} value={value}>{LEVEL_LABEL[value]}</option>)}
+      </select>
+      {trimmed !== fact.text && level && (
+        <label>
+          <input type="checkbox" checked={levelTouched} onChange={(e) => setLevelTouched(e.target.checked)} />{" "}
+          Use this level for the updated wording
+        </label>
+      )}
       <p className="hint" id={`${id}-note`}>
         An edited or moved fact becomes your own claim: resumes use your wording
-        and role, and the original quote stays beside it for reference. Only
-        write what's true.
+        and role, and the original quote stays beside it for reference. Changing
+        the wording clears its prior level unless you choose a level again. Only write what's true.
       </p>
       <div className="actions">
         <button

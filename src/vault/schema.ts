@@ -118,6 +118,12 @@ export const MIGRATIONS: readonly string[][] = [
        WHEN NEW.start_date IS NOT NULL OR NEW.end_date IS NOT NULL
        BEGIN UPDATE roles SET unknown_end_start_date = NULL WHERE id = NEW.id; END`,
   ],
+  [
+    `ALTER TABLE facts ADD COLUMN level_revision INTEGER`,
+    // All pre-migration user levels need reaffirmation. Older schema versions
+    // introduced revisions with a default of 1, so revision=1 does not prove
+    // that the wording was never changed. Keep original values for review.
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

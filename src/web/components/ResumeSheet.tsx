@@ -60,7 +60,7 @@ export function ResumeSheet({
     verifiedCount === lineIds.length && review.headersReady && review.skillsReady;
   // The server applies the same guard to saved exports. Keep historical data
   // visible for recovery even when it cannot be downloaded or shared.
-  const needsEvidence = resume.provenance !== "snapshot" || lines.some(
+  const needsEvidence = resume.needsGroundingReview === true || resume.provenance !== "snapshot" || lines.some(
     (item) => !["kept", "repaired", "replaced"].includes(item.status) || item.factIds.length === 0 ||
       item.factIds.some((id) => !resume.facts[id]?.text?.trim()),
   ) || body.skills.some((skill) => !Object.values(resume.facts).some((fact) => !!fact.text && fact.text === skill));
@@ -133,7 +133,7 @@ export function ResumeSheet({
             This version contains wording without verified evidence, so its PDF,
             Word download and print preview are unavailable. Your text is still here.{" "}
             {!readOnly && resume.provenance === "snapshot"
-              ? "Edit an uncited line to choose its supporting facts, or confirm facts and tailor a new version."
+              ? "Review the cited facts, then confirm facts and tailor a new version."
               : !readOnly && review
                 ? "Review each line against confirmed facts to prepare a checked version."
                 : "Select Latest or confirm facts and tailor a new version to create a downloadable resume."}
