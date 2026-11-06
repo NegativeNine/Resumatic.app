@@ -510,10 +510,66 @@ function formsOf(base: string): string[] {
 }
 
 const VERB_RANK = new Map<string, number>();
+const VERB_CANONICAL = new Map<string, string>();
 for (const [rank, bases] of Object.entries(VERBS)) {
-  for (const base of bases) for (const form of formsOf(base)) VERB_RANK.set(form, Number(rank));
+  for (const base of bases) for (const form of formsOf(base)) {
+    VERB_RANK.set(form, Number(rank));
+    VERB_CANONICAL.set(form, base);
+  }
 }
 for (const [form, rank] of Object.entries(IRREGULAR)) VERB_RANK.set(form, rank);
+for (const [base, forms] of Object.entries({
+  lead: ["led", "leading", "leads"], build: ["built"], write: ["wrote", "written"],
+  grow: ["grew", "grown"], drive: ["drove", "driven"], oversee: ["oversaw", "overseen"],
+  own: ["owned", "owning", "owner", "ownership"], found: ["founded", "founding", "founder"],
+  "co-found": ["co-founder"], cofound: ["cofounder"], ship: ["shipped", "shipping"],
+  cut: ["cutting"], scope: ["scoped"], manage: ["manager"], mentor: ["mentored", "mentoring"],
+  run: ["ran"],
+})) for (const form of forms) VERB_CANONICAL.set(form, base);
+
+/** Recognize a narrow set of explicit English negations around action verbs.
+ * This catches contradictions; it does not establish semantic entailment. */
+function actionPolarity(text: string): { positive: Set<string>; negative: Set<string> } {
+  const positive = new Set<string>();
+  const negative = new Set<string>();
+  const tokens = text.toLowerCase().match(/[a-z]+(?:['’][a-z]+)?(?:-[a-z]+)*|[.!?;:\n]/g) ?? [];
+  let context: string[] = [];
+  for (const raw of tokens) {
+    const token = raw.replace("’", "'");
+    if (/^[.!?;:\n]$/.test(token) || ["but", "however", "yet"].includes(token)) {
+      context = [];
+      continue;
+    }
+    const action = VERB_CANONICAL.get(token);
+    if (action) {
+      const prior = context.slice(-5);
+      const negated = prior.some((word, i) =>
+        (word === "not" && !["only", "just", "merely", "simply"].includes(prior[i + 1] ?? "")) ||
+        ["never", "no", "without", "neither", "didn't", "doesn't", "don't", "hasn't", "haven't", "hadn't", "wasn't", "weren't", "isn't", "aren't", "cannot", "can't"].includes(word),
+      );
+      (negated ? negative : positive).add(action);
+    }
+    context.push(token);
+  }
+  return { positive, negative };
+}
+
+function contradictedActions(claim: string, evidence: Evidence[]): string[] {
+  const asserted = actionPolarity(claim);
+  const supported = new Set<string>();
+  const denied = new Set<string>();
+  for (const item of evidence) {
+    for (const text of [item.text, item.quote ?? ""]) {
+      const polarity = actionPolarity(text);
+      for (const action of polarity.positive) supported.add(action);
+      for (const action of polarity.negative) denied.add(action);
+    }
+  }
+  return [...new Set([
+    ...[...asserted.positive].filter((action) => denied.has(action) && !supported.has(action)),
+    ...[...asserted.negative].filter((action) => supported.has(action) && !denied.has(action)),
+  ])];
+}
 
 /** The highest scope the text asserts, 0 if it has no scope verb. "Helped lead" counts as contributed. */
 export function scopeRank(text: string): number {
@@ -554,6 +610,8 @@ export function checkClaim(claim: string, evidence: Evidence[]): CheckResult {
   if (numbers.length) problems.push(`numbers not in the evidence: ${numbers.join(", ")}`);
   const names = unsupportedNames(claim, corpus);
   if (names.length) problems.push(`names not in the evidence: ${names.join(", ")}`);
+  const denied = contradictedActions(claim, evidence);
+  if (denied.length) problems.push(`actions contradicted by the evidence: ${denied.join(", ")}`);
   const claimed = scopeRank(claim);
   const supported = Math.max(
     ...evidence.map((e) => Math.max(rankOf(e.level), scopeRank(e.text), scopeRank(e.quote ?? ""))),

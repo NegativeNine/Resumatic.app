@@ -158,6 +158,29 @@ describe("verifyDraft", () => {
     expect(result.report.dropped).toBe(1);
   });
 
+  it("does not publish or repair a positive action contradicted by a selected fact", async () => {
+    const denied = record("denied", "r1", "Never led the migration", "led");
+    const base = fakeModels();
+    let judged = 0;
+    const models: Models = {
+      ...base,
+      complete: async (route, messages, schema) => {
+        if (route === "repair") return schema.parse({ text: "Led the migration" });
+        if (route === "judge") {
+          judged++;
+          return schema.parse({ verdicts: [{ id: "L1", verdict: "supported", reason: "" }] });
+        }
+        return base.complete(route, messages, schema);
+      },
+    };
+    const result = await verifyDraft(models, { lines: [line("l1", "r1", "Led the migration", [denied.id])] },
+      { factIds: [denied.id], skillIds: [], gaps: [] }, [denied]);
+    expect(judged).toBe(0);
+    expect(result.lines.map(({ text, status }) => ({ text, status }))).toEqual([
+      { text: "Never led the migration", status: "replaced" },
+    ]);
+  });
+
   it("keeps, repairs, replaces and drops, in draft order, and never prints a sentence twice", async () => {
     const draft: Draft = {
       lines: [

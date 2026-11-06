@@ -184,6 +184,38 @@ export class PilotLedger {
       reservedMicros: meta.used_micros, reservedCalls: meta.used_calls, frozen: meta.frozen === 1, ...counts };
   }
 
+  /** A bounded point-in-time snapshot for reconciliation; never changes budget state. */
+  auditAttempts() {
+    const meta = this.requiredMeta();
+    const rows = this.sql.exec<Attempt & { id: string }>(
+      `SELECT id,reserved_micros,reserved_calls,state,actual_micros FROM pilot_attempts ORDER BY id LIMIT ?`,
+      PILOT_MAX_CALLS + 1,
+    ).toArray();
+    if (rows.length > PILOT_MAX_CALLS || rows.some((row) => !validId(row.id) || !positive(row.reserved_micros) ||
+        !positive(row.reserved_calls) || !["pending", "settled", "unknown", "overrun"].includes(row.state) ||
+        (row.actual_micros !== null && (!Number.isSafeInteger(row.actual_micros) || row.actual_micros < 0)) ||
+        (row.state === "pending" && row.actual_micros !== null) ||
+        (row.state === "unknown" && row.actual_micros !== null) ||
+        (row.state === "settled" && (row.actual_micros === null || row.actual_micros > row.reserved_micros)) ||
+        (row.state === "overrun" && (row.actual_micros === null || row.actual_micros <= row.reserved_micros))) ||
+        (meta.frozen !== 1 && rows.some((row) => row.state === "unknown" || row.state === "overrun")) ||
+        rows.reduce((sum, row) => sum + row.reserved_micros, 0) !== meta.used_micros ||
+        rows.reduce((sum, row) => sum + row.reserved_calls, 0) !== meta.used_calls)
+      throw new AppError("unavailable", "the pilot ledger is invalid");
+    return {
+      totals: {
+        maxMicros: meta.max_micros, maxCalls: meta.max_calls,
+        reservedMicros: meta.used_micros, reservedCalls: meta.used_calls, frozen: meta.frozen === 1,
+        count: rows.length,
+        pending: rows.filter((row) => row.state === "pending").length,
+        unknown: rows.filter((row) => row.state === "unknown").length,
+        overrun: rows.filter((row) => row.state === "overrun").length,
+      },
+      attempts: rows.map((row) => ({ id: row.id, reservedMicros: row.reserved_micros,
+        reservedCalls: row.reserved_calls, state: row.state, actualMicros: row.actual_micros })),
+    };
+  }
+
   private meta(): Meta | null {
     return this.sql.exec<Meta>(`SELECT max_micros,max_calls,used_micros,used_calls,frozen FROM pilot_meta WHERE id=1`).toArray()[0] ?? null;
   }

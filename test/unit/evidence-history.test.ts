@@ -91,4 +91,17 @@ describe("immutable resume evidence", () => {
     const corrected = { ...extracted, origin: "user" as const };
     expect(() => assertGroundedResume(render, stored, "snapshot", evidenceForFacts([corrected]))).toThrow(/unverified/);
   });
+
+  it("blocks a historical positive claim that contradicts saved negative evidence", () => {
+    const render: RenderData = {
+      profile: { name: "A User", email: "", phone: "", location: "", links: [] },
+      body: { summary: { id: "line", text: "Led the migration", factIds: [fact.id], status: "kept" }, sections: [], skills: [] },
+      version: 1, company: null, title: null,
+    };
+    const negative = { ...fact, text: "Never led the migration", quote: "Never led the migration", level: "led" as const };
+    const stored = { [fact.id]: { text: negative.text, quote: negative.quote } };
+    expect(() => assertGroundedResume(render, stored, "snapshot", evidenceForFacts([negative]))).toThrow(/unverified/);
+    render.body.summary!.text = negative.text;
+    expect(() => assertGroundedResume(render, stored, "snapshot", evidenceForFacts([negative]))).not.toThrow();
+  });
 });

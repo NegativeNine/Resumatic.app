@@ -134,11 +134,80 @@ it("keeps a lost copy acknowledgement fenced even if a later copy succeeds", asy
       },
       head: (key: string) => files.head(key),
     } as unknown as R2Bucket;
-    await expect(instance.finishImport(operationId, sourceId)).rejects.toThrow("synthetic lost copy acknowledgement");
+    const error = await instance.finishImport(operationId, sourceId).catch((value: Error) => value);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("source copy outcome is unresolved");
+    expect((error as Error).message).not.toContain("synthetic lost copy acknowledgement");
     await expect(instance.finishImport(operationId, sourceId)).rejects.toThrow("source write is unresolved");
     expect(calls).toBe(2);
     expect(state.storage.sql.exec(`SELECT attempt_id FROM r2_cache_dispatches WHERE kind='source'`).toArray()).toHaveLength(1);
     await expect(instance.close()).rejects.toThrow("source write is unresolved");
+  });
+}, 30_000);
+
+it.each(["null", "wrong key", "wrong size", "missing checksum", "wrong checksum"])("keeps a copy fenced after an inconsistent %s acknowledgement", async (variant) => {
+  await withImport(async (instance, state, files, operationId, sourceId) => {
+    const local = (instance as unknown as { env: Env }).env;
+    let calls = 0;
+    local.FILES = {
+      get: (key: string) => files.get(key),
+      put: async (key: string, bytes: ArrayBuffer, options: R2PutOptions) => {
+        const result = await files.put(key, bytes, options);
+        if (++calls !== 1) return result;
+        if (variant === "null") return null;
+        return { key: variant === "wrong key" ? `${key}-other` : key,
+          size: variant === "wrong size" ? bytes.byteLength + 1 : bytes.byteLength,
+          checksums: variant === "missing checksum" ? {} : variant === "wrong checksum" ? { sha256: new Uint8Array(32).buffer } : result?.checksums };
+      },
+      head: (key: string) => files.head(key),
+    } as unknown as R2Bucket;
+    await expect(instance.finishImport(operationId, sourceId)).rejects.toThrow("source copy outcome is unresolved");
+    // Another successful copy or a visible object is not proof that the
+    // malformed acknowledgement settled the first attempt.
+    await expect(instance.finishImport(operationId, sourceId)).rejects.toThrow("source write is unresolved");
+    expect(calls).toBe(2);
+    expect(state.storage.sql.exec(`SELECT attempt_id FROM r2_cache_dispatches WHERE kind='source'`).toArray()).toHaveLength(1);
+    await expect(instance.close()).rejects.toThrow("source write is unresolved");
+  });
+}, 30_000);
+
+it.each(["get", "body", "head"])("redacts provider errors on %s without inventing an unresolved put", async (stage) => {
+  await withImport(async (instance, state, files, operationId, sourceId) => {
+    const local = (instance as unknown as { env: Env }).env;
+    let shouldFail = true;
+    let puts = 0;
+    const privateError = () => new Error("invalid: synthetic private source name");
+    local.FILES = {
+      get: async (key: string) => {
+        if (stage === "get" && shouldFail) throw privateError();
+        const object = await files.get(key);
+        if (stage !== "body" || !object || !shouldFail) return object;
+        return new Proxy(object, {
+          get(target, property) {
+            if (property === "arrayBuffer") return async () => { throw privateError(); };
+            return Reflect.get(target, property, target);
+          },
+        });
+      },
+      put: async (key: string, bytes: ArrayBuffer, options: R2PutOptions) => {
+        puts++;
+        return files.put(key, bytes, options);
+      },
+      head: (key: string) => {
+        if (stage === "head" && shouldFail) throw privateError();
+        return files.head(key);
+      },
+    } as unknown as R2Bucket;
+    const error = await instance.finishImport(operationId, sourceId).catch((value: Error) => value);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(stage === "head" ? "could not be verified" : "could not be read");
+    expect((error as Error).message).not.toContain("synthetic private source name");
+    expect(puts).toBe(stage === "head" ? 1 : 0);
+    // A failure before dispatch cannot have an outstanding put. A failed
+    // follow-up head cannot undo a put acknowledgement already observed.
+    expect(state.storage.sql.exec(`SELECT attempt_id FROM r2_cache_dispatches`).toArray()).toHaveLength(0);
+    shouldFail = false;
+    expect(await instance.finishImport(operationId, sourceId)).toMatchObject({ state: "ready" });
   });
 }, 30_000);
 

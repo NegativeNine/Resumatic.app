@@ -84,4 +84,37 @@ describe("shared one-shot pilot ledger", () => {
       expect(() => ledger.reserve("later", 1, 1)).toThrow(/frozen/);
     } finally { db.close(); }
   });
+
+  it("returns one bounded accounting snapshot and rejects inconsistencies", () => {
+    const { db, ledger } = fixture();
+    try {
+      ledger.initialize(1000, 10);
+      ledger.reserve("first", 100, 2);
+      ledger.reserve("second", 30, 1);
+      ledger.settle("first", 90);
+      expect(ledger.auditAttempts()).toEqual({ totals: {
+        maxMicros: 1000, maxCalls: 10, reservedMicros: 130, reservedCalls: 3,
+        frozen: false, count: 2, pending: 1, unknown: 0, overrun: 0,
+      }, attempts: [
+        { id: "first", reservedMicros: 100, reservedCalls: 2, state: "settled", actualMicros: 90 },
+        { id: "second", reservedMicros: 30, reservedCalls: 1, state: "pending", actualMicros: null },
+      ] });
+      expect(ledger.status()).toMatchObject({ reservedMicros: 130, reservedCalls: 3, pending: 1 });
+      // The audit checks its totals against the immutable counters and refuses
+      // corrupted rows rather than making a partial inventory appear complete.
+      db.exec("UPDATE pilot_meta SET used_micros=131");
+      expect(() => ledger.auditAttempts()).toThrow(/ledger is invalid/);
+    } finally { db.close(); }
+  });
+
+  it.each(["unknown", "overrun"])("rejects an unfrozen %s attempt in the audit snapshot", (state) => {
+    const { db, ledger } = fixture();
+    try {
+      ledger.initialize(1000, 10);
+      ledger.reserve("first", 100, 1);
+      db.prepare("UPDATE pilot_attempts SET state=?,actual_micros=? WHERE id='first'")
+        .run(state, state === "unknown" ? null : 101);
+      expect(() => ledger.auditAttempts()).toThrow(/ledger is invalid/);
+    } finally { db.close(); }
+  });
 });

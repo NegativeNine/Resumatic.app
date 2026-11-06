@@ -413,6 +413,39 @@ describe("scope", () => {
     expect(checkClaim("Improved billing", [{ text: "Billing improvements" }]).ok).toBe(true);
   });
 
+  it.each([
+    ["Led the migration", "Never led the migration"],
+    ["Led the migration", "Did not lead the migration"],
+    ["Led the migration", "Didn't lead the migration"],
+    ["Led the migration", "No experience leading the migration"],
+    ["Built the billing API", "Never built the billing API"],
+    ["Owned the platform", "Was not the owner of the platform"],
+    ["Founded the company", "Never founded the company"],
+  ])("rejects %s when its only matching action is negated: %s", (claim, text) => {
+    // A retained or explicitly selected level cannot override a direct denial.
+    expect(checkClaim(claim, [{ text, level: "founded" }]).ok).toBe(false);
+  });
+
+  it.each([
+    ["Never led the migration", "Led the migration"],
+    ["Did not lead the migration", "Led the migration"],
+    ["No experience leading the migration", "Led the migration"],
+    ["Never built the billing API", "Built the billing API"],
+  ])("rejects a negative action %s when the only evidence asserts it: %s", (claim, text) => {
+    expect(checkClaim(claim, [{ text, level: "founded" }]).ok).toBe(false);
+    expect(checkClaim(claim, [{ text: claim, level: "founded" }]).ok).toBe(true);
+  });
+
+  it("keeps an exact negative statement and recognizes a later positive assertion", () => {
+    expect(checkClaim("Never led the migration", [{ text: "Never led the migration" }]).ok).toBe(true);
+    expect(checkClaim("Led the migration", [{ text: "Never led the first migration, but led the second migration" }]).ok).toBe(true);
+    expect(checkClaim("Led the migration", [{ text: "Not only led the migration but also mentored engineers" }]).ok).toBe(true);
+    expect(checkClaim("Led the migration", [{ text: "No budget was allocated; I led the migration" }]).ok).toBe(true);
+    expect(checkClaim("Led the migration", [{ text: "My colleague never led the migration, but I led the migration" }]).ok).toBe(true);
+    // Mentioning a colleague's denial alone does not support the candidate's claim.
+    expect(checkClaim("Led the migration", [{ text: "My colleague never led the migration" }]).ok).toBe(false);
+  });
+
   it("reports every problem at once", () => {
     const result = checkClaim("Led a Rust rewrite that cut costs by 50%", [{ text: "Helped with a Go rewrite", level: "contributed" }]);
     expect(result.ok).toBe(false);

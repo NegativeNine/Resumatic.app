@@ -3441,15 +3441,27 @@ export class Vault extends DurableObject<Env> {
       const original =
         `vaults/${sourceVaultId}/` +
         row.r2_key.slice(`vaults/${this.vaultId}/`.length);
-      const object = await this.env.FILES.get(original);
+      let object: R2ObjectBody | null;
+      try {
+        object = await this.env.FILES.get(original);
+      } catch {
+        throw new AppError("unavailable", "a source file could not be read for copying");
+      }
       try {
         this.requireMaintenanceAccess();
       } catch (error) {
-        if (object) await object.body.cancel().catch(() => {});
+        if (object) {
+          try { await object.body.cancel(); } catch { /* Preserve the lifecycle error. */ }
+        }
         throw error;
       }
       if (!object) throw new AppError("conflict", "a source file is missing");
-      const bytes = await object.arrayBuffer();
+      let bytes: ArrayBuffer;
+      try {
+        bytes = await object.arrayBuffer();
+      } catch {
+        throw new AppError("unavailable", "a source file could not be read for copying");
+      }
       this.requireMaintenanceAccess();
       const digest = await crypto.subtle.digest("SHA-256", bytes);
       this.requireMaintenanceAccess();
@@ -3462,16 +3474,37 @@ export class Vault extends DurableObject<Env> {
       // No await between the final lifecycle/operation checks and this marker.
       // Every retry has its own marker; a rejected put remains unresolved.
       this.recordR2Dispatch(attemptId, "source", keyDigest);
-      await this.env.FILES.put(row.r2_key, bytes, {
-        sha256: digest,
-        httpMetadata: object.httpMetadata,
-        customMetadata: { ...object.customMetadata, resumatic_cache_attempt: attemptId },
-      });
-      // Only this put's acknowledged response can release its own marker.
-      // It remains safe to record the acknowledgement after quiescence.
-      this.sql.exec(`DELETE FROM r2_cache_dispatches WHERE attempt_id=?`, attemptId);
+      const put = (async () => {
+        try {
+          const result = await this.env.FILES.put(row.r2_key, bytes, {
+            sha256: digest,
+            httpMetadata: object.httpMetadata,
+            customMetadata: { ...object.customMetadata, resumatic_cache_attempt: attemptId },
+          });
+          // A null or inconsistent response is not an acknowledgement of this
+          // write. Keep its marker even if a later head finds an object.
+          if (!result || result.key !== row.r2_key || result.size !== bytes.byteLength ||
+              !result.checksums?.sha256 || base64url(result.checksums.sha256) !== base64url(digest))
+            throw new Error("unexpected R2 acknowledgement");
+        } catch {
+          // Provider messages may contain object names or other private data.
+          throw new AppError("unavailable", "the source copy outcome is unresolved");
+        }
+        // No await between this put's acknowledgement and its settlement;
+        // recording it remains safe after the target has been quiesced.
+        this.sql.exec(`DELETE FROM r2_cache_dispatches WHERE attempt_id=?`, attemptId);
+      })();
+      // Preserve the acknowledgement handler after a caller disconnects when
+      // the runtime permits. A crash or unknown response still holds the fence.
+      this.ctx.waitUntil(put.catch(() => {}));
+      await put;
       this.requireMaintenanceAccess();
-      const check = await this.env.FILES.head(row.r2_key);
+      let check: R2Object | null;
+      try {
+        check = await this.env.FILES.head(row.r2_key);
+      } catch {
+        throw new AppError("unavailable", "a source file could not be verified after copying");
+      }
       this.requireMaintenanceAccess();
       if (
         !check ||

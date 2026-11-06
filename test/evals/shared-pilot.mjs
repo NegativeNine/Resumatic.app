@@ -51,6 +51,57 @@ export class SharedPilotBudget {
     try { return await response.json(); } catch { throw new Error("shared_pilot_unavailable"); }
   }
 
+  /** Read-only accounting metadata for reconciling ambiguous attempts; never authorizes spending. */
+  async auditAttempts() {
+    const response = await this.#call("attempts");
+    if (response.status !== 200) throw new Error("shared_pilot_unavailable");
+    let value;
+    try {
+      if (!response.body) throw new Error();
+      const reader = response.body.getReader();
+      const chunks = []; let total = 0;
+      try {
+        for (;;) {
+          const next = await reader.read();
+          if (next.done) break;
+          if (!(next.value instanceof Uint8Array) || next.value.length > 32_768 - total) throw new Error();
+          total += next.value.length; chunks.push(next.value);
+        }
+      } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+      const bytes = new Uint8Array(total); let offset = 0;
+      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+      value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    } catch { throw new Error("shared_pilot_unavailable"); }
+    const t = value?.totals;
+    const nonnegative = (n) => Number.isSafeInteger(n) && n >= 0;
+    if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).sort().join() !== "attempts,totals" ||
+        !t || typeof t !== "object" || Array.isArray(t) ||
+        Object.keys(t).sort().join() !== "count,frozen,maxCalls,maxMicros,overrun,pending,reservedCalls,reservedMicros,unknown" ||
+        !Number.isSafeInteger(t.maxMicros) || t.maxMicros < 1 || t.maxMicros > 10_000_000 ||
+        !Number.isSafeInteger(t.maxCalls) || t.maxCalls < 1 || t.maxCalls > 50 ||
+        !nonnegative(t.reservedMicros) || t.reservedMicros > t.maxMicros ||
+        !nonnegative(t.reservedCalls) || t.reservedCalls > t.maxCalls || typeof t.frozen !== "boolean" ||
+        ![t.count, t.pending, t.unknown, t.overrun].every(nonnegative) ||
+        !Array.isArray(value.attempts) || value.attempts.length > 50 || t.count !== value.attempts.length ||
+        value.attempts.some((a) => !a || typeof a !== "object" || Array.isArray(a) || Object.keys(a).sort().join() !== "actualMicros,idMac,reservedCalls,reservedMicros,state" ||
+          typeof a.idMac !== "string" || !/^[0-9a-f]{64}$/.test(a.idMac) || !Number.isSafeInteger(a.reservedMicros) || a.reservedMicros < 1 ||
+          !Number.isSafeInteger(a.reservedCalls) || a.reservedCalls < 1 || a.reservedCalls > 50 ||
+          !["pending", "settled", "unknown", "overrun"].includes(a.state) ||
+          (a.actualMicros !== null && (!Number.isSafeInteger(a.actualMicros) || a.actualMicros < 0)) ||
+          ((a.state === "pending" || a.state === "unknown") && a.actualMicros !== null) ||
+          (a.state === "settled" && (a.actualMicros === null || a.actualMicros > a.reservedMicros)) ||
+          (a.state === "overrun" && (a.actualMicros === null || a.actualMicros <= a.reservedMicros))) ||
+        new Set(value.attempts.map((a) => a.idMac)).size !== value.attempts.length ||
+        value.attempts.reduce((sum, a) => sum + a.reservedMicros, 0) !== t.reservedMicros ||
+        value.attempts.reduce((sum, a) => sum + a.reservedCalls, 0) !== t.reservedCalls ||
+        value.attempts.filter((a) => a.state === "pending").length !== t.pending ||
+        value.attempts.filter((a) => a.state === "unknown").length !== t.unknown ||
+        value.attempts.filter((a) => a.state === "overrun").length !== t.overrun ||
+        ((t.unknown > 0 || t.overrun > 0) && !t.frozen))
+      throw new Error("shared_pilot_unavailable");
+    return value;
+  }
+
   /** Diagnostic only. A result proves one observed invocation, not account ownership or future versions. */
   async beginIdentity(path, vaultId) {
     if (!new Set(["distill", "tailor", "document", "reembed", "vault"]).has(path) || !/^[0-9a-f]{64}$/i.test(vaultId))

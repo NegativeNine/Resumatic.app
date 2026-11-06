@@ -262,7 +262,14 @@ app.post("/auth/test/pilot-budget/freeze", async (c) => {
   await pilotBudget(c).freeze();
   return c.body(null, 204);
 });
-app.get("/auth/test/pilot-budget/status", async (c) => c.json(await pilotBudget(c).status()));
+app.get("/auth/test/pilot-budget/status", async (c) => {
+  c.header("cache-control", "no-store");
+  return c.json(await pilotBudget(c).status());
+});
+app.get("/auth/test/pilot-budget/attempts", async (c) => {
+  c.header("cache-control", "no-store");
+  return c.json(await pilotBudget(c).auditAttempts());
+});
 
 // This diagnostic uses a server-generated public nonce and metadata only. An
 // authenticated caller cannot submit an observation: only a real model-call

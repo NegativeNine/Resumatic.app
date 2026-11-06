@@ -50,7 +50,7 @@ it("does not commit an import page after its Vault closes during checksum verifi
   });
 });
 
-it("cancels an original's body when the target closes while R2 get is in flight", async () => {
+it.each(["cancel", "reject", "getter"])("preserves the target closure when R2 body cleanup is %s", async (mode) => {
   const source = env.VAULT.get(env.VAULT.newUniqueId());
   const target = env.VAULT.get(env.VAULT.newUniqueId());
   await source.init("owner");
@@ -82,12 +82,13 @@ it("cancels an original's body when the target closes while R2 get is in flight"
       let entered!: () => void;
       const waiting = new Promise<void>((resolve) => { release = resolve; });
       const started = new Promise<void>((resolve) => { entered = resolve; });
-      const cancel = vi.fn();
+      const cancel = vi.fn(() => { if (mode === "reject") throw new Error("invalid: synthetic private source name"); });
       const put = vi.fn();
       local.FILES = {
         get: async () => {
           entered();
           await waiting;
+          if (mode === "getter") return { get body() { throw new Error("invalid: synthetic private source name"); } };
           return { body: new ReadableStream({ cancel }) };
         },
         put,
@@ -100,8 +101,10 @@ it("cancels an original's body when the target closes while R2 get is in flight"
         await started;
         instance.quiesce();
         release();
-        expect((await outcome)?.message).toMatch(/account is being deleted/);
-        expect(cancel).toHaveBeenCalledOnce();
+        const error = await outcome;
+        expect(error?.message).toMatch(/account is being deleted/);
+        expect(error?.message).not.toContain("synthetic private source name");
+        expect(cancel).toHaveBeenCalledTimes(mode === "getter" ? 0 : 1);
         expect(put).not.toHaveBeenCalled();
       } finally {
         release();
