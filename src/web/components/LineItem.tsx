@@ -19,6 +19,7 @@ interface Props {
   roleId: string | null;
   line: ResumeLine;
   facts: ResumeView["facts"];
+  legacyReview?: "verified" | "pending";
   expanded: boolean;
   onToggle: (lineId: string) => void;
   reload: Reload;
@@ -33,6 +34,7 @@ export function LineItem({
   roleId,
   line,
   facts,
+  legacyReview,
   expanded,
   onToggle,
   reload,
@@ -59,7 +61,8 @@ export function LineItem({
           applicationId={applicationId}
           roleId={roleId}
           line={line}
-          hasEvidence={cited.length > 0 && cited.length === line.factIds.length &&
+          legacyReview={!!legacyReview}
+          hasEvidence={!legacyReview && cited.length > 0 && cited.length === line.factIds.length &&
             cited.every((fact) => !!fact.text.trim()) && ["kept", "repaired", "replaced"].includes(line.status)}
           reload={reload}
           onClose={closeEditor}
@@ -71,8 +74,8 @@ export function LineItem({
         </p>
       )}
       <div className="line-tools">
-        <Badge tone={line.status} title={LINE_STATUS_HINT[line.status]}>
-          {LINE_STATUS_LABEL[line.status]}
+        <Badge tone={legacyReview === "pending" ? "edited" : line.status} title={legacyReview === "pending" ? "This older line needs a fresh check against confirmed facts." : LINE_STATUS_HINT[line.status]}>
+          {legacyReview === "pending" ? "Needs review" : legacyReview === "verified" ? "Checked" : LINE_STATUS_LABEL[line.status]}
         </Badge>
         <button
           type="button"
@@ -82,9 +85,9 @@ export function LineItem({
           aria-describedby={editing ? undefined : `${id}-text`}
           onClick={() => onToggle(line.id)}
         >
-          {expanded
-            ? "Hide evidence"
-            : `Show evidence (${count(cited.length, "fact")})`}
+          {legacyReview === "pending"
+            ? expanded ? "Hide review note" : "Show review note"
+            : expanded ? "Hide evidence" : `Show evidence (${count(cited.length, "fact")})`}
         </button>
         {!editing && !readOnly && (
           <button
@@ -93,12 +96,14 @@ export function LineItem({
             aria-describedby={`${id}-text`}
             onClick={() => setEditing(true)}
           >
-            Edit line
+            {legacyReview === "pending" ? "Review line" : "Edit line"}
           </button>
         )}
       </div>
       <div className="evidence" id={`${id}-evidence`} hidden={!expanded}>
-        <Evidence facts={cited} />
+        {legacyReview === "pending"
+          ? <p className="meta">This older line's citations have not been rechecked. Select confirmed facts when reviewing it.</p>
+          : <Evidence facts={cited} />}
       </div>
     </li>
   );
@@ -130,6 +135,7 @@ function LineEditor({
   roleId,
   line,
   hasEvidence,
+  legacyReview,
   reload,
   onClose,
   expectedVersion,
@@ -139,6 +145,7 @@ function LineEditor({
   roleId: string | null;
   line: ResumeLine;
   hasEvidence: boolean;
+  legacyReview: boolean;
   reload: Reload;
   onClose: () => void;
   expectedVersion?: number;
@@ -244,7 +251,9 @@ function LineEditor({
       <p className="hint" id={`${id}-note`}>
         {hasEvidence
           ? "Your wording is checked against the cited facts before it replaces this line. A completed check uses one output."
-          : "This line has no verified citations. Choose up to four confirmed facts that support it. The check uses one output."}
+          : legacyReview
+            ? "Choose up to four confirmed facts that support this older line. You can check its current wording or change it. The check uses one output."
+            : "This line has no verified citations. Choose up to four confirmed facts that support it. The check uses one output."}
       </p>
       {!hasEvidence && (
         <fieldset disabled={pending || !!documentId}>

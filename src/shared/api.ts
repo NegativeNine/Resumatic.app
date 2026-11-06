@@ -253,6 +253,8 @@ export interface ResumeReport {
 }
 
 export interface ResumeView {
+  /** Fresh verification progress for an old version; earlier flags are not trusted. */
+  legacyReview?: { verifiedLineIds: string[]; totalLines: number; headersReady: boolean; skillsReady: boolean };
   /** The request was saved, but starting its workflow is unconfirmed. */
   dispatchUncertain?: boolean;
   /** Cancellation was requested but has not yet been confirmed. */

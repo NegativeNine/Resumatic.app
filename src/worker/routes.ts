@@ -656,6 +656,11 @@ api.patch("/resumes/:id/lines/:lineId", JSON_LIMIT, async (c) => {
   return c.body(null, 204);
 });
 
+api.post("/resumes/:id/legacy-finalize", JSON_LIMIT, async (c) => {
+  const { expectedVersion } = await jsonBody(c, z.object({ expectedVersion: z.number().int().positive() }));
+  return c.json(await myVault(c).finalizeLegacyResume(c.get("who"), c.req.param("id"), expectedVersion));
+});
+
 /** Renders once per resume version and serves the cached PDF after that. */
 api.get("/resumes/:id/pdf", async (c) => {
   const resumeId = c.req.param("id");

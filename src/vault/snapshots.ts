@@ -22,6 +22,10 @@ export interface ResumeVersion {
   facts: Record<string, { text: string; quote: string | null }>;
   /** Full immutable generation evidence. Missing on versions created before this field existed. */
   evidence?: Record<string, FactRecord>;
+  /** Independent exact-line checks performed while remediating a legacy version. */
+  legacyReceipts?: Record<string, { text: string; roleId: string | null; factIds: string[]; facts: FactRecord[]; roles: RoleRecord[] }>;
+  /** Identifies an idempotently finalized legacy version. */
+  legacyFinalizedFrom?: number;
   provenance: "snapshot" | "legacy";
 }
 

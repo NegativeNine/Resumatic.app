@@ -229,6 +229,8 @@ export const api = {
       "GET",
       `/api/resumes/${encodeURIComponent(id)}/versions`,
     ),
+  finalizeLegacyResume: (id: string, expectedVersion: number) =>
+    request<{ version: number }>("POST", `/api/resumes/${encodeURIComponent(id)}/legacy-finalize`, { expectedVersion }),
   pdfUrl: (resumeId: string, version?: number) =>
     `/api/resumes/${encodeURIComponent(resumeId)}/pdf${versionQuery(version)}`,
   docxUrl: (resumeId: string, version?: number) =>

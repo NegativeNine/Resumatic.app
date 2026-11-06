@@ -57,7 +57,10 @@ export function mergeRefinementEvidence(
   const evidence = { ...base.evidence };
   for (const id of changed) {
     const next = current[id];
-    if (!next || (unchanged.has(id) && (!sameEvidence(base.evidence?.[id], next) ||
+    // Legacy versions are never printable until fresh per-line receipts are
+    // revalidated. Rebinding here invalidates any older receipt whose fact
+    // changed; it must not block recovery of other still-unverified lines.
+    if (!next || (base.provenance !== "legacy" && unchanged.has(id) && (!sameEvidence(base.evidence?.[id], next) ||
         base.facts[id]?.text !== base.evidence?.[id]?.text ||
         base.facts[id]?.quote !== base.evidence?.[id]?.quote))) throw conflict();
     facts[id] = { text: next.text, quote: next.quote };

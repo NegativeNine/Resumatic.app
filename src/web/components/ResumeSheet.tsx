@@ -8,7 +8,8 @@ import type {
 } from "../../shared/api";
 import { api } from "../api";
 import { formatDateRange, SECTION_HEADING } from "../format";
-import type { Reload } from "../hooks";
+import { useAction, type Reload } from "../hooks";
+import { href } from "../router";
 import { useTailor } from "../tailor";
 import { LineItem } from "./LineItem";
 import { GapsCard, ReportCard } from "./ResumeReport";
@@ -44,6 +45,7 @@ export function ResumeSheet({
     [body],
   );
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
+  const finalization = useAction();
   const allOpen = lineIds.length > 0 && lineIds.every((id) => open.has(id));
   const isEmpty =
     !body.summary && body.sections.length === 0 && body.skills.length === 0;
@@ -51,6 +53,11 @@ export function ResumeSheet({
     ...(body.summary ? [body.summary] : []),
     ...body.sections.flatMap((section) => section.lines),
   ];
+  const review = resume.provenance === "legacy" ? resume.legacyReview : undefined;
+  const verified = new Set(review?.verifiedLineIds ?? []);
+  const verifiedCount = lineIds.filter((id) => verified.has(id)).length;
+  const readyToFinalize = !!review && review.totalLines === lineIds.length &&
+    verifiedCount === lineIds.length && review.headersReady && review.skillsReady;
   // The server applies the same guard to saved exports. Keep historical data
   // visible for recovery even when it cannot be downloaded or shared.
   const needsEvidence = resume.provenance !== "snapshot" || lines.some(
@@ -76,6 +83,7 @@ export function ResumeSheet({
       roleId={roleId}
       line={l}
       facts={resume.facts}
+      legacyReview={resume.provenance === "legacy" ? (verified.has(l.id) ? "verified" : "pending") : undefined}
       expanded={open.has(l.id)}
       onToggle={toggle}
       reload={reload}
@@ -126,8 +134,35 @@ export function ResumeSheet({
             Word download and print preview are unavailable. Your text is still here.{" "}
             {!readOnly && resume.provenance === "snapshot"
               ? "Edit an uncited line to choose its supporting facts, or confirm facts and tailor a new version."
-              : "Select Latest or confirm facts and tailor a new version to create a downloadable resume."}
+              : !readOnly && review
+                ? "Review each line against confirmed facts to prepare a checked version."
+                : "Select Latest or confirm facts and tailor a new version to create a downloadable resume."}
           </p>
+        )}
+        {!readOnly && review && (
+          <section className="card" aria-label="Review older resume">
+            <h2>Review this older resume</h2>
+            <p>{verifiedCount} of {review.totalLines} lines checked. Choose “Review line” for each line and select its supporting facts. Each completed line check uses one output.</p>
+            {(!review.headersReady || !review.skillsReady) && (
+              <p className="notice">
+                {!review.headersReady && !review.skillsReady
+                  ? "Some headings and skills don't match confirmed records."
+                  : !review.headersReady
+                    ? "Some headings don't match confirmed roles."
+                    : "Some skills don't match confirmed facts."}{" "}
+                Review your confirmed experience in <a href={href.sources}>Sources &amp; facts</a>, then return and refresh this page.
+              </p>
+            )}
+            <button type="button" className="primary" disabled={!readyToFinalize || finalization.pending}
+              onClick={() => void finalization.run(async () => {
+                await api.finalizeLegacyResume(resume.id, resume.version);
+                await reload();
+              })}>
+              {finalization.pending ? "Preparing…" : "Create checked version"}
+            </button>
+            <p className="hint">This creates a new version. Your saved versions and existing share links are not changed.</p>
+            <ActionError message={finalization.error} />
+          </section>
         )}
         <article className="paper" aria-label="Resume preview">
           {isEmpty && (

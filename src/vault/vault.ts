@@ -65,6 +65,7 @@ import { vault as vaultStub } from "../shared/stubs";
 import { createSchema, hasSchema, migrate, SCHEMA_VERSION } from "./schema";
 import { assertGroundedResume, evidenceForFacts, SnapshotStore, type ResumeVersion } from "./snapshots";
 import { mergeRefinementEvidence } from "./refinement-evidence";
+import { finalLegacyEvidence, legacyReceipt, legacyReview } from "./legacy-remediation";
 import { RunStore } from "./runs";
 import { ShareStore } from "./shares";
 import { billingConfig } from "../shared/billing";
@@ -1651,6 +1652,7 @@ export class Vault extends DurableObject<Env> {
       report: saved?.report ?? null,
       facts: saved?.facts ?? {},
       provenance: saved?.provenance,
+      ...(saved?.provenance === "legacy" ? { legacyReview: legacyReview(saved, this.usableFacts(), this.confirmedRoles()) } : {}),
     };
   }
 
@@ -1659,6 +1661,45 @@ export class Vault extends DurableObject<Env> {
     const row = this.resumeRow(id);
     if (row.state === "ready") this.resumeVersion(row);
     return this.snapshots.versions(id);
+  }
+
+  /** Promote only a fully rechecked current legacy version; never mutate history. */
+  finalizeLegacyResume(who: Who, resumeId: string, expectedVersion: number): { version: number } {
+    this.requireOwner(who);
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1)
+      throw new AppError("invalid", "the resume version is required");
+    const result = this.ctx.storage.transactionSync(() => {
+      this.requireOwner(who);
+      const row = this.resumeRow(resumeId);
+      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "the resume is not ready");
+      if (row.version === expectedVersion + 1) {
+        const saved = this.snapshots.read(resumeId, row.version);
+        if (saved?.provenance === "snapshot" && saved.legacyFinalizedFrom === expectedVersion)
+          return { version: row.version };
+      }
+      if (row.version !== expectedVersion) throw new AppError("conflict", "the resume changed; refresh and try again");
+      if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
+        throw new AppError("conflict", "wait for the current document to finish");
+      const base = this.resumeVersion(row);
+      const verified = finalLegacyEvidence(base, this.usableFacts(), this.confirmedRoles());
+      const version = row.version + 1;
+      const saved: ResumeVersion = {
+        ...base,
+        render: { ...base.render, profile: this.readProfile(), version },
+        facts: verified.facts,
+        evidence: verified.evidence,
+        report: { kept: verified.count, repaired: 0, replaced: 0, dropped: 0, gaps: [] },
+        provenance: "snapshot",
+        legacyFinalizedFrom: expectedVersion,
+      };
+      assertGroundedResume(saved.render, saved.facts, saved.provenance);
+      this.snapshots.save(resumeId, version, saved);
+      this.sql.exec(`UPDATE resumes SET version=?,body=?,report=? WHERE id=?`, version,
+        JSON.stringify(saved.render.body), JSON.stringify(saved.report), resumeId);
+      return { version };
+    });
+    this.broadcast("resume", resumeId);
+    return result;
   }
 
   /** Direct edits cannot establish entailment; use the verified document workflow. */
@@ -2094,6 +2135,8 @@ export class Vault extends DurableObject<Env> {
         );
       options = { ...options, expectedVersion: resume.version };
       base = this.resumeVersion(resume);
+      if (base.provenance === "legacy" && (options.manualText === undefined || !options.manualFactIds?.length))
+        throw new AppError("invalid", "choose confirmed facts to verify this historical line");
       if (options.manualText === undefined)
         assertGroundedResume(base.render, base.facts, base.provenance);
     }
@@ -2251,8 +2294,11 @@ export class Vault extends DurableObject<Env> {
       ? await refinementCacheKey(cachedInput, this.env.MODEL_WRITE)
       : null;
     this.requireOpen();
+    const legacyManual = options.manualText !== undefined && !!options.resumeId &&
+      this.resumeVersion(this.resumeRow(options.resumeId)).provenance === "legacy";
     const unchanged =
       options.kind === "refine" &&
+      !legacyManual &&
       !!result.body &&
       JSON.stringify(options.base) === JSON.stringify(result.body);
     const completed = this.runs.finish(
@@ -2260,7 +2306,7 @@ export class Vault extends DurableObject<Env> {
       () => {
         const input = this.snapshots.metadata(runId)!;
         const roles = this.snapshots.items<RoleRecord>(runId, "role");
-        const checkBody: ResumeBody = result.body ?? {
+        let checkBody: ResumeBody = result.body ?? {
           summary: null,
           skills: [],
           sections: roles
@@ -2283,6 +2329,19 @@ export class Vault extends DurableObject<Env> {
               status: "kept",
             };
         }
+        if (legacyManual && result.body) {
+          // Other historical lines and headers may still need review. Validate
+          // only the checked line now; finalization rechecks the entire body.
+          const target = options.lineIds?.[0];
+          const summary = result.body.summary?.id === target ? result.body.summary : null;
+          const sections = result.body.sections.flatMap((section) => {
+            const lines = section.lines.filter((line) => line.id === target);
+            return lines.length ? [{ ...section, lines }] : [];
+          });
+          if (Number(!!summary) + sections.reduce((n, section) => n + section.lines.length, 0) !== 1)
+            throw new AppError("conflict", "the checked line changed");
+          checkBody = { summary, sections, skills: [] };
+        }
         this.snapshots.assertCurrent(runId, checkBody);
         const capturedFacts = this.snapshots.items<FactRecord>(runId, "fact");
         const facts = Object.fromEntries(capturedFacts.map((f) => [f.id, { text: f.text, quote: f.quote }]));
@@ -2299,13 +2358,41 @@ export class Vault extends DurableObject<Env> {
               "the resume changed while refining; try again",
             );
           const base = this.resumeVersion(row);
+          if (legacyManual) {
+            // A stored result must still be exactly the requested one-line
+            // change. No other legacy content can acquire trust implicitly.
+            const expected = structuredClone(base.render.body);
+            const all = [
+              ...(expected.summary ? [expected.summary] : []),
+              ...expected.sections.flatMap((section) => section.lines),
+            ];
+            const targets = all.filter((line) => line.id === options.lineIds?.[0]);
+            if (targets.length !== 1 || !options.manualFactIds?.length || options.manualText === undefined)
+              throw new AppError("conflict", "the checked line changed");
+            targets[0]!.text = options.manualText;
+            targets[0]!.factIds = [...options.manualFactIds];
+            targets[0]!.status = "kept";
+            if (JSON.stringify(expected) !== JSON.stringify(result.body))
+              throw new AppError("conflict", "the checked line changed");
+          }
           const savedEvidence = mergeRefinementEvidence(base, result.body, capturedFacts, roles);
+          const receipt = legacyManual ? legacyReceipt(result.body, options.lineIds![0]!, capturedFacts, roles) : undefined;
+          // Even an identical checked line needs fresh evidence for the owner
+          // to inspect; older unverified versions remain untouched.
+          if (receipt) for (const fact of receipt.facts) {
+            savedEvidence.facts[fact.id] = { text: fact.text, quote: fact.quote };
+            savedEvidence.evidence![fact.id] = fact;
+          }
+          const receipts = receipt
+            ? { ...base.legacyReceipts, [options.lineIds![0]!]: receipt }
+            : base.legacyReceipts;
           const version = row.version + 1;
           this.snapshots.save(row.id, version, {
             ...base,
             render: { ...base.render, body: result.body, version },
             report: result.report,
             ...savedEvidence,
+            legacyReceipts: receipts,
             provenance: options.manualText !== undefined ? base.provenance : "snapshot",
           });
           this.sql.exec(
