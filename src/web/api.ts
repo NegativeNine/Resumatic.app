@@ -229,17 +229,6 @@ export const api = {
       "GET",
       `/api/resumes/${encodeURIComponent(id)}/versions`,
     ),
-  editLine: (
-    resumeId: string,
-    lineId: string,
-    text: string,
-    expectedVersion?: number,
-  ) =>
-    request<void>(
-      "PATCH",
-      `/api/resumes/${encodeURIComponent(resumeId)}/lines/${encodeURIComponent(lineId)}`,
-      { text, expectedVersion },
-    ),
   pdfUrl: (resumeId: string, version?: number) =>
     `/api/resumes/${encodeURIComponent(resumeId)}/pdf${versionQuery(version)}`,
   docxUrl: (resumeId: string, version?: number) =>

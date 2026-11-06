@@ -844,6 +844,8 @@ api.get("/resumes/:id/docx", async (c) => {
 });
 api.get("/documents/:id/docx", async (c) => {
   const doc = await myVault(c).getDocument(c.get("who"), c.req.param("id"));
+  if (doc.kind !== "letter" && doc.kind !== "prep")
+    throw new AppError("invalid", "only cover letters and interview preparation can be exported as documents");
   if (doc.state !== "ready" || !doc.result)
     throw new AppError("conflict", "the document is not ready");
   const paragraphs =
@@ -923,6 +925,8 @@ api.post("/applications/:id/documents", JSON_LIMIT, async (c) => {
       resumeId: z.string().max(100).optional(),
       expectedVersion: z.number().int().positive().optional(),
       lineIds: z.array(z.string().max(100)).max(100).optional(),
+      manualText: z.string().trim().min(1).max(MAX_LINE_CHARS).optional(),
+      manualFactIds: z.array(z.string().min(1).max(100)).min(1).max(4).optional(),
     }),
   );
   return c.json(

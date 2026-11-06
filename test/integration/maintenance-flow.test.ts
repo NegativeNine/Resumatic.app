@@ -96,14 +96,26 @@ describe("maintenance replacement lifecycle", () => {
     ).json()) as { resumeId: string };
     const original = await waitForResume(user, resumeId);
     const line = original.body.sections[0].lines[0];
-    expect(
-      (
-        await user.send("PATCH", `/api/resumes/${resumeId}/lines/${line.id}`, {
-          text: "My own edited description",
-          expectedVersion: original.version,
-        })
-      ).status,
-    ).toBe(204);
+    // Simulate a pre-migration detached edit to verify that replacement keeps
+    // owner-visible history rather than silently deleting it.
+    await runInDurableObject(vault(env, oldSession.vid), (_instance, state) => {
+      const stored = state.storage.sql.exec<{ data: string }>(
+        `SELECT data FROM resume_versions WHERE resume_id=? AND version=?`,
+        resumeId, original.version,
+      ).one();
+      const saved = JSON.parse(stored.data);
+      const edited = saved.render.body.sections[0].lines.find((item: { id: string }) => item.id === line.id);
+      edited.text = "My own edited description";
+      edited.status = "edited";
+      edited.factIds = [];
+      saved.render.version = original.version + 1;
+      state.storage.sql.exec(
+        `INSERT INTO resume_versions (resume_id,version,data,created_at) VALUES (?,?,?,?)`,
+        resumeId, saved.render.version, JSON.stringify(saved), Date.now(),
+      );
+      state.storage.sql.exec(`UPDATE resumes SET version=?,body=? WHERE id=?`,
+        saved.render.version, JSON.stringify(saved.render.body), resumeId);
+    });
     const current = await user.json(`/api/resumes/${resumeId}`);
     const initialQuota = (await user.json("/api/me")).quota;
     const savedVersions = await user.json(`/api/resumes/${resumeId}/versions`);

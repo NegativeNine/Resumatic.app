@@ -47,6 +47,7 @@ export async function refinementCacheKey(
   input: DocumentInput,
   model: string,
 ): Promise<string | null> {
+  if (input.manualText !== undefined) return null;
   const lines = linesFor(input);
   if (!input.instruction?.trim() || !lines.length) return null;
   const ids = new Set(lines.flatMap((line) => line.factIds));

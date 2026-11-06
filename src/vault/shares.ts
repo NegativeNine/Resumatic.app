@@ -9,6 +9,7 @@ import type {
   ShareSnapshot,
 } from "../shared/sharing";
 import type { RenderData, Who } from "../shared/types";
+import { assertGroundedResume, type ResumeVersion } from "./snapshots";
 
 export const SHARE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const MAX_SHARE_FACTS = 100;
@@ -30,6 +31,7 @@ export interface ShareSelection {
     id: string;
     render: RenderData;
     provenance?: "snapshot" | "legacy";
+    facts?: ResumeVersion["facts"];
   }[];
 }
 
@@ -88,7 +90,7 @@ export function snapshotSelection(
     };
   });
   const resumes: SharedResume[] = selection.resumes.map(
-    ({ id, render, provenance }) => {
+    ({ id, render, provenance, facts }) => {
       if (
         !Number.isSafeInteger(render.version) ||
         render.version < 1 ||
@@ -98,15 +100,11 @@ export function snapshotSelection(
           "invalid",
           "only finished resume versions can be shared",
         );
+      assertGroundedResume(render, facts, provenance);
       const line = (value: ResumeLine): SharedLine => ({
         id: value.id,
         text: value.text,
-        verification:
-          value.status === "edited"
-            ? "user-authored"
-            : provenance === "snapshot"
-              ? "verified"
-              : "unverified",
+        verification: "verified",
       });
       const summary = render.body.summary ? line(render.body.summary) : null;
       const sections = render.body.sections.map((section) => ({
@@ -293,10 +291,29 @@ export class ShareStore {
       !row.snapshot
     )
       throw new AppError("gone", "this share link is unavailable or expired");
+    let snapshot: ShareSnapshot;
+    try {
+      snapshot = JSON.parse(row.snapshot) as ShareSnapshot;
+      if (snapshot.schemaVersion !== 1 || !Array.isArray(snapshot.resumes) || !Array.isArray(snapshot.facts)) throw new Error();
+      // Prior grants are immutable copies without citations. Reconstruct each
+      // shared resume from its immutable version and require an exact match;
+      // this also prevents detached historical edits from reaching a coach.
+      for (const shared of snapshot.resumes) {
+        const saved = this.sql.exec<{ data: string }>(
+          `SELECT data FROM resume_versions WHERE resume_id = ? AND version = ?`, shared.id, shared.version,
+        ).toArray()[0];
+        if (!saved) throw new Error();
+        const version = JSON.parse(saved.data) as ResumeVersion;
+        const expected = snapshotSelection({ facts: [], roles: [], resumes: [{ id: shared.id, ...version }] }, snapshot.createdAt).resumes[0];
+        if (JSON.stringify(expected) !== JSON.stringify(shared)) throw new Error();
+      }
+    } catch {
+      throw new AppError("gone", "this share link is unavailable or expired");
+    }
     return {
       grantId: row.id,
       expiresAt: row.expires_at,
-      snapshot: JSON.parse(row.snapshot) as ShareSnapshot,
+      snapshot,
     };
   }
 

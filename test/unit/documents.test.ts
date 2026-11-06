@@ -308,6 +308,47 @@ describe("gap questions", () => {
 });
 
 describe("evidence-preserving refinement", () => {
+  it("verifies the exact manual edit against cited facts without asking the writer", async () => {
+    const m = models();
+    const i = input({ kind: "refine", base: BASE, lineIds: ["line-1"], manualText: "Built services in Go" });
+    const plan = await planDocument(m, i);
+    const draft = await writeDocument(m, i, plan);
+    const result = await verifyDocument(m, i, plan, draft);
+    expect(result.body!.sections[0]!.lines[0]).toMatchObject({
+      text: "Built services in Go", factIds: ["f1"], status: "kept",
+    });
+    expect(m.calls).toEqual(["judge"]);
+  });
+
+  it("rejects unsupported edits and judge failures without accepting repair", async () => {
+    for (const [text, opts] of [
+      ["Built 999 services", {}],
+      ["Built services in Go", { rejectJudge: true }],
+      ["Built services in Go", { judgeError: true }],
+    ] as const) {
+      const m = models(opts);
+      const i = input({ kind: "refine", base: BASE, lineIds: ["line-1"], manualText: text });
+      const plan = await planDocument(m, i);
+      await expect(verifyDocument(m, i, plan, await writeDocument(m, i, plan))).rejects.toThrow();
+      expect(m.calls).not.toContain("repair");
+    }
+  });
+
+  it("requires explicitly selected confirmed evidence for an uncited historical edit", async () => {
+    const m = models();
+    const i = input({ kind: "refine", base: BASE, lineIds: ["manual"], manualText: "Built 2 services in Go", manualFactIds: ["f1"] });
+    const plan = await planDocument(m, i);
+    const result = await verifyDocument(m, i, plan, await writeDocument(m, i, plan));
+    expect(result.body!.sections[0]!.lines[1]).toMatchObject({
+      text: "Built 2 services in Go", factIds: ["f1"], status: "kept",
+    });
+    const wrongRole = { ...i, manualFactIds: ["f2"] };
+    const wrongPlan = await planDocument(m, wrongRole);
+    await expect(verifyDocument(m, wrongRole, wrongPlan, await writeDocument(m, wrongRole, wrongPlan))).rejects.toThrow();
+    const noFacts = { ...i, manualFactIds: undefined };
+    const noFactsPlan = await planDocument(m, noFacts);
+    await expect(writeDocument(m, noFacts, noFactsPlan)).rejects.toThrow();
+  });
   it("changes only eligible text and preserves headers, skills and user-authored lines", async () => {
     const m = models({
       write: {

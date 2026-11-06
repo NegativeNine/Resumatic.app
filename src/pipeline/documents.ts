@@ -13,7 +13,7 @@ import type {
   Selection,
 } from "../shared/types";
 import { isInstruction } from "./extract/verify";
-import { analyzeJob, selectFacts, verifyDraft } from "./tailor";
+import { analyzeJob, selectFacts, verifyDraft, verifyExactLine } from "./tailor";
 
 export type DocumentKind = "refine" | "letter" | "prep" | "questions";
 export interface DocumentQuestion {
@@ -34,6 +34,8 @@ export interface DocumentInput {
   instruction?: string;
   base?: ResumeBody;
   lineIds?: string[];
+  manualText?: string;
+  manualFactIds?: string[];
 }
 export interface DocumentPlan {
   analysis: Analysis;
@@ -102,7 +104,7 @@ export async function planDocument(
     ].slice(0, 20),
   };
   if (input.kind === "refine") {
-    const ids = new Set(baseUnits(input.base!).flatMap((line) => line.factIds));
+    const ids = new Set([...baseUnits(input.base!).flatMap((line) => line.factIds), ...(input.manualFactIds ?? [])]);
     const facts = input.facts.filter((fact) => ids.has(fact.id));
     return {
       analysis: cleanAnalysis,
@@ -182,16 +184,22 @@ export async function writeDocument(
     const permitted = new Set(
       input.lineIds ?? baseUnits(input.base!).map((line) => line.id),
     );
-    // A user-authored line can be exported as-is, but is not silently promoted to verified generation.
+    // Detached historical lines need explicitly selected evidence before verification.
     const lines = baseUnits(input.base!).filter(
       (line) =>
         permitted.has(line.id) &&
-        line.status !== "edited" &&
-        line.factIds.length > 0 &&
-        line.factIds.every((id) => selected.has(id)),
-    );
+        (line.status !== "edited" || (input.manualText !== undefined && !!input.manualFactIds?.length)) &&
+        (input.manualText !== undefined && input.manualFactIds ? input.manualFactIds : line.factIds).length > 0 &&
+        (input.manualText !== undefined && input.manualFactIds ? input.manualFactIds : line.factIds).every((id) => selected.has(id)),
+    ).map((line) => input.manualText !== undefined && input.manualFactIds
+      ? { ...line, factIds: input.manualFactIds } : line);
     if (lines.length === 0)
       throw new AppError("invalid", "choose a verified line to refine");
+    if (input.manualText !== undefined) {
+      if (lines.length !== 1 || input.lineIds?.length !== 1)
+        throw new AppError("invalid", "choose one verified line to edit");
+      return { units: [{ ...lines[0]!, text: input.manualText }] };
+    }
     const out = await models.complete(
       "write",
       [
@@ -331,10 +339,26 @@ export async function verifyDocument(
     // Rebuild citations and role from the saved baseline even if a stored draft was malformed.
     const candidates = draft.units.flatMap((unit) => {
       const original = originalById.get(unit.id);
-      return original && original.status !== "edited" && permitted.has(unit.id)
-        ? [{ ...original, text: unit.text }]
+      return original && (original.status !== "edited" || (input.manualText !== undefined && !!input.manualFactIds?.length)) && permitted.has(unit.id)
+        ? [{ ...original, text: unit.text, factIds: input.manualText !== undefined && input.manualFactIds ? input.manualFactIds : original.factIds }]
         : [];
     });
+    if (input.manualText !== undefined) {
+      const candidate = candidates[0];
+      if (candidates.length !== 1 || !candidate ||
+          candidate.text !== input.manualText ||
+          !(await verifyExactLine(models, candidate, plan.selection, input.facts)))
+        throw new AppError("invalid", "the edit could not be verified against its cited facts");
+      const body = structuredClone(input.base!);
+      const update = (line: ResumeLine): ResumeLine =>
+        line.id === candidate.id ? { ...line, text: candidate.text, factIds: candidate.factIds, status: "kept" } : line;
+      if (body.summary) body.summary = update(body.summary);
+      for (const section of body.sections) section.lines = section.lines.map(update);
+      return {
+        kind: input.kind, body, units: baseUnits(body), questions: [],
+        report: { kept: 1, repaired: 0, replaced: 0, dropped: 0, gaps: plan.selection.gaps },
+      };
+    }
     const verified = await verifyUnits(
       models,
       candidates,
@@ -396,7 +420,15 @@ function baseUnits(body: ResumeBody): CitedUnit[] {
 }
 
 function validateInput(input: DocumentInput): void {
-  if (input.kind === "refine" && (!input.base || !input.instruction?.trim()))
+  if (input.manualFactIds !== undefined &&
+      (input.manualText === undefined || input.manualFactIds.length < 1 || input.manualFactIds.length > 4 ||
+       new Set(input.manualFactIds).size !== input.manualFactIds.length))
+    throw new AppError("invalid", "choose up to four distinct confirmed facts");
+  if (input.manualText !== undefined &&
+      (input.kind !== "refine" || !input.manualText.trim() || input.manualText !== input.manualText.trim() ||
+       input.manualText.length > MAX_LINE_CHARS || input.lineIds?.length !== 1))
+    throw new AppError("invalid", "choose one line and enter a valid edit");
+  if (input.kind === "refine" && (!input.base || (input.manualText === undefined && !input.instruction?.trim())))
     throw new AppError(
       "invalid",
       "choose a resume and give a refinement instruction",

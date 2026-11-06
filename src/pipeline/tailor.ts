@@ -305,6 +305,19 @@ export async function verifyDraft(
   };
 }
 
+/** Verify exact user text without repair or fallback changing the requested edit. */
+export async function verifyExactLine(
+  models: Models,
+  line: DraftLine,
+  selection: Selection,
+  facts: FactRecord[],
+): Promise<boolean> {
+  const byId = new Map(facts.map((f) => [f.id, authoritativeFact(f)]));
+  const selected = new Set([...selection.factIds, ...selection.skillIds]);
+  if (isInstruction(line.text) || !checkLine(line, byId, selected).ok) return false;
+  return (await judge(models, [line], byId)).get(line.id)?.ok === true;
+}
+
 async function judge(
   models: Models,
   lines: DraftLine[],

@@ -7,6 +7,9 @@ export interface NewDocument {
   resumeId?: string;
   expectedVersion?: number;
   lineIds?: string[];
+  /** Exact user-proposed text; used only for an independently verified refinement. */
+  manualText?: string;
+  manualFactIds?: string[];
 }
 export interface DocumentView {
   /** The stopped generation run can be retried with its original options. */

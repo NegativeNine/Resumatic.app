@@ -63,7 +63,7 @@ import {
 } from "../shared/operations";
 import { vault as vaultStub } from "../shared/stubs";
 import { createSchema, hasSchema, migrate, SCHEMA_VERSION } from "./schema";
-import { SnapshotStore, type ResumeVersion } from "./snapshots";
+import { assertGroundedResume, SnapshotStore, type ResumeVersion } from "./snapshots";
 import { RunStore } from "./runs";
 import { ShareStore } from "./shares";
 import { billingConfig } from "../shared/billing";
@@ -1660,7 +1660,7 @@ export class Vault extends DurableObject<Env> {
     return this.snapshots.versions(id);
   }
 
-  /** A user edit is the user's own claim; the PDF cache key changes with the version. */
+  /** Direct edits cannot establish entailment; use the verified document workflow. */
   async editLine(
     who: Who,
     resumeId: string,
@@ -1690,19 +1690,7 @@ export class Vault extends DurableObject<Env> {
     ].find((l) => l.id === lineId);
     if (!line) throw new AppError("not_found", "no such line");
     if (line.text === trimmed) return;
-    line.text = trimmed;
-    line.status = "edited";
-    line.factIds = [];
-    saved.render.version = row.version + 1;
-    this.ctx.storage.transactionSync(() => {
-      this.snapshots.save(resumeId, saved.render.version, saved);
-      this.sql.exec(
-        `UPDATE resumes SET body = ?, version = ? WHERE id = ?`,
-        JSON.stringify(saved.render.body),
-        saved.render.version,
-        resumeId,
-      );
-    });
+    throw new AppError("conflict", "use verified editing to change this line");
   }
 
   async renderData(
@@ -1714,7 +1702,9 @@ export class Vault extends DurableObject<Env> {
     const row = this.resumeRow(resumeId);
     if (row.state !== "ready" || !row.body)
       throw new AppError("conflict", "the resume is not ready yet");
-    return this.resumeVersion(row, version).render;
+    const saved = this.resumeVersion(row, version);
+    assertGroundedResume(saved.render, saved.facts, saved.provenance);
+    return saved.render;
   }
 
   // ---------------------------------------------------------------- tailoring (Tailor Workflow)
@@ -1928,10 +1918,11 @@ export class Vault extends DurableObject<Env> {
     const resume = await this.getResume(who, id, version);
     if (resume.state !== "ready")
       throw new AppError("conflict", "the resume is not ready");
+    const render = await this.renderData(who, id, resume.version);
     return {
       id: resume.id,
       version: resume.version,
-      body: resume.body,
+      body: render.body,
       provenance: resume.provenance,
     };
   }
@@ -2049,6 +2040,16 @@ export class Vault extends DurableObject<Env> {
       await sha256(JSON.stringify([applicationId, options])),
     );
     this.requireOwner(who);
+    if (options.manualText !== undefined &&
+        (options.kind !== "refine" || options.expectedVersion === undefined ||
+         !options.resumeId || options.lineIds?.length !== 1 ||
+         !options.manualText.trim() || options.manualText !== options.manualText.trim() ||
+         options.manualText.length > MAX_LINE_CHARS))
+      throw new AppError("invalid", "choose one line and enter a valid edit");
+    if (options.manualFactIds !== undefined &&
+        (options.manualText === undefined || options.manualFactIds.length < 1 ||
+         options.manualFactIds.length > 4 || new Set(options.manualFactIds).size !== options.manualFactIds.length))
+      throw new AppError("invalid", "choose up to four distinct confirmed facts");
     const app = this.sql
       .exec<ApplicationRow>(
         `SELECT * FROM applications WHERE id = ?`,
@@ -2094,6 +2095,8 @@ export class Vault extends DurableObject<Env> {
         );
       options = { ...options, expectedVersion: resume.version };
       base = this.resumeVersion(resume);
+      if (options.manualText === undefined)
+        assertGroundedResume(base.render, base.facts, base.provenance);
     }
     const id = crypto.randomUUID();
     this.quota();
@@ -2236,6 +2239,13 @@ export class Vault extends DurableObject<Env> {
         )
         .one().options,
     ) as NewDocument & { base?: ResumeBody };
+    if (options.manualText !== undefined) {
+      const verified = this.sql.exec<{ result: string | null }>(
+        `SELECT result FROM document_requests WHERE run_id = ?`, runId,
+      ).one().result;
+      if (!verified || verified !== JSON.stringify(result))
+        throw new AppError("conflict", "the verified edit changed");
+    }
     const cachedInput =
       options.kind === "refine" ? await this.documentInput(runId) : null;
     const cacheKey = cachedInput
@@ -2293,13 +2303,38 @@ export class Vault extends DurableObject<Env> {
               "the resume changed while refining; try again",
             );
           const base = this.resumeVersion(row);
+          let savedFacts = facts;
+          if (options.manualText !== undefined) {
+            const targetId = options.lineIds?.[0];
+            const allLines = [
+              ...(base.render.body.summary ? [base.render.body.summary] : []),
+              ...base.render.body.sections.flatMap((section) => section.lines),
+            ];
+            const target = [
+              ...(result.body.summary ? [result.body.summary] : []),
+              ...result.body.sections.flatMap((section) => section.lines),
+            ].find((line) => line.id === targetId);
+            if (!target || !target.factIds.length)
+              throw new AppError("conflict", "the verified edit is missing its evidence");
+            const otherIds = new Set(allLines.filter((line) => line.id !== targetId).flatMap((line) => line.factIds));
+            const skillIds = new Set(this.snapshots.items<FactRecord>(runId, "fact")
+              .filter((fact) => fact.kind === "skill" && base.render.body.skills.includes(fact.text))
+              .map((fact) => fact.id));
+            if (target.factIds.some((id) => otherIds.has(id) || skillIds.has(id)))
+              throw new AppError("conflict", "this evidence is shared with another line; generate a new resume to update it safely");
+            savedFacts = { ...base.facts };
+            for (const id of target.factIds) {
+              if (!facts[id]) throw new AppError("conflict", "the selected evidence is no longer available");
+              savedFacts[id] = facts[id]!;
+            }
+          }
           const version = row.version + 1;
           this.snapshots.save(row.id, version, {
             ...base,
             render: { ...base.render, body: result.body, version },
             report: result.report,
-            facts,
-            provenance: "snapshot",
+            facts: savedFacts,
+            provenance: options.manualText !== undefined ? base.provenance : "snapshot",
           });
           this.sql.exec(
             `UPDATE resumes SET body = ?, report = ?, version = ? WHERE id = ?`,
@@ -3335,6 +3370,8 @@ export class Vault extends DurableObject<Env> {
           resumeId: options.resumeId,
           expectedVersion: options.expectedVersion,
           lineIds: options.lineIds,
+          manualText: options.manualText,
+          manualFactIds: options.manualFactIds,
         },
         key,
       );

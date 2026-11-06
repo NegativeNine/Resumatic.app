@@ -9,6 +9,7 @@ import {
   fakeModels,
   JOB_DESCRIPTION,
   RESUME,
+  eventually,
   signIn,
   waitForResume,
   waitForSource,
@@ -18,7 +19,7 @@ beforeEach(() => setModels(() => fakeModels()));
 afterEach(() => setModels(null));
 
 describe("immutable versions and selected coach snapshots", () => {
-  it("preserves old versions, labels manual edits, shares only selected snapshots and revokes an issued cookie", async () => {
+  it("preserves old versions, verifies edits, shares only selected snapshots and revokes an issued cookie", async () => {
     const user = await signIn();
     const upload = await user.upload("synthetic.pdf", RESUME);
     const source = (await upload.json()) as { sourceId: string };
@@ -46,10 +47,15 @@ describe("immutable versions and selected coach snapshots", () => {
     const { resumeId } = (await generation.json()) as { resumeId: string };
     const original = (await waitForResume(user, resumeId)) as ResumeView;
     expect(original.state).toBe("ready");
-    const line = original.body!.sections.flatMap(
+    const lines = original.body!.sections.flatMap(
       (section) => section.lines,
-    )[0]!;
-    const editedText = "My own wording for the career coach";
+    );
+    const line = lines.find((item) => item.factIds.length && item.factIds.every(
+      (id) => lines.every((other) => other.id === item.id || !other.factIds.includes(id)) &&
+        !(original.body!.summary?.factIds ?? []).includes(id),
+    ))!;
+    expect(line).toBeDefined();
+    const editedText = line.text.endsWith(".") ? line.text.slice(0, -1) : `${line.text}.`;
     expect(
       (
         await user.send("PATCH", `/api/resumes/${resumeId}/lines/${line.id}`, {
@@ -57,14 +63,24 @@ describe("immutable versions and selected coach snapshots", () => {
           expectedVersion: 1,
         })
       ).status,
-    ).toBe(204);
+    ).toBe(409);
+    const editResponse = await user.send("POST", `/api/applications/${applicationId}/documents`, {
+      kind: "refine", resumeId, expectedVersion: 1, lineIds: [line.id], manualText: editedText,
+    });
+    expect(editResponse.status, await editResponse.clone().text()).toBe(202);
+    const { documentId } = await editResponse.json() as { documentId: string };
+    const completed = await eventually(async () => {
+      const document = await user.json<{ state: string; error: string | null }>(`/api/documents/${documentId}`);
+      return document.state === "running" ? null : document;
+    }, "verified edit");
+    expect(completed).toMatchObject({ state: "ready" });
     const edited = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
     expect(edited.version).toBe(2);
     expect(
       edited
         .body!.sections.flatMap((section) => section.lines)
         .find((item) => item.id === line.id),
-    ).toMatchObject({ text: editedText, status: "edited", factIds: [] });
+    ).toMatchObject({ text: editedText, status: "kept", factIds: line.factIds });
     expect(
       (await user.json<ResumeView>(`/api/resumes/${resumeId}?version=1`)).body,
     ).toEqual(original.body);
@@ -104,7 +120,7 @@ describe("immutable versions and selected coach snapshots", () => {
       before.snapshot.resumes[0]!.sections.flatMap(
         (section) => section.lines,
       ).find((item) => item.id === line.id),
-    ).toMatchObject({ text: editedText, verification: "user-authored" });
+    ).toMatchObject({ text: editedText, verification: "verified" });
     expect(JSON.stringify(before)).not.toContain('"quote"');
     expect(JSON.stringify(before)).not.toContain('"factIds"');
     await user.send("PATCH", `/api/facts/${chosen.id}`, {

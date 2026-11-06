@@ -19,7 +19,7 @@ if (!browser?.startsWith("/")) {
   const temp = await mkdtemp(join(tmpdir(), "resumatic-browser-smoke-"));
   let vite, server, chrome, ws;
   let stage = "setup";
-  const state = { signedIn: false, source: false, sourceRunning: false, sourceCancel: false, sourceFailed: false, sourceRetryKeys: [], documentRetryKeys: [], roleState: "proposed", factState: "proposed", uploadKeys: [], applications: [], documents: [], tailored: false, resumeRunning: false, resumeCancel: false };
+  const state = { signedIn: false, source: false, sourceRunning: false, sourceCancel: false, sourceFailed: false, sourceRetryKeys: [], documentRetryKeys: [], roleState: "proposed", factState: "proposed", uploadKeys: [], applications: [], documents: [], tailored: false, resumeRunning: false, resumeCancel: false, resumeUncited: false, resumeText: "Built 12 payment services", resumeVersion: 1, manualEdits: [], manualDocument: null };
   const role = { id: "role-1", kind: "job", org: "Acme Example", title: "Engineer", startDate: "2021", endDate: null, state: "proposed", quote: "Acme Example — Engineer", sourceId: "source-1", revision: 1 };
   const fact = { id: "fact-1", roleId: "role-1", kind: "accomplishment", text: "Built 12 payment services", level: "implemented", origin: "extracted", state: "proposed", quote: "Built 12 payment services", sourceId: "source-1", revision: 1 };
   const me = { userId: "synthetic-user", profile: { name: "Avery Example", email: "avery@example.test", phone: "", location: "", links: [] }, quota: { used: 0, limit: 3, month: "2026-11" } };
@@ -69,7 +69,7 @@ if (!browser?.startsWith("/")) {
     }
     if (path === "/api/resumes/resume-1/cancel" && req.method === "POST") { state.resumeCancel = true; res.writeHead(202); res.end(); return; }
     if (path === "/api/resumes/resume-1" && req.method === "GET" && state.resumeRunning) return send(res, 200, { id: "resume-1", applicationId: "application-1", state: "running", step: null, error: null, version: 0, createdAt: 1, dispatchUncertain: true, cancellationPending: state.resumeCancel, body: null, report: null, facts: {} });
-    if (path === "/api/resumes/resume-1" && req.method === "GET") return send(res, 200, { id: "resume-1", applicationId: "application-1", state: "ready", step: null, error: null, version: 1, createdAt: 1, report: null, facts: { "fact-1": { text: fact.text, quote: fact.quote } }, body: { summary: null, sections: [{ roleId: "role-1", kind: "job", org: role.org, title: role.title, startDate: role.startDate, endDate: null, lines: [{ id: "line-1", text: fact.text, factIds: ["fact-1"], status: "kept" }] }], skills: [] } });
+    if (path === "/api/resumes/resume-1" && req.method === "GET") return send(res, 200, { id: "resume-1", applicationId: "application-1", state: "ready", provenance: "snapshot", step: null, error: null, version: state.resumeVersion, createdAt: 1, report: null, facts: { "fact-1": { text: fact.text, quote: fact.quote } }, body: { summary: null, sections: [{ roleId: "role-1", kind: "job", org: role.org, title: role.title, startDate: role.startDate, endDate: null, lines: [{ id: "line-1", text: state.resumeText, factIds: state.resumeUncited ? [] : ["fact-1"], status: state.resumeUncited ? "edited" : "kept" }] }], skills: [] } });
     if (path === "/api/resumes/resume-1/versions") return send(res, 200, { versions: [] });
     if (path === "/api/runs/document-2/cancel" && req.method === "POST") { state.documents.find((d) => d.id === "document-2").cancellationPending = true; res.writeHead(202); res.end(); return; }
     if (path === "/api/runs/document-failed/retry" && req.method === "POST") {
@@ -81,8 +81,18 @@ if (!browser?.startsWith("/")) {
       return send(res, 202, { runId: "document-retry", targetId: "document-retry" });
     }
     if (path === "/api/applications/application-1/documents" && req.method === "GET") return send(res, 200, { documents: state.documents });
+    if (path === "/api/documents/manual-edit" && req.method === "GET") return send(res, 200, state.manualDocument);
     if (path === "/api/applications/application-1/documents" && req.method === "POST") {
       const body = JSON.parse((await read(req)).toString("utf8"));
+      if (body.kind === "refine" && typeof body.manualText === "string") {
+        if (!req.headers["idempotency-key"] || body.resumeId !== "resume-1" || body.expectedVersion !== state.resumeVersion || body.lineIds?.[0] !== "line-1") return send(res, 400, { error: "invalid" });
+        if (state.resumeUncited && JSON.stringify(body.manualFactIds) !== '["fact-1"]') return send(res, 400, { error: "invalid" });
+        state.manualEdits.push(body);
+        const failed = state.manualEdits.length === 1;
+        if (!failed) { state.resumeText = body.manualText; state.resumeUncited = false; state.resumeVersion++; }
+        state.manualDocument = { id: "manual-edit", applicationId: "application-1", kind: "refine", state: failed ? "failed" : "ready", error: failed ? "invalid" : null };
+        return send(res, 202, { documentId: "manual-edit", runId: "manual-edit" });
+      }
       if (body.kind !== "letter" || !req.headers["idempotency-key"] || state.factState !== "confirmed") return send(res, 400, { error: "invalid" });
       state.documents.push({ id: "document-1", applicationId: "application-1", kind: "letter", state: "ready", version: 1, createdAt: 1, error: null, result: { kind: "letter", units: [{ id: "unit-1", roleId: "role-1", text: "I built 12 payment services.", factIds: ["fact-1"], group: 0 }], questions: [], report: { kept: 1, repaired: 0, replaced: 0, dropped: 0, gaps: [] } }, facts: { "fact-1": { text: fact.text, quote: fact.quote } } });
       return send(res, 202, { documentId: "document-1", runId: "document-1" });
@@ -169,6 +179,24 @@ if (!browser?.startsWith("/")) {
     state.documents = state.documents.filter((d) => d.id !== "document-retry");
     stage = "resume"; await clickText("button", "Tailor a resume"); await wait(`document.body?.innerText.includes('Resume preview') || !!document.querySelector('[aria-label="Resume preview"]')`); if (!state.tailored) throw new Error("TAILOR_NOT_STARTED");
     await wait(`document.querySelector('[aria-label="Resume preview"]')?.innerText.includes('Built 12 payment services')`);
+    stage = "verified_manual_edit";
+    await clickText("button", "Edit line");
+    await evalPage(`(() => { const e = document.querySelector('.line textarea'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(e, 'Built 12 reliable payment services'); e.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+    await clickText("button", "Check and save");
+    await wait(`document.body?.innerText.includes("couldn't verify that wording")`);
+    if (!await evalPage(`document.querySelector('.line textarea')?.value === 'Built 12 reliable payment services'`)) throw new Error("MANUAL_TEXT_LOST");
+    await clickText("button", "Check and save");
+    await wait(`document.querySelector('[aria-label="Resume preview"]')?.innerText.includes('Built 12 reliable payment services') && !document.querySelector('.line textarea')`);
+    stage = "uncited_remediation";
+    state.resumeUncited = true; await call("Page.reload");
+    await wait(`document.body?.innerText.includes('wording without verified evidence')`);
+    if (await evalPage(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download PDF')`)) throw new Error("UNVERIFIED_DOWNLOAD_SHOWN");
+    await clickText("button", "Edit line");
+    await wait(`!!document.querySelector('.line fieldset input[type="checkbox"]')`);
+    await evalPage(`document.querySelector('.line fieldset input[type="checkbox"]').click()`);
+    await clickText("button", "Check and save");
+    await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download PDF')`);
+    if (JSON.stringify(state.manualEdits.at(-1)?.manualFactIds) !== '["fact-1"]') throw new Error("REMEDIATION_FACT_MISSING");
     stage = "uncertain_resume_cancellation";
     state.resumeRunning = true; await call("Page.reload");
     await wait(`document.body?.innerText.includes("we can't confirm that tailoring started")`);
@@ -180,7 +208,7 @@ if (!browser?.startsWith("/")) {
     await wait(`document.body?.innerText.includes('up to 128 source files and 100 MiB')`);
     if (!await evalPage(`!!document.querySelector('a[href="/api/export/archive"]')`)) throw new Error("ARCHIVE_LINK_MISSING");
     if (!await evalPage(`!!document.querySelector('a[href="/api/export"]') && [...document.querySelectorAll('a[href="#/sources"]')].some(x => x.textContent.includes('Sources & facts'))`)) throw new Error("EXPORT_DOWNLOAD_LINKS_MISSING");
-    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, applicationCreation: true, applicationTracking: true, coverLetterDisplay: true, tailoredResumeDisplay: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true } }));
+    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, applicationCreation: true, applicationTracking: true, coverLetterDisplay: true, tailoredResumeDisplay: true, verifiedManualEdit: true, uncitedRemediation: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true } }));
   } catch {
     console.log(JSON.stringify({ status: "failed", reason: "BROWSER_SMOKE_FAILED", stage, promotionEligible: false })); process.exitCode = 1;
   } finally {

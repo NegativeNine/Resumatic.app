@@ -57,6 +57,7 @@ function selection(): ShareSelection {
       {
         id: "resume1",
         provenance: "snapshot",
+        facts: { f1: { text: "Built the API", quote: "private original quote" } },
         render: {
           profile: {
             name: "A User",
@@ -68,9 +69,9 @@ function selection(): ShareSelection {
           body: {
             summary: {
               id: "line1",
-              text: "My own wording",
+              text: "Built the API",
               factIds: ["f1"],
-              status: "edited",
+              status: "kept",
             },
             sections: [],
             skills: [],
@@ -93,6 +94,9 @@ function store() {
     },
   } as unknown as SqlStorage;
   for (const migration of SHARE_MIGRATIONS) sql.exec(migration);
+  db.exec(`CREATE TABLE resume_versions (resume_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL)`);
+  const resume = selection().resumes[0]!;
+  db.prepare(`INSERT INTO resume_versions (resume_id,version,data) VALUES (?,?,?)`).run(resume.id, resume.render.version, JSON.stringify(resume));
   const security = { open: true, epoch: "epoch-one" };
   const shares = new ShareStore(sql, {
     authorizeOwner(caller) {
@@ -133,7 +137,7 @@ describe("coach share snapshots", () => {
     role.unknownEndStartDate = "2024";
     expect(snapshot.facts[0]!.role!.unknownEndStartDate).toBe("2020");
   });
-  it("copies only selected public fields and preserves user-authored status", () => {
+  it("copies only selected public fields for grounded resumes", () => {
     const original = selection();
     original.facts[0]!.interview = {
       documentId: "private-doc",
@@ -145,7 +149,7 @@ describe("coach share snapshots", () => {
     const json = JSON.stringify(snapshot);
     expect(json).not.toContain("private");
     expect(json).not.toContain("factIds");
-    expect(snapshot.resumes[0]!.verification).toBe("user-authored");
+    expect(snapshot.resumes[0]!.verification).toBe("verified");
     original.facts[0]!.text = "Edited later";
     original.resumes[0]!.render.profile.name = "Changed later";
     expect(snapshot.facts[0]!.text).toBe("Built the API");
@@ -173,6 +177,36 @@ describe("coach share snapshots", () => {
         })),
       }),
     ).toThrow("too many");
+  });
+  it("refuses detached edits, missing evidence and legacy resume versions", () => {
+    const value = selection();
+    value.resumes[0]!.render.body.summary!.status = "edited";
+    expect(() => snapshotSelection(value)).toThrow("unverified content");
+    value.resumes[0]!.render.body.summary!.status = "kept";
+    value.resumes[0]!.render.body.summary!.factIds = [];
+    expect(() => snapshotSelection(value)).toThrow("unverified content");
+    value.resumes[0]!.render.body.summary!.factIds = ["missing"];
+    expect(() => snapshotSelection(value)).toThrow("unverified content");
+    value.resumes[0]!.render.body.summary!.factIds = ["f1"];
+    value.resumes[0]!.render.body.skills = ["unbacked skill"];
+    expect(() => snapshotSelection(value)).toThrow("unverified content");
+    value.resumes[0]!.render.body.skills = [];
+    value.resumes[0]!.provenance = "legacy";
+    expect(() => snapshotSelection(value)).toThrow("unverified content");
+  });
+  it("keeps an old detached share private without erasing the owner's stored snapshot", () => {
+    const { shares, db } = store();
+    try {
+      const grant = shares.create(who, selection(), now + 10_000, now);
+      const saved = db.prepare(`SELECT snapshot FROM share_grants WHERE id = ?`).get(grant.id)!;
+      const old = JSON.parse(saved.snapshot as string);
+      old.resumes[0].summary = { id: "line1", text: "Unverified historical edit", verification: "user-authored" };
+      old.resumes[0].verification = "user-authored";
+      db.prepare(`UPDATE share_grants SET snapshot = ? WHERE id = ?`).run(JSON.stringify(old), grant.id);
+      expect(() => shares.read({ grantId: grant.id, epoch: grant.epoch }, now)).toThrow("unavailable");
+      expect(shares.export(who)[0]!.snapshot!.resumes[0]!.summary!.text).toBe("Unverified historical edit");
+      expect(shares.list(who)[0]!.revokedAt).toBeNull();
+    } finally { db.close(); }
   });
   it("enforces owner auth, immutable reads, immediate revocation and epoch changes", () => {
     const { shares, security, db } = store();

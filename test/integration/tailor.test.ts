@@ -289,7 +289,7 @@ describe("roles and facts the user adds", () => {
 });
 
 describe("editing and PDF export", () => {
-  it("marks edited lines, and renders each version of the resume once", async () => {
+  it("rejects direct unverified edits and keeps the cached resume unchanged", async () => {
     const user = await readyUser();
     const resume = await tailor(user, await newApplication(user));
     const line = resume.body.sections[0].lines[0];
@@ -316,18 +316,15 @@ describe("editing and PDF export", () => {
           text: edited,
         })
       ).status,
-    ).toBe(204);
+    ).toBe(409);
     const after = await user.json(`/api/resumes/${resume.id}`);
-    expect(after.version).toBe(resume.version + 1);
-    expect(after.body.sections[0].lines[0]).toMatchObject({
-      text: edited,
-      status: "edited",
-    });
+    expect(after.version).toBe(resume.version);
+    expect(after.body.sections[0].lines[0].text).toBe(line.text);
 
     expect(
       await bytesOf(await user.fetch(`/api/resumes/${resume.id}/pdf`)),
-    ).toBe("%PDF-1.7 fake 2");
-    expect(rendered[1]).toContain(edited);
+    ).toBe("%PDF-1.7 fake 1");
+    expect(rendered).toHaveLength(1);
 
     const vid = JSON.parse(
       atob(
@@ -341,7 +338,7 @@ describe("editing and PDF export", () => {
     const pdfs = await env.FILES.list({
       prefix: `${vaultPrefix(vid)}exports/`,
     });
-    expect(pdfs.objects).toHaveLength(2);
+    expect(pdfs.objects).toHaveLength(1);
 
     expect(
       (

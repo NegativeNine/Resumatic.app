@@ -23,6 +23,30 @@ export interface ResumeVersion {
   provenance: "snapshot" | "legacy";
 }
 
+/** A historical version is printable only if its stored evidence remains attached. */
+export function assertGroundedResume(
+  render: RenderData,
+  facts: ResumeVersion["facts"] | undefined,
+  provenance: ResumeVersion["provenance"] | undefined,
+): void {
+  const unavailable = () => new AppError("conflict", "this resume version contains unverified content; review it before exporting or sharing");
+  if (provenance !== "snapshot" || !facts || typeof facts !== "object" || Array.isArray(facts) ||
+      !render?.body || !Array.isArray(render.body.sections) || !Array.isArray(render.body.skills)) throw unavailable();
+  if (render.body.sections.some((section) => !section || !Array.isArray(section.lines))) throw unavailable();
+  const lines = [
+    ...(render.body.summary ? [render.body.summary] : []),
+    ...render.body.sections.flatMap((section) => section.lines),
+  ];
+  for (const line of lines) {
+    if (!line || !["kept", "repaired", "replaced"].includes(line.status) ||
+        !Array.isArray(line.factIds) || line.factIds.length === 0 ||
+        line.factIds.some((id) => typeof id !== "string" || !Object.hasOwn(facts, id) ||
+          typeof facts[id]?.text !== "string" || !facts[id]!.text.trim())) throw unavailable();
+  }
+  const texts = new Set(Object.values(facts).map((fact) => fact?.text).filter((text): text is string => typeof text === "string" && !!text.trim()));
+  if (render.body.skills.some((skill) => typeof skill !== "string" || !texts.has(skill))) throw unavailable();
+}
+
 /** Content stays in the Vault. Workflow state carries only the run ID. */
 export class SnapshotStore {
   constructor(private readonly sql: SqlStorage) {}

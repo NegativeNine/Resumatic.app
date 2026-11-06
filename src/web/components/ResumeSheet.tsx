@@ -47,6 +47,16 @@ export function ResumeSheet({
   const allOpen = lineIds.length > 0 && lineIds.every((id) => open.has(id));
   const isEmpty =
     !body.summary && body.sections.length === 0 && body.skills.length === 0;
+  const lines = [
+    ...(body.summary ? [body.summary] : []),
+    ...body.sections.flatMap((section) => section.lines),
+  ];
+  // The server applies the same guard to saved exports. Keep historical data
+  // visible for recovery even when it cannot be downloaded or shared.
+  const needsEvidence = resume.provenance !== "snapshot" || lines.some(
+    (item) => !["kept", "repaired", "replaced"].includes(item.status) || item.factIds.length === 0 ||
+      item.factIds.some((id) => !resume.facts[id]?.text?.trim()),
+  ) || body.skills.some((skill) => !Object.values(resume.facts).some((fact) => !!fact.text && fact.text === skill));
 
   const toggle = useCallback(
     (id: string) =>
@@ -58,10 +68,12 @@ export function ResumeSheet({
     [],
   );
 
-  const line = (l: ResumeLine) => (
+  const line = (l: ResumeLine, roleId: string | null) => (
     <LineItem
       key={l.id}
       resumeId={resume.id}
+      applicationId={resume.applicationId}
+      roleId={roleId}
       line={l}
       facts={resume.facts}
       expanded={open.has(l.id)}
@@ -76,7 +88,7 @@ export function ResumeSheet({
     <div className="resume-layout">
       <div>
         <div className="toolbar">
-          <a
+          {!needsEvidence && <><a
             className="button primary"
             href={api.pdfUrl(resume.id, resume.version)}
             download={`resume-v${resume.version}.pdf`}
@@ -97,7 +109,7 @@ export function ResumeSheet({
             rel="noopener"
           >
             Print preview
-          </a>
+          </a></>}
           {lineIds.length > 0 && (
             <button
               type="button"
@@ -108,6 +120,15 @@ export function ResumeSheet({
           )}
           <TailorAgain applicationId={resume.applicationId} />
         </div>
+        {needsEvidence && (
+          <p className="notice" role="status">
+            This version contains wording without verified evidence, so its PDF,
+            Word download and print preview are unavailable. Your text is still here.{" "}
+            {!readOnly && resume.provenance === "snapshot"
+              ? "Edit an uncited line to choose its supporting facts, or confirm facts and tailor a new version."
+              : "Select Latest or confirm facts and tailor a new version to create a downloadable resume."}
+          </p>
+        )}
         <article className="paper" aria-label="Resume preview">
           {isEmpty && (
             <p className="meta">
@@ -118,7 +139,7 @@ export function ResumeSheet({
           {body.summary && (
             <section className="paper-section">
               <h2>Summary</h2>
-              <ul className="plain-list lines summary">{line(body.summary)}</ul>
+              <ul className="plain-list lines summary">{line(body.summary, null)}</ul>
             </section>
           )}
           {groupSections(body.sections).map(({ kind, sections }) => (
@@ -136,7 +157,7 @@ export function ResumeSheet({
                     </p>
                   </div>
                   {s.lines.length > 0 && (
-                    <ul className="plain-list lines">{s.lines.map(line)}</ul>
+                    <ul className="plain-list lines">{s.lines.map((item) => line(item, s.roleId))}</ul>
                   )}
                 </div>
               ))}

@@ -199,11 +199,9 @@ try {
   // that the deletion audit itself does not implement.
   if (workflowInventoryAuditCapability().complete !== true)
     report.missing.push("DELETION_INVENTORY_AUDIT_UNAVAILABLE");
-  // Manual edits currently clear fact citations and remain renderable,
-  // including older versions. Evidence or environment variables cannot
-  // manufacture verified edits or remediate those persisted versions.
-  // Remove this implementation block only with verified-edit and historical
-  // remediation support across rendering, exports, and shares.
+  // Exact new edits are checked, but full legacy remediation, shared-evidence
+  // handling and historic share/refinement guarantees remain incomplete.
+  // Operator evidence cannot replace the missing implementation or live tests.
   report.missing.push("MANUAL_RESUME_EDIT_GROUNDING_UNAVAILABLE");
   if (!count(evidence.betaOperations?.quietDays, 14))
     report.missing.push("BETA_OBSERVATION_WINDOW");
