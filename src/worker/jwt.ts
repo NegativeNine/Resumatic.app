@@ -70,6 +70,6 @@ export async function verifyJwt(
   if (!claims.iss || !opts.issuers.includes(claims.iss)) throw new Error("unexpected token issuer");
   const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
   if (!audiences.includes(opts.audience)) throw new Error("unexpected token audience");
-  if (typeof claims.exp !== "number" || claims.exp + 60 < now) throw new Error("token expired");
+  if (typeof claims.exp !== "number" || !Number.isFinite(claims.exp) || claims.exp + 60 < now) throw new Error("token expired");
   return claims;
 }

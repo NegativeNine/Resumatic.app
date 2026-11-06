@@ -75,6 +75,27 @@ function supportsDate(quote: string, date: string | null): boolean {
   return writtenDates.some((written) => sourceDate(written) === date);
 }
 
+/** A name or title must not be an empty string or the middle of another word. */
+function supportsRoleField(quote: string, field: string): boolean {
+  const source = normalizeForQuote(quote);
+  const value = normalizeForQuote(field);
+  if (!value) return false;
+  const word = (character: string | undefined) =>
+    character !== undefined && /[\p{L}\p{M}\p{N}]/u.test(character);
+  const first = Array.from(value)[0];
+  const last = Array.from(value).at(-1);
+  let from = 0;
+  for (;;) {
+    const at = source.indexOf(value, from);
+    if (at < 0) return false;
+    const before = Array.from(source.slice(0, at)).at(-1);
+    const after = Array.from(source.slice(at + value.length))[0];
+    if (!(word(first) && word(before)) && !(word(last) && word(after)))
+      return true;
+    from = at + 1;
+  }
+}
+
 /** A missing end renders as "Present", so it must be stated as the end of this role. */
 function supportsCurrent(quote: string, startDate: string): boolean {
   // More than one distinct year in the header may identify an ended role or
@@ -237,11 +258,10 @@ export function verifyExtraction(
       drop("role", "instruction");
       continue;
     }
-    const normalizedQuote = normalizeForQuote(matchedQuote);
     const unsupported =
-      !normalizedQuote.includes(normalizeForQuote(role.org)) ||
+      !supportsRoleField(matchedQuote, role.org) ||
       (role.title !== null &&
-        !normalizedQuote.includes(normalizeForQuote(role.title))) ||
+        !supportsRoleField(matchedQuote, role.title)) ||
       !supportsDate(matchedQuote, role.startDate) ||
       !supportsDate(matchedQuote, role.endDate);
     if (unsupported) {

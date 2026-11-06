@@ -228,9 +228,15 @@ describe("Google sign-in", () => {
     for (const [variant, expected] of [
       [(nonce: string) => ({ ...base, nonce: `${nonce}x` }), "unauthenticated"],
       [(nonce: string) => ({ ...base, nonce, aud: "someone-else" }), "unauthenticated"],
+      [(nonce: string) => ({ ...base, nonce, aud: [env.OIDC_CLIENT_ID, "untrusted-client"] }), "unauthenticated"],
+      [(nonce: string) => ({ ...base, nonce, azp: "untrusted-client" }), "unauthenticated"],
       [(nonce: string) => ({ ...base, nonce, iss: "https://evil.example" }), "unauthenticated"],
       [(nonce: string) => ({ ...base, nonce, exp: nowSeconds() - 3600 }), "unauthenticated"],
       [(nonce: string) => ({ ...base, nonce, email_verified: false }), "forbidden"],
+      [(nonce: string) => ({ ...base, nonce, sub: 42 }), "forbidden"],
+      [(nonce: string) => ({ ...base, nonce, sub: "" }), "forbidden"],
+      [(nonce: string) => ({ ...base, nonce, email: { value: email } }), "forbidden"],
+      [(nonce: string) => ({ ...base, nonce, email: "user\n@example.com" }), "forbidden"],
     ] as const) {
       const google = await stubGoogle(variant);
       const { location, cookie } = await startLogin();
@@ -239,6 +245,21 @@ describe("Google sign-in", () => {
       expect(res.headers.get("location")).toBe(`/?error=${expected}`);
       vi.unstubAllGlobals();
     }
+  });
+
+  it("accepts the configured client as the sole audience and authorized party", async () => {
+    const email = uniqueEmail("google-azp");
+    await directory(env).addInvite(email);
+    const google = await stubGoogle((nonce) => ({
+      iss: "https://accounts.google.com", aud: [env.OIDC_CLIENT_ID],
+      azp: env.OIDC_CLIENT_ID, sub: `google-${email}`, email,
+      email_verified: true, nonce, exp: nowSeconds() + 600,
+    }));
+    const { location, cookie } = await startLogin();
+    google.pending.nonce = location.searchParams.get("nonce")!;
+    const res = await call(`/auth/callback?code=good-code&state=${location.searchParams.get("state")}`, { cookie });
+    expect(res.headers.get("location")).toBe("/");
+    expect(cookieFrom(res, "__Host-session")).toBeTruthy();
   });
 
   it("refuses an uninvited Google account", async () => {

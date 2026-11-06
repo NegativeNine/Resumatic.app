@@ -532,13 +532,7 @@ export class Directory extends DurableObject<Env> {
             this.env.VAULT.idFromString(retired.vault_id),
           );
           const runs = await stub.close();
-          await stopRuns(this.env.DISTILL, runs.distill);
-          await stopRuns(this.env.TAILOR, runs.tailor);
-          for (const run of runs.other ?? [])
-            await stopRuns(
-              run.kind === "reembed" ? this.env.REEMBED : this.env.DOCUMENTS,
-              [run.id],
-            );
+          await stopVaultRuns(this.env, runs);
           await deletePrefix(this.env.FILES, vaultPrefix(retired.vault_id));
           await stub.destroy();
           this.sql.exec(
@@ -626,33 +620,7 @@ export class Directory extends DurableObject<Env> {
       );
       await cleanupBillingCustomer(this.env, customer);
     }
-    await stopRuns(this.env.DISTILL, runs.distill);
-    await stopRuns(this.env.TAILOR, runs.tailor);
-    // Every added workflow must join erasure. A missing binding fails closed so the
-    // alarm retries instead of silently destroying the only inventory of its runs.
-    const bindings: Record<string, string> = {
-      distill: "DISTILL",
-      tailor: "TAILOR",
-      refine: "DOCUMENTS",
-      letter: "DOCUMENTS",
-      prep: "DOCUMENTS",
-      questions: "DOCUMENTS",
-      reembed: "REEMBED",
-    };
-    for (const run of (
-      runs as typeof runs & { other?: { kind: string; id: string }[] }
-    ).other ?? []) {
-      const binding = bindings[run.kind];
-      const workflow = binding
-        ? (this.env as unknown as Record<string, Workflow | undefined>)[binding]
-        : undefined;
-      if (!workflow)
-        throw new AppError(
-          "unavailable",
-          "a workflow required for deletion is not configured",
-        );
-      await stopRuns(workflow, [run.id]);
-    }
+    await stopVaultRuns(this.env, runs);
     const owner = this.sql
       .exec<{ user_id: string }>(
         `SELECT user_id FROM vaults WHERE vault_id = ?`,
@@ -727,6 +695,33 @@ export class Directory extends DurableObject<Env> {
         .exec(`SELECT email FROM invites WHERE email = ?`, email)
         .toArray().length > 0
     );
+  }
+}
+
+/** Both account deletion and vault retirement must understand every run kind. */
+export async function stopVaultRuns(
+  env: Env,
+  runs: { distill: string[]; tailor: string[]; other?: { kind: string; id: string }[] },
+): Promise<void> {
+  const bindings: Record<string, string> = {
+    distill: "DISTILL",
+    tailor: "TAILOR",
+    refine: "DOCUMENTS",
+    letter: "DOCUMENTS",
+    prep: "DOCUMENTS",
+    questions: "DOCUMENTS",
+    reembed: "REEMBED",
+  };
+  await stopRuns(env.DISTILL, runs.distill);
+  await stopRuns(env.TAILOR, runs.tailor);
+  for (const run of runs.other ?? []) {
+    const binding = bindings[run.kind];
+    const workflow = binding
+      ? (env as unknown as Record<string, Workflow | undefined>)[binding]
+      : undefined;
+    if (!workflow)
+      throw new AppError("unavailable", "a workflow required for deletion is not configured");
+    await stopRuns(workflow, [run.id]);
   }
 }
 

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { deletionProbeInput, workflowCoverage, workflowInventoryAuditCapability } from "./lib/deletion-audit.mjs";
+import { deletionProbeInput, preDeletionInventory, workflowCoverage, workflowInventoryAuditCapability } from "./lib/deletion-audit.mjs";
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const manifest = () => ({
   base: "https://staging.example",
@@ -82,6 +82,19 @@ test("missing, truncated, incomplete or forged inventory cannot pass validation"
       input,
     ),
   );
+});
+test("pre-deletion snapshot requires valid ledger rows for both created targets", () => {
+  const m = manifest();
+  const rows = m.runs.map((r) => ({ ...r, privateDetail: "omitted" }));
+  m.deletionRequested = false;
+  m.runs = [];
+  const result = preDeletionInventory(m, { runs: rows }, m.base);
+  assert.deepEqual(result, manifest().runs);
+  assert.equal(m.deletionRequested, false);
+  for (const runs of [[], rows.slice(0, 2), [null], [rows[0], rows[0]], Array(100).fill(rows[0])]) {
+    assert.throws(() => preDeletionInventory(m, { runs }, m.base));
+  }
+  assert.throws(() => preDeletionInventory(m, {}, m.base));
 });
 test("zero results for supplied IDs stay pending without an independently complete inventory", async () => {
   const dir = await mkdtemp(join(tmpdir(), "deletion-audit-"));

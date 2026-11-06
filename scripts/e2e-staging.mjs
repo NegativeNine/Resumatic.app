@@ -8,6 +8,7 @@
 import { writeFile } from "node:fs/promises";
 import { validate } from "./validate-config.mjs";
 import { makePdf } from "./lib/synthetic-pdf.mjs";
+import { preDeletionInventory } from "./lib/deletion-audit.mjs";
 
 const missing = (await validate({ environment: "staging", purpose: "e2e" }))
   .missing;
@@ -244,13 +245,7 @@ async function main() {
   // Capture all ledger IDs before deletion. The endpoint currently returns at most 100;
   // a full page cannot establish that its result was complete.
   const inventory = await json("GET", "/api/runs");
-  if (!Array.isArray(inventory.runs) || inventory.runs.length >= 100)
-    throw new Error("workflow inventory is unavailable or truncated");
-  manifest.runs = inventory.runs.map(({ id, kind, targetId }) => ({
-    id,
-    kind,
-    targetId,
-  }));
+  manifest.runs = preDeletionInventory(manifest, inventory, base);
   await saveManifest();
 
   await json("DELETE", "/auth/account", undefined, 202);

@@ -14,6 +14,16 @@ const WORKFLOWS = {
 export function workflowInventoryAuditCapability() {
   return { scope: "supplied_ids_only", complete: false };
 }
+/** Check a snapshot before deletion without claiming that it is complete. */
+export function preDeletionInventory(manifest, response, base) {
+  if (!Array.isArray(response?.runs))
+    throw new Error("INVALID_RUN_INVENTORY");
+  const runs = response.runs.map((run) =>
+    run && { id: run.id, kind: run.kind, targetId: run.targetId },
+  );
+  deletionProbeInput({ ...manifest, runs, deletionRequested: true }, base);
+  return runs;
+}
 /** Validate the actual pre-deletion ledger rows, not a caller-supplied completeness flag. */
 export function deletionProbeInput(manifest, base) {
   if (

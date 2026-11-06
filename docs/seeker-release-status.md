@@ -20,6 +20,8 @@ Local verification on 6 November 2026: TypeScript and the production build pass;
 
 Role attribution uses the nearest verified header and leaves conflicting or ambiguous assignments unattached. This check cannot establish reading order after a poor conversion or detect every missing, unmarked header; evaluate role assignment on real layouts before promotion. Date parsing also clears ambiguous ranges, which can omit valid dates.
 
+Extracted organization and title fields must be nonempty and appear at word boundaries in their evidence. This avoids accepting a substring of an unrelated word, but can drop valid fields in languages or layouts without spacing; measure that recall impact on the held-out dataset. It does not prove that a matching name is the correct employer or that nearby text describes the same role.
+
 An absent credential, budget, binding, benchmark, consented dataset or retention decision is **pending**, never passed. In particular, an offline extraction harness report is not a promoted extractor, and a successful HTTP health check is not a complete production acceptance run.
 
 See [the operations runbook](seeker-operations.md) for commands and deployment variables and [the threat model](seeker-threat-model.md) for the security review checklist. Historic architecture documents describe broader future work; this delivery is limited to the job seeker scope and the choices recorded in the implementation.

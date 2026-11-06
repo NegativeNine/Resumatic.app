@@ -57,6 +57,28 @@ describe("source offsets", () => {
 });
 
 describe("strategy verification", () => {
+  it.each([
+    { markdown: "Pineapple Labs — Engineer", org: "Apple", title: "Engineer" },
+    { markdown: "Acme Corp — Engineering Manager", org: "Acme Corp", title: "Engineer" },
+    { markdown: "Acme Corp — Engineer", org: "  ", title: "Engineer" },
+    { markdown: "東京電機 — Engineer", org: "東京", title: "Engineer" },
+  ])("rejects empty or partial-word role fields: $org / $title", ({ markdown, org, title }) => {
+    const raw: RawExtraction = {
+      roles: [{ key: "r", kind: "job", org, title, startDate: null, endDate: null, quote: markdown }],
+      facts: [],
+    };
+    const result = verifyExtraction(markdown, raw);
+    expect(result.extraction.roles).toEqual([]);
+    expect(result.dropped).toContainEqual({ kind: "role", reason: "unsupported_role" });
+  });
+  it("accepts complete role fields and punctuation-delimited names", () => {
+    const markdown = "Acme Corp — C++ Engineer";
+    const raw: RawExtraction = {
+      roles: [{ key: "r", kind: "job", org: "Acme Corp", title: "C++ Engineer", startDate: null, endDate: null, quote: markdown }],
+      facts: [],
+    };
+    expect(verifyExtraction(markdown, raw).extraction.roles).toHaveLength(1);
+  });
   it("keeps short skills using wider source-line evidence", () => {
     const markdown = "Skills: Go, Rust";
     const raw: RawExtraction = {

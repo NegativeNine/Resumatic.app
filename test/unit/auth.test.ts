@@ -81,4 +81,11 @@ describe("verifyJwt", () => {
     await expect(verifyJwt(await signer.sign(claims, { kid: "rotated-away" }), opts)).rejects.toThrow("unknown signing key");
     expect(fetches()).toBe(2);
   });
+
+  it("rejects a signed token whose expiry parses to infinity", async () => {
+    const { signer, opts, claims } = await setup();
+    const json = JSON.stringify({ ...claims, exp: null }).replace('"exp":null', '"exp":1e400');
+    expect(JSON.parse(json).exp).toBe(Infinity);
+    await expect(verifyJwt(await signer.signRaw(json), opts)).rejects.toThrow("token expired");
+  });
 });

@@ -9,14 +9,18 @@ export async function rsaSigner(kid = crypto.randomUUID()) {
   )) as CryptoKeyPair;
   const publicJwk = (await crypto.subtle.exportKey("jwk", pair.publicKey)) as JsonWebKey;
   const encode = (value: unknown) => base64url(new TextEncoder().encode(JSON.stringify(value)));
+  async function signRaw(json: string, header: Record<string, unknown> = {}): Promise<string> {
+    const head = encode({ alg: "RS256", typ: "JWT", kid, ...header });
+    const body = base64url(new TextEncoder().encode(json));
+    const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", pair.privateKey, new TextEncoder().encode(`${head}.${body}`));
+    return `${head}.${body}.${base64url(signature)}`;
+  }
   return {
     kid,
     jwks: { keys: [{ ...publicJwk, kid, alg: "RS256", use: "sig" }] },
+    signRaw,
     async sign(claims: Record<string, unknown>, header: Record<string, unknown> = {}): Promise<string> {
-      const head = encode({ alg: "RS256", typ: "JWT", kid, ...header });
-      const body = encode(claims);
-      const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", pair.privateKey, new TextEncoder().encode(`${head}.${body}`));
-      return `${head}.${body}.${base64url(signature)}`;
+      return signRaw(JSON.stringify(claims), header);
     },
   };
 }

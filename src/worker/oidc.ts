@@ -127,9 +127,25 @@ export async function finishLogin(
   }
   if (claims.nonce !== pending.nonce)
     throw new AppError("unauthenticated", "sign-in could not be verified");
+  // Only this application's client ID is trusted as an ID-token audience.
+  // A token presented on behalf of another client must not establish a session.
+  const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+  if (
+    audiences.some((audience) => audience !== env.OIDC_CLIENT_ID) ||
+    (claims.azp !== undefined && claims.azp !== env.OIDC_CLIENT_ID)
+  )
+    throw new AppError("unauthenticated", "sign-in could not be verified");
   const verified =
     claims.email_verified === true || claims.email_verified === "true";
-  if (!claims.sub || !claims.email || !verified)
+  if (
+    typeof claims.sub !== "string" ||
+    !/^[\x21-\x7e]{1,255}$/.test(claims.sub) ||
+    typeof claims.email !== "string" ||
+    claims.email.length === 0 ||
+    claims.email.length > 320 ||
+    /[\x00-\x20\x7f]/.test(claims.email) ||
+    !verified
+  )
     throw new AppError("forbidden", "a verified email address is required");
   return {
     subject: claims.sub,
