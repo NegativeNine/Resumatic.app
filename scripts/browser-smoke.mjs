@@ -232,6 +232,7 @@ if (!browser?.startsWith("/")) {
         await new Promise((resolve) => { releaseDocumentRead = resolve; });
       }
       if (state.failDocumentRead) { state.failDocumentRead = false; return send(res, 503, { error: "unavailable" }); }
+      if (state.alwaysHideDocuments) return send(res, 200, { documents: [] });
       if (state.hideDocumentRead) { state.hideDocumentRead = false; return send(res, 200, { documents: [] }); }
       return send(res, 200, { documents: state.documents });
     }
@@ -511,12 +512,34 @@ if (!browser?.startsWith("/")) {
     await clickText("button", "Reload saved details");
     await wait(`document.querySelector('.application-workspace textarea')?.value === 'Remote note'`);
     stage = "document_refresh_after_start";
+    state.alwaysHideDocuments = true;
     await clickText("button", "Create cover letter");
     await wait(`(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create cover letter'); return b?.disabled && !!b.closest('section')?.querySelector('[role="alert"] button'); })()`);
     if (state.letterStarts !== 1) throw new Error("DOCUMENT_START_DUPLICATED");
     await evalPage(`(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create cover letter'); b.closest('section').querySelector('[role="alert"] button').click(); })()`);
     await wait(`document.body?.innerText.includes('Your document was started.')`);
     if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create cover letter')?.disabled`)) throw new Error("DOCUMENT_START_ENABLED_BEFORE_OBSERVED");
+    stage = "document_reopen_guard";
+    await clickText("button", "Close workspace");
+    state.hideDocumentRead = true;
+    await clickText("button", "Track & prepare");
+    await wait(`document.body?.innerText.includes('Your document was started.')`);
+    if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create cover letter')?.disabled`)) throw new Error("DOCUMENT_START_ENABLED_AFTER_REOPEN");
+    stage = "document_storage_before_reload";
+    if (!await evalPage(`sessionStorage.getItem('resumatic:document-start:' + JSON.stringify(['synthetic-user', 'application-1'])) === 'document-1'`)) throw new Error("DOCUMENT_START_NOT_STORED");
+    stage = "document_reload_guard";
+    state.alwaysHideDocuments = true;
+    await call("Page.reload");
+    await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Track & prepare')`);
+    stage = "document_storage_after_reload";
+    if (!await evalPage(`sessionStorage.getItem('resumatic:document-start:' + JSON.stringify(['synthetic-user', 'application-1'])) === 'document-1'`)) throw new Error("DOCUMENT_START_NOT_RESTORED");
+    stage = "document_reload_open";
+    await clickText("button", "Track & prepare");
+    stage = "document_reload_pending";
+    await wait(`document.body?.innerText.includes('Your document was started.')`);
+    if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create cover letter')?.disabled`)) throw new Error("DOCUMENT_START_ENABLED_AFTER_RELOAD");
+    state.alwaysHideDocuments = false;
+    state.hideDocumentRead = false;
     await clickText("button", "Refresh its status");
     stage = "cover_letter"; await wait(`!![...document.querySelectorAll('summary')].find(x => x.textContent.trim() === 'Read cover letter')`); await clickText("summary", "Read cover letter"); await wait(`document.body?.innerText.includes('I built 12 payment services.')`);
     await wait(`(() => { const link = [...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download Word'); return link?.origin === location.origin && link.getAttribute('href') === '/api/documents/document-1/docx' && link.referrerPolicy === 'no-referrer'; })()`);

@@ -11,6 +11,7 @@ import type {
 } from "../../shared/documents";
 import { api } from "../api";
 import { formatDateTime } from "../format";
+import { forgetDocumentStart, readDocumentStart, rememberDocumentStart } from "../document-starts";
 import { useAction, useResource, type Reload } from "../hooks";
 import { useSession } from "../session";
 import { roleLabel } from "../vault";
@@ -32,15 +33,22 @@ const LABELS: Record<DocumentKind, string> = {
   refine: "Resume refinement",
 };
 
-export function ApplicationDocuments({
-  applicationId,
-  resume,
-  onUpdated,
-}: {
+type ApplicationDocumentsProps = {
   applicationId: string;
   resume?: ResumeView;
   onUpdated?: Reload;
-}) {
+};
+
+export function ApplicationDocuments(props: ApplicationDocumentsProps) {
+  const { me } = useSession();
+  return <ApplicationDocumentsForUser key={JSON.stringify([me.userId, props.applicationId])} {...props} />;
+}
+
+function ApplicationDocumentsForUser({
+  applicationId,
+  resume,
+  onUpdated,
+}: ApplicationDocumentsProps) {
   const list = useResource(
     () => api.documents(applicationId),
     (data) => data.documents.some((doc) => doc.state === "running"),
@@ -54,7 +62,7 @@ export function ApplicationDocuments({
   const [instruction, setInstruction] = useState("");
   // A successful start can be followed by a failed or superseded list read.
   // Keep generation disabled until the acknowledged document appears.
-  const [unseenDocument, setUnseenDocument] = useState<string | null>(null);
+  const [unseenDocument, setUnseenDocument] = useState<string | null>(() => readDocumentStart(me.userId, applicationId));
   const id = useId();
   const docs = list.data?.documents ?? [];
   const running = !list.data || !!list.error || !!unseenDocument || docs.some((doc) => doc.state === "running");
@@ -81,14 +89,17 @@ export function ApplicationDocuments({
   }, [list.data]);
 
   useEffect(() => {
-    if (unseenDocument && list.data?.documents.some((doc) => doc.id === unseenDocument))
+    if (unseenDocument && list.data?.documents.some((doc) => doc.id === unseenDocument)) {
+      forgetDocumentStart(me.userId, applicationId, unseenDocument);
       setUnseenDocument(null);
-  }, [list.data, unseenDocument]);
+    }
+  }, [list.data, unseenDocument, me.userId, applicationId]);
 
   async function start(options: NewDocument) {
     await action.run(async () => {
       const { documentId } = await api.startDocument(applicationId, options);
       requested.current.add(documentId);
+      rememberDocumentStart(me.userId, applicationId, documentId);
       setUnseenDocument(documentId);
       await list.reload();
       void refreshMe();
@@ -99,6 +110,7 @@ export function ApplicationDocuments({
     await action.run(async () => {
       const { targetId } = await api.retryRun(runId);
       requested.current.add(targetId);
+      rememberDocumentStart(me.userId, applicationId, targetId);
       setUnseenDocument(targetId);
       await list.reload();
       void refreshMe();
@@ -190,7 +202,7 @@ export function ApplicationDocuments({
       {list.error && <ErrorNote message={list.error} onRetry={list.reload} />}
       {unseenDocument && !list.error && (
         <p className="hint" role="status">
-          Your document was started. <button type="button" className="link-button" onClick={() => void list.reload()}>Refresh its status</button> before starting another. If it still does not appear, close and reopen this workspace to check again.
+          Your document was started. <button type="button" className="link-button" onClick={() => void list.reload()}>Refresh its status</button> before starting another.
         </p>
       )}
       {!list.data && !list.error && <Loading>Loading your documents…</Loading>}
