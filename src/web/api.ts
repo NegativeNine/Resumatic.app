@@ -277,6 +277,8 @@ export const api = {
     request<{ version: number }>("POST", `/api/resumes/${encodeURIComponent(id)}/legacy-remove-skill`, { skillIndex, expectedVersion }),
   removeResumeLine: (id: string, lineId: string, expectedVersion: number) =>
     request<{ version: number }>("POST", `/api/resumes/${encodeURIComponent(id)}/remove-line`, { lineId, expectedVersion }),
+  removeResumeSkill: (id: string, skillIndex: number, expectedVersion: number) =>
+    request<{ version: number }>("POST", `/api/resumes/${encodeURIComponent(id)}/remove-skill`, { skillIndex, expectedVersion }),
   beginResumeReview: (id: string, expectedVersion: number) =>
     request<{ version: number }>("POST", `/api/resumes/${encodeURIComponent(id)}/grounding-review`, { expectedVersion }),
   pdfUrl: (resumeId: string, version?: number) =>

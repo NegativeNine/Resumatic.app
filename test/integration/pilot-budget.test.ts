@@ -23,15 +23,22 @@ describe("staging pilot budget coordinator", () => {
     const responses = await Promise.all(Array.from({ length: 20 }, (_, i) =>
       post("reserve", { id: `attempt-${i}`, micros: 100, calls: 1 }),
     ));
-    expect(responses.filter((r) => r.status === 204)).toHaveLength(10);
-    expect(responses.filter((r) => r.status === 429)).toHaveLength(10);
+    // Parallel callers cannot dispatch behind an unresolved provider attempt.
+    expect(responses.filter((r) => r.status === 204)).toHaveLength(1);
+    expect(responses.filter((r) => r.status === 503)).toHaveLength(19);
     const successful = responses.findIndex((r) => r.status === 204);
     expect((await post("reserve", { id: `attempt-${successful}`, micros: 100, calls: 1 })).status).toBe(409);
+    let pendingId = `attempt-${successful}`;
+    for (let i = 1; i < 10; i++) {
+      expect((await post("settle", { id: pendingId, actualMicros: 90 })).status).toBe(200);
+      pendingId = `serial-${i}`;
+      expect((await post("reserve", { id: pendingId, micros: 100, calls: 1 })).status).toBe(204);
+    }
     // Reinitialization cannot clear earlier reservations, even from a fresh stub.
     expect((await post("initialize", { maxMicros: 1000, maxCalls: 10 })).status).toBe(204);
     expect((await post("initialize", { maxMicros: 1001, maxCalls: 10 })).status).toBe(409);
     const shared = env.PILOT_BUDGET!.getByName(PILOT_LEDGER_NAME);
-    expect(await shared.status()).toMatchObject({ initialized: true, reservedMicros: 1000, reservedCalls: 10, pending: 10 });
+    expect(await shared.status()).toMatchObject({ initialized: true, reservedMicros: 1000, reservedCalls: 10, pending: 1 });
     const getAttempts = (suppliedKey: string) => call(`${root}/attempts`, { headers: { "x-pilot-budget-key": suppliedKey } });
     expect((await getAttempts("wrong")).status).toBe(403);
     const auditResponse = await getAttempts(key);
@@ -39,10 +46,11 @@ describe("staging pilot budget coordinator", () => {
     expect(auditResponse.headers.get("cache-control")).toBe("no-store");
     const body = await auditResponse.json() as { totals: unknown; attempts: { idMac: string; state: string; reservedMicros: number; reservedCalls: number; actualMicros: number | null }[] };
     expect(body.totals).toEqual({ maxMicros: 1000, maxCalls: 10, reservedMicros: 1000, reservedCalls: 10,
-      frozen: false, count: 10, pending: 10, unknown: 0, overrun: 0 });
+      frozen: false, count: 10, pending: 1, unknown: 0, overrun: 0 });
     expect(body.attempts).toHaveLength(10);
-    expect(body.attempts.every((a) => /^[0-9a-f]{64}$/.test(a.idMac) && a.state === "pending" &&
-      a.reservedMicros === 100 && a.reservedCalls === 1 && a.actualMicros === null)).toBe(true);
+    expect(body.attempts.every((a) => /^[0-9a-f]{64}$/.test(a.idMac) &&
+      a.reservedMicros === 100 && a.reservedCalls === 1 &&
+      (a.state === "pending" ? a.actualMicros === null : a.state === "settled" && a.actualMicros === 90))).toBe(true);
     expect(JSON.stringify(body)).not.toContain("attempt-");
     const hmacKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
     const bytes = await crypto.subtle.sign("HMAC", hmacKey, new TextEncoder().encode(`resumatic-pilot-attempt-v1:attempt-${successful}`));
@@ -50,9 +58,9 @@ describe("staging pilot budget coordinator", () => {
     expect(body.attempts.map((a) => a.idMac)).toContain(mac);
     await evictDurableObject(shared);
     expect(await env.PILOT_BUDGET!.getByName(PILOT_LEDGER_NAME).status()).toMatchObject({
-      initialized: true, reservedMicros: 1000, reservedCalls: 10, pending: 10,
+      initialized: true, reservedMicros: 1000, reservedCalls: 10, pending: 1,
     });
-    expect((await post("settle", { id: `attempt-${successful}`, actualMicros: null })).status).toBe(200);
+    expect((await post("settle", { id: pendingId, actualMicros: null })).status).toBe(200);
     expect(await (await status()).json()).toMatchObject({ frozen: true, unknown: 1, reservedMicros: 1000, reservedCalls: 10 });
     expect((await post("reserve", { id: "after-freeze", micros: 1, calls: 1 })).status).toBe(503);
     expect((await post("reserve", { id: "bad", micros: 1, calls: 1, payload: "career text" })).status).toBe(422);

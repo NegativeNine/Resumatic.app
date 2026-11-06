@@ -126,10 +126,14 @@ export class PilotLedger {
     this.transaction(() => {
       const existing = this.meta();
       if (existing) {
+        // Reinitialization must not make an inconsistent ledger look healthy.
+        this.auditAttempts();
         if (existing.max_micros !== maxMicros || existing.max_calls !== maxCalls)
           throw new AppError("conflict", "the pilot limits are already fixed");
         return;
       }
+      if (this.sql.exec(`SELECT id FROM pilot_attempts LIMIT 1`).toArray().length)
+        throw new AppError("unavailable", "the pilot ledger is invalid");
       this.sql.exec(`INSERT INTO pilot_meta (id,max_micros,max_calls) VALUES (1,?,?)`, maxMicros, maxCalls);
     });
   }
@@ -139,10 +143,18 @@ export class PilotLedger {
       throw new AppError("invalid", "invalid pilot reservation");
     this.transaction(() => {
       const meta = this.requiredMeta();
+      // Check the bounded durable inventory before trusting aggregate counters.
+      // An earlier version or damaged state may have recorded an attempt
+      // without charging its counters; never dispatch against such a ledger.
+      const { totals } = this.auditAttempts();
       if (meta.frozen) throw new AppError("unavailable", "the pilot is frozen");
       // A replay is rejected: an acknowledgement may have been lost, and
       // returning success twice could allow two provider dispatches.
       if (this.attempt(id)) throw new AppError("conflict", "pilot attempt already reserved");
+      // Keep only one provider attempt in flight. A missing or overrun usage
+      // report must freeze the campaign before another call can be dispatched.
+      if (totals.pending !== 0)
+        throw new AppError("unavailable", "another pilot attempt is unresolved");
       if (micros > meta.max_micros - meta.used_micros || calls > meta.max_calls - meta.used_calls)
         throw new AppError("quota", "the pilot budget is exhausted");
       this.sql.exec(`INSERT INTO pilot_attempts (id,reserved_micros,reserved_calls,state) VALUES (?,?,?,'pending')`, id, micros, calls);
@@ -173,15 +185,15 @@ export class PilotLedger {
   }
 
   status() {
-    if (!this.meta()) return { initialized: false as const };
-    const meta = this.requiredMeta();
-    const counts = this.sql.exec<{ pending: number; unknown: number; overrun: number }>(
-      `SELECT COUNT(CASE WHEN state='pending' THEN 1 END) AS pending,
-        COUNT(CASE WHEN state='unknown' THEN 1 END) AS unknown,
-        COUNT(CASE WHEN state='overrun' THEN 1 END) AS overrun FROM pilot_attempts`,
-    ).one();
-    return { initialized: true as const, maxMicros: meta.max_micros, maxCalls: meta.max_calls,
-      reservedMicros: meta.used_micros, reservedCalls: meta.used_calls, frozen: meta.frozen === 1, ...counts };
+    if (!this.meta()) {
+      if (this.sql.exec(`SELECT id FROM pilot_attempts LIMIT 1`).toArray().length)
+        throw new AppError("unavailable", "the pilot ledger is invalid");
+      return { initialized: false as const };
+    }
+    const { totals } = this.auditAttempts();
+    return { initialized: true as const, maxMicros: totals.maxMicros, maxCalls: totals.maxCalls,
+      reservedMicros: totals.reservedMicros, reservedCalls: totals.reservedCalls, frozen: totals.frozen,
+      pending: totals.pending, unknown: totals.unknown, overrun: totals.overrun };
   }
 
   /** A bounded point-in-time snapshot for reconciliation; never changes budget state. */

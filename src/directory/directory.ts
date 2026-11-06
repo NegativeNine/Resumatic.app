@@ -1292,12 +1292,18 @@ export class Directory extends DurableObject<Env> {
           `SELECT provider,subject,generation FROM placement_finalizations WHERE user_id=?`, v.user_id,
         ).toArray();
         const fenced = finalizations.length ? null : await this.prepareFencedIdentityRemoval(v.user_id);
+        // The placement RPC can yield while this deletion is replaced or a
+        // retirement is created. Do not dispatch the next external cleanup
+        // using a stale owner or final-sweep incarnation.
+        this.requireFinalizationUnchanged(v);
         const shard = /^s(\d+):/i.exec(v.user_id);
         await directory(this.env).removeInvite(v.email);
+        this.requireFinalizationUnchanged(v);
         if (v.stripe_customer)
           await cleanupBillingCustomer(this.env, v.stripe_customer, fetch, parseCheckoutIds(v.stripe_checkout_sessions));
         else if (parseCheckoutIds(v.stripe_checkout_sessions).length)
           throw new AppError("unavailable", "checkout customer requires operator review");
+        this.requireFinalizationUnchanged(v);
         await revokeOAuthUserGrants(this.env, v.user_id);
         // A newly discovered retirement must stop before initiating any
         // identity-home release. An in-flight release cannot be recalled.

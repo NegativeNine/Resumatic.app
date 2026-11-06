@@ -10,7 +10,7 @@ import { call, cookieFrom, eventually, fakeModels, JOB_DESCRIPTION, RESUME, sign
 beforeEach(() => setModels(() => fakeModels()));
 afterEach(() => setModels(null));
 
-async function fixture(mode: "legacy" | "blockedSnapshot" | "verifiedSnapshot" = "legacy") {
+async function fixture(mode: "legacy" | "blockedSnapshot" | "verifiedSnapshot" | "verifiedWithSkills" = "legacy") {
   const user = await signIn();
   const upload = await user.upload("synthetic.pdf", RESUME);
   const { sourceId } = await upload.json() as { sourceId: string };
@@ -42,7 +42,7 @@ async function fixture(mode: "legacy" | "blockedSnapshot" | "verifiedSnapshot" =
     ];
     saved.render.body.summary = null;
     saved.render.body.sections = [section];
-    saved.render.body.skills = [];
+    if (mode !== "verifiedWithSkills") saved.render.body.skills = [];
     saved.provenance = mode === "legacy" ? "legacy" : "snapshot";
     if (mode === "legacy") delete saved.evidence;
     delete saved.legacyReceipts;
@@ -207,6 +207,71 @@ describe("legacy resume remediation", () => {
     const sharedAfter = await call("/share/snapshot", { cookie: shareCookie });
     expect(sharedAfter.status).toBe(200);
     expect(await sharedAfter.json()).toEqual(sharedBefore);
+  }, 30_000);
+
+  it("removes a checked skill once while preserving earlier downloads and coach shares", async () => {
+    const { user, resumeId, version } = await fixture("verifiedWithSkills");
+    const before = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(before.body!.skills.length).toBeGreaterThan(1);
+    expect((await user.fetch(`/api/resumes/${resumeId}/preview`)).status).toBe(200);
+    const share = await user.send("POST", "/api/shares", { factIds: [], resumes: [{ id: resumeId, version }] });
+    expect(share.status).toBe(201);
+    const { url } = await share.json() as { url: string };
+    const exchange = await call("/share/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: new URL(url).hash.slice(1) }) });
+    const cookie = cookieFrom(exchange, "__Host-share")!;
+    const sharedBefore = await (await call("/share/snapshot", { cookie })).json();
+    const quota = (await user.json<{ quota: unknown }>("/api/me")).quota;
+    const path = `/api/resumes/${resumeId}/remove-skill`;
+    const input = { skillIndex: 0, expectedVersion: version };
+    const stranger = await signIn();
+    expect((await stranger.send("POST", path, input)).status).toBe(404);
+    expect((await user.send("POST", path, { ...input, skillIndex: 999 })).status).toBe(409);
+    expect(await (await user.send("POST", path, input)).json()).toEqual({ version: version + 1 });
+    expect(await (await user.send("POST", path, input)).json()).toEqual({ version: version + 1 });
+    expect((await user.send("POST", path, { ...input, skillIndex: 1 })).status).toBe(409);
+    const after = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(after.provenance).toBe("snapshot");
+    expect(after.needsGroundingReview).toBeUndefined();
+    expect(after.body!.skills).toEqual(before.body!.skills.slice(1));
+    expect(after.report).toEqual(before.report);
+    expect((await user.json<{ quota: unknown }>("/api/me")).quota).toEqual(quota);
+    expect((await user.fetch(`/api/resumes/${resumeId}/preview`)).status).toBe(200);
+    expect((await user.fetch(`/api/resumes/${resumeId}/preview?version=${version}`)).status).toBe(200);
+    expect((await user.json<ResumeView>(`/api/resumes/${resumeId}?version=${version}`)).body).toEqual(before.body);
+    const sharedAfter = await call("/share/snapshot", { cookie });
+    expect(sharedAfter.status).toBe(200);
+    expect(await sharedAfter.json()).toEqual(sharedBefore);
+  }, 30_000);
+
+  it("serializes checked-skill removals and blocks them during document generation", async () => {
+    const { user, resumeId, version, stub } = await fixture("verifiedWithSkills");
+    const before = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(before.body!.skills.length).toBeGreaterThan(1);
+    const path = `/api/resumes/${resumeId}/remove-skill`;
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO runs (id,kind,target_id,request_key,input_digest,state,steps,credit_state,created_at,updated_at)
+        VALUES ('pending-skill-checked','refine',?,'pending-skill-checked','digest','running','[]','none',1,1)`, resumeId);
+    });
+    expect((await user.send("POST", path, { skillIndex: 0, expectedVersion: version })).status).toBe(409);
+    await runInDurableObject(stub, (_instance, state) => { state.storage.sql.exec(`UPDATE runs SET state='failed' WHERE id='pending-skill-checked'`); });
+    const requests = [0, 1].map((skillIndex) => ({ skillIndex, expectedVersion: version }));
+    const results = await Promise.all(requests.map((body) => user.send("POST", path, body)));
+    expect(results.map((result) => result.status).sort()).toEqual([200, 409]);
+    const winner = results.findIndex((result) => result.status === 200);
+    expect((await user.send("POST", path, requests[winner]!)).status).toBe(200);
+    expect((await user.send("POST", path, requests[1 - winner]!)).status).toBe(409);
+    const current = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(current.version).toBe(version + 1);
+    expect(current.body!.skills).toHaveLength(before.body!.skills.length - 1);
+  }, 30_000);
+
+  it("does not use skill removal to promote a blocked or legacy resume", async () => {
+    for (const mode of ["blockedSnapshot", "legacy"] as const) {
+      const { user, resumeId, version } = await fixture(mode);
+      const path = `/api/resumes/${resumeId}/remove-skill`;
+      expect((await user.send("POST", path, { skillIndex: 0, expectedVersion: version })).status).toBe(409);
+      expect((await user.json<ResumeView>(`/api/resumes/${resumeId}`)).version).toBe(version);
+    }
   }, 30_000);
 
   it("serializes concurrent checked-line removals and blocks during generation", async () => {

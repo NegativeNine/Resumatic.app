@@ -152,7 +152,7 @@ it("correlates unknown puts without treating overwritten metadata as proof", asy
   }
 });
 
-it.each(["pdf", "docx"] as const)("does not write or return a new %s cache after closure during the legacy R2 lookup", async (kind) => {
+it.each(["pdf", "docx"] as const)("does not write or return a new %s cache after closure during its cache read", async (kind) => {
   const user = await signIn();
   const session = await readSession(env.SESSION_KEY, user.cookie.slice("__Host-session=".length));
   if (!session) throw new Error("missing synthetic session");
@@ -173,12 +173,28 @@ it.each(["pdf", "docx"] as const)("does not write or return a new %s cache after
   let notify!: () => void;
   const waiting = new Promise<void>((resolve) => { release = resolve; });
   const entered = new Promise<void>((resolve) => { notify = resolve; });
-  const put = vi.fn(async () => null);
-  const files = { get: async () => { notify(); await waiting; return null; }, put, delete: async () => {} };
-  const bindings = { ...env, FILES: files, R2_CACHE_FENCE_ENABLED: "true" } as unknown as Env;
+  const put = vi.fn(async () => null), get = vi.fn(async () => null);
+  const files = { get, put, delete: async () => {} };
+  const namespace = {
+    idFromString: (id: string) => env.VAULT.idFromString(id),
+    get: (id: DurableObjectId) => {
+      const target = env.VAULT.get(id);
+      return {
+        renderData: (...args: Parameters<typeof stub.renderData>) => target.renderData(...args),
+        checkSession: (...args: Parameters<typeof stub.checkSession>) => target.checkSession(...args),
+        putExportCache: (...args: Parameters<typeof stub.putExportCache>) => target.putExportCache(...args),
+        readExportCache: async (...args: Parameters<typeof stub.readExportCache>) => {
+          const result = await target.readExportCache(...args);
+          notify(); await waiting;
+          return result;
+        },
+      };
+    },
+  };
+  const bindings = { ...env, FILES: files, VAULT: namespace, R2_CACHE_FENCE_ENABLED: "true" } as unknown as Env;
   const request = Promise.resolve(app.fetch(new Request(`https://resumatic.test/api/resumes/${resumeId}/${kind}`, { headers: { cookie: user.cookie } }), bindings));
   try {
-    await within(Promise.race([entered, request.then((response) => { throw new Error(`request finished before lookup: ${response.status}`); })]), "legacy cache lookup");
+    await within(Promise.race([entered, request.then((response) => { throw new Error(`request finished before lookup: ${response.status}`); })]), "cache lookup");
     await stub.quiesce();
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM r2_cache_dispatches`).one().n).toBe(0);
@@ -187,6 +203,7 @@ it.each(["pdf", "docx"] as const)("does not write or return a new %s cache after
     release();
     expect((await within(request, "cache response")).status).toBe(410);
     expect(put).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
     expect(await stub.close()).toEqual({ distill: [sourceId], tailor: [resumeId] });
   } finally {
     release();

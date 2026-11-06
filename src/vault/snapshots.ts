@@ -40,6 +40,8 @@ export interface ResumeVersion {
   legacySkillRemoved?: { fromVersion: number; skillIndex: number };
   /** Identifies an idempotently removed line in a checked version. */
   lineRemoved?: { fromVersion: number; lineId: string };
+  /** Identifies an idempotently removed skill in a checked version. */
+  skillRemoved?: { fromVersion: number; skillIndex: number };
   provenance: "snapshot" | "legacy";
 }
 

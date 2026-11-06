@@ -51,10 +51,13 @@ describe("shared one-shot pilot ledger", () => {
     try {
       ledger.initialize(100, 8);
       ledger.reserve("one", 70, 6);
+      expect(() => ledger.reserve("other", 1, 1)).toThrow(/another pilot attempt is unresolved/);
+      ledger.settle("one", 70);
       expect(() => ledger.reserve("cost", 31, 1)).toThrow(/exhausted/);
       expect(() => ledger.reserve("calls", 1, 3)).toThrow(/exhausted/);
       ledger.reserve("two", 30, 2);
-      expect(ledger.status()).toMatchObject({ reservedMicros: 100, reservedCalls: 8, pending: 2 });
+      expect(ledger.status()).toMatchObject({ reservedMicros: 100, reservedCalls: 8, pending: 1 });
+      ledger.settle("two", 30);
       expect(() => ledger.reserve("three", 1, 1)).toThrow(/exhausted/);
     } finally { db.close(); }
   });
@@ -90,8 +93,8 @@ describe("shared one-shot pilot ledger", () => {
     try {
       ledger.initialize(1000, 10);
       ledger.reserve("first", 100, 2);
-      ledger.reserve("second", 30, 1);
       ledger.settle("first", 90);
+      ledger.reserve("second", 30, 1);
       expect(ledger.auditAttempts()).toEqual({ totals: {
         maxMicros: 1000, maxCalls: 10, reservedMicros: 130, reservedCalls: 3,
         frozen: false, count: 2, pending: 1, unknown: 0, overrun: 0,
@@ -104,7 +107,30 @@ describe("shared one-shot pilot ledger", () => {
       // corrupted rows rather than making a partial inventory appear complete.
       db.exec("UPDATE pilot_meta SET used_micros=131");
       expect(() => ledger.auditAttempts()).toThrow(/ledger is invalid/);
+      expect(() => ledger.status()).toThrow(/ledger is invalid/);
+      expect(() => ledger.reserve("third", 1, 1)).toThrow(/ledger is invalid/);
+      expect(() => ledger.initialize(1000, 10)).toThrow(/ledger is invalid/);
     } finally { db.close(); }
+  });
+
+  it("never initializes an orphaned attempt inventory or authorizes spending against undercounted counters", () => {
+    const { db, ledger } = fixture();
+    try {
+      db.exec("INSERT INTO pilot_attempts (id,reserved_micros,reserved_calls,state) VALUES ('orphan',100,1,'pending')");
+      expect(() => ledger.status()).toThrow(/ledger is invalid/);
+      expect(() => ledger.initialize(1000, 10)).toThrow(/ledger is invalid/);
+      expect(db.prepare("SELECT COUNT(*) AS n FROM pilot_meta").get()).toEqual({ n: 0 });
+    } finally { db.close(); }
+
+    const second = fixture();
+    try {
+      second.ledger.initialize(1000, 10);
+      // Simulate state left by an older writer that did not charge its row.
+      second.db.exec("INSERT INTO pilot_attempts (id,reserved_micros,reserved_calls,state) VALUES ('uncounted',100,1,'pending')");
+      expect(() => second.ledger.reserve("later", 1, 1)).toThrow(/ledger is invalid/);
+      expect(() => second.ledger.status()).toThrow(/ledger is invalid/);
+      expect(second.db.prepare("SELECT COUNT(*) AS n FROM pilot_attempts").get()).toEqual({ n: 1 });
+    } finally { second.db.close(); }
   });
 
   it.each(["unknown", "overrun"])("rejects an unfrozen %s attempt in the audit snapshot", (state) => {

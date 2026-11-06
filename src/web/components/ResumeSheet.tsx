@@ -226,14 +226,15 @@ export function ResumeSheet({
           {body.skills.length > 0 && (
             <section className="paper-section">
               <h2>Skills</h2>
-              {!readOnly && review ? (
+              {!readOnly && (review || !needsEvidence) ? (
                 <ul className="plain-list">
                   {body.skills.map((skill, index) => (
                     <li key={index}>
                       <span>{skill}</span>{" "}
                       <button type="button" className="small" disabled={finalization.pending} aria-label={`Remove skill ${skill}`}
                         onClick={() => void finalization.run(async () => {
-                          await api.removeLegacySkill(resume.id, index, resume.version);
+                          if (review) await api.removeLegacySkill(resume.id, index, resume.version);
+                          else await api.removeResumeSkill(resume.id, index, resume.version);
                           await reload();
                         })}>
                         Remove
@@ -242,6 +243,7 @@ export function ResumeSheet({
                   ))}
                 </ul>
               ) : <p>{body.skills.join(" · ")}</p>}
+              {!readOnly && !review && !needsEvidence && <ActionError message={finalization.error} />}
             </section>
           )}
         </article>

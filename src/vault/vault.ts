@@ -2291,6 +2291,45 @@ export class Vault extends DurableObject<Env> {
     return result;
   }
 
+  /** Remove one printed skill from a checked resume without changing prior versions. */
+  removeResumeSkill(who: Who, resumeId: string, skillIndex: number, expectedVersion: number): { version: number } {
+    this.requireOwner(who);
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || expectedVersion >= Number.MAX_SAFE_INTEGER ||
+        !Number.isSafeInteger(skillIndex) || skillIndex < 0)
+      throw new AppError("invalid", "the skill and resume version are required");
+    const result = this.ctx.storage.transactionSync(() => {
+      this.requireOwner(who);
+      const row = this.resumeRow(resumeId);
+      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "the resume is not ready");
+      if (row.version === expectedVersion + 1) {
+        const saved = this.snapshots.read(resumeId, row.version);
+        if (saved?.provenance === "snapshot" && saved.skillRemoved?.fromVersion === expectedVersion && saved.skillRemoved.skillIndex === skillIndex)
+          return { version: row.version };
+      }
+      if (row.version !== expectedVersion) throw new AppError("conflict", "the resume changed; refresh and try again");
+      if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
+        throw new AppError("conflict", "wait for the current document to finish");
+      const base = this.resumeVersion(row);
+      // Removing a skill cannot turn a legacy or otherwise blocked version
+      // into a checked version; both snapshots must pass the export guard.
+      assertGroundedResume(base.render, base.facts, base.provenance, base.evidence, base.roleEvidence);
+      const body = structuredClone(base.render.body);
+      if (skillIndex >= body.skills.length) throw new AppError("conflict", "the skill is missing");
+      body.skills.splice(skillIndex, 1);
+      const version = row.version + 1;
+      const saved: ResumeVersion = {
+        ...base, render: { ...base.render, body, version },
+        skillRemoved: { fromVersion: expectedVersion, skillIndex },
+      };
+      assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence, saved.roleEvidence);
+      this.snapshots.save(resumeId, version, saved);
+      this.sql.exec(`UPDATE resumes SET body=?,version=? WHERE id=?`, JSON.stringify(body), version, resumeId);
+      return { version };
+    });
+    this.broadcast("resume", resumeId);
+    return result;
+  }
+
   /** Promote only a fully rechecked current legacy version; never mutate history. */
   finalizeLegacyResume(who: Who, resumeId: string, expectedVersion: number): { version: number } {
     this.requireOwner(who);

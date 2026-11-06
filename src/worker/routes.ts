@@ -16,7 +16,7 @@ import { PILOT_IDENTITY_PATHS, PILOT_MAX_CALLS, PILOT_MAX_MICROS } from "./pilot
 import { stagingPilotBudget } from "./pilot/access";
 import { createArchive, MAX_ARCHIVE_BYTES, type ArchiveEntry } from "../render/archive";
 import { guardedStream } from "./guarded-stream";
-import { cachedExport } from "./vault-export-cache";
+import { cachedExport, snapshotCacheKey } from "./vault-export-cache";
 import { billingConfig } from "../shared/billing";
 import { verifyStripe, parseStripeEvent, stripeClient } from "./billing";
 import {
@@ -842,6 +842,11 @@ api.post("/resumes/:id/remove-line", JSON_LIMIT, async (c) => {
   return c.json(await myVault(c).removeResumeLine(c.get("who"), c.req.param("id"), lineId, expectedVersion));
 });
 
+api.post("/resumes/:id/remove-skill", JSON_LIMIT, async (c) => {
+  const { skillIndex, expectedVersion } = await jsonBody(c, z.object({ skillIndex: z.number().int().nonnegative(), expectedVersion: z.number().int().positive().max(Number.MAX_SAFE_INTEGER - 1) }));
+  return c.json(await myVault(c).removeResumeSkill(c.get("who"), c.req.param("id"), skillIndex, expectedVersion));
+});
+
 api.post("/resumes/:id/grounding-review", JSON_LIMIT, async (c) => {
   const { expectedVersion } = await jsonBody(c, z.object({ expectedVersion: z.number().int().positive() }));
   return c.json(await myVault(c).beginResumeReview(c.get("who"), c.req.param("id"), expectedVersion));
@@ -858,8 +863,8 @@ api.get("/resumes/:id/pdf", async (c) => {
   // Legacy renderers ignore unknown-end starts. Isolate their cached output
   // from new output for this same immutable version; old versions keep keys.
   const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
-  const key = pdfKey(c.get("session").vid, resumeId, data.version, hasUnknownEndDates);
-  const pdf = await cachedExport(() => myVault(c), c.env.FILES, c.get("who"), key,
+  const key = await snapshotCacheKey(pdfKey(c.get("session").vid, resumeId, data.version, hasUnknownEndDates), data);
+  const pdf = await cachedExport(() => myVault(c), c.get("who"), key,
     () => renderPdf(c.env, renderResumeHtml(data)));
   const name = fileName(
     [data.profile.name, data.company].filter(Boolean).join(" ") || "resume",
@@ -995,8 +1000,8 @@ api.get("/resumes/:id/docx", async (c) => {
     versionQuery(c),
   );
   const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
-  const key = docxKey(c.get("session").vid, c.req.param("id"), data.version, hasUnknownEndDates);
-  const bytes = await cachedExport(() => myVault(c), c.env.FILES, c.get("who"), key,
+  const key = await snapshotCacheKey(docxKey(c.get("session").vid, c.req.param("id"), data.version, hasUnknownEndDates), data);
+  const bytes = await cachedExport(() => myVault(c), c.get("who"), key,
     async () => renderDocx(data));
   return new Response(bytes, {
     headers: {
