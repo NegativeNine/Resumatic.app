@@ -30,6 +30,68 @@ describe("quoteIsVerbatim", () => {
 });
 
 describe("numbers", () => {
+  it("treats written, numeric, and mixed scaled quantities as a single quantity", () => {
+    for (const [source, expected] of [
+      ["five hundred", "500"], ["one hundred and 5", "105"],
+      ["2 hundred", "200"], ["five-hundred-and-five", "505"],
+      ["twenty-five hundred", "2500"], ["one hundred and five thousand", "105000"],
+      ["100 million", "100000000"], ["five million and 2 hundred", "5000200"],
+      [".5 million", "500000"], ["1,000.5 million", "1000500000"],
+      ["1e-3 million", "1000"], ["five dozen", "60"],
+      ["0.5 hundred thousand", "50000"],
+    ]) {
+      expect(unsupportedNumbers(`Managed ${expected} people`, `Managed ${source} people`)).toEqual([]);
+      expect(unsupportedNumbers(`Managed ${source} people`, `Managed ${expected} people`)).toEqual([]);
+    }
+    for (const [source, component] of [
+      ["one hundred and 5", "100"], ["one hundred and 5", "5"],
+      ["2 hundred", "2"], ["2 hundred", "100"],
+      [".5 million", "5000000"], ["100 million", "1000000"],
+      ["five hundredfold", "5"], ["five hundredth", "5"],
+      ["between 10 and 20 million", "10"],
+    ]) expect(unsupportedNumbers(`Managed ${component} people`, `Managed ${source} people`)).not.toEqual([]);
+    expect(unsupportedNumbers("Improved 500x", "Improved five hundredfold")).toEqual([]);
+    expect(unsupportedNumbers("Ranked 500th", "Ranked five hundredth")).toEqual([]);
+    expect(unsupportedNumbers("Lost -500%", "Lost minus five hundred percent")).toEqual([]);
+    expect(unsupportedNumbers("Gained 5%", "Lost -five percent")).toEqual(["5%"]);
+    expect(unsupportedNumbers("Raised $5000000", "Raised $five million")).toEqual([]);
+    expect(unsupportedNumbers("Managed 2020 people", "Founded in two thousand and twenty")).toEqual(["2020"]);
+    expect(unsupportedNumbers("Founded in 2020", "Founded in two thousand and twenty")).toEqual([]);
+    for (const source of ["<1,000", ">=1,000", "<=1,000", "~1,000", "1,000+"])
+      expect(unsupportedNumbers("Managed 1000 people", `Managed ${source} people`)).not.toEqual([]);
+    for (const source of ["~five million", "five million-ish", "at least five million", "more than five million", "five million-plus", "five million or more"])
+      expect(unsupportedNumbers("Managed 5000000 people", `Managed ${source} people`)).not.toEqual([]);
+    expect(unsupportedNumbers("Managed nearly 500 people", "Managed about five hundred people")).not.toEqual([]);
+    expect(unsupportedNumbers("Managed 100 people", "Managed a hundred and something people")).not.toEqual([]);
+    expect(unsupportedNumbers("Managed 1000000000 people", "Managed 1000000000.0000001 people")).not.toEqual([]);
+    expect(unsupportedNumbers("Managed 1001 people", "Managed 1.001k people")).toEqual([]);
+    // Never lose a small fractional component while adding a larger group.
+    for (const source of ["one million and 0.00000000001", "0.00000000001 million and one", "one hundred and 0.0000000000000001 thousand"]) {
+      expect(unsupportedNumbers("Managed 1000000 people", `Managed ${source} people`)).not.toEqual([]);
+      expect(unsupportedNumbers(`Managed ${source} people`, "Managed people")).not.toEqual([]);
+    }
+    expect(unsupportedNumbers("Managed 1481481468148160 people", "Managed 123456789012347 dozen people")).not.toEqual([]);
+    expect(unsupportedNumbers("Managed 1.48148146814816 people", "Managed 0.123456789012347 dozen people")).not.toEqual([]);
+  });
+
+  it("never exposes components of unknown fractions and scale suffixes", () => {
+    for (const source of ["one hundred and one-half", "one hundred and one-quarter", "one million and a half", "1/2 million", "1⁄2 million", "5∕10 million", "1½ million", "½ million", "five hundredfolded", "five hundredths", "five millions", "five ⁵million", "five\u200bhundred", "five\u2060hundred", "five\u00adhundred", "5٫5 million", "1 to 2 million", "5 ± 2 million"]) {
+      for (const component of ["1", "2", "5", "100", "500", "1000000"]) {
+        expect(unsupportedNumbers(`Managed ${component} people`, `Managed ${source} people`)).not.toEqual([]);
+      }
+      expect(unsupportedNumbers(`Managed ${source} people`, "Managed people")).not.toEqual([]);
+    }
+    for (const source of ["zero", "thirteen", "nineteen", "a million", "thousands", "half a million", "١٠", "１２", "𝟙𝟚", "Ⅻ", "2/3", "two-thirds"])
+      expect(unsupportedNumbers(`Managed ${source} people`, "Managed people")).not.toEqual([]);
+    for (const boundary of ["\n", "\r\n", "\u2028", "\u2029"])
+      expect(unsupportedNumbers("Managed 505 people", `Managed five hundred${boundary}five people`)).toEqual(["505"]);
+  });
+
+  it("fails closed on oversized numeric phrases without recursing through each word", () => {
+    const source = `${"100 ".repeat(9000)}million`;
+    expect(unsupportedNumbers("Managed 100 people", `Managed ${source} people`)).not.toEqual([]);
+  });
+
   it("treats written compound cardinals as one quantity, not their components", () => {
     for (const wording of ["twenty-five", "twenty five", "twenty‑five"]) {
       expect(unsupportedNumbers("Managed 25 people", `Managed ${wording} people`)).toEqual([]);
