@@ -1462,6 +1462,57 @@ export class Vault extends DurableObject<Env> {
     return { factId: id };
   }
 
+  /** A request key returns the same fact after an uncertain response. */
+  async addFactIdempotent(
+    who: Who,
+    f: NewFact,
+    requestKey: string,
+  ): Promise<{ factId: string }> {
+    this.requireOwner(who);
+    if (!/^[a-zA-Z0-9_-]{1,100}$/.test(requestKey))
+      throw new AppError("invalid", "invalid request key");
+    const digest = base64url(await sha256(JSON.stringify([f.roleId, f.kind, f.text, f.level])));
+    this.requireOwner(who);
+    const previous = () => {
+      const row = this.sql.exec<{ input_digest: string; fact_id: string }>(
+        `SELECT input_digest, fact_id FROM fact_create_requests WHERE request_key = ?`, requestKey,
+      ).toArray()[0];
+      if (!row) return null;
+      if (row.input_digest !== digest)
+        throw new AppError("conflict", "this fact request changed");
+      return row.fact_id;
+    };
+    const existing = previous();
+    if (existing) return { factId: existing };
+    if (f.roleId) this.requireUsableRole(f.roleId);
+    const model = this.activeEmbeddingModel();
+    const vector = await this.embedOne(f.text);
+    this.requireOwner(who);
+    const factId = this.ctx.storage.transactionSync(() => {
+      // Another copy of this request may have committed while embedding.
+      const prior = previous();
+      if (prior) return prior;
+      if (model !== this.activeEmbeddingModel())
+        throw new AppError("conflict", "the search index changed; try again");
+      if (f.roleId) this.requireUsableRole(f.roleId);
+      const id = crypto.randomUUID(), now = Date.now();
+      this.sql.exec(
+        `INSERT INTO facts (id, role_id, kind, text, level, origin, state, vector, updated_at, level_revision)
+         VALUES (?, ?, ?, ?, ?, 'user', 'confirmed', ?, ?, ?)`,
+        id, f.roleId, f.kind, f.text, f.level, packVector(vector), now,
+        f.level === null ? null : 1,
+      );
+      this.sql.exec(
+        `INSERT INTO fact_create_requests (request_key, input_digest, fact_id) VALUES (?, ?, ?)`,
+        requestKey, digest, id,
+      );
+      this.extractionFeedbackStore.manual(id, now);
+      return id;
+    });
+    this.vectorCache = null;
+    return { factId };
+  }
+
   /**
    * Rewords a fact, moves it to another role (or to none), or both. Either change makes it the
    * user's own claim; its original quote stays beside it.

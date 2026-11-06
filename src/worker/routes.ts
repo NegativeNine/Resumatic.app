@@ -298,7 +298,7 @@ export async function startSession(env: Env, input: SignInInput): Promise<string
   }
   const { userId, vaultId } = account;
   if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
-  await directory(env).bindIdentityHome(input.provider, input.subject, userId, input.authEpoch);
+  await directory(env).bindIdentityHome(input.provider, input.subject, userId, input.authEpoch, input.authExpiryMs);
   if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
   const { gen, epoch } = await vault(env, vaultId).openSession(userId);
   const cookie = sessionCookie(
@@ -681,6 +681,19 @@ api.get("/facts", async (c) => {
 api.post("/facts", JSON_LIMIT, async (c) =>
   c.json(
     await myVault(c).addFact(c.get("who"), await jsonBody(c, NewFactBody)),
+    201,
+  ),
+);
+
+// A new route and RPC name ensure older Workers/Vaults cannot silently drop
+// the request key and promise idempotency they do not provide.
+api.post("/v2/facts", JSON_LIMIT, async (c) =>
+  c.json(
+    await myVault(c).addFactIdempotent(
+      c.get("who"),
+      await jsonBody(c, NewFactBody),
+      requestKey(c),
+    ),
     201,
   ),
 );

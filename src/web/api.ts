@@ -174,7 +174,7 @@ export const api = {
       body,
     ),
   addFact: (fact: NewFact) =>
-    request<{ factId: string }>("POST", "/api/facts", fact),
+    generate<{ factId: string }>("/api/v2/facts", fact),
   editFact: (id: string, patch: FactPatch) =>
     request<void>("PATCH", `/api/facts/${encodeURIComponent(id)}`, patch),
   review: (r: ReviewRequest) => request<void>("POST", "/api/review", r),

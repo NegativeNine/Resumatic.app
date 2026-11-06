@@ -6,7 +6,7 @@ import {
 import { vault } from "../shared/stubs";
 import { errorCode } from "../shared/errors";
 import { runModels } from "./models";
-import { MODEL_STEP, STEP, once } from "./steps";
+import { MODEL_STEP, STEP, once, retrySafely } from "./steps";
 export type ReembedParams = { vaultId: string; runId: string };
 /** Every batch returns counts only; facts and staged vectors remain in the vault. */
 export class ReembedWorkflow extends WorkflowEntrypoint<Env, ReembedParams> {
@@ -53,14 +53,14 @@ export class ReembedWorkflow extends WorkflowEntrypoint<Env, ReembedParams> {
       }
       throw new Error("embedding_batch_limit");
     } catch (error) {
-      await step.do("fail", STEP, async () => {
+      await step.do("fail", STEP, retrySafely(async () => {
         try {
           await v.failReembed(runId);
         } catch (e) {
           if (errorCode(e) !== "gone") throw e;
         }
         return { failed: true };
-      });
+      }));
       return { failed: true };
     }
   }

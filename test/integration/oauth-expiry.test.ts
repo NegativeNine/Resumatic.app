@@ -33,6 +33,31 @@ describe("OAuth expiry across Directory calls", () => {
     expect((await target.directory.signIn(target.input)).userId).toMatch(/^s(?:[0-9]|1[0-5]):/);
   });
 
+  it("does not bind a home when an RPC arrives after the signed state expires", async () => {
+    const p = identity();
+    const global = directory(env);
+    const epoch = await global.googleAuthEpoch();
+    await global.addInvite(p.email);
+    await global.claimIdentityHome(p.provider, p.subject, null, p.email, undefined, epoch);
+    const account = await global.signIn({ ...p, authEpoch: epoch });
+    // Simulate an RPC dispatched while fresh but delivered after expiry.
+    const expiry = Date.now() + 50;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await runInDurableObject(global, async (instance, state) => {
+      await expect(instance.bindIdentityHome(p.provider, p.subject, account.userId, epoch, expiry))
+        .rejects.toThrow("sign-in took too long");
+      expect(state.storage.sql.exec<{ user_id: string | null }>(
+        `SELECT user_id FROM identity_homes WHERE provider=? AND subject=?`, p.provider, p.subject,
+      ).one().user_id).toBeNull();
+    });
+    await global.bindIdentityHome(p.provider, p.subject, account.userId, epoch, Date.now() + 60_000);
+    await runInDurableObject(global, (_instance, state) => {
+      expect(state.storage.sql.exec<{ user_id: string | null }>(
+        `SELECT user_id FROM identity_homes WHERE provider=? AND subject=?`, p.provider, p.subject,
+      ).one().user_id).toBe(account.userId);
+    });
+  });
+
   it("refuses a result when initialization outlives the signed state", async () => {
     const p = { ...identity(), provider: "test" as const };
     const stub = env.DIRECTORY.getByName(`expiry-init-${crypto.randomUUID()}`);
@@ -71,10 +96,11 @@ describe("OAuth expiry across Directory calls", () => {
     let now = Date.UTC(2026, 10, 1);
     const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
     const expires = now + 1000;
+    const bindIdentityHome = vi.fn(async (..._args: unknown[]) => {});
     const stub = {
       existingIdentity: async () => ({ userId: "synthetic-user", vaultId: "synthetic-vault" }),
       signIn: async () => ({ userId: "synthetic-user", vaultId: "synthetic-vault" }),
-      bindIdentityHome: async () => {},
+      bindIdentityHome,
     };
     const openSession = vi.fn(async () => { now = expires; return { gen: 1, epoch: "synthetic" }; });
     const bindings = {
@@ -84,6 +110,7 @@ describe("OAuth expiry across Directory calls", () => {
     try {
       await expect(startSession(bindings, { ...identity(), authExpiryMs: expires })).rejects.toThrow("sign-in took too long");
       expect(openSession).toHaveBeenCalledOnce();
+      expect(bindIdentityHome.mock.calls[0]?.[4]).toBe(expires);
     } finally {
       clock.mockRestore();
     }

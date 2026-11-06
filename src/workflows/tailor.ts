@@ -13,7 +13,7 @@ import {
 } from "../pipeline/tailor";
 import { AppError, errorCode } from "../shared/errors";
 import { vault } from "../shared/stubs";
-import { MODEL_STEP, STEP, once, userMessage } from "./steps";
+import { MODEL_STEP, STEP, once, retrySafely, userMessage } from "./steps";
 
 export type TailorParams = { vaultId: string; resumeId: string };
 
@@ -144,14 +144,14 @@ export class TailorWorkflow extends WorkflowEntrypoint<Env, TailorParams> {
         e,
         "Tailoring stopped unexpectedly. Try again.",
       );
-      await step.do("fail", STEP, async () => {
+      await step.do("fail", STEP, retrySafely(async () => {
         try {
           await v.failResume(resumeId, message, event.instanceId);
         } catch (error) {
           if (errorCode(error) !== "gone") throw error;
         }
         return { failed: true };
-      });
+      }));
       return { failed: true };
     }
   }

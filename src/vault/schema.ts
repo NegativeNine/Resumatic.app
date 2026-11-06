@@ -133,6 +133,11 @@ export const MIGRATIONS: readonly string[][] = [
     // Older unresolved markers remain valid but cannot be matched by key digest.
     `ALTER TABLE r2_cache_dispatches ADD COLUMN key_digest TEXT`,
   ],
+  [
+    // Stable result for a retried manual fact submission; no fact text is
+    // duplicated in the request ledger.
+    `CREATE TABLE fact_create_requests (request_key TEXT PRIMARY KEY, input_digest TEXT NOT NULL, fact_id TEXT NOT NULL REFERENCES facts(id))`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

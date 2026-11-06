@@ -1,6 +1,6 @@
 import { AppError } from "./errors";
 
-/** Content tables only. Credentials, grants, jobs and financial ledgers are deliberately excluded. */
+/** Content and its retry receipts. Credentials, grants, jobs and financial ledgers are excluded. */
 export const TRANSFER_TABLES = [
   "profile",
   "sources",
@@ -8,6 +8,8 @@ export const TRANSFER_TABLES = [
   "evidence",
   "roles",
   "facts",
+  // Preserve manual fact idempotency across a fenced vault replacement.
+  "fact_create_requests",
   "extraction_feedback_sources",
   "extraction_feedback_facts",
   "extraction_feedback_manual",

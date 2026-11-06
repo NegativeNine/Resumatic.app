@@ -114,6 +114,7 @@ describe("atomic schema migrations", () => {
     await stub.init("migration-owner");
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
+      sql.exec(`DROP TABLE fact_create_requests`);
       sql.exec(`DROP TABLE r2_cache_dispatches`);
       sql.exec(`DROP TRIGGER keep_uncertain_dispatch`);
       sql.exec(`DROP TABLE workflow_redispatches`);
@@ -137,6 +138,7 @@ describe("atomic schema migrations", () => {
     await stub.init("migration-owner");
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
+      sql.exec(`DROP TABLE fact_create_requests`);
       sql.exec(`DROP TABLE r2_cache_dispatches`);
       sql.exec(`DROP TRIGGER clear_unknown_end_start`);
       sql.exec(`ALTER TABLE roles DROP COLUMN unknown_end_start_date`);
@@ -160,6 +162,7 @@ describe("atomic schema migrations", () => {
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
       sql.exec(`UPDATE profile SET name='preserved' WHERE id=1`);
+      sql.exec(`DROP TABLE fact_create_requests`);
       sql.exec(`DROP TABLE r2_cache_dispatches`);
       const previous = priorVersion("CREATE TABLE r2_cache_dispatches");
       sql.exec(`UPDATE meta SET value = ? WHERE key = 'schema_version'`, String(previous));
@@ -182,6 +185,7 @@ describe("atomic schema migrations", () => {
     await stub.beginCacheWrite({ userId: "migration-owner", gen: 1 }, attemptId, "pdf");
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
+      sql.exec(`DROP TABLE fact_create_requests`);
       sql.exec(`ALTER TABLE r2_cache_dispatches DROP COLUMN key_digest`);
       const previous = priorVersion("ALTER TABLE r2_cache_dispatches ADD COLUMN key_digest");
       sql.exec(`UPDATE meta SET value = ? WHERE key = 'schema_version'`, String(previous));
@@ -191,6 +195,26 @@ describe("atomic schema migrations", () => {
     expect(await stub.cacheWriteFences()).toMatchObject({ status: "available", total: 1, attempts: [{ id: attemptId, keyDigest: null }] });
     await runInDurableObject(stub, async (instance) => {
       await expect(instance.close()).rejects.toThrow("export cache write is unresolved");
+    });
+  });
+
+  it("rolls back the manual fact receipt table and version together, then retries", async () => {
+    const stub = env.VAULT.get(env.VAULT.newUniqueId());
+    await stub.init("migration-owner");
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec(`UPDATE profile SET name='preserved' WHERE id=1`);
+      sql.exec(`DROP TABLE fact_create_requests`);
+      const previous = priorVersion("CREATE TABLE fact_create_requests");
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrate(failAtVersion(sql, previous + 1), tx)).toThrow(/synthetic version-write interruption/);
+      expect(sql.exec<{value: string}>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(previous));
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='fact_create_requests'`).toArray()).toHaveLength(0);
+      expect(sql.exec<{name: string}>(`SELECT name FROM profile WHERE id=1`).one().name).toBe("preserved");
+      migrate(sql, tx);
+      expect(sql.exec<{value: string}>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(SCHEMA_VERSION));
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='fact_create_requests'`).toArray()).toHaveLength(1);
     });
   });
 });

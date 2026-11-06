@@ -58,4 +58,21 @@ describe("generation request keys", () => {
     await expect(api.tailor(application)).resolves.toEqual({ resumeId: "resume" });
     expect(keys[1]).toBe(keys[0]);
   });
+
+  it("reuses a manual fact key after a lost response and gives a new action a new key", async () => {
+    const keys: string[] = [], paths: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (path: RequestInfo | URL, init?: RequestInit) => {
+      paths.push(String(path));
+      keys.push((init?.headers as Record<string, string>)["idempotency-key"]!);
+      if (keys.length === 1) throw new TypeError("connection lost");
+      return Response.json({ factId: "fact" });
+    }));
+    const fact = { roleId: null, kind: "accomplishment" as const, text: "Built an accessible application", level: null };
+    await expect(api.addFact(fact)).rejects.toThrow("connection lost");
+    await expect(api.addFact(fact)).resolves.toEqual({ factId: "fact" });
+    await expect(api.addFact(fact)).resolves.toEqual({ factId: "fact" });
+    expect(paths).toEqual(["/api/v2/facts", "/api/v2/facts", "/api/v2/facts"]);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
+  });
 });

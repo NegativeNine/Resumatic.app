@@ -26,7 +26,7 @@ Model prompts and outputs may cross the configured model-provider boundary. OAut
 | Stripe forgery, rotation or replay | Exact-byte HMAC, multiple v1 signatures, timestamp tolerance, durable event/invoice idempotency | Raw-body/UTF-8/multi-signature tests; reordered event test-mode exercise |
 | Delinquent subscription grants fresh quota | Current subscription reconciliation plus paid invoice period; no trial entitlement | Paid/unpaid period tests, pending invoice and scheduled-cancel exercise |
 | Retry charges or starts generation twice | Durable request keys, run state and per-step attempt/spend records | Concurrent generation, duplicate HTTP request, workflow failure and retry tests |
-| Logging captures career data or credentials | Fixed error codes, explicit metadata events, gateway bodies/cache disabled | Deployed synthetic canary search across Worker/Gateway/Logpush outputs |
+| Logging or Workflow errors capture career data or credentials | Fixed error codes and reviewed messages at Workflow step boundaries; explicit metadata events; gateway bodies/cache disabled | Inject sensitive synthetic exceptions and inspect step errors; run a deployed canary across Worker, Gateway, Workflow and Logpush outputs |
 | Erasure races a running operation | Close first, terminate/reconcile runs, sweep prefixed R2, delete Vault, delayed second sweep | Deletion audit checks SQLite, Directory, R2, OAuth and active Workflow state |
 | Restore revives credentials or discarded work | Fence outside restored SQLite; fresh security epoch, revoke grants, preserve live billing/usage, cancel historical work | Staging restore drill before enabling operator restore; no deleted-account restoration |
 

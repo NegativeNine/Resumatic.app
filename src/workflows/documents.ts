@@ -16,7 +16,7 @@ import {
 import { errorCode } from "../shared/errors";
 import { vault } from "../shared/stubs";
 import type { Candidate } from "../shared/types";
-import { MODEL_STEP, once, STEP } from "./steps";
+import { MODEL_STEP, once, retrySafely, STEP } from "./steps";
 
 export interface DocumentParams {
   vaultId: string;
@@ -128,7 +128,7 @@ export class DocumentWorkflow extends WorkflowEntrypoint<Env, DocumentParams> {
       );
     } catch (error) {
       const code = errorCode(error) ?? "generation_failed";
-      await step.do("fail", STEP, async () => {
+      await step.do("fail", STEP, retrySafely(async () => {
         try {
           await v.failDocument(runId, code);
         } catch (failure) {
@@ -139,7 +139,7 @@ export class DocumentWorkflow extends WorkflowEntrypoint<Env, DocumentParams> {
             throw failure;
         }
         return { failed: true };
-      });
+      }));
       return { failed: true };
     }
   }

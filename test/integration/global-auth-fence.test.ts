@@ -80,6 +80,43 @@ it("rejects legacy writes and keeps guarded marker transaction-local", async () 
   });
 });
 
+it("rejects stale home claims and bindings before they change placement", async () => {
+  const global = directory(env);
+  const nonce = crypto.randomUUID();
+  const epoch = await global.googleAuthEpoch();
+  const input: SignInInput = {
+    provider: "google",
+    subject: `bind-${nonce}`,
+    email: `bind-${nonce}@example.test`,
+    hint: "enam",
+    authEpoch: epoch,
+  };
+  await global.addInvite(input.email);
+  await global.claimIdentityHome(input.provider, input.subject, null, input.email, undefined, epoch);
+  const account = await global.signIn(input);
+  const other = await global.signIn({
+    provider: "test", subject: `other-${nonce}`, email: `other-${nonce}@example.test`, hint: "enam",
+  });
+  await global.deleteAccount(other.userId, other.vaultId);
+  const newSubject = `new-${nonce}`;
+  const newEmail = `new-${nonce}@example.test`;
+  await global.addInvite(newEmail);
+  await runInDurableObject(global, async (instance, state) => {
+    await expect(instance.claimIdentityHome("google", newSubject, null, newEmail, undefined, epoch))
+      .rejects.toThrow("sign-in is stale");
+    await expect(instance.bindIdentityHome(input.provider, input.subject, account.userId, epoch))
+      .rejects.toThrow("sign-in is stale");
+    expect(state.storage.sql.exec(`SELECT subject FROM identity_homes WHERE provider='google' AND subject=?`, newSubject).toArray()).toHaveLength(0);
+    expect(state.storage.sql.exec<{user_id: string | null}>(`SELECT user_id FROM identity_homes WHERE provider=? AND subject=?`, input.provider, input.subject).one().user_id).toBeNull();
+  });
+  const current = await global.googleAuthEpoch();
+  await global.claimIdentityHome("google", newSubject, null, newEmail, undefined, current);
+  await global.bindIdentityHome(input.provider, input.subject, account.userId, current);
+  await runInDurableObject(global, (_instance, state) => {
+    expect(state.storage.sql.exec<{user_id: string | null}>(`SELECT user_id FROM identity_homes WHERE provider=? AND subject=?`, input.provider, input.subject).one().user_id).toBe(account.userId);
+  });
+});
+
 it("does not start deletion when the epoch is missing, malformed or overflowed", async () => {
   const global = directory(env);
   const id = crypto.randomUUID();

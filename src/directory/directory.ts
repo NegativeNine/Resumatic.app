@@ -387,7 +387,11 @@ export class Directory extends DurableObject<Env> {
     subject: string,
     userId: string,
     authEpoch?: number,
+    authExpiryMs?: number,
   ): Promise<void> {
+    // The Worker may have sent this RPC while the OAuth state was fresh, but
+    // it can be delayed in transit. Never mutate the home on an expired state.
+    if (authExpiryMs !== undefined) requireFreshAuth(authExpiryMs);
     return this.globalGoogleWrite(provider, authEpoch, () => {
       const home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null; placement_state: string }>(
         `SELECT shard,user_id,generation,placement_state FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,

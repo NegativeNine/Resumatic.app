@@ -5,7 +5,7 @@ import {
 } from "cloudflare:workers";
 import { AppError, errorCode } from "../shared/errors";
 import { allDirectories, vault } from "../shared/stubs";
-import { STEP } from "./steps";
+import { STEP, retrySafely } from "./steps";
 
 export interface FleetCursor {
   directory: number;
@@ -117,7 +117,7 @@ export async function runFleet(
     pageIndex++
   ) {
     const key = `${current.directory} ${pageIndex}`;
-    const page = await step.do(`list ${key}`, STEP, async () => {
+    const page = await step.do(`list ${key}`, STEP, retrySafely(async () => {
       const limit = Math.min(3, params.maxVaults - visited);
       const rows = await api.list(current.directory, current.after, limit);
       if (
@@ -137,12 +137,12 @@ export async function runFleet(
         after: rows.at(-1)?.vaultId ?? current.after,
         done: rows.length < limit,
       };
-    });
+    }));
     const next: FleetCursor = page.done
       ? { directory: current.directory + 1 }
       : { directory: current.directory, after: page.after };
     if (page.ids.length) {
-      let children: Child[] = await step.do(`start ${key}`, STEP, () =>
+      let children: Child[] = await step.do(`start ${key}`, STEP, retrySafely(() =>
         Promise.all(
           page.ids.map(async (vaultId): Promise<Child> => {
             try {
@@ -159,7 +159,7 @@ export async function runFleet(
               return { vaultId, runId: "", state: "skipped" };
             }
           }),
-        ),
+        )),
       );
       visited += children.length;
       result.started += children.filter(
@@ -170,7 +170,7 @@ export async function runFleet(
         poll < 20 && children.some((child) => child.state === "building");
         poll++
       ) {
-        children = await step.do(`poll ${key} ${poll}`, STEP, () =>
+        children = await step.do(`poll ${key} ${poll}`, STEP, retrySafely(() =>
           Promise.all(
             children.map(async (child): Promise<Child> => {
               if (child.state !== "building") return child;
@@ -191,7 +191,7 @@ export async function runFleet(
                 return { ...child, state: "failed" };
               }
             }),
-          ),
+          )),
         );
         if (children.some((child) => child.state === "building") && poll < 19)
           await step.sleep(`wait ${key} ${poll}`, "90 seconds");
