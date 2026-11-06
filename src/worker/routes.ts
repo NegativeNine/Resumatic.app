@@ -6,7 +6,6 @@ import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { durableReadResult } from "./rpc-read";
 import { completeReservedUpload } from "./upload-cleanup";
-import { settleAcknowledgedSourceWrite } from "./source-write";
 import { unwrapResult } from "../shared/result";
 import { rateLimitRequest, httpRoute } from "./limits";
 import { OcrImagesSchema, validateTranscriptionInput } from "../ai/transcribe";
@@ -57,7 +56,7 @@ import {
 } from "../shared/stubs";
 import type { SignInInput, Who } from "../shared/types";
 import { verifyAccess } from "./access";
-import { sameSecret, sha256 } from "./crypto";
+import { sameSecret } from "./crypto";
 import { beginLogin, clearOidcCookie, finishLogin, OIDC_COOKIE } from "./oidc";
 import {
   clearSessionCookie,
@@ -299,18 +298,18 @@ export async function startSession(env: Env, input: SignInInput): Promise<string
     throw new AppError("unavailable", "sessions are not configured");
   if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
   const target = await directoryForSignIn(env, input);
-  let account: { userId: string; vaultId: string };
+  let account: { userId: string; vaultId: string; created?: boolean };
   try {
-    account = await target.directory.signIn(target.input);
+    account = await target.directory.signIn({ ...target.input, reportCreation: true });
   } finally {
     await settleRoutedPlacement(env, target.directory, target.input);
   }
   const { userId, vaultId } = account;
   if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
-  // Existing shard rows may be survivors of a released placement. Only a
-  // matching bound home permits a new session; fresh account creation still
-  // binds its initial claim. Older Workers need a verified deployment drain.
-  const requireBound = target.input.homeShard !== undefined && target.input.expectedUserId !== undefined;
+  // A shard identity found by the target may have appeared after routing's
+  // lookup. Only the RPC that actually inserted it can bind an unbound home.
+  // An older Directory omits `created`, which fails closed on sharded homes.
+  const requireBound = target.input.homeShard !== undefined && account.created !== true;
   await directory(env).bindIdentityHome(input.provider, input.subject, userId, input.authEpoch, input.authExpiryMs, requireBound);
   if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
   const { gen, epoch } = await vault(env, vaultId).openSession(userId);
@@ -497,6 +496,8 @@ api.post("/sources", UPLOAD_LIMIT, async (c) => {
   const file = form.get("file");
   if (!(file instanceof File))
     throw new AppError("invalid", 'attach the file as the "file" field');
+  if (file.name.length > 8192)
+    throw new AppError("invalid", "the filename is too long");
   const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
   const contentType = ALLOWED_UPLOADS[extension];
   if (!contentType)
@@ -526,15 +527,8 @@ api.post("/sources", UPLOAD_LIMIT, async (c) => {
   const reserved = await myVault(c).reserveUpload(c.get("who"), descriptor);
   if (reserved.intent.state === "complete")
     return c.json({ sourceId: reserved.intent.sourceId }, 201);
-  const attemptId = crypto.randomUUID();
-  const keyDigest = Array.from(new Uint8Array(await sha256(descriptor.r2Key)), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  const authorized = await myVault(c).beginSourceWrite(c.get("who"), descriptor, attemptId, keyDigest);
+  const authorized = await myVault(c).writeReservedSource(c.get("who"), descriptor, bytes, file.name);
   if (authorized.sourceId) return c.json({ sourceId: authorized.sourceId }, 201);
-  await c.env.FILES.put(descriptor.r2Key, bytes, {
-    httpMetadata: { contentType }, customMetadata: { resumatic_cache_attempt: attemptId },
-  });
-  // A rejected or lost put acknowledgement remains fenced: it may arrive later.
-  await settleAcknowledgedSourceWrite(() => myVault(c), c.get("who").userId, attemptId);
   return c.json(
     await completeReservedUpload(c.env.FILES, descriptor.r2Key, () =>
       myVault(c).completeUpload(c.get("who"), descriptor), {
@@ -587,20 +581,15 @@ api.post(
     const reserved = await myVault(c).reserveUpload(c.get("who"), descriptor);
     if (reserved.intent.state === "complete")
       return c.json({ sourceId: reserved.intent.sourceId }, 202);
-    const attemptId = crypto.randomUUID();
-    const keyDigest = Array.from(new Uint8Array(await sha256(descriptor.r2Key)), (byte) => byte.toString(16).padStart(2, "0")).join("");
-    const authorized = await myVault(c).beginSourceWrite(c.get("who"), descriptor, attemptId, keyDigest);
-    if (authorized.sourceId) return c.json({ sourceId: authorized.sourceId }, 202);
     const input = {
       ...images,
       referenceDate: new Date(reserved.intent.createdAt)
         .toISOString()
         .slice(0, 10),
     };
-    await c.env.FILES.put(descriptor.r2Key, JSON.stringify(input), {
-      httpMetadata: { contentType: "application/json" }, customMetadata: { resumatic_cache_attempt: attemptId },
-    });
-    await settleAcknowledgedSourceWrite(() => myVault(c), c.get("who").userId, attemptId);
+    const encoded = new TextEncoder().encode(JSON.stringify(input));
+    const authorized = await myVault(c).writeReservedSource(c.get("who"), descriptor, encoded.buffer as ArrayBuffer, descriptor.filename);
+    if (authorized.sourceId) return c.json({ sourceId: authorized.sourceId }, 202);
     return c.json(
       await completeReservedUpload(c.env.FILES, descriptor.r2Key, () =>
         myVault(c).completeUpload(c.get("who"), descriptor), {

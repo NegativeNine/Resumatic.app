@@ -82,14 +82,16 @@ it.each(["close", "expired", "completed"] as const)("does not dispatch an upload
       await held;
     });
     const put = vi.fn(async () => null);
-    const bindings = { ...env, FILES: { put } } as unknown as Env;
+    const local = (instance as unknown as { env: Env }).env;
+    const originalFiles = local.FILES;
+    local.FILES = { put } as unknown as R2Bucket;
     const form = new FormData();
     form.set("file", new File(["synthetic"], "resume.pdf", { type: "application/pdf" }));
     const request = Promise.resolve(app.fetch(new Request("https://resumatic.test/api/sources", {
       method: "POST",
       headers: { cookie: user.cookie },
       body: form,
-    }), bindings));
+    }), env));
     try {
       await Promise.race([
         started,
@@ -112,6 +114,7 @@ it.each(["close", "expired", "completed"] as const)("does not dispatch an upload
       release();
       await request.catch(() => {});
       schedule.mockRestore();
+      local.FILES = originalFiles;
     }
   });
 }, 20_000);

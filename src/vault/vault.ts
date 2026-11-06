@@ -36,7 +36,7 @@ import type {
   SourceState,
   SourceView,
 } from "../shared/api";
-import { DATE_PATTERN, MAX_LINE_CHARS } from "../shared/api";
+import { DATE_PATTERN, MAX_LINE_CHARS, MAX_UPLOAD_BYTES } from "../shared/api";
 import { AppError } from "../shared/errors";
 import { isMissingWorkflowInstance } from "../shared/workflow-errors";
 import { directoryForUser } from "../shared/stubs";
@@ -53,7 +53,9 @@ import type {
   VerifiedDraft,
   Who,
 } from "../shared/types";
-import { UploadStore, type UploadDescriptor } from "./uploads";
+import { UploadStore, uploadDescriptorDigest, type UploadDescriptor } from "./uploads";
+import { sourceKey } from "../shared/r2";
+import { validateTranscriptionInput, type TranscriptionInput } from "../ai/transcribe";
 import { ExportCache, EXPORT_CACHE_ITEM_BYTES } from "./export-cache";
 import { VaultOperations, ReembedStore } from "./operations";
 import {
@@ -67,6 +69,7 @@ import { vault as vaultStub } from "../shared/stubs";
 import { createSchema, hasSchema, migrate, SCHEMA_VERSION } from "./schema";
 import { assertGroundedResume, evidenceForFacts, SnapshotStore, type ResumeVersion } from "./snapshots";
 import { mergeRefinementEvidence } from "./refinement-evidence";
+import { validateTailorCheckpoint, validateTailorPublication } from "./tailor-publication";
 import { finalLegacyEvidence, legacyReceipt, legacyReview } from "./legacy-remediation";
 import { RunStore } from "./runs";
 import { ShareStore } from "./shares";
@@ -635,6 +638,92 @@ export class Vault extends DurableObject<Env> {
       this.recordR2Dispatch(attemptId, "source", keyDigest);
       this.sql.exec(`INSERT INTO source_write_links (attempt_id,source_id) VALUES (?,?)`, attemptId, reservation.intent.sourceId);
     });
+    return {};
+  }
+  /**
+   * Send a reserved source from the vault, so an observed R2 acknowledgement
+   * settles its own fence without depending on a later Worker-to-Vault RPC.
+   * A rejected or interrupted put remains unresolved, even if the caller
+   * retries. The reservation and per-attempt fence predate all R2 I/O.
+   */
+  async writeReservedSource(who: Who, input: UploadDescriptor, bytes: ArrayBuffer, originalFilename: string): Promise<{ sourceId?: string }> {
+    this.requireOwner(who);
+    if (!input || typeof input !== "object" || typeof input.requestKey !== "string" ||
+        !/^[a-zA-Z0-9_-]{1,100}$/.test(input.requestKey) || typeof input.descriptorDigest !== "string")
+      throw new AppError("invalid", "invalid upload identity");
+    const maxBytes = input.origin === "ocr" ? 12 * 1024 * 1024 + 1024 : MAX_UPLOAD_BYTES;
+    if (!(bytes instanceof ArrayBuffer) || bytes.byteLength < 1 || bytes.byteLength > maxBytes ||
+        typeof originalFilename !== "string" || originalFilename.length < 1 || originalFilename.length > 8192 ||
+        !/^[a-f0-9]{64}$/.test(input.descriptorDigest) ||
+        (input.origin !== "ocr" && bytes.byteLength !== input.byteLength))
+      throw new AppError("invalid", "invalid upload contents");
+    const recorded = this.uploads.get(input.requestKey);
+    if (!recorded) throw new AppError("conflict", "reserve the upload before storing its file");
+    // Validate the complete descriptor before hashing, including its metadata
+    // limits and its binding to the existing reservation. This operation has
+    // no await and cannot create a new reservation after the lookup above.
+    this.uploads.reserve(input);
+    const expectedKey = sourceKey(this.vaultId, `${input.requestKey}-${input.descriptorDigest}${input.origin === "ocr" ? ".ocr.json" : ""}`);
+    if (input.r2Key !== expectedKey)
+      throw new AppError("invalid", "invalid upload path");
+    let digestBody: ArrayBuffer | string = bytes;
+    if (input.origin === "ocr") {
+      const prefix = new Uint8Array(bytes, 0, Math.min(3, bytes.byteLength));
+      if (prefix.length === 3 && prefix[0] === 0xef && prefix[1] === 0xbb && prefix[2] === 0xbf)
+        throw new AppError("invalid", "invalid image transcription input");
+      let decoded: string;
+      let parsed: TranscriptionInput;
+      try {
+        decoded = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
+        parsed = validateTranscriptionInput(JSON.parse(decoded));
+      } catch {
+        throw new AppError("invalid", "invalid image transcription input");
+      }
+      if (originalFilename !== input.filename ||
+          parsed.referenceDate !== new Date(recorded.createdAt).toISOString().slice(0, 10))
+        throw new AppError("invalid", "invalid image transcription input");
+      const stable = JSON.stringify({ images: parsed.images });
+      if (decoded !== JSON.stringify({ images: parsed.images, referenceDate: parsed.referenceDate }) ||
+          new TextEncoder().encode(stable).byteLength !== input.byteLength)
+        throw new AppError("invalid", "invalid image transcription input");
+      digestBody = stable;
+    }
+    const [digest, keyHash] = await Promise.all([
+      uploadDescriptorDigest({ filename: originalFilename, contentType: input.contentType, origin: input.origin, parentSourceId: input.parentSourceId }, digestBody),
+      sha256(input.r2Key),
+    ]);
+    // Hashing yields. Recheck the lifecycle and reservation before dispatch.
+    this.requireOwner(who);
+    if (digest !== input.descriptorDigest) throw new AppError("conflict", "upload contents do not match the reservation");
+    const keyDigest = Array.from(new Uint8Array(keyHash), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const attemptId = crypto.randomUUID();
+    const reservation = this.beginSourceWrite(who, input, attemptId, keyDigest);
+    if (reservation.sourceId) return reservation;
+    const put = (async () => {
+      let result: R2Object | null;
+      try {
+        result = await this.env.FILES.put(input.r2Key, bytes, {
+          httpMetadata: { contentType: input.contentType },
+          customMetadata: { resumatic_cache_attempt: attemptId },
+        });
+        // With no conditional put, null or inconsistent metadata is
+        // unexpected and cannot establish that this attempt succeeded.
+        if (!result || result.key !== input.r2Key || result.size !== bytes.byteLength)
+          throw new Error("unexpected R2 acknowledgement");
+      } catch {
+        // Provider exceptions can contain request details; the attempt is
+        // still uncertain, and only a fixed message may cross the RPC boundary.
+        throw new AppError("unavailable", "the upload outcome is unresolved");
+      }
+      // No await between observing the acknowledgement and clearing its fence.
+      // This settlement remains allowed after closure, but cannot clear another
+      // attempt or resurrect the source.
+      this.finishCacheWrite(who.userId, attemptId);
+    })();
+    // Let the object observe a late acknowledgement after the Worker
+    // disconnects when the runtime permits; this is not an erasure guarantee.
+    this.ctx.waitUntil(put.catch(() => {}));
+    await put;
     return {};
   }
   expiredUploadForCleanup(who: Who, input: UploadDescriptor): boolean {
@@ -2204,17 +2293,29 @@ export class Vault extends DurableObject<Env> {
           "conflict",
           "this resume no longer accepts workflow writes",
         );
+      validateTailorCheckpoint(step, patch);
+      // The finish call may only publish the already-verified draft. Never let
+      // a stale or malformed Workflow patch replace its evidence, report or
+      // headers while turning the run into a printable snapshot.
+      let publication: { body: ResumeBody; report: ResumeReport } | undefined;
+      if (patch.state === "ready") {
+        publication = validateTailorPublication(
+          patch.body, patch.report, row.verified, row.selection,
+          this.snapshots.items<RoleRecord>(id, "role"),
+          this.snapshots.items<FactRecord>(id, "fact"),
+        );
+      }
       const updates: [string, string][] = [["step", step]];
       if (patch.selection)
         updates.push(["selection", JSON.stringify(patch.selection)]);
       if (patch.draft) updates.push(["draft", JSON.stringify(patch.draft)]);
       if (patch.verified)
         updates.push(["verified", JSON.stringify(patch.verified)]);
-      if (patch.body) updates.push(["body", JSON.stringify(patch.body)]);
-      if (patch.report) updates.push(["report", JSON.stringify(patch.report)]);
+      if (patch.body) updates.push(["body", JSON.stringify(publication?.body ?? patch.body)]);
+      if (patch.report) updates.push(["report", JSON.stringify(publication?.report ?? patch.report)]);
       if (patch.state) updates.push(["state", patch.state]);
-      if (patch.state === "ready" && patch.body) {
-        this.snapshots.assertCurrent(id, patch.body);
+      if (publication) {
+        this.snapshots.assertCurrent(id, publication.body);
         const input = this.snapshots.metadata(id)!;
         const capturedFacts = this.snapshots.items<FactRecord>(id, "fact");
         const facts = Object.fromEntries(capturedFacts.map((f) => [f.id, { text: f.text, quote: f.quote }]));
@@ -2223,12 +2324,12 @@ export class Vault extends DurableObject<Env> {
         this.snapshots.save(resumeId, row.version, {
           render: {
             profile: input.profile,
-            body: patch.body,
+            body: publication.body,
             version: row.version,
             company: analysis?.company ?? null,
             title: analysis?.title ?? null,
           },
-          report: patch.report ?? null,
+          report: publication.report,
           facts,
           evidence: evidenceForFacts(capturedFacts),
           provenance: "snapshot",

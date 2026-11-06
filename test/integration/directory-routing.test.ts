@@ -1,6 +1,6 @@
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { directoryForSignIn } from "../../src/directory/routing";
 import type { Directory } from "../../src/directory/directory";
 import {
@@ -243,5 +243,74 @@ describe("Directory placement in Durable Objects", () => {
     expect(await startSession(configured("16"), p)).toContain("__Host-session=");
     const locations = await Promise.all([...allDirectories(env)].map((d) => d.existingIdentity(p.provider, p.subject)));
     expect(locations.filter(Boolean)).toHaveLength(1);
+  });
+
+  it("distinguishes the RPC that inserted a shard identity from a later discovery", async () => {
+    const p = await input();
+    const global = directory(env);
+    await global.addInvite(p.email);
+    // Both routing decisions are made before either target identity exists.
+    const first = await directoryForSignIn(configured("16"), p);
+    const late = await directoryForSignIn(configured("16"), p);
+    expect(late.input.expectedUserId).toBeUndefined();
+    const inserted = await first.directory.signIn({ ...first.input, reportCreation: true });
+    const discovered = await late.directory.signIn({ ...late.input, reportCreation: true });
+    expect(inserted).toMatchObject({ created: true });
+    expect(discovered).toEqual({ ...inserted, created: false });
+    await runInDurableObject(global, async (instance) => {
+      await expect((instance as Directory).bindIdentityHome(p.provider, p.subject, discovered.userId, p.authEpoch, undefined, true))
+        .rejects.toThrow("sharded account placement requires review");
+    });
+    await global.bindIdentityHome(p.provider, p.subject, inserted.userId, p.authEpoch);
+    await expect(global.bindIdentityHome(p.provider, p.subject, discovered.userId, p.authEpoch, undefined, true)).resolves.toBeUndefined();
+  });
+
+  it("rejects a delayed creator's old authorization after its home is released and reclaimed", async () => {
+    const p = await input();
+    const global = directory(env);
+    await global.addInvite(p.email);
+    const target = await directoryForSignIn(configured("16"), p);
+    const account = await target.directory.signIn({ ...target.input, reportCreation: true });
+    expect(account.created).toBe(true);
+    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch);
+    const shard = target.input.homeShard!;
+    await global.forgetGoogleShardHomeV3(p.subject, shard, account.userId);
+    const epoch = await global.googleAuthEpoch();
+    await global.claimIdentityHome(p.provider, p.subject, shard, p.email, undefined, epoch);
+    await runInDurableObject(global, async (instance) => {
+      await expect((instance as Directory).bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch))
+        .rejects.toThrow("sign-in is stale");
+    });
+    const home = await runInDurableObject(global, (_instance, state) => state.storage.sql
+      .exec<{ user_id: string | null }>(`SELECT user_id FROM identity_homes WHERE provider=? AND subject=?`, p.provider, p.subject).one());
+    expect(home.user_id).toBeNull();
+  });
+
+  it("requires a bound home for late-discovered or old-runtime shard results", async () => {
+    for (const reported of [false, undefined, "true"] as const) {
+      const p = await input();
+      const bind = vi.fn(async (...args: unknown[]) => {
+        if (args[5] === true) throw new Error("unbound home blocked");
+      });
+      const global = {
+        existingIdentity: async () => null,
+        requireInvite: async () => {},
+        claimIdentityHome: async (_provider: string, _subject: string, shard: number) => shard,
+        bindIdentityHome: bind,
+      };
+      const shard = {
+        existingIdentity: async () => null,
+        signIn: async () => ({ userId: `s1:${crypto.randomUUID()}`, vaultId: "synthetic-vault", created: reported }),
+      };
+      const openSession = vi.fn(async () => ({ gen: 1, epoch: "synthetic" }));
+      const bindings = {
+        SESSION_KEY: "synthetic-secret", DIRECTORY_SHARDS: "16",
+        DIRECTORY: { idFromName: (name: string) => name, get: (name: string) => name === "global" ? global : shard },
+        VAULT: { idFromString: (id: string) => id, get: () => ({ openSession }) },
+      } as unknown as Env;
+      await expect(startSession(bindings, p)).rejects.toThrow("unbound home blocked");
+      expect(bind.mock.calls[0]?.[5]).toBe(true);
+      expect(openSession).not.toHaveBeenCalled();
+    }
   });
 });

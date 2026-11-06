@@ -30,6 +30,8 @@ export interface SignInInput {
   inviteAuthorized?: boolean;
   /** Internal: a routed existing identity must still belong to this user. */
   expectedUserId?: string;
+  /** Internal: request whether this particular sign-in inserted the identity. */
+  reportCreation?: boolean;
   /** Internal experimental placement dispatch, reserved by the global Directory. */
   placementAttempt?: import("../directory/placement-fence").PlacementAttempt;
 }

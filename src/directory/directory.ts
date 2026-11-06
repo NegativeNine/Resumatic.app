@@ -187,13 +187,14 @@ export class Directory extends DurableObject<Env> {
    * Finds or creates the user and their vault. Rows are written before the first await, so a
    * second sign-in racing the first finds them and gets the same vault. Safe to repeat.
    */
-  async signIn(p: SignInInput): Promise<{ userId: string; vaultId: string }> {
+  async signIn(p: SignInInput): Promise<{ userId: string; vaultId: string; created?: boolean }> {
     if (p.authExpiryMs !== undefined) requireFreshAuth(p.authExpiryMs);
     // Existing identities also need the original authorization epoch: a
     // stale callback must not attach to a replacement account after erasure.
     if ((this.isGlobal || this.isShard) && p.provider === "google") this.googleWrite(p.provider, p.authEpoch, () => {});
     const email = p.email.trim().toLowerCase();
     let row = this.findAccount(p.provider, p.subject);
+    let created = false;
     const attempt = p.placementAttempt;
     if (attempt && (!syntheticPlacementIdentity(p.provider, p.subject) || email !== p.subject.toLowerCase()))
       throw new AppError("unavailable", "placement fencing is restricted to synthetic identities");
@@ -259,6 +260,7 @@ export class Directory extends DurableObject<Env> {
           now,
         );
       });
+      created = true;
       row = this.findAccount(p.provider, p.subject)!;
     }
     if (row.user_state !== "active")
@@ -288,7 +290,7 @@ export class Directory extends DurableObject<Env> {
     )
       throw new AppError("forbidden", "this account is being deleted");
     if (p.authExpiryMs !== undefined) requireFreshAuth(p.authExpiryMs);
-    return { userId: row.user_id, vaultId: row.vault_id };
+    return { userId: row.user_id, vaultId: row.vault_id, ...(p.reportCreation ? { created } : {}) };
   }
 
   /** A marker precedes cross-object init and survives an uncertain outcome. */
