@@ -222,8 +222,40 @@ export function numbersIn(text: string): NumberToken[] {
   for (const { start, end } of ranges)
     for (let i = start; i < end; i++) rangeScan[i] = " ";
   const scaled = scaledNumbers(rangeScan.join(""));
-  out.push(...scaled.map(({ token }) => token));
-  out.push(...ranges.map(({ start, end, raw, key, valid }) => {
+  // Capture the full numeric literal before any other scanner can expose a
+  // suffix from malformed grouping or scientific notation as a new number.
+  // Bare punctuation after a complete number remains ordinary punctuation.
+  const dateDigits = new Uint8Array(text.length);
+  for (const item of dates.components) dateDigits.fill(1, item.start, item.end);
+  const malformed: [number, number][] = [];
+  const candidate = /(?<![\d.,])(?:\d|\.\d)[\d.,]*(?:e[+\-−]*[\d.,]*)*/gi;
+  const validLiteral = /^(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)(?:e[+\-−]?\d+)?$/i;
+  for (const match of text.matchAll(candidate)) {
+    const raw = match[0].replace(/[.,]+$/, "");
+    if (!raw || validLiteral.test(raw)) continue;
+    const start = match.index, end = start + raw.length;
+    // An explicitly prefixed dotted software version is a technical name,
+    // not a numeric quantity. Preserve exact version wording for namesIn();
+    // the numeric scanner cannot split its components into separate counts.
+    if (start > 0 && /[vV]/.test(text[start - 1]!) &&
+        (start < 2 || !/[\p{L}\p{N}_]/u.test(text[start - 2]!)) &&
+        /^\d+(?:\.\d+){2,}$/.test(raw)) continue;
+    let onlyDateDigits = true;
+    for (let i = start; i < end; i++) {
+      if (/\d/.test(text[i]!) && !dateDigits[i]) { onlyDateDigits = false; break; }
+    }
+    if (!onlyDateDigits) malformed.push([start, end]);
+  }
+  const malformedMask = new Uint8Array(text.length);
+  for (const [start, end] of malformed) malformedMask.fill(1, start, end);
+  const touchesMalformed = (start: number, end: number) => {
+    for (let i = start; i < end; i++) if (malformedMask[i]) return true;
+    return false;
+  };
+  // A range or scaled expression can start in the middle of a malformed
+  // literal (e.g. "1e--3 million"). Mask that whole expression too.
+  out.push(...scaled.filter(({ start, end }) => !touchesMalformed(start, end)).map(({ token }) => token));
+  out.push(...ranges.filter(({ start, end }) => !touchesMalformed(start, end)).map(({ start, end, raw, key, valid }) => {
     // An immediately negated range is not affirmative evidence. Keep the
     // actual negator distinct; broader sentence-level entailment still needs
     // the independent judge.
@@ -238,8 +270,13 @@ export function numbersIn(text: string): NumberToken[] {
   const scaledMask = new Uint8Array(text.length);
   for (const { start, end } of scaled) scaledMask.fill(1, start, end);
   for (const { start, end } of ranges) scaledMask.fill(1, start, end);
-  const blocked: [number, number][] = [];
+  const blocked: [number, number][] = [
+    ...malformed,
+    ...scaled.filter(({ start, end }) => touchesMalformed(start, end)).map(({ start, end }): [number, number] => [start, end]),
+    ...ranges.filter(({ start, end }) => touchesMalformed(start, end)).map(({ start, end }): [number, number] => [start, end]),
+  ];
   const blockedMask = new Uint8Array(text.length);
+  for (const [start, end] of blocked) blockedMask.fill(1, start, end);
   const overlapsMask = (mask: Uint8Array, start: number, end: number) => {
     for (let i = start; i < end; i++) if (mask[i]) return true;
     return false;

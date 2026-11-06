@@ -28,6 +28,8 @@ import { supportedRoleAssignment } from "./role-assignment";
 /** Known injection patterns; eval and human gates still test semantic leakage. */
 export function isInstruction(text: string): boolean {
   if (
+    /(?:^|\n)\s*(?:[-*+•]\s*)?(?:please\s+)?(?:add|include|write|list|state|say|change|replace|put)\b[^.!?\n]{0,120}\b(?:(?:(?:my|this|your)\s+)?r[eé]sum[eé]|(?:my|this|your)\s+cv)(?![\p{L}\p{N}])/iu.test(text) ||
+    /(?:^|\n)\s*(?:[-*+•]\s*)?(?:please\s+)?(?:list|write|show|describe|present|portray)\s+me\s+as\b/iu.test(text) ||
     /\b(?:for|in|on)\s+(?:(?:this|my|the)\s+)?(?:r[eé]sum[eé]|cv)(?![\p{L}\p{N}])[^.!?\n]{0,100}\b(?:invent|fabricate|pretend)\b/iu.test(text) ||
     /\bpara\s+(?:(?:mi|el|este)\s+)?curr[ií]culum\b[^.!?\n]{0,100}\b(?:inventa|fabrica|finge)\b/i.test(text) ||
     /\b(?:für|fuer)\s+(?:(?:meinen?|den|diesen)\s+)?lebenslauf\b[^.!?\n]{0,100}\b(?:erfinde|behaupte)\b/i.test(text) ||

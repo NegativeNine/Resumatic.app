@@ -27,7 +27,11 @@ export function nextR2Cursor(
   return page.cursor;
 }
 
-/** Deletes every object under a prefix. Returns how many were deleted. Safe to repeat. */
+/**
+ * Deletes the objects observed under a prefix and checks that a fresh first
+ * page is empty. This is a point-in-time check, not a fence against a put
+ * that is still in flight. Safe to repeat when the check fails.
+ */
 export async function deletePrefix(bucket: R2Bucket, prefix: string): Promise<number> {
   let deleted = 0;
   let cursor: string | undefined;
@@ -41,5 +45,13 @@ export async function deletePrefix(bucket: R2Bucket, prefix: string): Promise<nu
     }
     cursor = nextR2Cursor(page, seen);
   } while (cursor);
+  // Cursors are opaque and the listing is mutated while it is paged. A fresh
+  // listing also catches already-visible writes that arrived during the sweep.
+  // Neither this check nor an empty result settles an unknown in-flight put.
+  const confirmation = await bucket.list({ prefix, limit: 1 });
+  if (!confirmation || !Array.isArray(confirmation.objects) || confirmation.truncated !== false)
+    throw new Error("r2_incomplete_verification");
+  if (confirmation.objects.length)
+    throw new Error("r2_prefix_not_empty");
   return deleted;
 }

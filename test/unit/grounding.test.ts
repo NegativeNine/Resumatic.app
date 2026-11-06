@@ -30,6 +30,41 @@ describe("quoteIsVerbatim", () => {
 });
 
 describe("numbers", () => {
+  it("keeps malformed and locale-ambiguous numeric literals from supporting their pieces", () => {
+    for (const source of ["1,00", "1,,000", "1,000,00", "1.2.3", ".5,00", ".5.6", "1,00e-3", "1,00e--3", "1e--3", "1e3.1", "1.000e3,4", "1e3e5", "1e--3 million", "1e--3 to 5", "1,00/2", "1,00 million", "1,00/2 million", "2021.03.01,00", "v1,00"]) {
+      for (const count of ["-3000000", "-3", "0", "1", "2", "3", "4", "5", "6", "50", "100", "1000", "3000000"])
+        expect(unsupportedNumbers(`Managed ${count} people`, `Managed ${source} people`), `${source} must not support ${count}`).not.toEqual([]);
+      expect(unsupportedNumbers(`Managed ${source} people`, "Managed people"), source).not.toEqual([]);
+    }
+    // No locale is guessed for decimal commas or comma-separated lists with
+    // no spacing. Both stay unmatchable until their meaning is explicit.
+    expect(unsupportedNumbers("Measured 1,00", "Measured 1,00")).not.toEqual([]);
+    expect(unsupportedNumbers("Managed 5", "Managed 5,10,20 people")).not.toEqual([]);
+    expect(unsupportedNumbers("Raised $1", "Raised $1,00")).not.toEqual([]);
+    expect(unsupportedNumbers("Lost -1%", "Lost −1,00%")).not.toEqual([]);
+    expect(unsupportedNumbers("Earned 2 USD", "Earned USD 2,50")).not.toEqual([]);
+    expect(unsupportedNumbers("Managed 5 people", "Unreadable value 1,00; managed 5 people")).toEqual([]);
+    expect(unsupportedNumbers("Managed 5 people", "Unreadable value 1e--3 million; managed 5 people")).toEqual([]);
+  });
+
+  it("preserves well-formed grouped decimals and explicit dates", () => {
+    for (const [claim, evidence] of [
+      ["Measured 1000", "Measured 1,000"],
+      ["Measured 1000.5", "Measured 1,000.5"],
+      ["Measured -1000500", "Measured -1,000.5k"],
+      ["Measured 1000", "Measured 1e3"],
+      ["Measured 0.001", "Measured 1e-3"],
+      ["Saved $2000", "Saved USD 2,000"],
+      ["Saved £2000", "Saved 2,000 pounds sterling"],
+      ["Managed 10", "Managed 5, 10, 20 people"],
+      ["Managed 1 and 2", "Managed 1, and 2 people"],
+      ["Started March 5, 2020", "Started March 5,2020"],
+      ["Started 2021-03-01", "Started 2021.03.01"],
+    ]) expect(unsupportedNumbers(claim, evidence), `${claim} / ${evidence}`).toEqual([]);
+    expect(checkClaim("Upgraded service to v1.2.3", [{ text: "Upgraded service to v1.2.3" }]).ok).toBe(true);
+    expect(unsupportedNumbers("Managed 2 people", "Shipped v1.2.3")).not.toEqual([]);
+  });
+
   it("matches same-line ranges only as ranges, never as unrelated endpoints", () => {
     for (const value of ["5 to 10", "between 5 and 10", "5–10", "5-10", "5 — 10", "five to ten", "between five and ten", "5 to ten", "5% to 10%", "$5 to $10", "5 to 10 million"]) {
       expect(unsupportedNumbers(`Managed ${value} people`, `Managed ${value} people`)).toEqual([]);

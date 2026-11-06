@@ -152,7 +152,7 @@ describe("Directory placement in Durable Objects", () => {
     await global.claimIdentityHome(p.provider, p.subject, shard, p.email, undefined, p.authEpoch);
     await global.bindIdentityHome(p.provider, p.subject, oldUser, p.authEpoch);
     await runInDurableObject(global, async (instance) => {
-      await expect((instance as Directory).forgetIdentityHome(p.provider, p.subject, shard, oldUser)).rejects.toThrow(/(?:shard_deletion_barrier_required|shard_auth_floor_required)/);
+      await expect((instance as Directory).forgetIdentityHome(p.provider, p.subject, shard, oldUser)).rejects.toThrow("account placement requires review");
     });
     await global.forgetGoogleShardHomeV3(p.subject, shard, oldUser);
     const freshEpoch = await global.googleAuthEpoch();
@@ -162,7 +162,9 @@ describe("Directory placement in Durable Objects", () => {
       await expect((instance as Directory).forgetIdentityHome(p.provider, p.subject, shard, oldUser)).rejects.toThrow("placement requires review");
     });
     await global.bindIdentityHome(p.provider, p.subject, newUser, freshEpoch);
-    await global.forgetIdentityHome(p.provider, p.subject, shard, oldUser);
+    await runInDurableObject(global, async (instance) => {
+      await expect((instance as Directory).forgetIdentityHome(p.provider, p.subject, shard, oldUser)).rejects.toThrow("account placement requires review");
+    });
     await runInDurableObject(global, async (instance) => {
       await expect((instance as Directory).bindIdentityHome(p.provider, p.subject, oldUser, freshEpoch)).rejects.toThrow("placement changed");
       await expect((instance as Directory).forgetIdentityHome(p.provider, p.subject, shard + 1, newUser)).rejects.toThrow("placement requires review");

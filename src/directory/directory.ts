@@ -481,6 +481,7 @@ export class Directory extends DurableObject<Env> {
       "identities",
       "vaults",
       "billing_accounts",
+      "billing_delivery_retries",
       "vault_replacements",
       "retired_vaults",
       "identity_homes",
@@ -488,6 +489,10 @@ export class Directory extends DurableObject<Env> {
       "placement_receipts",
       "placement_identities",
       "shard_deletion_releases",
+      "shard_identity_delete_marker",
+      "global_shard_home_release_marker",
+      "shard_google_delete_v3_marker",
+      "global_google_release_v3_marker",
     ]) {
       count += this.sql
         .exec<{ n: number }>(
@@ -500,6 +505,14 @@ export class Directory extends DurableObject<Env> {
       .exec<{ n: number }>(
         `SELECT COUNT(*) AS n FROM billing_events WHERE user_id=?`,
         userId,
+      )
+      .one().n;
+    // Initialization fences are keyed by vault rather than owner and can
+    // outlive the Directory row that originally linked the two.
+    count += this.sql
+      .exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM vault_initializations WHERE vault_id=?`,
+        vaultId,
       )
       .one().n;
     count += this.sql
@@ -521,6 +534,12 @@ export class Directory extends DurableObject<Env> {
     // it was placed on the same shard. Do not clear an unbound claim: it may
     // already belong to an in-flight replacement sign-in.
     if (typeof userId !== "string" || !userId)
+      throw new AppError("unavailable", "account placement requires review");
+    // An absent or different home used to return success, which an older
+    // shard could mistake for a fenced Google deletion. The V3 release is
+    // the only Google shard release allowed after the coordinator migrates.
+    if (this.isGlobal && provider === "google" && shard !== null &&
+        this.sql.exec(`SELECT key FROM meta WHERE key='global_shard_release_v3_guard' AND value='1'`).toArray().length)
       throw new AppError("unavailable", "account placement requires review");
     const home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null }>(
       `SELECT shard,user_id,generation FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
@@ -557,6 +576,11 @@ export class Directory extends DurableObject<Env> {
         !home || Number(home[1]) !== shard)
       throw new AppError("invalid", "invalid account placement");
     this.ctx.storage.transactionSync(() => {
+      // A no-home V2 call does not execute DELETE, so the SQL DELETE trigger
+      // cannot reject it. Never acknowledge this legacy release once V3 is
+      // active, even after another attempt has already removed the home.
+      if (this.sql.exec(`SELECT key FROM meta WHERE key='global_shard_release_v3_guard' AND value='1'`).toArray().length)
+        throw new AppError("unavailable", "account placement requires review");
       const home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null }>(
         `SELECT shard,user_id,generation FROM identity_homes WHERE provider='google' AND subject=?`, subject,
       ).toArray()[0];

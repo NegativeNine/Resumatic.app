@@ -135,7 +135,7 @@ it("blocks a markerless legacy shard insertion and legacy global release after m
   const shard = Number(f.current.userId.match(/^s(\d+):/)![1]);
   const before = await f.global.googleAuthEpoch();
   await runInDurableObject(f.global, async (instance) => {
-    await expect(instance.forgetGoogleShardHomeV2(f.input.subject, shard, f.current.userId)).rejects.toThrow(/shard_auth_floor_required/);
+    await expect(instance.forgetGoogleShardHomeV2(f.input.subject, shard, f.current.userId)).rejects.toThrow("account placement requires review");
   });
   expect(await f.global.googleAuthEpoch()).toBe(before);
   expect(await f.home.existingIdentity("google", f.input.subject)).toEqual(f.current);
@@ -147,6 +147,24 @@ it("blocks a markerless legacy shard insertion and legacy global release after m
     } finally { state.storage.sql.exec(`DELETE FROM shard_identity_delete_marker WHERE user_id=?`, f.current.userId); }
   });
 });
+
+it("does not acknowledge a legacy V2 release after the home is already absent", async () => {
+  const f = await account();
+  const shard = Number(f.current.userId.match(/^s(\d+):/)![1]);
+  await f.global.forgetGoogleShardHomeV3(f.input.subject, shard, f.current.userId);
+  const afterRelease = await f.global.googleAuthEpoch();
+  await runInDurableObject(f.global, async (instance) => {
+    await expect(instance.forgetGoogleShardHomeV2(f.input.subject, shard, f.current.userId))
+      .rejects.toThrow("account placement requires review");
+    await expect(instance.forgetIdentityHome("google", f.input.subject, shard, f.current.userId))
+      .rejects.toThrow("account placement requires review");
+    await expect(instance.releasePlacementHome("google", f.input.subject, crypto.randomUUID(), f.current.userId))
+      .rejects.toThrow("placement fencing is restricted to synthetic identities");
+  });
+  expect(await f.global.googleAuthEpoch()).toBe(afterRelease);
+  // V3 remains retryable after a lost reply and emits a new fence epoch.
+  expect(await f.global.forgetGoogleShardHomeV3(f.input.subject, shard, f.current.userId)).toBeGreaterThan(afterRelease);
+}, 30_000);
 
 it("raises the shard floor at erasure and forces unrelated older callbacks to restart", async () => {
   const f = await account();

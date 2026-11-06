@@ -84,7 +84,7 @@ describe("sharded Google home release: adversarial ordering", () => {
         .toThrow(/(?:shard_deletion_barrier_required|shard_auth_floor_required)/);
       expect(sql.exec(`SELECT * FROM global_shard_home_release_marker`).toArray()).toHaveLength(0);
       return expect(instance.forgetIdentityHome("google", subject, shard, userId))
-        .rejects.toThrow(/(?:shard_deletion_barrier_required|shard_auth_floor_required)/);
+        .rejects.toThrow("account placement requires review");
     });
     expect(await home(subject)).toEqual({ user_id: userId, shard });
     await g.forgetGoogleShardHomeV3(subject, shard, userId);
