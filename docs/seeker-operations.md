@@ -161,7 +161,7 @@ Resume exports, previews and coach shares require immutable evidence for every p
 
 CI runs local type checks, tests, build and dependency auditing. `LIVE_EVALS_ENABLED` and `STAGING_DEPLOY_ENABLED` opt in the respective GitHub jobs. Missing live evidence cannot pass production promotion.
 
-The seeded evaluation writes `seeded-report.json` and `seeded-report.md` at fixed paths. Run only one instance per working directory: concurrent runs are not serialized and their reports cannot be attributed reliably. The runner replaces the JSON with a pending marker before the Markdown; if interrupted between writes, treat the JSON as authoritative and do not rely on an older Markdown report. A synthetic harness run is not live-model evidence.
+The seeded evaluation serializes CLI runs with `.seeded-report.lock` and writes each run into a private directory before publishing `seeded-report.json` and `seeded-report.md`. Treat a report as unfinished while the lock exists. After interruption or child failure, verify that the CLI, Vitest child and its worker descendants have stopped before removing a stale lock and rerunning. Direct Vitest runs do not use this lock and must not share the working directory. JSON is authoritative between the separate report renames. Live CLI runs require staging; a synthetic harness run is not live-model evidence.
 
 The manual production workflow reads `RELEASE_EVIDENCE_JSON` from the protected production environment. Each required check has `status: "passed"`, the exact candidate commit SHA, and an HTTPS `reportUrl`: `models`, `googleSignin`, `extraction`, `grounding`, `ats`, `stagingE2e`, `billing`, `security`, `deletion`, `latency`, `betaOperations`. Additional measurements are required:
 

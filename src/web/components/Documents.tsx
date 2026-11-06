@@ -52,9 +52,12 @@ export function ApplicationDocuments({
   const callbacks = useRef({ onUpdated, refreshMe });
   callbacks.current = { onUpdated, refreshMe };
   const [instruction, setInstruction] = useState("");
+  // A successful start can be followed by a failed or superseded list read.
+  // Keep generation disabled until the acknowledged document appears.
+  const [unseenDocument, setUnseenDocument] = useState<string | null>(null);
   const id = useId();
   const docs = list.data?.documents ?? [];
-  const running = docs.some((doc) => doc.state === "running");
+  const running = !list.data || !!list.error || !!unseenDocument || docs.some((doc) => doc.state === "running");
   const available = Math.max(
     0,
     me.quota.limit - me.quota.used - (me.quota.reserved ?? 0),
@@ -77,10 +80,16 @@ export function ApplicationDocuments({
     );
   }, [list.data]);
 
+  useEffect(() => {
+    if (unseenDocument && list.data?.documents.some((doc) => doc.id === unseenDocument))
+      setUnseenDocument(null);
+  }, [list.data, unseenDocument]);
+
   async function start(options: NewDocument) {
     await action.run(async () => {
       const { documentId } = await api.startDocument(applicationId, options);
       requested.current.add(documentId);
+      setUnseenDocument(documentId);
       await list.reload();
       void refreshMe();
     });
@@ -90,6 +99,7 @@ export function ApplicationDocuments({
     await action.run(async () => {
       const { targetId } = await api.retryRun(runId);
       requested.current.add(targetId);
+      setUnseenDocument(targetId);
       await list.reload();
       void refreshMe();
     });
@@ -178,6 +188,11 @@ export function ApplicationDocuments({
       )}
       <ActionError message={action.error} />
       {list.error && <ErrorNote message={list.error} onRetry={list.reload} />}
+      {unseenDocument && !list.error && (
+        <p className="hint" role="status">
+          Your document was started. <button type="button" className="link-button" onClick={() => void list.reload()}>Refresh its status</button> before starting another. If it still does not appear, close and reopen this workspace to check again.
+        </p>
+      )}
       {!list.data && !list.error && <Loading>Loading your documents…</Loading>}
       {docs.length > 0 && (
         <ul className="plain-list document-list">

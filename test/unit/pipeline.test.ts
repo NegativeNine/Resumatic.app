@@ -204,6 +204,29 @@ describe("verifyDraft", () => {
     ]);
   });
 
+  it("does not print a planned deployment as completed even if the judge would approve", async () => {
+    const fact = record("planned", "r1", "Planned to deploy Kubernetes");
+    const base = fakeModels();
+    let judged = 0;
+    const models: Models = {
+      ...base,
+      complete: async (route, messages, schema) => {
+        if (route === "repair") return schema.parse({ text: "Deployed Kubernetes" });
+        if (route === "judge") {
+          judged++;
+          return schema.parse({ verdicts: [{ id: "l1", verdict: "supported", reason: "" }] });
+        }
+        return base.complete(route, messages, schema);
+      },
+    };
+    const result = await verifyDraft(models, { lines: [line("l1", "r1", "Deployed Kubernetes", [fact.id])] },
+      { factIds: [fact.id], skillIds: [], gaps: [] }, [fact]);
+    expect(judged).toBe(0);
+    expect(result.lines.map(({ text, status }) => ({ text, status }))).toEqual([
+      { text: fact.text, status: "replaced" },
+    ]);
+  });
+
   it("does not print a percentage taken from a different cited outcome", async () => {
     const fact = record("metrics", "r1", "Reduced latency by 50% and increased throughput by 30%");
     const base = fakeModels();

@@ -1151,11 +1151,36 @@ export class Directory extends DurableObject<Env> {
           if (this.sql.exec(`SELECT email FROM invites WHERE email=? AND generation=?`, normalized, row.generation).toArray().length)
             throw new AppError("unavailable", "sharded invite requires operator review");
         } else {
-          this.deleteInvite(normalized, row.generation);
+          // A single invitation can authorize multiple global identities with
+          // the same email. Preserve that grant while another local account
+          // is active. Use sign-in normalization in JavaScript: SQLite
+          // lower() is ASCII-only.
+          const current = this.sql.exec(`SELECT email FROM invites WHERE email=? AND generation=?`, normalized, row.generation).toArray();
+          if (current.length && !this.hasOtherLocalInviteUser(userId, normalized))
+            this.deleteInvite(normalized, row.generation);
         }
       }
       this.sql.exec(`UPDATE invite_deletion_receipts SET state='removed' WHERE operation_id=? AND state='captured'`, operationId);
     });
+  }
+
+  /** Caller holds the same transaction as the captured-generation removal. */
+  private hasOtherLocalInviteUser(userId: string, email: string): boolean {
+    let scanned = 0;
+    let otherActive = false;
+    // This control-plane scan is deliberately bounded. A larger directory
+    // needs a separately verified index or operator reconciliation.
+    for (const row of this.sql.exec<{ user_id: SqlStorageValue; email: SqlStorageValue; state: SqlStorageValue }>(`SELECT user_id,email,state FROM users ORDER BY rowid LIMIT 10001`)) {
+      if (++scanned > 10_000) throw new AppError("unavailable", "invitation ownership inventory requires review");
+      if (typeof row.user_id !== "string" || !row.user_id || typeof row.email !== "string")
+        throw new AppError("unavailable", "invitation ownership requires review");
+      if (row.user_id !== userId && row.email.trim().toLowerCase() === email) {
+        if (row.state !== "active" && row.state !== "deleting")
+          throw new AppError("unavailable", "invitation ownership requires review");
+        if (row.state === "active") otherActive = true;
+      }
+    }
+    return otherActive;
   }
 
   /** Preserve a non-identifying tombstone against late capture or removal RPCs. */

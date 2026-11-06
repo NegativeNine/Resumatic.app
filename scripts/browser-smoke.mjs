@@ -17,7 +17,7 @@ if (!browser?.startsWith("/")) {
   process.exitCode = 2;
 } else {
   const temp = await mkdtemp(join(tmpdir(), "resumatic-browser-smoke-"));
-  let vite, server, chrome, ws, releaseManualFact, releaseManualRole, releaseAnswer, releaseJob, releaseProfile;
+  let vite, server, chrome, ws, releaseManualFact, releaseManualRole, releaseAnswer, releaseJob, releaseProfile, releaseDocumentRead;
   let stage = "setup";
   const state = { signedIn: false, source: false, sourceRunning: false, sourceCancel: false, sourceFailed: false, sourceRetryKeys: [], documentRetryKeys: [], roleState: "proposed", factState: "proposed", manualFact: null, manualFactKeys: [], manualRoles: [], manualRoleKeys: [], uploadKeys: [], applications: [], documents: [], tailored: false, resumeRunning: false, resumeCancel: false, resumeUncited: false, resumeLegacy: false, resumeNeedsGroundingReview: false, legacyChecked: false, legacyHeadersReady: false, legacyFinalized: false, legacyExtraLine: false, legacySkill: false, resumeText: "Built 12 payment services", resumeVersion: 1, manualEdits: [], manualDocument: null };
   const role = { id: "role-1", kind: "job", org: "Acme Example", title: "Engineer", startDate: "2021", endDate: null, state: "proposed", quote: "Acme Example — Engineer", sourceId: "source-1", revision: 1 };
@@ -226,7 +226,15 @@ if (!browser?.startsWith("/")) {
       state.documents.push({ id: "document-retry", applicationId: "application-1", kind: "prep", state: "running", createdAt: 4, result: null, facts: {} });
       return send(res, 202, { runId: "document-retry", targetId: "document-retry" });
     }
-    if (path === "/api/applications/application-1/documents" && req.method === "GET") return send(res, 200, { documents: state.documents });
+    if (path === "/api/applications/application-1/documents" && req.method === "GET") {
+      if (state.deferDocumentRead) {
+        state.deferDocumentRead = false;
+        await new Promise((resolve) => { releaseDocumentRead = resolve; });
+      }
+      if (state.failDocumentRead) { state.failDocumentRead = false; return send(res, 503, { error: "unavailable" }); }
+      if (state.hideDocumentRead) { state.hideDocumentRead = false; return send(res, 200, { documents: [] }); }
+      return send(res, 200, { documents: state.documents });
+    }
     if (path === "/api/documents/question-doc/questions/question-1/answer" && req.method === "POST") {
       state.answer = JSON.parse((await read(req)).toString("utf8"));
       await new Promise((resolve) => { releaseAnswer = resolve; });
@@ -245,7 +253,10 @@ if (!browser?.startsWith("/")) {
         return send(res, 202, { documentId: "manual-edit", runId: "manual-edit" });
       }
       if (body.kind !== "letter" || !req.headers["idempotency-key"] || state.factState !== "confirmed") return send(res, 400, { error: "invalid" });
+      state.letterStarts = (state.letterStarts ?? 0) + 1;
       state.documents.push({ id: "document-1", applicationId: "application-1", kind: "letter", state: "ready", version: 1, createdAt: 1, error: null, result: { kind: "letter", units: [{ id: "unit-1", roleId: "role-1", text: "I built 12 payment services.", factIds: ["fact-1"], group: 0 }], questions: [], report: { kept: 1, repaired: 0, replaced: 0, dropped: 0, gaps: [] } }, facts: { "fact-1": { text: fact.text, quote: fact.quote } } });
+      state.failDocumentRead = true;
+      state.hideDocumentRead = true;
       return send(res, 202, { documentId: "document-1", runId: "document-1" });
     }
     return send(res, 404, { error: "not_found" });
@@ -423,7 +434,14 @@ if (!browser?.startsWith("/")) {
     finishJob();
     await wait(`document.body?.innerText.includes('Synthetic platform engineer job')`);
     if (state.jobRequests.length !== 2 || state.jobKeys.length !== 2 || state.jobKeys[0] !== state.jobKeys[1] || state.applications.length !== 1 || state.jobRequests.some((body) => body.jdText !== jobText) || !await evalPage(`document.querySelector('form.card textarea')?.value === '' && !document.querySelector('form.card textarea')?.readOnly && document.activeElement === document.querySelector('form.card textarea')`)) throw new Error("JOB_SAVE_RESULT_WRONG");
-    stage = "tracking"; await clickText("button", "Track & prepare"); await wait(`!!document.querySelector('.application-workspace select')`); await evalPage(`(() => { const e = document.querySelector('.application-workspace select'); e.value = 'applied'; e.dispatchEvent(new Event('change', { bubbles: true })); })()`); await evalPage(`document.querySelector('.application-workspace textarea').focus()`); await call("Input.insertText", { text: "Synthetic follow-up note" }); await clickText("button", "Save tracking details");
+    stage = "document_initial_read";
+    state.deferDocumentRead = true;
+    await clickText("button", "Track & prepare");
+    const finishDocumentRead = await waitForRelease(() => releaseDocumentRead);
+    await wait(`document.body?.innerText.includes('Loading your documents')`);
+    if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create cover letter')?.disabled`)) throw new Error("DOCUMENT_START_ENABLED_BEFORE_READ");
+    finishDocumentRead();
+    stage = "tracking"; await wait(`!!document.querySelector('.application-workspace select')`); await evalPage(`(() => { const e = document.querySelector('.application-workspace select'); e.value = 'applied'; e.dispatchEvent(new Event('change', { bubbles: true })); })()`); await evalPage(`document.querySelector('.application-workspace textarea').focus()`); await call("Input.insertText", { text: "Synthetic follow-up note" }); await clickText("button", "Save tracking details");
     await wait(`!!document.querySelector('.application-workspace [role="alert"]')`);
     if (!await evalPage(`document.querySelector('.application-workspace textarea')?.value === 'Synthetic follow-up note'`)) throw new Error("TRACKING_DRAFT_LOST");
     await clickText("button", "Save tracking details");
@@ -437,7 +455,15 @@ if (!browser?.startsWith("/")) {
     if (!await evalPage(`document.querySelector('.application-workspace textarea')?.value === 'Local draft'`) || state.applications[0].notes !== "Remote note") throw new Error("TRACKING_CONFLICT_DRAFT_LOST");
     await clickText("button", "Reload saved details");
     await wait(`document.querySelector('.application-workspace textarea')?.value === 'Remote note'`);
-    stage = "cover_letter"; await clickText("button", "Create cover letter"); await wait(`!![...document.querySelectorAll('summary')].find(x => x.textContent.trim() === 'Read cover letter')`); await clickText("summary", "Read cover letter"); await wait(`document.body?.innerText.includes('I built 12 payment services.')`);
+    stage = "document_refresh_after_start";
+    await clickText("button", "Create cover letter");
+    await wait(`(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create cover letter'); return b?.disabled && !!b.closest('section')?.querySelector('[role="alert"] button'); })()`);
+    if (state.letterStarts !== 1) throw new Error("DOCUMENT_START_DUPLICATED");
+    await evalPage(`(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create cover letter'); b.closest('section').querySelector('[role="alert"] button').click(); })()`);
+    await wait(`document.body?.innerText.includes('Your document was started.')`);
+    if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create cover letter')?.disabled`)) throw new Error("DOCUMENT_START_ENABLED_BEFORE_OBSERVED");
+    await clickText("button", "Refresh its status");
+    stage = "cover_letter"; await wait(`!![...document.querySelectorAll('summary')].find(x => x.textContent.trim() === 'Read cover letter')`); await clickText("summary", "Read cover letter"); await wait(`document.body?.innerText.includes('I built 12 payment services.')`);
     await wait(`(() => { const link = [...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download Word'); return link?.origin === location.origin && link.getAttribute('href') === '/api/documents/document-1/docx' && link.referrerPolicy === 'no-referrer'; })()`);
     stage = "saved_interview_answer";
     state.documents.push({ id: "question-doc", applicationId: "application-1", kind: "questions", state: "ready", version: 1, createdAt: 1, error: null, answeredQuestionIds: ["question-1"], result: { kind: "questions", units: [], questions: [{ id: "question-1", requirement: "Reliability", question: "How have you improved reliability?" }], report: { kept: 0, repaired: 0, replaced: 0, dropped: 0, gaps: [] } }, facts: {} });
@@ -606,7 +632,7 @@ if (!browser?.startsWith("/")) {
     await call("Page.navigate", { url: `${origin}/share?invalid=1#synthetic-invalid` });
     await wait(`document.body?.innerText.includes('Share unavailable')`);
     if (await evalPage(`location.hash !== '' || !![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Try again')`)) throw new Error("EXPIRED_SHARE_NOT_TERMINAL");
-    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, sourceRoleOnly: true, sourceEmpty: true, pollRecovery: true, pollNonTransient: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, roleEditLostResponse: true, factLevelReview: true, factEditLostResponse: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, jobRetryKey: true, profileSubmissionLock: true, profileConcurrentEdit: true, profileLostResponse: true, applicationTracking: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, legacySkillRemoval: true, checkedSkillRemoval: true, checkedLineRemoval: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true, stableResourceReload: true, shareRetry: true, expiredShare: true } }));
+    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, sourceRoleOnly: true, sourceEmpty: true, pollRecovery: true, pollNonTransient: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, roleEditLostResponse: true, factLevelReview: true, factEditLostResponse: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, jobRetryKey: true, profileSubmissionLock: true, profileConcurrentEdit: true, profileLostResponse: true, applicationTracking: true, documentRefreshAfterStart: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, legacySkillRemoval: true, checkedSkillRemoval: true, checkedLineRemoval: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true, stableResourceReload: true, shareRetry: true, expiredShare: true } }));
   } catch {
     console.log(JSON.stringify({ status: "failed", reason: "BROWSER_SMOKE_FAILED", stage, promotionEligible: false })); process.exitCode = 1;
   } finally {

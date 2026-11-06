@@ -656,6 +656,54 @@ function contradictedActionObjects(claim: string, evidence: Evidence[]): string[
   return [...asserted].filter((key) => denied.has(key) && !supported.has(key));
 }
 
+/**
+ * Identify only direct English plans and completed past-tense actions with a
+ * single named object. A plan alone does not establish completion; indirect,
+ * compound and qualified wording still needs the independent judge.
+ */
+function plannedActionMentions(text: string): { planned: Set<string>; completed: Set<string> } {
+  const planned = new Set<string>(), completed = new Set<string>();
+  const tokens = text.toLowerCase().replaceAll("’", "'").match(/[a-z]+(?:['-][a-z]+)*|[.!?;:,\n]|[^\s]/g) ?? [];
+  const goals = new Set(["planned", "aimed", "intended", "hoped", "proposed", "expected"]);
+  const boundary = new Set([".", "!", "?", ";", ":", ",", "and", "but", "then", "however", "yet"]);
+  const objectEnd = new Set([...boundary, "by", "in", "for", "on", "at", "with", "across", "using", "during", "from", "to", "via", "after", "before"]);
+  const uncertain = new Set(["not", "no", "never", "neither", "without", "didn't", "doesn't", "don't", "isn't", "wasn't", "weren't", "cannot", "can't", "could", "couldn't", "would", "wouldn't", "may", "might", "should", "shouldn't", "if", "unless", "will"]);
+  const irregularPast = new Set(["built", "wrote", "led", "grew", "drove", "oversaw", "ran"]);
+  for (let i = 0; i < tokens.length; i++) {
+    const verb = tokens[i]!;
+    const action = VERB_CANONICAL.get(verb);
+    if (!action) continue;
+    let j = i + 1;
+    if (["a", "an", "the", "our", "their", "its", "my"].includes(tokens[j] ?? "")) j++;
+    const object = tokens[j] ?? "";
+    if (!/^[a-z]+(?:-[a-z]+)*$/.test(object) || VERB_CANONICAL.has(object)) continue;
+    // Do not collapse a compound object into a misleading prefix.
+    if (j + 1 < tokens.length && /^[a-z]+$/.test(tokens[j + 1]!) && !objectEnd.has(tokens[j + 1]!)) continue;
+    const key = `${action}:${object}`;
+    if (tokens[i - 1] === "to" && goals.has(tokens[i - 2] ?? "")) {
+      planned.add(key);
+      continue;
+    }
+    if (!(verb.endsWith("ed") || irregularPast.has(verb))) continue;
+    const prior: string[] = [];
+    for (let k = i - 1; k >= 0 && prior.length < 5 && !boundary.has(tokens[k]!); k--) prior.unshift(tokens[k]!);
+    if (!prior.some((word) => uncertain.has(word) || goals.has(word)) && prior.at(-1) !== "to") completed.add(key);
+  }
+  return { planned, completed };
+}
+
+function plannedOnlyActions(claim: string, evidence: Evidence[]): string[] {
+  const asserted = plannedActionMentions(claim).completed;
+  if (!asserted.size) return [];
+  const planned = new Set<string>(), completed = new Set<string>();
+  for (const item of evidence) for (const text of [item.text, item.quote ?? ""]) {
+    const mentions = plannedActionMentions(text);
+    for (const key of mentions.planned) planned.add(key);
+    for (const key of mentions.completed) completed.add(key);
+  }
+  return [...asserted].filter((key) => planned.has(key) && !completed.has(key));
+}
+
 /** The highest scope the text asserts, 0 if it has no scope verb. "Helped lead" counts as contributed. */
 export function scopeRank(text: string): number {
   const tokens = text.toLowerCase().match(/[a-z]+(?:-[a-z]+)*/g) ?? [];
@@ -699,6 +747,8 @@ export function checkClaim(claim: string, evidence: Evidence[], options: { detec
   if (denied.length) problems.push(`actions contradicted by the evidence: ${denied.join(", ")}`);
   const deniedObjects = contradictedActionObjects(claim, evidence);
   if (deniedObjects.length) problems.push(`actions contradicted by the evidence: ${deniedObjects.join(", ")}`);
+  const planned = plannedOnlyActions(claim, evidence);
+  if (planned.length) problems.push(`completed actions stated only as plans: ${planned.join(", ")}`);
   if (options.detectDirection !== false) {
     const reversed = contradictedDirections(claim, evidence.flatMap((item) => [item.text, item.quote ?? ""]));
     if (reversed.length) problems.push(`outcome direction contradicted by the evidence: ${reversed.join(", ")}`);

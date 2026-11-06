@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { judgePrompt, repairPrompt, writePrompt } from "../../src/ai/prompts";
 import type { Usage } from "../../src/ai/usage";
@@ -68,9 +69,10 @@ afterAll(() => {
     seeds: kinds,
     cases: records,
   };
-  writeFileSync("seeded-report.json", JSON.stringify(report, null, 2));
+  const reportDir = process.env.SEEDED_REPORT_DIR || ".";
+  writeFileSync(join(reportDir, "seeded-report.json"), JSON.stringify(report, null, 2));
   writeFileSync(
-    "seeded-report.md",
+    join(reportDir, "seeded-report.md"),
     `# Seeded fabrication evaluation\n\nMode: ${report.mode}. Promotion remains pending.\n\n| Seed | Planted | Caught | Uncertain | Catch rate | Inapplicable | Failed | Not run |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n${kinds.map((row) => `| ${row.kind} | ${row.planted} | ${row.caught} | ${row.uncertain} | ${row.catchRate === null ? "n/a" : `${(row.catchRate * 100).toFixed(1)}%`} | ${row.skipped} | ${row.failed} | ${row.notRun} |`).join("\n")}\n\nBaseline retention is included in the JSON report so dropping every line cannot masquerade as quality.\n`,
   );
 });

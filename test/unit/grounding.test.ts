@@ -453,6 +453,19 @@ describe("scope", () => {
     expect(checkClaim("Did not deploy Kubernetes", evidence).ok).toBe(true);
   });
 
+  it("does not turn an explicit plan into a completed action", () => {
+    for (const source of [
+      "Planned to deploy Kubernetes",
+      "Intended to deploy Kubernetes; deployed Docker",
+      "Aimed to deploy Kubernetes",
+      "Planned to deploy Kubernetes; never deployed Kubernetes",
+    ]) {
+      expect(checkClaim("Deployed Kubernetes", [{ text: source, level: "implemented" }]).ok).toBe(false);
+    }
+    expect(checkClaim("Planned to deploy Kubernetes", [{ text: "Planned to deploy Kubernetes", level: "implemented" }]).ok).toBe(true);
+    expect(checkClaim("Deployed Kubernetes", [{ text: "Planned to deploy Kubernetes, then deployed Kubernetes", level: "implemented" }]).ok).toBe(true);
+  });
+
   it("does not infer a blanket object denial from a qualified denial or override positive evidence", () => {
     const qualified = [{ text: "Did not deploy Kubernetes in production; deployed Docker", level: "implemented" as const }];
     expect(checkClaim("Deployed Kubernetes", qualified).problems).not.toContain("actions contradicted by the evidence: deploy:kubernetes");
