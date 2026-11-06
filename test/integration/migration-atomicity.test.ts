@@ -26,10 +26,11 @@ describe("atomic schema migrations", () => {
       const sql = state.storage.sql;
       sql.exec(`DROP TRIGGER guard_sticky_vault_initializations`);
       sql.exec(`ALTER TABLE vault_initializations DROP COLUMN sticky`);
-      sql.exec(`UPDATE meta SET value = ? WHERE key = 'schema_version'`, String(DIRECTORY_MIGRATIONS.length - 1));
+      sql.exec(`ALTER TABLE vaults DROP COLUMN stripe_checkout_sessions`);
+      sql.exec(`UPDATE meta SET value = ? WHERE key = 'schema_version'`, String(DIRECTORY_MIGRATIONS.length - 2));
       const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
       expect(() => migrateDirectory(failAtTrigger(sql, "guard_sticky_vault_initializations"), tx)).toThrow(/synthetic migration interruption/);
-      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key = 'schema_version'`).one().value).toBe(String(DIRECTORY_MIGRATIONS.length - 1));
+      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key = 'schema_version'`).one().value).toBe(String(DIRECTORY_MIGRATIONS.length - 2));
       expect(() => sql.exec(`SELECT sticky FROM vault_initializations`).toArray()).toThrow();
       migrateDirectory(sql, tx);
       expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key = 'schema_version'`).one().value).toBe(String(DIRECTORY_MIGRATIONS.length));

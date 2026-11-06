@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ResumeView } from "../../shared/api";
 import { api } from "../api";
 import { ResumeSheet } from "../components/ResumeSheet";
@@ -6,9 +6,10 @@ import { ApplicationDocuments } from "../components/Documents";
 import { TailorProgress } from "../components/TailorProgress";
 import { ActionError, ErrorNote, Loading, PageHeader } from "../components/ui";
 import { formatDateTime } from "../format";
-import { useResource, type Reload } from "../hooks";
+import { useAction, useResource, type Reload } from "../hooks";
 import { href } from "../router";
 import { useTailor } from "../tailor";
+import { useSession } from "../session";
 
 export function ResumePage({ id }: { id: string }) {
   const resume = useResource(
@@ -16,6 +17,12 @@ export function ResumePage({ id }: { id: string }) {
     (r) => r.state === "running",
   );
   const r = resume.data;
+  const { refreshMe } = useSession();
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (r && wasRunning.current && r.state !== "running") void refreshMe();
+    wasRunning.current = r?.state === "running";
+  }, [r, refreshMe]);
 
   return (
     <>
@@ -29,7 +36,7 @@ export function ResumePage({ id }: { id: string }) {
         <ErrorNote message={resume.error} onRetry={resume.reload} />
       )}
       {!r && !resume.error && <Loading>Loading this resume…</Loading>}
-      {r?.state === "running" && <TailorProgress step={r.step} dispatchUncertain={r.dispatchUncertain} cancellationPending={r.cancellationPending} />}
+      {r?.state === "running" && <RunningResume resume={r} reload={resume.reload} />}
       {r?.state === "failed" && <TailorFailed resume={r} />}
       {r?.state === "ready" &&
         (r.body ? (
@@ -37,6 +44,24 @@ export function ResumePage({ id }: { id: string }) {
         ) : (
           <ErrorNote message="This resume is marked ready, but it has no content. Try tailoring a new version." />
         ))}
+    </>
+  );
+}
+
+function RunningResume({ resume, reload }: { resume: ResumeView; reload: Reload }) {
+  const cancel = useAction();
+  return (
+    <>
+      <TailorProgress step={resume.step} dispatchUncertain={resume.dispatchUncertain} cancellationPending={resume.cancellationPending} />
+      {!resume.cancellationPending && (
+        <button type="button" className="small" disabled={cancel.pending} onClick={() => void cancel.run(async () => {
+          await api.cancelResume(resume.id);
+          await reload();
+        })}>
+          {cancel.pending ? "Stopping…" : "Cancel tailoring"}
+        </button>
+      )}
+      <ActionError message={cancel.error} />
     </>
   );
 }

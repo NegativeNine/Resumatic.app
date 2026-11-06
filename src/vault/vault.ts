@@ -2725,7 +2725,7 @@ export class Vault extends DurableObject<Env> {
       ownerId: this.meta("user_id")!,
       meta: this.sql
         .exec<{ key: string; value: string }>(
-          `SELECT key,value FROM meta WHERE key IN ('stripe_customer','billing_customer_requested','billing_customer_requested_at','entitlement','entitlement_revision','checkout_intent','quota_month','quota_used')`,
+          `SELECT key,value FROM meta WHERE key IN ('stripe_customer','billing_customer_requested','billing_customer_requested_at','billing_checkout_sessions','entitlement','entitlement_revision','checkout_intent','quota_month','quota_used')`,
         )
         .toArray(),
       quota: this.sql
@@ -2983,6 +2983,26 @@ export class Vault extends DurableObject<Env> {
         }
       },
       requireOwner: () => this.requireOwner(who),
+      beginCheckoutDispatch: () => this.ctx.storage.transactionSync(() => {
+        this.requireOwner(who);
+        const count = Number(this.meta("billing_checkout_dispatches") ?? "0");
+        if (!Number.isSafeInteger(count) || count < 0 || count >= Number.MAX_SAFE_INTEGER)
+          throw new AppError("unavailable", "checkout dispatch state requires operator review");
+        this.setMeta("billing_checkout_dispatches", String(count + 1));
+      }),
+      settleCheckoutDispatch: (sessionId) => this.ctx.storage.transactionSync(() => {
+        const count = Number(this.meta("billing_checkout_dispatches") ?? "0");
+        if (!Number.isSafeInteger(count) || count < 1)
+          throw new AppError("unavailable", "checkout dispatch state requires operator review");
+        if (!/^cs_[A-Za-z0-9_]+$/.test(sessionId) || sessionId.length > 255)
+          throw new AppError("unavailable", "checkout session requires operator review");
+        const sessions = this.billingCheckoutSessionsForDeletion();
+        if (!sessions.includes(sessionId)) sessions.push(sessionId);
+        if (sessions.length > 2000)
+          throw new AppError("unavailable", "checkout history requires operator review");
+        this.setMeta("billing_checkout_sessions", JSON.stringify(sessions));
+        this.setMeta("billing_checkout_dispatches", String(count - 1));
+      }),
     });
   }
 
@@ -3001,6 +3021,16 @@ export class Vault extends DurableObject<Env> {
 
   async billingCancelCheckout(who: Who): Promise<void> {
     await this.checkoutCoordinator(who).cancel();
+  }
+  billingCheckoutSessionsForDeletion(): string[] {
+    if (!this.initialised || this.gone) return [];
+    try {
+      const sessions: unknown = JSON.parse(this.meta("billing_checkout_sessions") ?? "[]");
+      if (!Array.isArray(sessions) || sessions.length > 2000 || sessions.some((id) => typeof id !== "string" || id.length > 255 || !/^cs_[A-Za-z0-9_]+$/.test(id))) throw new Error();
+      return sessions;
+    } catch {
+      throw new AppError("unavailable", "checkout history requires operator review");
+    }
   }
   async billingCustomerForDeletion(): Promise<string | null> {
     if (!this.initialised || this.gone) return null;
@@ -3488,6 +3518,9 @@ export class Vault extends DurableObject<Env> {
   private requireNoUnsettledDispatches(): void {
     if (this.sql.exec(`SELECT run_id FROM workflow_dispatches UNION ALL SELECT run_id FROM workflow_redispatches LIMIT 1`).toArray().length)
       throw new AppError("unavailable", "workflow creation is unresolved; retry after it is settled");
+    const checkoutDispatches = Number(this.meta("billing_checkout_dispatches") ?? "0");
+    if (!Number.isSafeInteger(checkoutDispatches) || checkoutDispatches !== 0)
+      throw new AppError("unavailable", "checkout creation is unresolved; operator review may be required");
   }
 
   private hasUnsettledDispatch(runId: string | null): boolean {
@@ -3680,6 +3713,16 @@ export class Vault extends DurableObject<Env> {
     this.runs.requestCancel(id);
     await this.scheduleRunAlarm(Date.now());
     this.broadcast("run", id);
+  }
+
+  async cancelResume(who: Who, resumeId: string): Promise<void> {
+    this.requireOwner(who);
+    const resume = this.resumeRow(resumeId);
+    if (resume.state !== "running" || !resume.run_id)
+      throw new AppError("conflict", "this resume is no longer being prepared");
+    // Resolve the current run from the resume rather than assuming the IDs match.
+    this.workflowRun(resume.run_id, "tailor", resumeId);
+    await this.cancelRun(who, resume.run_id);
   }
 
   private readProfile(): Profile {

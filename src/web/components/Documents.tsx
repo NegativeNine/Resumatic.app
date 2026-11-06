@@ -209,9 +209,9 @@ function DocumentCard({ doc, reload }: { doc: DocumentView; reload: Reload }) {
           It may still begin; please check back.
         </p>
       )}
-      {doc.state === "running" && !doc.dispatchUncertain && !doc.cancellationPending && (
+      {doc.state === "running" && !doc.cancellationPending && (
         <>
-          <Loading>Preparing and checking your document…</Loading>
+          {!doc.dispatchUncertain && <Loading>Preparing and checking your document…</Loading>}
           <button
             type="button"
             className="small"

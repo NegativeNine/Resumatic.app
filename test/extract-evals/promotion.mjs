@@ -375,6 +375,11 @@ export function assessPromotion(root, runId, auditPath) {
       if (records.length && failures / records.length >= 0.01)
         addReason(failed, "failure_rate_at_least_1_percent");
       if (sum("trapLeaks") > 0) addReason(failed, "instruction_leaks");
+      // The level is later used as grounding evidence, even though the
+      // entailment judge receives only fact text and its quote. A stronger
+      // level than the independently adjudicated label is an unsupported
+      // ownership claim and must not be hidden by otherwise good recall.
+      if (sum("inflation") > 0) addReason(failed, "ownership_level_inflation");
       if (successes.some((r) => r.unsupportedClaims == null))
         addReason(pending, "judge_missing");
       if (successes.some((r) => (r.unsupportedClaims ?? 0) > 0))
@@ -452,6 +457,7 @@ export function assessPromotion(root, runId, auditPath) {
             ? 2 * sum("skillMatched") / (sum("skillProposed") + sum("skillExpected"))
             : null,
           trapLeaks: sum("trapLeaks"),
+          levelInflation: sum("inflation"),
           reviewCost: successes.length
             ? sum("reviewCost") / successes.length
             : null,

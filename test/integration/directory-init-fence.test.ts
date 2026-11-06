@@ -331,7 +331,8 @@ describe("Directory initialization fence", () => {
       ctx.storage.sql.exec(`INSERT INTO vault_replacements (operation_id,source_id,target_id,user_id,state) VALUES (?,?,?,?, 'complete')`, crypto.randomUUID(), vaultId, target, userId);
       ctx.storage.sql.exec(`INSERT INTO retired_vaults (vault_id,user_id) VALUES (?,?)`, retired, userId);
       ctx.storage.sql.exec(`DROP TABLE vault_initializations`);
-      ctx.storage.sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(DIRECTORY_MIGRATIONS.length - 2));
+      ctx.storage.sql.exec(`ALTER TABLE vaults DROP COLUMN stripe_checkout_sessions`);
+      ctx.storage.sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(DIRECTORY_MIGRATIONS.length - 3));
     });
     await evictDurableObject(d);
     const marked = await runInDurableObject(d, (_instance, ctx) => ctx.storage.sql.exec<{vault_id: string; sticky: number}>(`SELECT vault_id,sticky FROM vault_initializations`).toArray());

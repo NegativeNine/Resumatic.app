@@ -160,6 +160,7 @@ describe("maintenance replacement lifecycle", () => {
 
     // The spend checkpoint is captured at finalization, after the content manifest was created.
     await runInDurableObject(source, (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO meta (key,value) VALUES ('billing_checkout_sessions', ?) ON CONFLICT (key) DO UPDATE SET value=excluded.value`, JSON.stringify(["cs_test_transfer"]));
       const runs = new RunStore(state.storage.sql, (callback) =>
         state.storage.transactionSync(callback),
       );
@@ -189,6 +190,7 @@ describe("maintenance replacement lifecycle", () => {
     expect(await target.finishImport(op, oldSession.vid)).toMatchObject({
       state: "ready",
     });
+    expect(await target.billingCheckoutSessionsForDeletion()).toEqual(["cs_test_transfer"]);
     expect(await target.finishImport(op, oldSession.vid)).toMatchObject({
       state: "ready",
     });

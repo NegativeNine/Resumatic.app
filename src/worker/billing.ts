@@ -544,11 +544,40 @@ export async function cleanupBillingCustomer(
   env: BillingEnvironment,
   customerId: string,
   fetcher: typeof fetch = fetch,
+  knownSessionIds: string[] = [],
 ): Promise<void> {
   const cfg = billingConfig({ ...env, BILLING_ENABLED: "true" });
   if (!cfg)
     throw new AppError("unavailable", "billing cleanup is not configured");
   const stripe = stripeClient(cfg, fetcher);
+  // Listing can lag a successful create. Check IDs recorded from create
+  // responses directly and handle subscriptions even if absent from a list.
+  for (const id of new Set(knownSessionIds)) {
+    let session = await stripe.checkoutSession(id);
+    if (session.id !== id) throw new AppError("unavailable", "checkout identity requires review");
+    if (session.status === "open") {
+      try {
+        await stripe.expireCheckout(id, `delete:${customerId}:${id}`);
+      } catch (error) {
+        if ((await stripe.checkoutSession(id)).status === "open") throw error;
+      }
+      session = await stripe.checkoutSession(id);
+    }
+    if (session.id !== id) throw new AppError("unavailable", "checkout identity requires review");
+    if (session.status === "open") throw new AppError("unavailable", "checkout cleanup remains pending");
+    if (session.status === "complete") {
+      if (!session.subscriptionId) throw new AppError("unavailable", "completed checkout subscription is unresolved");
+      const sub = await stripe.subscription(session.subscriptionId);
+      const owner = typeof sub.customer === "string" ? sub.customer : sub.customer.id;
+      if (sub.id !== session.subscriptionId || owner !== customerId)
+        throw new AppError("unavailable", "checkout subscription association requires review");
+      if (subscriptionIsOpen(sub)) await stripe.cancelSubscription(sub.id);
+      const after = await stripe.subscription(sub.id);
+      const afterOwner = typeof after.customer === "string" ? after.customer : after.customer.id;
+      if (after.id !== sub.id || afterOwner !== customerId || subscriptionIsOpen(after))
+        throw new AppError("unavailable", "checkout subscription cleanup remains pending");
+    }
+  }
   // Expire links first so a still-open checkout cannot create a new subscription during cancellation.
   for (const session of await stripe.checkoutSessions(customerId)) {
     if (session.status !== "open") continue;

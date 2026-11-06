@@ -2,6 +2,8 @@ import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { vault } from "../../src/shared/stubs";
+import { fromBase64url } from "../../src/worker/crypto";
+import { signIn } from "./support";
 
 const uncertainWorkflow = () => ({
   async create() { throw new Error("synthetic uncertain create"); },
@@ -9,6 +11,30 @@ const uncertainWorkflow = () => ({
 }) as unknown as Workflow;
 
 describe("uncertain workflow starts", () => {
+  it("lets the owner request resume cancellation over HTTP while preserving an unresolved dispatch", async () => {
+    const user = await signIn();
+    const payload = user.cookie.slice("__Host-session=".length).split(".")[0]!;
+    const session = JSON.parse(new TextDecoder().decode(fromBase64url(payload))) as { uid: string; vid: string; gen: number; epoch?: string };
+    const stub = vault(env, session.vid);
+    const { resumeId, runId } = await runInDurableObject(stub, async (instance) => {
+      const local = (instance as unknown as { env: Env }).env;
+      const original = local.TAILOR;
+      local.TAILOR = uncertainWorkflow();
+      try {
+        const who = { userId: session.uid, gen: session.gen, epoch: session.epoch };
+        const { applicationId } = await instance.addApplication(who, "An engineering role with a detailed job description.");
+        return await instance.tailor(who, applicationId);
+      } finally { local.TAILOR = original; }
+    });
+    const stranger = await signIn();
+    expect((await stranger.send("POST", `/api/resumes/${resumeId}/cancel`)).status).toBe(404);
+    expect((await user.send("POST", `/api/resumes/${resumeId}/cancel`)).status).toBe(202);
+    await runInDurableObject(stub, async (instance, state) => {
+      const who = { userId: session.uid, gen: session.gen, epoch: session.epoch };
+      expect(await instance.runInfo(who, runId)).toMatchObject({ state: "cancel_requested", creditState: "reserved" });
+      expect(state.storage.sql.exec(`SELECT run_id FROM workflow_dispatches WHERE run_id = ?`, runId).toArray()).toHaveLength(1);
+    });
+  });
   it("shows saved uploads as unconfirmed without treating a missing instance as failure", async () => {
     const id = env.VAULT.newUniqueId().toString();
     const stub = vault(env, id);
@@ -103,7 +129,8 @@ describe("uncertain workflow starts", () => {
         const { resumeId, runId } = await instance.tailor(who, applicationId);
         const before = (await instance.me(who)).quota;
         expect(before.reserved).toBe(1);
-        await instance.cancelRun(who, runId);
+        await expect(instance.cancelResume({ userId: "someone-else", gen: 1 }, resumeId)).rejects.toThrow();
+        await instance.cancelResume(who, resumeId);
         await instance.alarm();
         expect(await instance.runInfo(who, runId)).toMatchObject({
           state: "cancel_requested", creditState: "reserved",
@@ -113,6 +140,10 @@ describe("uncertain workflow starts", () => {
         expect((await instance.listApplications(who))[0]?.resumes[0]).toMatchObject({ cancellationPending: true });
         expect((await instance.me(who)).quota.reserved).toBe(before.reserved);
         expect(state.storage.sql.exec(`SELECT run_id FROM workflow_dispatches WHERE run_id = ?`, runId).toArray()).toHaveLength(1);
+        // The target-specific UI action keeps the original dispatch fence;
+        // neither deletion nor another generation may proceed while it is unresolved.
+        await expect(instance.tailor(who, applicationId)).rejects.toThrow();
+        await expect(instance.close()).rejects.toThrow(/workflow creation is unresolved/);
       } finally { local.TAILOR = original; }
     });
   });

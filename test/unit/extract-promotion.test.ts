@@ -424,6 +424,23 @@ describe("private extraction evaluation evidence", () => {
       assessPromotion(root, written.runId, "audit.json").results[0]!.failed,
     ).toContain("judge_unsupported_claims");
   });
+  it("rejects ownership inflation even when the fact text is judged supported", () => {
+    const { root } = dataset();
+    const source = loadPrivateDataset(root);
+    const { audit, written } = snapshot(root, (data) => {
+      const row = data.records[0];
+      const item = source.cases.find((c) => c.id === row.caseId)!;
+      // The quote and text stay the same, so the text-only judge reports
+      // supported, but this label would let downstream grounding claim more.
+      row.prediction.facts[0].level = "founded";
+      row.score = scoreCase(row.prediction, item.gold, item.markdown);
+    });
+    saveAudit(root, audit);
+    const result = assessPromotion(root, written.runId, "audit.json");
+    expect(result.winner).toBeNull();
+    expect(result.results[0]!.failed).toContain("ownership_level_inflation");
+    expect(result.results[0]!.metrics.levelInflation).toBe(1);
+  });
   it("rejects a changed audit and independently re-scores the private predictions", () => {
     const { root } = dataset();
     const tampered = snapshot(root, (data) => {

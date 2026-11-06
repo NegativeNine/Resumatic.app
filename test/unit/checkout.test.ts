@@ -12,6 +12,7 @@ function fixture() {
     now: 1_800_000_000_000,
     closed: false,
     calls: 0,
+    dispatches: 0,
   };
   const sessions = new Map<string, BillingCheckoutSession>();
   let holdFirst: Promise<void> | null = null;
@@ -70,6 +71,11 @@ function fixture() {
       requireOwner() {
         if (state.closed) throw new Error("closed");
       },
+      beginCheckoutDispatch() {
+        if (state.closed) throw new Error("closed");
+        state.dispatches++;
+      },
+      settleCheckoutDispatch(_sessionId) { state.dispatches--; },
     },
     () => state.now,
   );
@@ -167,5 +173,25 @@ describe("durable checkout intent", () => {
     expect(f.state.intent).not.toBeNull();
     f.state.closed = true;
     await expect(f.coordinator.open("pro")).rejects.toThrow("closed");
+  });
+  it("keeps a checkout dispatch fenced until its create response arrives after closure", async () => {
+    const f = fixture();
+    let release!: () => void;
+    f.hold(new Promise<void>((resolve) => { release = resolve; }));
+    const opening = f.coordinator.open("pro");
+    while (f.sessions.size === 0) await Promise.resolve();
+    expect(f.state.dispatches).toBe(1);
+    f.state.closed = true;
+    release();
+    await expect(opening).rejects.toThrow("closed");
+    expect(f.state.dispatches).toBe(0);
+  });
+  it("keeps a failed checkout create fenced even if a later retry succeeds", async () => {
+    const f = fixture();
+    f.checkout.mockRejectedValueOnce(new Error("response lost"));
+    await expect(f.coordinator.open("pro")).rejects.toThrow("response lost");
+    expect(f.state.dispatches).toBe(1);
+    await f.coordinator.open("pro");
+    expect(f.state.dispatches).toBe(1);
   });
 });

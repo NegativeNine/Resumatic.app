@@ -273,7 +273,7 @@ test("release gates require passing evidence for the exact candidate commit", as
         metrics: {
           cases: 15, runs: 15, failures: 0, failureRate: 0,
           recall: 0.85, precision: 0.95, trapLeaks: 0,
-          reviewedFacts: 50, disagreements: 0, meanCostUsd: 0.01,
+          reviewedFacts: 50, disagreements: 0, meanCostUsd: 0.01, levelInflation: 0,
         },
       }],
     },
@@ -383,6 +383,8 @@ test("release gates require passing evidence for the exact candidate commit", as
       { ...promotion, results: [{ ...winner, sampleKeys: Array(50).fill(winner.sampleKeys[0]) }] },
       { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, cases: 14 } }] },
       { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, reviewedFacts: 49 } }] },
+      { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, levelInflation: 1 } }] },
+      { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, levelInflation: undefined } }] },
       { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, recall: 0.9 } }] },
       { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, failureRate: 0.001 } }] },
     ]) {

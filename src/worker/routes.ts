@@ -790,6 +790,10 @@ api.post("/runs/:id/cancel", async (c) => {
   await myVault(c).cancelRun(c.get("who"), c.req.param("id"));
   return c.body(null, 202);
 });
+api.post("/resumes/:id/cancel", async (c) => {
+  await myVault(c).cancelResume(c.get("who"), c.req.param("id"));
+  return c.body(null, 202);
+});
 api.get("/resumes/:id/versions", async (c) =>
   c.json({
     versions: await myVault(c).resumeVersions(c.get("who"), c.req.param("id")),

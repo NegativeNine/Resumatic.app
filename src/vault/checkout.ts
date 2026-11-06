@@ -22,6 +22,8 @@ export interface CheckoutHooks {
   setCustomer(id: string): void;
   markCustomerRequested(): void;
   requireOwner(): void;
+  beginCheckoutDispatch(): void;
+  settleCheckoutDispatch(sessionId: string): void;
 }
 
 /** Durable intent transitions surround every Stripe await. A cancel invalidates in-flight open calls. */
@@ -80,6 +82,15 @@ export class CheckoutCoordinator {
   }
   private stripeKey(intent: Intent): string {
     return `checkout:${this.userId}:${intent.key}`;
+  }
+  private async createCheckout(customer: string, intent: Intent) {
+    // Persist before the request, with no await after the final owner check.
+    // A failed or interrupted request may still create a session, so only a
+    // received success settles its own dispatch fence.
+    this.hooks.beginCheckoutDispatch();
+    const result = await this.stripe.checkout(customer, this.userId, intent.planId, this.stripeKey(intent));
+    this.hooks.settleCheckoutDispatch(result.id);
+    return result;
   }
   private async customer(intent: Intent): Promise<string> {
     this.hooks.markCustomerRequested();
@@ -188,12 +199,7 @@ export class CheckoutCoordinator {
         "conflict",
         "cancel your existing checkout before choosing another plan",
       );
-    const result = await this.stripe.checkout(
-      customer,
-      this.userId,
-      planId,
-      this.stripeKey(intent),
-    );
+    const result = await this.createCheckout(customer, intent);
     const current = this.current(intent);
     if (current.sessionId && current.sessionId !== result.id)
       throw new AppError(
@@ -219,12 +225,7 @@ export class CheckoutCoordinator {
     this.current(intent);
     if (!session) {
       // Recover an in-flight/lost creation with the original Stripe key, then immediately expire it.
-      const recovered = await this.stripe.checkout(
-        customer,
-        this.userId,
-        intent.planId,
-        this.stripeKey(intent),
-      );
+      const recovered = await this.createCheckout(customer, intent);
       this.current(intent);
       intent.sessionId = recovered.id;
       this.write(intent);

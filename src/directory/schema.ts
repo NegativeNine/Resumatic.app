@@ -41,6 +41,7 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
     // sticky rows at the database boundary as well as in current code.
     `CREATE TRIGGER guard_sticky_vault_initializations BEFORE DELETE ON vault_initializations WHEN OLD.sticky = 1 BEGIN SELECT RAISE(IGNORE); END`,
   ],
+  [`ALTER TABLE vaults ADD COLUMN stripe_checkout_sessions TEXT NOT NULL DEFAULT '[]'`],
 ];
 
 export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T): void {

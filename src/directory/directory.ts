@@ -13,6 +13,16 @@ import { migrateDirectory } from "./schema";
 /** How soon a failed deletion is retried. */
 const RETRY_MS = 60_000;
 
+function parseCheckoutIds(value: string): string[] {
+  try {
+    const ids: unknown = JSON.parse(value);
+    if (!Array.isArray(ids) || ids.length > 2000 || ids.some((id) => typeof id !== "string" || id.length > 255 || !/^cs_[A-Za-z0-9_]+$/.test(id))) throw new Error();
+    return ids;
+  } catch {
+    throw new AppError("unavailable", "checkout history requires operator review");
+  }
+}
+
 type AccountRow = {
   user_id: string;
   user_state: string;
@@ -23,6 +33,7 @@ type AccountRow = {
 
 type VaultDbRow = {
   stripe_customer: string | null;
+  stripe_checkout_sessions: string;
   vault_id: string;
   user_id: string;
   email: string;
@@ -479,7 +490,7 @@ export class Directory extends DurableObject<Env> {
     const limit = Math.max(1, Math.min(200, Math.floor(p.limit)));
     return this.sql
       .exec<VaultDbRow>(
-        `SELECT v.vault_id, v.user_id, u.email, v.hint, v.state, v.swept_at, v.updated_at, v.stripe_customer
+        `SELECT v.vault_id, v.user_id, u.email, v.hint, v.state, v.swept_at, v.updated_at, v.stripe_customer, v.stripe_checkout_sessions
          FROM vaults v JOIN users u ON u.user_id = v.user_id
          WHERE v.vault_id > ? ORDER BY v.vault_id LIMIT ?`,
         p.after ?? "",
@@ -614,7 +625,9 @@ export class Directory extends DurableObject<Env> {
         }
         await directory(this.env).removeInvite(v.email);
         if (v.stripe_customer)
-          await cleanupBillingCustomer(this.env, v.stripe_customer);
+          await cleanupBillingCustomer(this.env, v.stripe_customer, fetch, parseCheckoutIds(v.stripe_checkout_sessions));
+        else if (parseCheckoutIds(v.stripe_checkout_sessions).length)
+          throw new AppError("unavailable", "checkout customer requires operator review");
         await revokeOAuthUserGrants(this.env, v.user_id);
         await deletePrefix(this.env.FILES, vaultPrefix(v.vault_id));
         this.ctx.storage.transactionSync(() => {
@@ -647,14 +660,22 @@ export class Directory extends DurableObject<Env> {
     this.requireInitializationSettled(vaultId);
     const runs = await stub.close();
     const customer = await stub.billingCustomerForDeletion();
-    if (customer) {
-      this.sql.exec(
-        `UPDATE vaults SET stripe_customer=? WHERE vault_id=?`,
-        customer,
-        vaultId,
-      );
-      await cleanupBillingCustomer(this.env, customer);
-    }
+    const newCheckoutIds = await stub.billingCheckoutSessionsForDeletion();
+    const previous = this.sql.exec<{ stripe_customer: string | null; stripe_checkout_sessions: string }>(
+      `SELECT stripe_customer, stripe_checkout_sessions FROM vaults WHERE vault_id=?`, vaultId,
+    ).one();
+    if (previous.stripe_customer && customer && previous.stripe_customer !== customer)
+      throw new AppError("unavailable", "billing customer requires operator review");
+    const knownCustomer = customer ?? previous.stripe_customer;
+    const checkoutIds = [...new Set([...parseCheckoutIds(previous.stripe_checkout_sessions), ...newCheckoutIds])];
+    if (checkoutIds.length > 2000) throw new AppError("unavailable", "checkout history requires operator review");
+    this.sql.exec(
+      `UPDATE vaults SET stripe_customer=?, stripe_checkout_sessions=? WHERE vault_id=?`,
+      knownCustomer, JSON.stringify(checkoutIds), vaultId,
+    );
+    if (!knownCustomer && checkoutIds.length)
+      throw new AppError("unavailable", "checkout customer requires operator review");
+    if (knownCustomer) await cleanupBillingCustomer(this.env, knownCustomer, fetch, checkoutIds);
     await stopVaultRuns(this.env, runs);
     const owner = this.sql
       .exec<{ user_id: string }>(
@@ -705,7 +726,7 @@ export class Directory extends DurableObject<Env> {
   private vaultsIn(state: "deleting" | "swept"): VaultDbRow[] {
     return this.sql
       .exec<VaultDbRow>(
-        `SELECT v.vault_id, v.user_id, u.email, v.hint, v.state, v.swept_at, v.updated_at, v.stripe_customer
+        `SELECT v.vault_id, v.user_id, u.email, v.hint, v.state, v.swept_at, v.updated_at, v.stripe_customer, v.stripe_checkout_sessions
          FROM vaults v JOIN users u ON u.user_id = v.user_id WHERE v.state = ?`,
         state,
       )

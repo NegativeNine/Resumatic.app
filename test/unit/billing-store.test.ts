@@ -272,6 +272,41 @@ describe("durable billing reconciliation", () => {
 });
 
 describe("billing account cleanup", () => {
+  it("expires a known checkout by ID even when the list has not exposed it", async () => {
+    let open = true;
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/v1/checkout/sessions/cs_test_late/expire") {
+        open = false;
+        return Response.json({});
+      }
+      if (url.pathname === "/v1/checkout/sessions/cs_test_late")
+        return Response.json({ id: "cs_test_late", status: open ? "open" : "expired", expires_at: end, url: null });
+      if (["/v1/checkout/sessions", "/v1/subscriptions"].includes(url.pathname))
+        return Response.json({ data: [], has_more: false });
+      throw new Error(`unexpected ${init?.method} ${url.pathname}`);
+    });
+    await cleanupBillingCustomer(billingEnv, "cus_123", fetcher, ["cs_test_late"]);
+    expect(open).toBe(false);
+  });
+
+  it("cancels a known completed checkout's subscription even when absent from lists", async () => {
+    let active = true;
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/v1/checkout/sessions/cs_test_paid")
+        return Response.json({ id: "cs_test_paid", status: "complete", expires_at: end, url: null, subscription: "sub_new" });
+      if (url.pathname === "/v1/subscriptions/sub_new") {
+        if (init?.method === "DELETE") { active = false; return Response.json({}); }
+        return Response.json(subscription("sub_new", active ? "active" : "canceled"));
+      }
+      if (["/v1/checkout/sessions", "/v1/subscriptions"].includes(url.pathname))
+        return Response.json({ data: [], has_more: false });
+      throw new Error(`unexpected ${init?.method} ${url.pathname}`);
+    });
+    await cleanupBillingCustomer(billingEnv, "cus_123", fetcher, ["cs_test_paid"]);
+    expect(active).toBe(false);
+  });
   it("expires pending checkouts before cancellation and verifies remote state, even with new billing disabled", async () => {
     let open = true;
     let active = true;
