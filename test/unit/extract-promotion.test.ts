@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import { docxFixture, pdfFixture } from "../extract-evals/fixture-files.mjs";
 import {
@@ -337,6 +338,20 @@ describe("private extraction evaluation evidence", () => {
     });
     expect(JSON.stringify(report)).not.toContain("Example Organisation");
     expect(JSON.stringify(report)).not.toContain("Built synthetic");
+    // Exercise the exact public aggregate through the production gate; this
+    // synthetic attestation proves shape compatibility, not real consent.
+    const commit = "a".repeat(40);
+    const names = ["models", "googleSignin", "extraction", "grounding", "ats", "stagingE2e", "billing", "security", "deletion", "latency", "betaOperations"];
+    const evidence: Record<string, any> = Object.fromEntries(names.map((name) => [name, { status: "passed", commit, reportUrl: `https://reports.example.test/${name}` }]));
+    const metrics = report.results[0]!.metrics;
+    Object.assign(evidence.extraction, { trapLeaks: 0, unsupportedClaims: 0, evaluatedUploads: metrics.cases, failureRate: metrics.failureRate, factRecall: metrics.recall, factPrecision: metrics.precision, promotion: report, priceOverrides: process.env.EVAL_MODEL_PRICES ? JSON.parse(process.env.EVAL_MODEL_PRICES) : {} });
+    Object.assign(evidence.grounding, { unsupportedClaims: 0, evaluatedLines: 1 });
+    Object.assign(evidence.ats, { syntheticPdfPassed: true, syntheticDocxPassed: true, externalParsersTested: 2, unresolvedFailures: 0 });
+    Object.assign(evidence.latency, { p95Seconds: 1, sampleSize: 1 });
+    Object.assign(evidence.security, { openHighFindings: 0 });
+    Object.assign(evidence.betaOperations, { quietDays: 14 });
+    const check = spawnSync(process.execPath, [resolve("scripts/check-release.mjs")], { cwd: root, env: { ...process.env, GITHUB_SHA: commit, RELEASE_EVIDENCE_JSON: JSON.stringify(evidence) }, encoding: "utf8" });
+    expect(check.status, check.stderr || check.stdout).toBe(0);
   });
   it("keeps missing audits, missing adjudication, and unpriced usage pending", () => {
     const { root } = dataset();

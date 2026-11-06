@@ -15,7 +15,10 @@ export function assessPromotion(
 ): {
   version: number;
   mode: string;
+  profile: "round-1" | "full";
   runId: string;
+  environment: "staging" | "production";
+  strategies: string[];
   manifestHash: string;
   snapshotSha256: string;
   configurationHash: string;

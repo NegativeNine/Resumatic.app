@@ -2,6 +2,12 @@
 // Evidence is entered in the protected production environment after reviewing real reports.
 // Local tests, unavailable integrations and pending audits can never satisfy launch gates.
 import { writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { readConfig } from "./lib/config.mjs";
+import { configuredExtractors } from "./lib/extractor-routes.mjs";
+import { extractionConfiguration } from "../test/extract-evals/configuration.mjs";
+const root = fileURLToPath(new URL("../", import.meta.url));
 const required = [
   "models",
   "googleSignin",
@@ -20,6 +26,75 @@ const report = {
   commit: process.env.GITHUB_SHA ?? null,
   missing: [],
 };
+const hex256 = (value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+const count = (value, minimum) => Number.isSafeInteger(value) && value >= minimum;
+const finite = (value) => typeof value === "number" && Number.isFinite(value);
+/** Validate the aggregate returned by the full-corpus human-audited promotion assessor.
+ * The protected environment remains an operator attestation: this cannot authenticate
+ * the report, underlying dataset, consent or audit independently. */
+function validResult(winner) {
+  const metrics = winner?.metrics;
+  return Boolean(
+    winner?.status === "eligible" && Array.isArray(winner.pending) && winner.pending.length === 0 &&
+    Array.isArray(winner.failed) && winner.failed.length === 0 && hex256(winner.sampleSeed) &&
+    Array.isArray(winner.sampleKeys) && winner.sampleKeys.length === 50 &&
+    new Set(winner.sampleKeys).size === 50 && winner.sampleKeys.every(hex256) &&
+    metrics && count(metrics.cases, 15) && count(metrics.runs, metrics.cases) &&
+    count(metrics.failures, 0) && metrics.failures <= metrics.runs &&
+    finite(metrics.failureRate) && metrics.failureRate === metrics.failures / metrics.runs &&
+    metrics.failureRate >= 0 && metrics.failureRate < 0.01 &&
+    finite(metrics.recall) && metrics.recall >= 0.85 && metrics.recall <= 1 &&
+    finite(metrics.precision) && metrics.precision >= 0.95 && metrics.precision <= 1 &&
+    metrics.trapLeaks === 0 && count(metrics.reviewedFacts, 50) &&
+    count(metrics.disagreements, 0) && finite(metrics.meanCostUsd) && metrics.meanCostUsd >= 0
+  );
+}
+function validPromotion(extraction) {
+  const promotion = extraction?.promotion;
+  if (
+    !promotion || promotion.version !== 1 || promotion.mode !== "human-audited" ||
+    promotion.profile !== "full" || promotion.rankingPending !== false ||
+    typeof promotion.runId !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(promotion.runId) ||
+    !hex256(promotion.manifestHash) || !hex256(promotion.snapshotSha256) ||
+    !hex256(promotion.configurationHash) ||
+    typeof promotion.winner !== "string" || !promotion.winner ||
+    !["staging", "production"].includes(promotion.environment) ||
+    !Array.isArray(promotion.strategies) || promotion.strategies.length === 0 ||
+    promotion.strategies.length > 20 || new Set(promotion.strategies).size !== promotion.strategies.length ||
+    promotion.strategies.some((strategy) => typeof strategy !== "string" || !/^[A-Za-z0-9_@/:.\-]{1,240}$/.test(strategy)) ||
+    !Array.isArray(promotion.results) || promotion.results.length !== promotion.strategies.length ||
+    promotion.results.some((result, i) => result?.strategy !== promotion.strategies[i])
+  ) return false;
+  const winners = promotion.results.filter((result) => result?.strategy === promotion.winner);
+  if (winners.length !== 1) return false;
+  const winner = winners[0], metrics = winner.metrics;
+  if (!validResult(winner)) return false;
+  return extraction.evaluatedUploads === metrics.cases &&
+    extraction.failureRate === metrics.failureRate && extraction.factRecall === metrics.recall &&
+    extraction.factPrecision === metrics.precision && extraction.trapLeaks === metrics.trapLeaks;
+}
+/** Every configured production route must be an eligible measured strategy. */
+async function validExtractionConfiguration(extraction) {
+  try {
+    const promotion = extraction.promotion;
+    const { config } = await readConfig("production", join(root, "wrangler.jsonc"));
+    const vars = config.vars ?? {};
+    const { fallback, selected } = configuredExtractors(vars);
+    if (fallback !== promotion.winner) return false;
+    for (const strategy of selected) {
+      const result = promotion.results.find((item) => item.strategy === strategy);
+      if (!result || !validResult(result) || result.metrics.cases !== promotion.results.find((item) => item.strategy === promotion.winner).metrics.cases) return false;
+    }
+    const opts = { root, priceOverrides: extraction.priceOverrides ?? {} };
+    const tested = extractionConfiguration(promotion.strategies, promotion.environment, opts);
+    const production = extractionConfiguration(promotion.strategies, "production", opts);
+    return tested.hash === promotion.configurationHash &&
+      JSON.stringify(tested.models) === JSON.stringify(production.models);
+  } catch {
+    return false;
+  }
+}
 try {
   const evidence = JSON.parse(process.env.RELEASE_EVIDENCE_JSON ?? "{}");
   if (!/^[a-f0-9]{40}$/.test(report.commit ?? ""))
@@ -48,9 +123,13 @@ try {
       evidence.extraction?.failureRate >= 0 &&
       evidence.extraction?.failureRate < 0.01
     ) ||
-    !(evidence.extraction?.evaluatedUploads > 0)
+    !count(evidence.extraction?.evaluatedUploads, 15)
   )
     report.missing.push("EXTRACTION_MEASUREMENTS");
+  if (!validPromotion(evidence.extraction))
+    report.missing.push("EXTRACTION_PROMOTION");
+  else if (!(await validExtractionConfiguration(evidence.extraction)))
+    report.missing.push("EXTRACTION_CONFIGURATION");
   // A strategy must satisfy the agreed quality thresholds as well as the
   // no-fabrication gates. Missing, NaN, and impossible values fail closed.
   if (
@@ -64,12 +143,12 @@ try {
     report.missing.push("EXTRACTION_QUALITY");
   if (
     evidence.grounding?.unsupportedClaims !== 0 ||
-    !(evidence.grounding?.evaluatedLines > 0)
+    !count(evidence.grounding?.evaluatedLines, 1)
   )
     report.missing.push("GROUNDING_MEASUREMENTS");
   if (
-    !(evidence.latency?.p95Seconds > 0 && evidence.latency?.p95Seconds < 90) ||
-    !(evidence.latency?.sampleSize > 0)
+    !(finite(evidence.latency?.p95Seconds) && evidence.latency.p95Seconds > 0 && evidence.latency.p95Seconds < 90) ||
+    !count(evidence.latency?.sampleSize, 1)
   )
     report.missing.push("LATENCY_MEASUREMENTS");
   // Local text extraction is necessary, but separate independent ATS parser checks remain required.
@@ -83,7 +162,7 @@ try {
     report.missing.push("ATS_VALIDATION");
   if (evidence.security?.openHighFindings !== 0)
     report.missing.push("SECURITY_FINDINGS");
-  if (!(evidence.betaOperations?.quietDays >= 14))
+  if (!count(evidence.betaOperations?.quietDays, 14))
     report.missing.push("BETA_OBSERVATION_WINDOW");
   if (report.missing.length === 0) report.status = "passed";
 } catch {

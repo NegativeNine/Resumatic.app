@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { parseJsonc } from "../../scripts/lib/config.mjs";
 
 /** Hash every strategy, verifier and scoring source plus the actual configured model IDs. */
-export function extractionConfiguration(strategies, environment) {
+export function extractionConfiguration(strategies, environment, opts = {}) {
   if (!["staging", "production"].includes(environment))
     throw new Error("extract_eval_environment_invalid");
-  const config = parseJsonc(readFileSync("wrangler.jsonc", "utf8"));
+  const root = opts.root ?? process.cwd();
+  const config = parseJsonc(readFileSync(join(root, "wrangler.jsonc"), "utf8"));
   const vars =
     environment === "staging" ? config.env?.staging?.vars : config.vars;
   if (!vars || typeof vars !== "object")
@@ -22,7 +24,16 @@ export function extractionConfiguration(strategies, environment) {
     "src/ai/llm.ts",
     "src/ai/usage.ts",
     "src/ai/vectors.ts",
+    "src/ai/transcribe.ts",
+    "src/pipeline/distill.ts",
+    "src/pipeline/linkedin.ts",
+    "src/pipeline/linkedin-extract.ts",
+    "src/workflows/distill.ts",
+    "src/shared/api.ts",
+    "src/shared/types.ts",
+    "test/evals/nonvacuity.ts",
     "test/evals/rest-models.ts",
+    "test/extract-evals/cli.mjs",
     "test/extract-evals/run.eval.ts",
     "test/extract-evals/private-dataset.mjs",
     "src/ai/fields.ts",
@@ -31,19 +42,20 @@ export function extractionConfiguration(strategies, environment) {
     "test/extract-evals/score-core.mjs",
     "test/extract-evals/budget.ts",
     "test/extract-evals/promotion.mjs",
-    ...readdirSync("src/pipeline/extract")
-      .filter((name) => name.endsWith(".ts"))
+    ...readdirSync(join(root, "src/pipeline/extract"))
+      .filter((name) => name.endsWith(".ts") || name.endsWith(".mjs"))
       .sort()
       .map((name) => `src/pipeline/extract/${name}`),
-    ...readdirSync("src/grounding")
+    ...readdirSync(join(root, "src/grounding"))
       .filter((name) => name.endsWith(".ts"))
       .sort()
       .map((name) => `src/grounding/${name}`),
   ];
   let prices = {};
-  if (process.env.EVAL_MODEL_PRICES) {
+  const inputPrices = opts.priceOverrides === undefined ? process.env.EVAL_MODEL_PRICES : JSON.stringify(opts.priceOverrides);
+  if (inputPrices) {
     try {
-      prices = JSON.parse(process.env.EVAL_MODEL_PRICES);
+      prices = JSON.parse(inputPrices);
     } catch {
       throw new Error("live_eval_price_invalid");
     }
@@ -72,7 +84,7 @@ export function extractionConfiguration(strategies, environment) {
     environment,
     models,
     prices,
-    source: paths.map((file) => [file, readFileSync(file, "utf8")]),
+    source: paths.map((file) => [file, readFileSync(join(root, file), "utf8")]),
   };
   return {
     models,

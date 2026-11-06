@@ -48,10 +48,10 @@ jobs:
       - name: Require recorded live and external release gates for this commit
         run: node scripts/check-release.mjs
       - run: node scripts/validate-config.mjs --environment production --purpose deploy --report production-preflight.json
-      - name: Verify production has no test login secret
+      - name: Verify production secret names do not shadow evaluated configuration
         run: |
           npx wrangler secret list > production-secret-names.json
-          node --input-type=module -e 'import fs from "node:fs"; const secrets=JSON.parse(fs.readFileSync("production-secret-names.json","utf8")); if (!Array.isArray(secrets) || secrets.some(s => s.name === "TEST_SIGNIN_KEY")) process.exit(1);'
+          node --input-type=module -e 'import fs from "node:fs"; import {validProductionSecretNames} from "./scripts/lib/release-secret-names.mjs"; const secrets=JSON.parse(fs.readFileSync("production-secret-names.json","utf8")); if (!validProductionSecretNames(secrets)) process.exit(1);'
       # Production uses the top-level Wrangler configuration, not env.production.
       - run: npm run build
       - run: npx wrangler deploy

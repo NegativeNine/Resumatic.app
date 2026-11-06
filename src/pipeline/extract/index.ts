@@ -2,6 +2,7 @@ import { clairic } from "./clairic";
 import { withJudge } from "./judge";
 import { llmExtractor } from "./llm";
 import { segmentExtractor } from "./segment";
+import { validExtractorId } from "./ids.mjs";
 import type { Extractor } from "./types";
 
 export { verifyExtraction } from "./verify";
@@ -23,6 +24,7 @@ export const EXTRACTORS: Readonly<Record<string, Extractor>> =
   );
 
 export function extractorById(id: string): Extractor {
+  if (!validExtractorId(id)) throw new Error("extractor_unknown");
   // Registry keys are configuration data; never resolve inherited object properties.
   if (Object.hasOwn(EXTRACTORS, id)) return EXTRACTORS[id]!;
   if (id.startsWith("judge:") && !id.slice(6).startsWith("judge:"))

@@ -28,7 +28,7 @@ export interface ChatConfig extends ModelObservers {
 type Fetcher = (input: string, init: RequestInit) => Promise<Response>;
 
 /**
- * One chat completion through AI Gateway's OpenAI-compatible REST endpoint.
+ * One structured completion through AI Gateway's OpenAI-compatible REST endpoints.
  * Third-party models are paid through Unified Billing, so only a Cloudflare token is needed.
  * Prompt and response bodies are kept out of gateway logs; metrics are still recorded.
  * Output must be JSON matching `schema`; one retry is allowed with the validation error attached,
@@ -93,19 +93,32 @@ async function callOnce(
   fetcher: Fetcher,
 ): Promise<string> {
   const maxOutputTokens = cfg.maxOutputTokens ?? 8192;
-  const payload = {
-    model: cfg.model,
-    messages,
-    ...(/^(?:anthropic\/claude-(?:haiku|sonnet)-(?:5\.5|5-5)|openai\/gpt-5(?:-\d{4}-\d{2}-\d{2})?)$/.test(
-      cfg.model,
-    )
-      ? {}
-      : { temperature: cfg.temperature }),
-    max_tokens: maxOutputTokens,
-    response_format: cfg.model.startsWith("@cf/")
-      ? { type: "json_schema", json_schema: schema }
-      : { type: "json_object" },
-  };
+  // Cloudflare lists this model as Responses-only. Other models retain the
+  // existing Chat Completions wire contract unless explicitly supported here.
+  const responses = cfg.model === "openai/gpt-5.6-sol";
+  const payload = responses
+    ? {
+        model: cfg.model,
+        input: messages,
+        max_output_tokens: maxOutputTokens,
+        text: { format: { type: "json_object" } },
+        // Responses may persist application state by default. Each call is
+        // independent and must not retain career text in the provider's store.
+        store: false,
+      }
+    : {
+        model: cfg.model,
+        messages,
+        ...(/^(?:anthropic\/claude-(?:haiku|sonnet)-(?:5\.5|5-5)|openai\/gpt-5(?:-\d{4}-\d{2}-\d{2})?)$/.test(
+          cfg.model,
+        )
+          ? {}
+          : { temperature: cfg.temperature }),
+        max_tokens: maxOutputTokens,
+        response_format: cfg.model.startsWith("@cf/")
+          ? { type: "json_schema", json_schema: schema }
+          : { type: "json_object" },
+      };
   const bodyText = JSON.stringify(payload);
   const body = await modelAttempt(
     {
@@ -128,7 +141,7 @@ async function callOnce(
     },
     async () => {
       const res = await fetcher(
-        `https://api.cloudflare.com/client/v4/accounts/${cfg.accountId}/ai/v1/chat/completions`,
+        `https://api.cloudflare.com/client/v4/accounts/${cfg.accountId}/ai/v1/${responses ? "responses" : "chat/completions"}`,
         {
           method: "POST",
           redirect: "error",
@@ -157,19 +170,53 @@ async function callOnce(
           `model call for ${cfg.route} failed with HTTP ${res.status}`,
         );
       }
-      return (await res.json().catch(() => {
+      const value = await res.json().catch(() => {
         throw new Error(`model response for ${cfg.route} was not JSON`);
-      })) as {
+      });
+      if (!value || typeof value !== "object" || Array.isArray(value))
+        throw new Error(`model response for ${cfg.route} was not an object`);
+      return value as {
         usage?: unknown;
         choices?: { message?: { content?: string | null } }[];
+        status?: unknown;
+        error?: unknown;
+        output?: unknown;
       };
     },
     (response) => response.usage,
   );
+  if (responses) return responseText(body, cfg.route);
   const content = body.choices?.[0]?.message?.content;
   if (typeof content !== "string")
     throw new Error(`model call for ${cfg.route} returned no content`);
   return content;
+}
+
+/** Refusals, partial responses, tools and ambiguous outputs are never model answers. */
+function responseText(
+  body: { status?: unknown; error?: unknown; output?: unknown },
+  route: string,
+): string {
+  if (body.status !== "completed" || body.error != null || !Array.isArray(body.output))
+    throw new Error(`model call for ${route} did not complete`);
+  if (body.output.some((item: unknown) =>
+    !item || typeof item !== "object" ||
+    !["reasoning", "message"].includes(String((item as Record<string, unknown>).type)),
+  )) throw new Error(`model call for ${route} returned unexpected output`);
+  const messages = body.output.filter((item: unknown) =>
+    item && typeof item === "object" && (item as Record<string, unknown>).type === "message",
+  ) as Record<string, unknown>[];
+  if (messages.length !== 1 || messages[0]!.role !== "assistant" ||
+    (messages[0]!.status != null && messages[0]!.status !== "completed") ||
+    !Array.isArray(messages[0]!.content))
+    throw new Error(`model call for ${route} returned no content`);
+  const content = messages[0]!.content as unknown[];
+  if (content.length !== 1 || !content[0] || typeof content[0] !== "object")
+    throw new Error(`model call for ${route} returned no content`);
+  const item = content[0] as Record<string, unknown>;
+  if (item.type !== "output_text" || typeof item.text !== "string")
+    throw new Error(`model call for ${route} returned no content`);
+  return item.text;
 }
 
 function parseJson(

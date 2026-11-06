@@ -485,6 +485,8 @@ export function assessPromotion(root, runId, auditPath) {
       mode: "human-audited",
       profile,
       runId,
+      environment: snapshot.environment,
+      strategies: snapshot.strategies,
       manifestHash: dataset.manifestHash,
       snapshotSha256: input.sha256,
       configurationHash: snapshot.configurationHash,

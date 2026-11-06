@@ -7,6 +7,38 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { extractionConfiguration } from "../test/extract-evals/configuration.mjs";
+import { configuredExtractors } from "./lib/extractor-routes.mjs";
+import { validProductionSecretNames } from "./lib/release-secret-names.mjs";
+
+test("production secrets cannot shadow the evaluated extractor or model configuration", () => {
+  assert.equal(validProductionSecretNames([{ name: "SESSION_KEY" }, { name: "CF_AI_TOKEN" }]), true);
+  for (const name of ["TEST_SIGNIN_KEY", "MODEL_EXTRACT", "MODEL_JUDGE", "EXTRACTOR", "EXTRACTOR_BY_FORMAT", "EXTRACTOR_EXPERIMENT"]) {
+    assert.equal(validProductionSecretNames([{ name }]), false);
+  }
+  assert.equal(validProductionSecretNames({}), false);
+  assert.equal(validProductionSecretNames([{}]), false);
+});
+
+test("release route inventory includes default, format routes and active experiment", () => {
+  const { fallback, selected } = configuredExtractors({
+    EXTRACTOR: "llm:default",
+    EXTRACTOR_BY_FORMAT: JSON.stringify({ pdf: "clairic", docx: "llm:default" }),
+    EXTRACTOR_EXPERIMENT: JSON.stringify({ strategy: "segment:@cf/openai/gpt-oss-20b", percent: 1 }),
+  });
+  assert.equal(fallback, "llm:default");
+  assert.deepEqual([...selected].sort(), ["llm:default", "clairic", "segment:@cf/openai/gpt-oss-20b"].sort());
+  assert.deepEqual([...configuredExtractors({ EXTRACTOR_EXPERIMENT: JSON.stringify({ strategy: "clairic", percent: 0 }) }).selected], ["llm:default"]);
+  for (const invalid of [
+    { EXTRACTOR_BY_FORMAT: '{"other":"clairic"}' },
+    { EXTRACTOR_BY_FORMAT: '[]' },
+    { EXTRACTOR_EXPERIMENT: '{"strategy":"clairic","percent":"1"}' },
+    { EXTRACTOR_EXPERIMENT: '{"strategy":"clairic","percent":101}' },
+    { EXTRACTOR_EXPERIMENT: '{"strategy":"not-a-real-extractor","percent":0}' },
+    { EXTRACTOR_BY_FORMAT: '{"pdf":"judge:judge:clairic"}' },
+    { EXTRACTOR: "not-a-real-extractor" },
+  ]) assert.throws(() => configuredExtractors(invalid));
+});
 
 test("JSONC preserves URLs, comment characters and escaped strings", () => {
   assert.deepEqual(
@@ -194,9 +226,35 @@ test("release gates require passing evidence for the exact candidate commit", as
     trapLeaks: 0,
     unsupportedClaims: 0,
     failureRate: 0,
-    evaluatedUploads: 40,
+    evaluatedUploads: 15,
     factRecall: 0.85,
     factPrecision: 0.95,
+    promotion: {
+      version: 1,
+      mode: "human-audited",
+      profile: "full",
+      runId: "12345678-1234-4234-8234-123456789abc",
+      environment: "staging",
+      strategies: ["llm:default"],
+      manifestHash: "a".repeat(64),
+      snapshotSha256: "b".repeat(64),
+      configurationHash: extractionConfiguration(["llm:default"], "staging", { root: fileURLToPath(new URL("../", import.meta.url)), priceOverrides: {} }).hash,
+      winner: "llm:default",
+      rankingPending: false,
+      results: [{
+        strategy: "llm:default",
+        status: "eligible",
+        pending: [],
+        failed: [],
+        sampleSeed: "d".repeat(64),
+        sampleKeys: Array.from({ length: 50 }, (_, i) => i.toString(16).padStart(64, "0")),
+        metrics: {
+          cases: 15, runs: 15, failures: 0, failureRate: 0,
+          recall: 0.85, precision: 0.95, trapLeaks: 0,
+          reviewedFacts: 50, disagreements: 0, meanCostUsd: 0.01,
+        },
+      }],
+    },
   });
   Object.assign(evidence.grounding, {
     unsupportedClaims: 0,
@@ -272,6 +330,50 @@ test("release gates require passing evidence for the exact candidate commit", as
       );
       assert.ok(result.missing.includes("EXTRACTION_QUALITY"));
     }
+    const promotion = evidence.extraction.promotion;
+    const winner = promotion.results[0];
+    for (const invalid of [
+      undefined,
+      { ...promotion, profile: "round-1" },
+      { ...promotion, environment: "unknown" },
+      { ...promotion, strategies: ["clairic"] },
+      { ...promotion, mode: "offline" },
+      { ...promotion, winner: null },
+      { ...promotion, rankingPending: true },
+      { ...promotion, configurationHash: "" },
+      { ...promotion, results: [{ ...winner, status: "pending" }] },
+      { ...promotion, results: [{ ...winner, pending: ["human_audit_missing"] }] },
+      { ...promotion, results: [{ ...winner, sampleKeys: winner.sampleKeys.slice(0, 49) }] },
+      { ...promotion, results: [{ ...winner, sampleKeys: Array(50).fill(winner.sampleKeys[0]) }] },
+      { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, cases: 14 } }] },
+      { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, reviewedFacts: 49 } }] },
+      { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, recall: 0.9 } }] },
+      { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, failureRate: 0.001 } }] },
+    ]) {
+      assert.equal(run({ ...evidence, extraction: { ...evidence.extraction, promotion: invalid } }).status, 2);
+      const result = JSON.parse(await readFile(join(directory, "release-report.json"), "utf8"));
+      assert.ok(result.missing.includes("EXTRACTION_PROMOTION"));
+    }
+    for (const candidate of [
+      { ...evidence, extraction: { ...evidence.extraction, evaluatedUploads: 1 } },
+      { ...evidence, extraction: { ...evidence.extraction, evaluatedUploads: "15" } },
+      { ...evidence, grounding: { ...evidence.grounding, evaluatedLines: "1" } },
+      { ...evidence, latency: { ...evidence.latency, p95Seconds: "70" } },
+      { ...evidence, latency: { ...evidence.latency, sampleSize: 1.5 } },
+      { ...evidence, betaOperations: { ...evidence.betaOperations, quietDays: "14" } },
+    ]) assert.equal(run(candidate).status, 2);
+    const badConfiguration = {
+      ...evidence,
+      extraction: { ...evidence.extraction, promotion: { ...promotion, configurationHash: "f".repeat(64) } },
+    };
+    assert.equal(run(badConfiguration).status, 2);
+    assert.ok(JSON.parse(await readFile(join(directory, "release-report.json"), "utf8")).missing.includes("EXTRACTION_CONFIGURATION"));
+    const otherRoute = {
+      ...evidence,
+      extraction: { ...evidence.extraction, promotion: { ...promotion, strategies: ["clairic"], winner: "clairic", results: [{ ...winner, strategy: "clairic" }], configurationHash: extractionConfiguration(["clairic"], "staging", { root: fileURLToPath(new URL("../", import.meta.url)), priceOverrides: {} }).hash } },
+    };
+    assert.equal(run(otherRoute).status, 2);
+    assert.ok(JSON.parse(await readFile(join(directory, "release-report.json"), "utf8")).missing.includes("EXTRACTION_CONFIGURATION"));
     assert.equal(
       JSON.parse(await readFile(join(directory, "release-report.json"), "utf8"))
         .status,
