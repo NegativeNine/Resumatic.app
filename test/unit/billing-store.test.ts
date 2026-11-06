@@ -85,6 +85,7 @@ function fixture() {
     ],
     invoiceStatus: "paid",
     active: true,
+    vaultId: "vault1",
     failDelivery: false,
   };
   const fetcher = vi.fn<typeof fetch>(async (input) => {
@@ -108,7 +109,7 @@ function fixture() {
     {
       transaction: (fn) => fn(),
       account: (uid) =>
-        state.active && uid === "u1" ? { vaultId: "vault1" } : null,
+        state.active && uid === "u1" ? { vaultId: state.vaultId } : null,
       deliver,
     },
     fetcher,
@@ -117,6 +118,51 @@ function fixture() {
 }
 
 describe("durable billing reconciliation", () => {
+  it.each([true, false])("redelivers when the old RPC completes %s before the new delivery", async (oldCompletesFirst) => {
+    const f = fixture();
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    try {
+      f.db.prepare("INSERT INTO billing_accounts(user_id,customer_id,entitlement,revision,delivered_revision) VALUES ('u1','cus_123','{}',1,0)").run();
+      f.deliver.mockImplementationOnce(async () => { entered(); await held; });
+      const first = f.store.reconcile();
+      await ready;
+      f.state.vaultId = "vault2";
+      f.store.redeliverAfterReplacement("u1");
+      if (oldCompletesFirst) {
+        release();
+        await first;
+        expect(f.db.prepare("SELECT delivered_revision FROM billing_accounts WHERE user_id='u1'").get()!.delivered_revision).toBe(0);
+        await f.store.reconcile();
+      } else {
+        await f.store.reconcile();
+        expect(f.db.prepare("SELECT delivered_revision FROM billing_accounts WHERE user_id='u1'").get()!.delivered_revision).toBe(1);
+        release();
+        await first;
+      }
+      expect(f.deliver).toHaveBeenNthCalledWith(1, "vault1", 1, {});
+      expect(f.deliver).toHaveBeenNthCalledWith(2, "vault2", 1, {});
+      expect(f.db.prepare("SELECT delivered_revision FROM billing_accounts WHERE user_id='u1'").get()!.delivered_revision).toBe(1);
+    } finally { release(); f.db.close(); }
+  });
+
+  it("does not acknowledge an entitlement when its active Vault is temporarily unavailable", async () => {
+    const f = fixture();
+    try {
+      f.db.prepare("INSERT INTO billing_accounts(user_id,customer_id,entitlement,revision,delivered_revision) VALUES ('u1','cus_123','{}',1,0)").run();
+      f.state.active = false;
+      await f.store.reconcile();
+      expect(f.deliver).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT delivered_revision FROM billing_accounts WHERE user_id='u1'").get()!.delivered_revision).toBe(0);
+      f.state.active = true;
+      await f.store.reconcile();
+      expect(f.deliver).toHaveBeenCalledOnce();
+      expect(f.db.prepare("SELECT delivered_revision FROM billing_accounts WHERE user_id='u1'").get()!.delivered_revision).toBe(1);
+    } finally { f.db.close(); }
+  });
+
   it("attributes a first event before a customer account row exists and reconciles it", async () => {
     const f = fixture();
     try {

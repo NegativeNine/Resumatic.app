@@ -109,6 +109,12 @@ export class BillingStore {
     );
   }
 
+  /** Called in the same Directory transaction that publishes a replacement Vault. */
+  redeliverAfterReplacement(userId: string): void {
+    this.sql.exec(`UPDATE billing_accounts SET delivered_revision = 0 WHERE user_id = ?`, userId);
+    this.sql.exec(`DELETE FROM billing_delivery_retries WHERE user_id = ?`, userId);
+  }
+
   /** Earliest queued attempt, or now for an undelivered entitlement. */
   nextPendingAt(now = Date.now()): number | null {
     const delivery = this.sql.exec<{ at: number | null }>(
@@ -332,6 +338,10 @@ revision = billing_accounts.revision + CASE WHEN billing_accounts.entitlement !=
             row.revision,
             JSON.parse(row.entitlement),
           );
+        // A replacement can publish a new Vault while the old RPC is in
+        // flight. Its acknowledgement says nothing about the new Vault.
+        if (!account || this.hooks.account(row.user_id)?.vaultId !== account.vaultId)
+          continue;
         this.sql.exec(
           `UPDATE billing_accounts SET delivered_revision = ? WHERE user_id = ? AND revision = ?`,
           row.revision,

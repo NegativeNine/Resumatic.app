@@ -386,6 +386,14 @@ describe("deletion workflow failures", () => {
     await expect(stopRuns(workflow, ["run"])).resolves.toBeUndefined();
   });
 
+  it("does not mistake a different instance's absence for the requested run", async () => {
+    const failure = new Error("Workflow instance other-run not found");
+    const workflow = { get: vi.fn().mockRejectedValue(failure) } as unknown as Workflow;
+    await expect(stopRuns(workflow, ["run"])).rejects.toBe(failure);
+    await expect(stopRuns({ get: vi.fn().mockRejectedValue(new Error("Workflow instance run not found")) } as unknown as Workflow, ["run"]))
+      .resolves.toBeUndefined();
+  });
+
   it.each([
     Object.assign(new Error("workflow.not_found"), { code: 10200 }),
     Object.assign(new Error("instance.not_found"), { code: 10200 }),

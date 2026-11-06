@@ -742,7 +742,7 @@ export class Directory extends DurableObject<Env> {
     await this.env.VAULT.get(
       this.env.VAULT.idFromString(targetId),
     ).activateImport(operationId, operation.user_id);
-    this.ctx.storage.transactionSync(() => {
+    await this.ctx.storage.transaction(async () => {
       this.requireInitializationSettled(targetId);
       const source = this.sql
         .exec(
@@ -767,8 +767,15 @@ export class Directory extends DurableObject<Env> {
         `UPDATE vault_replacements SET state='complete' WHERE operation_id=?`,
         operationId,
       );
+      // A delivered plan may have reached only the source or been delivered
+      // after the import snapshot. Force the current revision to the target.
+      this.billing.redeliverAfterReplacement(operation.user_id);
+      // The retry and retired-vault cleanup must survive a crash immediately
+      // after publishing the new home.
+      const now = Date.now();
+      const alarm = await this.ctx.storage.getAlarm();
+      if (alarm === null || alarm > now) await this.ctx.storage.setAlarm(now);
     });
-    await this.scheduleAt(Date.now());
   }
 
   /** Marks the account for deletion; alarm() does the work and retries until it is done. */
@@ -1234,7 +1241,7 @@ export async function stopRuns(
       }
       await instance.delete();
     } catch (error) {
-      if (!isMissingWorkflowInstance(error)) throw error;
+      if (!isMissingWorkflowInstance(error, id)) throw error;
     }
   }
 }

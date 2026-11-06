@@ -3058,8 +3058,7 @@ export class Vault extends DurableObject<Env> {
         vaultId: this.vaultId,
         userId: this.meta("user_id")!,
         schemaVersion: SCHEMA_VERSION,
-        requireMaintenanceFence: () =>
-          requireMaintenanceFence(this.vaultId, this.env.RESTORE_FENCE_IDS),
+        requireMaintenanceFence: () => this.requireMaintenanceAccess(),
       },
     );
   }
@@ -3082,9 +3081,7 @@ export class Vault extends DurableObject<Env> {
     return this.operations.importPage(page);
   }
   async prepareMaintenance(): Promise<void> {
-    requireMaintenanceFence(this.vaultId, this.env.RESTORE_FENCE_IDS);
-    if (this.meta("account_deletion_intent") === "1")
-      throw new AppError("gone", "this account is being deleted");
+    this.requireMaintenanceAccess();
     this.requireNoUnsettledDispatches();
     for (const run of this.runs.listPending()) {
       if (run.kind === "embed")
@@ -3102,13 +3099,18 @@ export class Vault extends DurableObject<Env> {
               : this.env.DOCUMENTS;
       try {
         const instance = await binding.get(run.id);
+        this.requireMaintenanceAccess();
         const status = await instance.status();
-        if (!["complete", "terminated", "errored"].includes(status.status))
+        this.requireMaintenanceAccess();
+        if (!["complete", "terminated", "errored"].includes(status.status)) {
           await instance.terminate();
+          this.requireMaintenanceAccess();
+        }
         await instance.delete();
       } catch (error) {
-        if (!isMissingWorkflowInstance(error)) throw error;
+        if (!isMissingWorkflowInstance(error, run.id)) throw error;
       }
+      this.requireMaintenanceAccess();
       this.runs.requestCancel(run.id);
       this.runs.cancel(run.id);
       if (run.kind === "reembed") {
@@ -3122,7 +3124,7 @@ export class Vault extends DurableObject<Env> {
     for (const ws of this.ctx.getWebSockets()) ws.close(1008, "Maintenance");
   }
   async controlCheckpoint() {
-    requireMaintenanceFence(this.vaultId, this.env.RESTORE_FENCE_IDS);
+    this.requireMaintenanceAccess();
     this.requireNoUnsettledDispatches();
     if (this.runs.listPending().length)
       throw new AppError(
@@ -3162,7 +3164,7 @@ export class Vault extends DurableObject<Env> {
   }
   async finishImport(operationId: string, sourceVaultId: string) {
     requireMaintenanceFence(sourceVaultId, this.env.RESTORE_FENCE_IDS);
-    requireMaintenanceFence(this.vaultId, this.env.RESTORE_FENCE_IDS);
+    this.requireMaintenanceAccess();
     const operation = this.sql
       .exec<{ manifest: string }>(
         `SELECT manifest FROM vault_operations WHERE id = ? AND kind = 'import'`,
@@ -3176,6 +3178,7 @@ export class Vault extends DurableObject<Env> {
       throw new AppError("conflict", "wrong source vault");
     const source = vaultStub(this.env, sourceVaultId);
     const control = await source.controlCheckpoint();
+    this.requireMaintenanceAccess();
     if (control.ownerId !== this.meta("user_id"))
       throw new AppError("forbidden", "wrong account");
     // Only original sources need copying; immutable output caches are regenerated on demand.
@@ -3186,15 +3189,25 @@ export class Vault extends DurableObject<Env> {
         `vaults/${sourceVaultId}/` +
         row.r2_key.slice(`vaults/${this.vaultId}/`.length);
       const object = await this.env.FILES.get(original);
+      try {
+        this.requireMaintenanceAccess();
+      } catch (error) {
+        if (object) await object.body.cancel().catch(() => {});
+        throw error;
+      }
       if (!object) throw new AppError("conflict", "a source file is missing");
       const bytes = await object.arrayBuffer();
+      this.requireMaintenanceAccess();
       const digest = await crypto.subtle.digest("SHA-256", bytes);
+      this.requireMaintenanceAccess();
       await this.env.FILES.put(row.r2_key, bytes, {
         sha256: digest,
         httpMetadata: object.httpMetadata,
         customMetadata: object.customMetadata,
       });
+      this.requireMaintenanceAccess();
       const check = await this.env.FILES.head(row.r2_key);
+      this.requireMaintenanceAccess();
       if (
         !check ||
         check.size !== bytes.byteLength ||
@@ -3230,7 +3243,7 @@ export class Vault extends DurableObject<Env> {
     );
   }
   async activateImport(operationId: string, ownerId: string): Promise<void> {
-    requireMaintenanceFence(this.vaultId, this.env.RESTORE_FENCE_IDS);
+    this.requireMaintenanceAccess();
     if (
       this.meta("user_id") !== ownerId ||
       this.operations.importStatus(operationId).state !== "ready"
@@ -3240,6 +3253,15 @@ export class Vault extends DurableObject<Env> {
   }
 
   // ---------------------------------------------------------------- helpers
+
+  /** Both the external deployment fence and the Vault's live lifecycle must allow maintenance. */
+  private requireMaintenanceAccess(): void {
+    requireMaintenanceFence(this.vaultId, this.env.RESTORE_FENCE_IDS);
+    if (this.gone || !this.initialised || this.closing || this.destroying ||
+        !["open", "maintenance"].includes(this.meta("state") ?? "") ||
+        this.meta("account_deletion_intent") === "1")
+      throw new AppError("gone", "this account is being deleted");
+  }
 
   private requireOpen(): void {
     this.requireNotUnderMaintenance();
@@ -4124,7 +4146,7 @@ export class Vault extends DurableObject<Env> {
       } catch (error) {
         if (!canContinue()) return;
         // The platform's explicit not-found result is the only safe reason to create again.
-        if (isMissingWorkflowInstance(error) && run.state === "starting") {
+        if (isMissingWorkflowInstance(error, run.id) && run.state === "starting") {
           // The run may have been cancelled while get()/status() was pending.
           if (this.runs.get(run.id)?.state !== "starting") continue;
           if (this.hasUnsettledDispatch(run.id)) {
@@ -4142,7 +4164,7 @@ export class Vault extends DurableObject<Env> {
             this.runs.noteUncertain(run.id, "dispatch_uncertain");
             await this.redispatchUncertain(run.id);
           }
-        } else if (isMissingWorkflowInstance(error) && run.state === "cancel_requested" && !this.hasUnsettledDispatch(run.id))
+        } else if (isMissingWorkflowInstance(error, run.id) && run.state === "cancel_requested" && !this.hasUnsettledDispatch(run.id))
           this.finishCancelledRun(run);
         else if (!this.dispatchUncertain(run.id))
           this.runs.noteUncertain(run.id, "status_uncertain");
@@ -4467,7 +4489,7 @@ async function runStopped(
       status === "errored" || status === "terminated" || status === "complete"
     );
   } catch (error) {
-    return isMissingWorkflowInstance(error);
+    return isMissingWorkflowInstance(error, runId);
   }
 }
 

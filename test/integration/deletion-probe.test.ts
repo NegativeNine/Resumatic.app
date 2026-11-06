@@ -5,6 +5,7 @@ describe("deletion Workflow probe", () => {
   it.each([
     [Object.assign(new Error("workflow.not_found"), { code: 10200 }), null],
     [Object.assign(new Error("missing"), { status: 404 }), null],
+    [new Error("Workflow instance another-run not found"), null],
     [new Error("instance.not_found"), 0],
   ])("only treats explicit instance absence as zero remaining", async (failure, expected) => {
     const mock = {

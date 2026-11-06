@@ -113,12 +113,16 @@ export class VaultOperations {
         `SELECT rowid AS __transfer_rowid, * FROM "${table}" WHERE rowid > ? ORDER BY rowid LIMIT ?`,
         after,
         limit + 1,
-      )
-      .toArray();
+      );
     const rows: TransferValue[][] = [];
     let size = 0;
     let lastRowid = after;
-    for (const row of found.slice(0, limit)) {
+    let done = true;
+    for (const row of found) {
+      if (rows.length === limit) {
+        done = false;
+        break;
+      }
       const values = columns.map((column) => encode(row[column]!));
       const bytes = new TextEncoder().encode(JSON.stringify(values)).byteLength;
       if (size + bytes > MAX_PAGE_BYTES) {
@@ -127,6 +131,7 @@ export class VaultOperations {
             "too_large",
             "a row exceeds the transfer page limit",
           );
+        done = false;
         break;
       }
       rows.push(values);
@@ -138,11 +143,13 @@ export class VaultOperations {
       table,
       after,
       lastRowid,
-      done: found.length === rows.length,
+      done,
       columns,
       rows,
     };
-    return { ...page, sha256: await contentDigest(page) };
+    const sha256 = await contentDigest(page);
+    this.fenced();
+    return { ...page, sha256 };
   }
 
   beginImport(manifest: TransferManifest): ImportStatus {

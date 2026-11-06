@@ -1,6 +1,6 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setModels } from "../../src/ai/models";
 import { directory, vault } from "../../src/shared/stubs";
 import { vaultPrefix } from "../../src/shared/r2";
@@ -255,8 +255,35 @@ describe("maintenance replacement lifecycle", () => {
         .one(),
     );
     expect(charge).toEqual({ state: "unknown", max_cost_micros: 37 });
+    // A plan delivered after the snapshot may not exist in the target. The
+    // Directory must send its current revision again after publishing it.
+    await runInDurableObject(directory(env), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO billing_accounts(user_id,customer_id,entitlement,revision,delivered_revision) VALUES (?,?,'{}',3,3)`,
+        oldSession.uid, `cus_${crypto.randomUUID().replaceAll("-", "")}`,
+      );
+    });
+    // Publishing the new Vault and scheduling its pending entitlement must
+    // roll back together if alarm storage fails; a retry can then complete.
+    await runInDurableObject(directory(env), async (instance, state) => {
+      const getAlarm = vi.spyOn(state.storage, "getAlarm").mockResolvedValue(null);
+      const setAlarm = vi.spyOn(state.storage, "setAlarm").mockRejectedValue(new Error("alarm unavailable"));
+      try {
+        await expect(instance.cutover(oldSession.vid, targetVaultId, op)).rejects.toThrow("alarm unavailable");
+        const home = state.storage.sql.exec<{ vault_id: string }>(`SELECT vault_id FROM vaults WHERE user_id=?`, oldSession.uid).one();
+        const delivery = state.storage.sql.exec<{ delivered_revision: number }>(`SELECT delivered_revision FROM billing_accounts WHERE user_id=?`, oldSession.uid).one();
+        expect(home.vault_id).toBe(oldSession.vid);
+        expect(delivery.delivered_revision).toBe(3);
+      } finally { getAlarm.mockRestore(); setAlarm.mockRestore(); }
+    });
     await directory(env).cutover(oldSession.vid, targetVaultId, op);
     await directory(env).cutover(oldSession.vid, targetVaultId, op);
+    const delivery = await runInDurableObject(directory(env), (_instance, state) =>
+      state.storage.sql.exec<{ revision: number; delivered_revision: number }>(
+        `SELECT revision,delivered_revision FROM billing_accounts WHERE user_id=?`, oldSession.uid,
+      ).one(),
+    );
+    expect(delivery).toEqual({ revision: 3, delivered_revision: 0 });
     expect(await directory(env).existingIdentity("test", user.email)).toEqual({
       userId: oldSession.uid,
       vaultId: targetVaultId,

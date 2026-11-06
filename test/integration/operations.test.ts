@@ -88,6 +88,28 @@ async function exported(
 }
 
 describe("fenced vault transfer", () => {
+  it("continues after the page byte limit without dropping or duplicating rows", async () => {
+    await storage(stub(), async (ops, _embed, sql) => {
+      const text = "x".repeat(1024 * 1024);
+      for (let index = 0; index < 9; index++)
+        sql.exec(
+          `INSERT INTO sources (id,filename,r2_key,markdown,state,created_at) VALUES (?,?,?,?,'ready',1)`,
+          `source-${index}`, "resume.pdf", `vaults/test/sources/${index}`, text,
+        );
+      const manifest = ops.beginExport("move-large-pages");
+      const first = await ops.exportPage(manifest.operationId, "sources");
+      expect(first.done).toBe(false);
+      expect(first.rows.length).toBe(7);
+      const second = await ops.exportPage(manifest.operationId, "sources", first.lastRowid);
+      expect(second.done).toBe(true);
+      expect(second.rows.length).toBe(2);
+      const idIndex = first.columns.indexOf("id");
+      expect([...first.rows, ...second.rows].map((row) => row[idIndex])).toEqual(
+        Array.from({ length: 9 }, (_, index) => `source-${index}`),
+      );
+    });
+  });
+
   it("preserves content and evidence, rewrites file prefixes and installs fresh control state", async () => {
     const source = stub();
     const destination = stub();

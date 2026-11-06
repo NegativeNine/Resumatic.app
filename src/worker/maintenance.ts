@@ -211,7 +211,7 @@ maintenance.post("/deletion-audits/:id", async (c) => {
         await (await binding.get(run)).status();
         if (activeRuns !== null) activeRuns++;
       } catch (error) {
-        if (!isMissingWorkflowInstance(error)) activeRuns = null;
+        if (!isMissingWorkflowInstance(error, run)) activeRuns = null;
       }
     }
   }
