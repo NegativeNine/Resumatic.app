@@ -76,6 +76,12 @@ const Case = z
     origin: z.enum(["synthetic", "real"]),
     format: z.enum(["pdf", "docx"]),
     language: z.string().regex(/^[a-z]{2,3}(?:-[A-Z]{2})?$/),
+    // These fields describe independently reviewed source characteristics.
+    // They are optional for older manifests but required for full coverage.
+    pdfTagged: z.boolean().optional(),
+    pageCount: z.number().int().positive().max(1000).optional(),
+    documentKind: z.enum(["resume", "academic-cv"]).optional(),
+    dateTraps: z.array(z.enum(["odd-date", "numbers-in-dates"])).max(2).optional(),
     layout: z.enum([
       "single-column",
       "two-column",
@@ -284,6 +290,9 @@ export function loadPrivateDataset(path) {
     const cases = manifest.cases.map((entry) => {
       if (ids.has(entry.id)) return fail();
       ids.add(entry.id);
+      if ((entry.format !== "pdf" && entry.pdfTagged !== undefined) ||
+          (entry.dateTraps && new Set(entry.dateTraps).size !== entry.dateTraps.length))
+        return fail();
       if (
         entry.origin === "real" &&
         (!entry.consent || !entry.labeling.evidence)
@@ -370,6 +379,10 @@ export function loadPrivateDataset(path) {
           format: entry.format,
           language: entry.language,
           layout: entry.layout,
+          pdfTagged: entry.pdfTagged,
+          pageCount: entry.pageCount,
+          documentKind: entry.documentKind,
+          dateTraps: entry.dateTraps ?? [],
         },
       };
     });

@@ -362,6 +362,20 @@ export function assessPromotion(root, runId, auditPath) {
         addReason(pending, "holdout_format_coverage_missing");
       if (holdout.filter((c) => c.gold.traps.length > 0).length < 3)
         addReason(pending, "holdout_trap_coverage_missing");
+      // These source characteristics are reviewed operator attestations, not
+      // proof of conversion accuracy or truthful labels. Count the complete
+      // corpus: the roadmap requires these slices across development and holdout.
+      if (![true, false].every((tagged) => dataset.cases.some((c) => c.meta.format === "pdf" && c.meta.pdfTagged === tagged)))
+        addReason(pending, "pdf_tagging_coverage_missing");
+      if (!["two-column", "table"].every((layout) => dataset.cases.some((c) => c.meta.layout === layout)) ||
+          !dataset.cases.some((c) => c.meta.format === "pdf" && c.meta.layout === "scanned"))
+        addReason(pending, "layout_coverage_missing");
+      if (!["es", "de"].every((language) => dataset.cases.some((c) => c.meta.language.split("-")[0] === language)))
+        addReason(pending, "language_coverage_missing");
+      if (!dataset.cases.some((c) => c.meta.documentKind === "academic-cv" && (c.meta.pageCount ?? 0) >= 5))
+        addReason(pending, "long_academic_cv_missing");
+      if (!["odd-date", "numbers-in-dates"].every((trap) => dataset.cases.some((c) => c.meta.dateTraps.includes(trap))))
+        addReason(pending, "date_trap_coverage_missing");
       const successes = records.filter((r) => r.outcome === "ok" && r.score),
         failures = records.length - successes.length;
       const sum = (field) => successes.reduce((n, r) => n + r.score[field], 0);

@@ -119,8 +119,12 @@ function dataset() {
       split,
       origin: real ? "real" : "synthetic",
       format,
-      language: "en",
-      layout: "single-column",
+      language: i === 1 ? "es" : i === 2 ? "de" : "en",
+      layout: i === 0 ? "two-column" : i === 1 ? "table" : i === 2 ? "scanned" : "single-column",
+      ...(format === "pdf" ? { pdfTagged: i % 4 === 0 } : {}),
+      pageCount: i === 5 ? 5 : 1,
+      documentKind: i === 5 ? "academic-cv" : "resume",
+      dateTraps: i === 6 ? ["odd-date", "numbers-in-dates"] : [],
       source,
       markdown: converted,
       gold: labels,
@@ -375,6 +379,40 @@ describe("private extraction evaluation evidence", () => {
       status: "pending",
       missing: ["DELETION_INVENTORY_AUDIT_UNAVAILABLE", "MANUAL_RESUME_EDIT_GROUNDING_UNAVAILABLE"],
     });
+  });
+  it("keeps promotion pending when any roadmap corpus slice is missing", () => {
+    const scenarios: [string, (entry: any) => void][] = [
+      ["pdf_tagging_coverage_missing", (entry) => { if (entry.pdfTagged === true) delete entry.pdfTagged; }],
+      ["pdf_tagging_coverage_missing", (entry) => { if (entry.pdfTagged === false) delete entry.pdfTagged; }],
+      ...["two-column", "table", "scanned"].map((layout): [string, (entry: any) => void] =>
+        ["layout_coverage_missing", (entry) => { if (entry.layout === layout) entry.layout = "single-column"; }]),
+      ...["es", "de"].map((language): [string, (entry: any) => void] =>
+        ["language_coverage_missing", (entry) => { if (entry.language === language) entry.language = "en"; }]),
+      ["long_academic_cv_missing", (entry) => { entry.pageCount = 1; }],
+      ...["odd-date", "numbers-in-dates"].map((trap): [string, (entry: any) => void] =>
+        ["date_trap_coverage_missing", (entry) => { entry.dateTraps = entry.dateTraps.filter((v: string) => v !== trap); }]),
+    ];
+    for (const [reason, removeCoverage] of scenarios) {
+      const { root, manifest } = dataset();
+      for (const entry of manifest.cases) removeCoverage(entry);
+      put(root, "manifest.json", JSON.stringify(manifest));
+      const { audit, written } = snapshot(root);
+      saveAudit(root, audit);
+      const report = assessPromotion(root, written.runId, "audit.json");
+      expect(report.winner, reason).toBeNull();
+      expect(report.results[0]!.pending, reason).toContain(reason);
+    }
+  });
+  it("does not treat PDF tag attestations on DOCX or repeated trap labels as valid evidence", () => {
+    const { root, manifest } = dataset();
+    const docx = manifest.cases.find((c) => c.format === "docx")! as any;
+    docx.pdfTagged = true;
+    put(root, "manifest.json", JSON.stringify(manifest));
+    expect(() => loadPrivateDataset(root)).toThrow(/^private_dataset_invalid$/);
+    delete docx.pdfTagged;
+    docx.dateTraps = ["odd-date", "odd-date"];
+    put(root, "manifest.json", JSON.stringify(manifest));
+    expect(() => loadPrivateDataset(root)).toThrow(/^private_dataset_invalid$/);
   });
   it("keeps missing audits, missing adjudication, and unpriced usage pending", () => {
     const { root } = dataset();

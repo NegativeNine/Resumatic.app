@@ -10,6 +10,10 @@ export interface PrivateCase {
     format: "pdf" | "docx";
     language: string;
     layout: string;
+    pdfTagged?: boolean;
+    pageCount?: number;
+    documentKind?: "resume" | "academic-cv";
+    dateTraps: ("odd-date" | "numbers-in-dates")[];
   };
 }
 export interface PrivateDataset {
