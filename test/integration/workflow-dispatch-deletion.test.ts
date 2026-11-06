@@ -97,6 +97,8 @@ describe("deletion and Workflow dispatch", () => {
         state.storage.sql.exec(`INSERT INTO applications (id, jd_text, created_at) VALUES (?, 'old job', 1)`, appId);
         state.storage.sql.exec(`INSERT INTO resumes (id, application_id, state, run_id, created_at) VALUES (?, ?, 'ready', ?, 1)`, oldResume, appId, oldResume);
         // This fixture rewinds to the era before Workflow dispatch markers.
+        state.storage.sql.exec(`DROP TRIGGER clear_source_write_link`);
+        state.storage.sql.exec(`DROP TABLE source_write_links`);
         state.storage.sql.exec(`DROP TABLE export_cache_chunks`);
         state.storage.sql.exec(`DROP TABLE export_cache`);
         state.storage.sql.exec(`DROP TABLE application_create_requests`);

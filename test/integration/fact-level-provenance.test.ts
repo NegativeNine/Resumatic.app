@@ -63,6 +63,8 @@ describe("fact level provenance", () => {
       const sql = state.storage.sql;
       // Restore the actual schema before this historic migration, including
       // removing the later export-cache tables before replaying migrations.
+      sql.exec(`DROP TRIGGER clear_source_write_link`);
+      sql.exec(`DROP TABLE source_write_links`);
       sql.exec(`DROP TABLE export_cache_chunks`);
       sql.exec(`DROP TABLE export_cache`);
       sql.exec(`DROP TABLE application_create_requests`);

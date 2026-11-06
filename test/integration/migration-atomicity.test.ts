@@ -41,6 +41,8 @@ function priorVersion(fragment: string): number {
 
 /** Restore the schema state before the later export-cache migration. */
 function removeExportCacheMigration(sql: SqlStorage): void {
+  sql.exec(`DROP TRIGGER clear_source_write_link`);
+  sql.exec(`DROP TABLE source_write_links`);
   sql.exec(`DROP TABLE export_cache_chunks`);
   sql.exec(`DROP TABLE export_cache`);
 }
@@ -403,6 +405,30 @@ describe("atomic schema migrations", () => {
       migrate(sql, tx);
       expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(SCHEMA_VERSION));
       expect(sql.exec(`SELECT name FROM sqlite_master WHERE name IN ('export_cache','export_cache_chunks')`).toArray()).toHaveLength(2);
+    });
+  });
+
+  it("atomically migrates source-write links while preserving unattributed legacy markers", async () => {
+    const stub = env.VAULT.get(env.VAULT.newUniqueId());
+    await stub.init("migration-owner");
+    const attempt = crypto.randomUUID();
+    await stub.beginCacheWrite({ userId: "migration-owner", gen: 1 }, attempt, "source", "a".repeat(64));
+    await runInDurableObject(stub, async (instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec(`DROP TRIGGER clear_source_write_link`);
+      sql.exec(`DROP TABLE source_write_links`);
+      const previous = priorVersion("CREATE TABLE source_write_links");
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrate(failAtTrigger(sql, "clear_source_write_link"), tx)).toThrow(/synthetic migration interruption/);
+      expect(sql.exec<{value:string}>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(previous));
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name IN ('source_write_links','clear_source_write_link')`).toArray()).toEqual([]);
+      expect(sql.exec<{attempt_id:string}>(`SELECT attempt_id FROM r2_cache_dispatches`).one().attempt_id).toBe(attempt);
+      migrate(sql, tx);
+      expect(sql.exec<{value:string}>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(SCHEMA_VERSION));
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name IN ('source_write_links','clear_source_write_link')`).toArray()).toHaveLength(2);
+      expect(sql.exec(`SELECT attempt_id FROM source_write_links`).toArray()).toHaveLength(0);
+      await expect(instance.close()).rejects.toThrow("source write is unresolved");
     });
   });
 
