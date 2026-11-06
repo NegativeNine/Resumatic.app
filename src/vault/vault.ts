@@ -1723,6 +1723,48 @@ export class Vault extends DurableObject<Env> {
     return result;
   }
 
+  /** Remove one line from a new review version; old versions and shares are immutable. */
+  removeLegacyLine(who: Who, resumeId: string, lineId: string, expectedVersion: number): { version: number } {
+    this.requireOwner(who);
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || !lineId || lineId.length > 256)
+      throw new AppError("invalid", "the line and resume version are required");
+    const result = this.ctx.storage.transactionSync(() => {
+      this.requireOwner(who);
+      const row = this.resumeRow(resumeId);
+      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "the resume is not ready");
+      if (row.version === expectedVersion + 1) {
+        const saved = this.snapshots.read(resumeId, row.version);
+        if (saved?.provenance === "legacy" && saved.legacyRemoved?.fromVersion === expectedVersion && saved.legacyRemoved.lineId === lineId)
+          return { version: row.version };
+      }
+      if (row.version !== expectedVersion) throw new AppError("conflict", "the resume changed; refresh and try again");
+      if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
+        throw new AppError("conflict", "wait for the current document to finish");
+      const base = this.resumeVersion(row);
+      if (base.provenance !== "legacy") throw new AppError("conflict", "only a review version can remove a line");
+      const body = structuredClone(base.render.body);
+      const matches = Number(body.summary?.id === lineId) + body.sections.reduce((n, section) => n + section.lines.filter((line) => line.id === lineId).length, 0);
+      if (matches !== 1) throw new AppError("conflict", "the review line is missing or ambiguous");
+      if (body.summary?.id === lineId) body.summary = null;
+      body.sections = body.sections.flatMap((section) => {
+        if (!section.lines.some((line) => line.id === lineId)) return [section];
+        const lines = section.lines.filter((line) => line.id !== lineId);
+        return lines.length ? [{ ...section, lines }] : [];
+      });
+      const receipts = { ...base.legacyReceipts };
+      delete receipts[lineId];
+      const version = row.version + 1;
+      this.snapshots.save(resumeId, version, {
+        ...base, render: { ...base.render, body, version }, legacyReceipts: receipts,
+        legacyRemoved: { fromVersion: expectedVersion, lineId },
+      });
+      this.sql.exec(`UPDATE resumes SET body=?,version=? WHERE id=?`, JSON.stringify(body), version, resumeId);
+      return { version };
+    });
+    this.broadcast("resume", resumeId);
+    return result;
+  }
+
   /** Promote only a fully rechecked current legacy version; never mutate history. */
   finalizeLegacyResume(who: Who, resumeId: string, expectedVersion: number): { version: number } {
     this.requireOwner(who);

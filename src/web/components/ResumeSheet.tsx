@@ -56,7 +56,7 @@ export function ResumeSheet({
   const review = resume.provenance === "legacy" ? resume.legacyReview : undefined;
   const verified = new Set(review?.verifiedLineIds ?? []);
   const verifiedCount = lineIds.filter((id) => verified.has(id)).length;
-  const readyToFinalize = !!review && review.totalLines === lineIds.length &&
+  const readyToFinalize = !!review && (lineIds.length > 0 || body.skills.length > 0) && review.totalLines === lineIds.length &&
     verifiedCount === lineIds.length && review.headersReady && review.skillsReady;
   // The server applies the same guard to saved exports. Keep historical data
   // visible for recovery even when it cannot be downloaded or shared.

@@ -81,6 +81,17 @@ describe("numbers", () => {
     expect(unsupportedNumbers("Changed by -$5", "changed by negative $five")).toEqual([]);
   });
 
+  it("does not reuse explicit years as counts or counts as dates", () => {
+    expect(unsupportedNumbers("Managed 2021 employees", "Worked from 2019–2021")).toEqual(["2021"]);
+    expect(unsupportedNumbers("Worked in 2021", "Managed 2021 employees")).toEqual(["2021"]);
+    expect(unsupportedNumbers("Worked in 2021", "Worked from 2019–2021")).toEqual([]);
+    expect(unsupportedNumbers("Managed 2021 employees", "Managed 2021 employees")).toEqual([]);
+    expect(unsupportedNumbers("Started in 2021", "Started March 2021")).toEqual([]);
+    expect(unsupportedNumbers("Managed 2021 employees", "Started 2021-03-01")).toEqual(["2021"]);
+    expect(unsupportedNumbers("Managed 3 employees", "Started 2021/03/01")).toEqual(["3"]);
+    expect(unsupportedNumbers("Managed 1 employee", "Started 2021/03/01")).toEqual(["1"]);
+  });
+
   it("detects leading-dot decimals and scientific notation without dropping extreme values", () => {
     expect(unsupportedNumbers("Reduced cost by .5%", "reduced cost")).toEqual([".5%"]);
     expect(unsupportedNumbers("Reduced cost by .5%", "reduced cost by 0.5%")).toEqual([]);

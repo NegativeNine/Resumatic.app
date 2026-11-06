@@ -66,6 +66,77 @@ async function checkLine(user: User, applicationId: string, resumeId: string, ve
 }
 
 describe("legacy resume remediation", () => {
+  it("removes an unwanted review line without losing other checks or changing shared history", async () => {
+    const { user, applicationId, resumeId, original, version, oldGrantId, shareCookie } = await fixture("blockedSnapshot");
+    const before = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    const beforeGrant = (await user.json<{ shares: { id: string; snapshot: unknown }[] }>("/api/export")).shares.find((item) => item.id === oldGrantId);
+    expect((await user.send("POST", `/api/resumes/${resumeId}/grounding-review`, { expectedVersion: version })).status).toBe(200);
+    expect((await checkLine(user, applicationId, resumeId, version + 1, "legacy-duplicate", original.text, original.factIds)).state).toBe("ready");
+    const checked = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(checked.legacyReview?.verifiedLineIds).toEqual(["legacy-duplicate"]);
+    const path = `/api/resumes/${resumeId}/legacy-remove-line`;
+    const input = { expectedVersion: checked.version, lineId: original.id };
+    const stranger = await signIn();
+    expect((await stranger.send("POST", path, input)).status).toBe(404);
+    const removed = await user.send("POST", path, input);
+    expect(removed.status, await removed.clone().text()).toBe(200);
+    expect(await removed.json()).toEqual({ version: checked.version + 1 });
+    expect(await (await user.send("POST", path, input)).json()).toEqual({ version: checked.version + 1 });
+    expect((await user.send("POST", path, { ...input, lineId: "legacy-duplicate" })).status).toBe(409);
+    const reviewed = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(reviewed.legacyReview).toMatchObject({ verifiedLineIds: ["legacy-duplicate"], totalLines: 1 });
+    expect(reviewed.body!.sections.flatMap((s) => s.lines).map((line) => line.id)).toEqual(["legacy-duplicate"]);
+    expect((await user.send("POST", `/api/resumes/${resumeId}/legacy-finalize`, { expectedVersion: reviewed.version })).status).toBe(200);
+    expect((await user.fetch(`/api/resumes/${resumeId}/preview`)).status).toBe(200);
+    expect((await user.send("POST", path, { lineId: "legacy-duplicate", expectedVersion: reviewed.version + 1 })).status).toBe(409);
+    expect((await user.json<ResumeView>(`/api/resumes/${resumeId}?version=${version}`)).body).toEqual(before.body);
+    expect((await call("/share/snapshot", { cookie: shareCookie })).status).toBe(410);
+    const afterGrant = (await user.json<{ shares: { id: string; snapshot: unknown }[] }>("/api/export")).shares.find((item) => item.id === oldGrantId);
+    expect(afterGrant?.snapshot).toEqual(beforeGrant?.snapshot);
+  }, 30_000);
+
+  it("does not finalize an empty review after every line is removed", async () => {
+    const { user, resumeId, original, version } = await fixture("legacy");
+    const path = `/api/resumes/${resumeId}/legacy-remove-line`;
+    expect((await user.send("POST", path, { lineId: original.id, expectedVersion: version })).status).toBe(200);
+    expect((await user.send("POST", path, { lineId: "legacy-duplicate", expectedVersion: version + 1 })).status).toBe(200);
+    const empty = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(empty.legacyReview?.totalLines).toBe(0);
+    expect((await user.send("POST", `/api/resumes/${resumeId}/legacy-finalize`, { expectedVersion: empty.version })).status).toBe(409);
+    expect((await user.fetch(`/api/resumes/${resumeId}/preview`)).status).toBe(409);
+    expect((await user.send("POST", path, { lineId: "legacy-duplicate", expectedVersion: version + 1 })).status).toBe(200);
+  }, 30_000);
+
+  it("drops a removed line's receipt while preserving receipts for the remaining lines", async () => {
+    const { user, applicationId, resumeId, original, version, stub } = await fixture("legacy");
+    expect((await checkLine(user, applicationId, resumeId, version, original.id, original.text, original.factIds)).state).toBe("ready");
+    expect((await checkLine(user, applicationId, resumeId, version + 1, "legacy-duplicate", original.text, original.factIds)).state).toBe("ready");
+    const checkedVersion = version + 2;
+    expect((await user.send("POST", `/api/resumes/${resumeId}/legacy-remove-line`, { lineId: original.id, expectedVersion: checkedVersion })).status).toBe(200);
+    const after = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(after.legacyReview?.verifiedLineIds).toEqual(["legacy-duplicate"]);
+    await runInDurableObject(stub, (_instance, state) => {
+      const read = (v: number) => JSON.parse(state.storage.sql.exec<{ data: string }>("SELECT data FROM resume_versions WHERE resume_id=? AND version=?", resumeId, v).one().data);
+      expect(Object.keys(read(checkedVersion).legacyReceipts).sort()).toEqual([original.id, "legacy-duplicate"].sort());
+      expect(Object.keys(read(after.version).legacyReceipts)).toEqual(["legacy-duplicate"]);
+    });
+    expect((await user.send("POST", `/api/resumes/${resumeId}/legacy-finalize`, { expectedVersion: after.version })).status).toBe(200);
+  }, 30_000);
+
+  it("serializes simultaneous removals from the same review version", async () => {
+    const { user, resumeId, original, version } = await fixture("legacy");
+    const path = `/api/resumes/${resumeId}/legacy-remove-line`;
+    const requests = [original.id, "legacy-duplicate"].map((lineId) => ({ lineId, expectedVersion: version }));
+    const results = await Promise.all(requests.map((body) => user.send("POST", path, body)));
+    expect(results.map((result) => result.status).sort()).toEqual([200, 409]);
+    const winner = results.findIndex((result) => result.status === 200);
+    const after = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(after.version).toBe(version + 1);
+    expect(after.body!.sections.flatMap((section) => section.lines)).toHaveLength(1);
+    expect((await user.send("POST", path, requests[winner])).status).toBe(200);
+    expect((await user.send("POST", path, requests[1 - winner])).status).toBe(409);
+  }, 30_000);
+
   it("requires a blocked current snapshot and an owner before starting review", async () => {
     const { user, resumeId, version } = await fixture("verifiedSnapshot");
     expect((await user.fetch(`/api/resumes/${resumeId}/preview`)).status).toBe(200);

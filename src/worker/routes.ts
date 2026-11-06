@@ -14,6 +14,7 @@ import { renderPdf } from "../render/pdf";
 import { PILOT_IDENTITY_PATHS, PILOT_MAX_CALLS, PILOT_MAX_MICROS } from "./pilot/ledger";
 import { stagingPilotBudget } from "./pilot/access";
 import { createArchive, MAX_ARCHIVE_BYTES, type ArchiveEntry } from "../render/archive";
+import { guardedStream } from "./guarded-stream";
 import { billingConfig } from "../shared/billing";
 import { verifyStripe, parseStripeEvent, stripeClient } from "./billing";
 import {
@@ -580,12 +581,19 @@ api.get("/sources/:id/file", async (c) => {
   );
   const object = await c.env.FILES.get(r2Key);
   if (!object) throw new AppError("not_found", "the file is no longer stored");
-  await myVault(c).checkSession(c.get("who"));
+  const v = myVault(c);
+  const who = c.get("who");
+  try {
+    await v.checkSession(who);
+  } catch (error) {
+    await object.body.cancel().catch(() => {});
+    throw error;
+  }
   const extension = filename.split(".").pop()?.toLowerCase() ?? "";
   const name = origin === "ocr"
     ? `${fileName(filename.replace(/\s*\(image transcription\)$/i, "").replace(/\.[^.]*$/, ""))}-image-inputs.json`
     : `${fileName(filename.replace(/\.[^.]*$/, ""))}${ALLOWED_UPLOADS[extension] ? `.${extension}` : ""}`;
-  return new Response(object.body, {
+  return new Response(guardedStream(object.body, () => v.checkSession(who)), {
     headers: {
       "content-type": origin === "ocr"
         ? "application/json"
@@ -740,6 +748,11 @@ api.patch("/resumes/:id/lines/:lineId", JSON_LIMIT, async (c) => {
 api.post("/resumes/:id/legacy-finalize", JSON_LIMIT, async (c) => {
   const { expectedVersion } = await jsonBody(c, z.object({ expectedVersion: z.number().int().positive() }));
   return c.json(await myVault(c).finalizeLegacyResume(c.get("who"), c.req.param("id"), expectedVersion));
+});
+
+api.post("/resumes/:id/legacy-remove-line", JSON_LIMIT, async (c) => {
+  const { lineId, expectedVersion } = await jsonBody(c, z.object({ lineId: z.string().min(1).max(256), expectedVersion: z.number().int().positive() }));
+  return c.json(await myVault(c).removeLegacyLine(c.get("who"), c.req.param("id"), lineId, expectedVersion));
 });
 
 api.post("/resumes/:id/grounding-review", JSON_LIMIT, async (c) => {
@@ -1003,11 +1016,10 @@ api.patch("/applications/:id", JSON_LIMIT, async (c) => {
     c,
     z.object({
       status: z.enum(APPLICATION_STATUSES).optional(),
-      appliedAt: z
-        .string()
-        .regex(/^\d{4}-\d{2}-\d{2}$/)
-        .nullable()
-        .optional(),
+      // HTML date inputs cannot display impossible dates or year zero. Reject
+      // them at the API boundary as well, including non-leap February 29.
+      appliedAt: z.iso.date().refine((date) => !date.startsWith("0000-"))
+        .nullable().optional(),
       notes: z.string().max(10000).optional(),
       expectedRevision: z.number().int().positive().optional(),
     }),

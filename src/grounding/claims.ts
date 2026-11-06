@@ -9,6 +9,8 @@ export interface NumberToken {
   multiplier: boolean;
   currency: "dollar" | "euro" | "sterling" | "conflicting" | null;
   raw: string;
+  /** A number in an explicit date context, not an achievement count. */
+  date: boolean;
 }
 
 const NUMBER_WORDS: Record<string, number> = {
@@ -56,9 +58,24 @@ function isMultiplier(unit: string): boolean {
   return /^(?:x|×|times|-?fold)$/.test(unit);
 }
 
+/** Identify common explicit year contexts; ambiguous cases still need the model judge. */
+function isDateYear(text: string, index: number, digits: string): boolean {
+  if (!/^(?:19|20)\d{2}$/.test(digits)) return false;
+  const before = text.slice(Math.max(0, index - 32), index);
+  const after = text.slice(index + digits.length, index + digits.length + 32);
+  return /\b(?:in|during|since|from|to|until|through|by|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+$/i.test(before) ||
+    /\b(?:19|20)\d{2}\s*(?:[-–—]|to|through)\s*$/i.test(before) ||
+    /^\s*(?:[-–—]|to|through)\s*(?:(?:19|20)\d{2}|present|current|now)\b/i.test(after) ||
+    /^[-/]\d{1,2}(?:[-/]\d{1,2})?\b/.test(after);
+}
+
 /** Every number in the text, with scale words applied and percentages flagged. */
 export function numbersIn(text: string): NumberToken[] {
   const out: NumberToken[] = [];
+  // Mark every component of an explicit ISO-style date, including its month
+  // and day. Otherwise those values can be reused as unrelated counts.
+  const numericDates = [...text.matchAll(/\b(?:19|20)\d{2}[-/.](?:0?[1-9]|1[0-2])(?:[-/.](?:0?[1-9]|[12]\d|3[01]))?\b/g)]
+    .map((match) => [match.index, match.index + match[0].length] as const);
   for (const match of text.matchAll(NUMBER)) {
     const digits = (match[4] ?? "").replace(/,/g, "");
     const unit = (match[5] ?? "").toLowerCase().replace(/\s+/g, " ");
@@ -76,7 +93,9 @@ export function numbersIn(text: string): NumberToken[] {
     const suffixCurrency = currencyOf(match[6]);
     // Conflicting units cannot be treated as any supported quantity.
     const currency = prefixCurrency && suffixCurrency && prefixCurrency !== suffixCurrency ? "conflicting" : prefixCurrency ?? suffixCurrency;
-    out.push({ value, percent, multiplier: isMultiplier(unit), currency, raw: match[0].trim() });
+    const digitIndex = match.index + match[0].indexOf(match[4]!);
+    const date = numericDates.some(([start, end]) => digitIndex >= start && digitIndex < end) || isDateYear(text, digitIndex, digits);
+    out.push({ value, percent, multiplier: isMultiplier(unit), currency, raw: match[0].trim(), date });
   }
   for (const match of text.matchAll(WORD_NUMBER)) {
     const magnitude = NUMBER_WORDS[match[1]!.toLowerCase()];
@@ -87,7 +106,7 @@ export function numbersIn(text: string): NumberToken[] {
     const prefixCurrency = currencyOf(prefix);
     const suffixCurrency = currencyOf(match[3]);
     const currency = prefixCurrency && suffixCurrency && prefixCurrency !== suffixCurrency ? "conflicting" : prefixCurrency ?? suffixCurrency;
-    out.push({ value, percent: unit === "%" || unit === "percent" || unit === "per cent", multiplier: isMultiplier(unit), currency, raw: match[0].trim() });
+    out.push({ value, percent: unit === "%" || unit === "percent" || unit === "per cent", multiplier: isMultiplier(unit), currency, raw: match[0].trim(), date: false });
   }
   return out;
 }
@@ -96,7 +115,7 @@ function sameNumber(a: NumberToken, b: NumberToken): boolean {
   if (!Number.isFinite(a.value) || !Number.isFinite(b.value)) return false;
   if ((Number.isInteger(a.value) && !Number.isSafeInteger(a.value)) ||
       (Number.isInteger(b.value) && !Number.isSafeInteger(b.value))) return false;
-  return a.currency !== "conflicting" && b.currency !== "conflicting" && a.percent === b.percent && a.multiplier === b.multiplier && a.currency === b.currency && Math.abs(a.value - b.value) <= 2 * Number.EPSILON * Math.max(1, Math.abs(a.value), Math.abs(b.value));
+  return a.currency !== "conflicting" && b.currency !== "conflicting" && a.percent === b.percent && a.multiplier === b.multiplier && a.currency === b.currency && a.date === b.date && Math.abs(a.value - b.value) <= 2 * Number.EPSILON * Math.max(1, Math.abs(a.value), Math.abs(b.value));
 }
 
 /** Numbers in the claim that no evidence number matches. */

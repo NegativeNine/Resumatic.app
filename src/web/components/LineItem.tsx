@@ -42,6 +42,7 @@ export function LineItem({
   readOnly = false,
 }: Props) {
   const [editing, setEditing] = useState(false);
+  const removal = useAction();
   const ref = useRef<HTMLLIElement>(null);
   const id = useId();
   const cited: CitedFact[] = line.factIds.flatMap((factId) =>
@@ -99,7 +100,17 @@ export function LineItem({
             {legacyReview === "pending" ? "Review line" : "Edit line"}
           </button>
         )}
+        {!editing && !readOnly && legacyReview && expectedVersion !== undefined && (
+          <button type="button" className="link-button" disabled={removal.pending} aria-describedby={`${id}-text`}
+            onClick={() => void removal.run(async () => {
+              await api.removeLegacyLine(resumeId, line.id, expectedVersion);
+              await reload();
+            })}>
+            {removal.pending ? "Removing…" : "Remove line"}
+          </button>
+        )}
       </div>
+      <ActionError message={removal.error} />
       <div className="evidence" id={`${id}-evidence`} hidden={!expanded}>
         {legacyReview === "pending"
           ? <p className="meta">This older line's citations have not been rechecked. Select confirmed facts when reviewing it.</p>

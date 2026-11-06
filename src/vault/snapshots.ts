@@ -30,6 +30,8 @@ export interface ResumeVersion {
   legacyFinalizedFrom?: number;
   /** Identifies an explicit transition from a blocked snapshot to review. */
   reviewStartedFrom?: number;
+  /** Identifies an idempotently removed line in a review version. */
+  legacyRemoved?: { fromVersion: number; lineId: string };
   provenance: "snapshot" | "legacy";
 }
 

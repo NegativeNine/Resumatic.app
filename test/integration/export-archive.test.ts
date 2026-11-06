@@ -112,4 +112,13 @@ describe("portable vault archive", () => {
     const response = await call("/api/export/archive");
     expect(response.ok).toBe(false);
   });
+
+  it("stops an unconsumed original-file download when the session is revoked", async () => {
+    const user = await signIn();
+    const file = await source(user);
+    const response = await user.fetch(`/api/sources/${file.sourceId}/file`);
+    expect(response.status).toBe(200);
+    expect((await user.send("POST", "/api/account/sign-out-everywhere")).status).toBe(204);
+    await expect(response.arrayBuffer()).rejects.toThrow();
+  });
 });
