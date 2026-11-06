@@ -516,8 +516,9 @@ export class Vault extends DurableObject<Env> {
   }
 
   /** Record a cache write before the Worker can send it to R2. */
-  beginCacheWrite(who: Who, attemptId: string, kind: "pdf" | "docx" | "source", keyDigest?: string): void {
+  beginCacheWrite(who: Who, attemptId: string, kind: "pdf" | "docx", keyDigest?: string): void {
     this.requireOwner(who);
+    if (!["pdf", "docx"].includes(kind)) throw new AppError("invalid", "invalid cache write attempt");
     this.recordR2Dispatch(attemptId, kind, keyDigest);
   }
 
@@ -531,7 +532,7 @@ export class Vault extends DurableObject<Env> {
     this.sql.exec(`INSERT INTO r2_cache_dispatches (attempt_id,kind,created_at,key_digest) VALUES (?,?,?,?)`, attemptId, kind, Date.now(), keyDigest ?? null);
   }
 
-  /** A known R2 acknowledgement can settle its own opaque attempt after revocation. */
+  /** A known legacy export-cache acknowledgement can settle its own attempt after revocation. */
   finishCacheWrite(userId: string, attemptId: string): void {
     if (this.gone || !this.initialised || this.meta("user_id") !== userId)
       throw new AppError("forbidden", "not this user's vault");
@@ -539,7 +540,12 @@ export class Vault extends DurableObject<Env> {
     // intentionally survives sign-out and closure, but may clear only its ID.
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(attemptId))
       throw new AppError("invalid", "invalid cache write attempt");
-    this.sql.exec(`DELETE FROM r2_cache_dispatches WHERE attempt_id = ?`, attemptId);
+    // This RPC belongs to legacy Worker-owned export writes. Source writes
+    // are now Vault-owned and may be settled only by their own put handler.
+    // An older Worker that tries to settle one stays blocked for review.
+    if (this.sql.exec(`SELECT attempt_id FROM r2_cache_dispatches WHERE attempt_id = ? AND kind = 'source'`, attemptId).toArray().length)
+      throw new AppError("unavailable", "source write requires its original acknowledgement");
+    this.sql.exec(`DELETE FROM r2_cache_dispatches WHERE attempt_id = ? AND kind IN ('pdf', 'docx')`, attemptId);
   }
 
   /** Authenticate and close access atomically, before the cross-object deletion call. */
@@ -829,7 +835,9 @@ export class Vault extends DurableObject<Env> {
       // No await between observing the acknowledgement and clearing its fence.
       // This settlement remains allowed after closure, but cannot clear another
       // attempt or resurrect the source.
-      this.finishCacheWrite(who.userId, attemptId);
+      if (this.gone || !this.initialised || this.meta("user_id") !== who.userId)
+        throw new AppError("unavailable", "the upload acknowledgement requires review");
+      this.sql.exec(`DELETE FROM r2_cache_dispatches WHERE attempt_id = ? AND kind = 'source'`, attemptId);
     })();
     // Let the object observe a late acknowledgement after the Worker
     // disconnects when the runtime permits; this is not an erasure guarantee.

@@ -140,7 +140,9 @@ it("keeps a lost copy acknowledgement fenced even if a later copy succeeds", asy
     expect((error as Error).message).not.toContain("synthetic lost copy acknowledgement");
     await expect(instance.finishImport(operationId, sourceId)).rejects.toThrow("source write is unresolved");
     expect(calls).toBe(2);
-    expect(state.storage.sql.exec(`SELECT attempt_id FROM r2_cache_dispatches WHERE kind='source'`).toArray()).toHaveLength(1);
+    const attempts = state.storage.sql.exec<{ attempt_id: string }>(`SELECT attempt_id FROM r2_cache_dispatches WHERE kind='source'`).toArray();
+    expect(attempts).toHaveLength(1);
+    expect(() => instance.finishCacheWrite("copy-owner", attempts[0]!.attempt_id)).toThrow(/original acknowledgement/);
     await expect(instance.close()).rejects.toThrow("source write is unresolved");
   });
 }, 30_000);

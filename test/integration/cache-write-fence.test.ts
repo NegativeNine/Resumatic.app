@@ -97,10 +97,10 @@ it("retains an uncertain put marker through closure and rejects another owner", 
   });
 });
 
-it("settles an acknowledged attempt after sign-out without reopening the old session", async () => {
+it.each(["pdf", "docx"] as const)("settles an acknowledged %s cache attempt after sign-out without reopening the old session", async (kind) => {
   const { who, stub } = await account();
   const id = crypto.randomUUID();
-  await stub.beginCacheWrite(who, id, "pdf");
+  await stub.beginCacheWrite(who, id, kind);
   await stub.signOutEverywhere(who);
   await stub.finishCacheWrite(who.userId, id);
   expect(await stub.cacheWriteFences()).toMatchObject({ status: "available", total: 0, attempts: [] });

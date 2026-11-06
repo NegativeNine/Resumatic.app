@@ -640,9 +640,9 @@ describe("atomic schema migrations", () => {
     const stub = env.VAULT.get(env.VAULT.newUniqueId());
     await stub.init("migration-owner");
     const attempt = crypto.randomUUID();
-    await stub.beginCacheWrite({ userId: "migration-owner", gen: 1 }, attempt, "source", "a".repeat(64));
     await runInDurableObject(stub, async (instance, state) => {
       const sql = state.storage.sql;
+      sql.exec(`INSERT INTO r2_cache_dispatches (attempt_id,kind,created_at,key_digest) VALUES (?,'source',?,?)`, attempt, Date.now(), "a".repeat(64));
       sql.exec(`DROP TRIGGER clear_source_write_link`);
       sql.exec(`DROP TABLE source_write_links`);
       const previous = priorVersion("CREATE TABLE source_write_links");

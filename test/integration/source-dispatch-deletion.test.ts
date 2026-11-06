@@ -93,15 +93,17 @@ it("blocks closure after dispatch authorization, even if the Worker crashes befo
   const input = descriptor(stub.id.toString());
   await stub.reserveUpload(who, input);
   const attempt = crypto.randomUUID();
-  await runInDurableObject(stub, async (instance) => {
+  await runInDurableObject(stub, async (instance, state) => {
     expect(instance.beginSourceWrite(who, input, attempt, "b".repeat(64))).toEqual({});
     await expect(instance.close()).rejects.toThrow("source write is unresolved");
     await expect(instance.destroy()).rejects.toThrow("source write is unresolved");
     expect(() => instance.beginSourceWrite(who, input, crypto.randomUUID(), "b".repeat(64))).toThrow(/gone/);
     expect(() => instance.finishCacheWrite("another-user", attempt)).toThrow(/forbidden/);
-    // This is a stand-in for the original Worker's acknowledged put, not a
-    // timeout or an inferred acknowledgement after a crash.
-    instance.finishCacheWrite(who.userId, attempt);
+    expect(() => instance.finishCacheWrite(who.userId, attempt)).toThrow(/original acknowledgement/);
+    await expect(instance.close()).rejects.toThrow("source write is unresolved");
+    // Stand in for the owning Vault's acknowledged put; a Worker RPC cannot
+    // settle this source marker, even after closure.
+    state.storage.sql.exec(`DELETE FROM r2_cache_dispatches WHERE attempt_id=?`, attempt);
     await expect(instance.close()).resolves.toEqual({ distill: [], tailor: [] });
   });
 });
@@ -114,12 +116,12 @@ it("retains each concurrent put's fence until that put is acknowledged", async (
   await stub.reserveUpload(who, input);
   const first = crypto.randomUUID();
   const second = crypto.randomUUID();
-  await runInDurableObject(stub, async (instance) => {
+  await runInDurableObject(stub, async (instance, state) => {
     instance.beginSourceWrite(who, input, first, "b".repeat(64));
     instance.beginSourceWrite(who, input, second, "b".repeat(64));
-    instance.finishCacheWrite(who.userId, first);
+    state.storage.sql.exec(`DELETE FROM r2_cache_dispatches WHERE attempt_id=?`, first);
     await expect(instance.close()).rejects.toThrow("source write is unresolved");
-    instance.finishCacheWrite(who.userId, second);
+    state.storage.sql.exec(`DELETE FROM r2_cache_dispatches WHERE attempt_id=?`, second);
     await expect(instance.close()).resolves.toEqual({ distill: [], tailor: [] });
   });
 });
@@ -141,7 +143,9 @@ it("leaves the fence in place when R2 rejects a Vault-owned put", async () => {
       }), env);
       expect(response.status).toBe(503);
       expect(await response.text()).not.toContain("synthetic private provider detail");
-      expect(state.storage.sql.exec(`SELECT kind FROM r2_cache_dispatches WHERE kind='source'`).toArray()).toHaveLength(1);
+      const attempts = state.storage.sql.exec<{ attempt_id: string }>(`SELECT attempt_id FROM r2_cache_dispatches WHERE kind='source'`).toArray();
+      expect(attempts).toHaveLength(1);
+      expect(() => instance.finishCacheWrite(session.uid, attempts[0]!.attempt_id)).toThrow(/original acknowledgement/);
       await expect(instance.close()).rejects.toThrow("source write is unresolved");
     } finally {
       local.FILES = originalFiles;
@@ -206,7 +210,7 @@ it("defers expiry cleanup until a late put settles, including if its Worker then
     expect(() => instance.beginSourceWrite(who, input, crypto.randomUUID(), "b".repeat(64))).toThrow(/expired/);
     // The put starts before expiry, but its acknowledgement arrives afterward.
     await env.FILES.put(input.r2Key, "late");
-    instance.finishCacheWrite(who.userId, attempt);
+    state.storage.sql.exec(`DELETE FROM r2_cache_dispatches WHERE attempt_id=?`, attempt);
     // No completeUpload: the Worker has crashed after settling the marker.
     await instance.alarm();
     expect(await env.FILES.head(input.r2Key)).toBeNull();
@@ -234,7 +238,7 @@ it("cleans unrelated expired uploads while preserving linked and unattributed wr
     expect(await env.FILES.head(second.r2Key)).toBeNull();
     expect(await env.FILES.head(third.r2Key)).toBeNull();
     expect(state.storage.sql.exec(`SELECT source_id FROM source_write_links WHERE attempt_id=?`, linked).toArray()).toHaveLength(1);
-    instance.finishCacheWrite(who.userId, linked);
+    state.storage.sql.exec(`DELETE FROM r2_cache_dispatches WHERE attempt_id=?`, linked);
     expect(state.storage.sql.exec(`SELECT source_id FROM source_write_links WHERE attempt_id=?`, linked).toArray()).toHaveLength(0);
     await instance.alarm();
     expect(await env.FILES.head(first.r2Key)).toBeNull();
@@ -245,10 +249,10 @@ it("cleans unrelated expired uploads while preserving linked and unattributed wr
     await env.FILES.put(fourth.r2Key, "synthetic");
     const old = crypto.randomUUID();
     // A legacy or copy attempt has no trusted source link, even if it has a digest.
-    instance.beginCacheWrite(who, old, "source", "c".repeat(64));
+    state.storage.sql.exec(`INSERT INTO r2_cache_dispatches (attempt_id,kind,created_at,key_digest) VALUES (?,'source',?,?)`, old, Date.now(), "c".repeat(64));
     await instance.alarm();
     expect(await env.FILES.head(fourth.r2Key)).not.toBeNull();
-    instance.finishCacheWrite(who.userId, old);
+    state.storage.sql.exec(`DELETE FROM r2_cache_dispatches WHERE attempt_id=?`, old);
     await instance.alarm();
     expect(await env.FILES.head(fourth.r2Key)).toBeNull();
   });

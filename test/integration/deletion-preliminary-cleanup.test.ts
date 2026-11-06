@@ -152,7 +152,10 @@ describe("preliminary account cleanup", () => {
         await instance.alarm();
         expect(await env.FILES.head(key)).toBeNull();
         expect(state.storage.sql.exec<{ state: string }>(`SELECT state FROM vaults WHERE vault_id=?`, user.vaultId).one().state).toBe("deleting");
-        await vault(env, user.vaultId).finishCacheWrite(user.userId, attempt);
+        // Stand in for the originating Vault observing its own put ACK.
+        await runInDurableObject(vault(env, user.vaultId), (_vault, vaultState) => {
+          vaultState.storage.sql.exec(`DELETE FROM r2_cache_dispatches WHERE attempt_id=?`, attempt);
+        });
         await instance.alarm();
         const remaining = state.storage.sql.exec<{ state: string }>(`SELECT state FROM vaults WHERE vault_id=?`, user.vaultId).toArray();
         // The configured second sweep may also remove the Directory row in
