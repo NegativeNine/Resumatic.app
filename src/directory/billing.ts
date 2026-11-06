@@ -18,6 +18,11 @@ export const BILLING_DEFERRED_MIGRATIONS = [
   `ALTER TABLE billing_events ADD COLUMN next_attempt_at INTEGER NOT NULL DEFAULT 0`,
   `CREATE INDEX billing_pending_by_time ON billing_events (state, next_attempt_at, created_at)`,
 ];
+export const BILLING_DELIVERY_RETRY_MIGRATIONS = [
+  `CREATE TABLE billing_delivery_retries (user_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, next_attempt_at INTEGER NOT NULL)`,
+];
+
+const RETRY_DELAY_MS = 60_000;
 
 /** Durable inbox and entitlement outbox. Webhooks trigger a read of current customer state. */
 export class BillingStore {
@@ -97,9 +102,12 @@ export class BillingStore {
 
   /** Earliest queued attempt, or now for an undelivered entitlement. */
   nextPendingAt(now = Date.now()): number | null {
-    if (this.sql.exec(`SELECT user_id FROM billing_accounts WHERE delivered_revision < revision LIMIT 1`).toArray().length) return now;
-    const row = this.sql.exec<{ at: number | null }>(`SELECT MIN(next_attempt_at) AS at FROM billing_events WHERE state = 'pending'`).toArray()[0];
-    return row?.at == null ? null : Math.max(now, row.at);
+    const delivery = this.sql.exec<{ at: number | null }>(
+      `SELECT MIN(COALESCE(r.next_attempt_at, 0)) AS at FROM billing_accounts a LEFT JOIN billing_delivery_retries r ON r.user_id = a.user_id AND r.revision = a.revision WHERE a.delivered_revision < a.revision`,
+    ).toArray()[0]?.at;
+    const event = this.sql.exec<{ at: number | null }>(`SELECT MIN(next_attempt_at) AS at FROM billing_events WHERE state = 'pending'`).toArray()[0]?.at;
+    const due = [delivery, event].filter((value): value is number => value != null);
+    return due.length ? Math.max(now, Math.min(...due)) : null;
   }
 
   async reconcile(): Promise<void> {
@@ -108,7 +116,7 @@ export class BillingStore {
     const stripe = stripeClient(cfg, this.fetcher);
     const events = this.sql
       .exec<{ id: string; customer_id: string; invoice_id: string | null; next_attempt_at: number }>(
-        `SELECT id, customer_id, invoice_id, next_attempt_at FROM billing_events WHERE state = 'pending' AND next_attempt_at <= ? ORDER BY created_at, id LIMIT 20`,
+        `SELECT id, customer_id, invoice_id, next_attempt_at FROM billing_events WHERE state = 'pending' AND next_attempt_at <= ? ORDER BY next_attempt_at, created_at, id LIMIT 20`,
         Date.now(),
       )
       .toArray();
@@ -278,11 +286,22 @@ revision = billing_accounts.revision + CASE WHEN billing_accounts.entitlement !=
         });
       } catch {
         failed = true;
+        // A malformed or temporarily unavailable customer must not occupy
+        // the oldest batch forever and prevent other customers' events,
+        // including cancellations, from being reconciled. Do not postpone a
+        // concurrent reconciliation that already changed this event.
+        this.sql.exec(
+          `UPDATE billing_events SET next_attempt_at = ? WHERE id = ? AND state = 'pending' AND next_attempt_at = ?`,
+          Date.now() + RETRY_DELAY_MS,
+          event.id,
+          event.next_attempt_at,
+        );
       }
     }
     for (const row of this.sql
-      .exec<{ user_id: string; revision: number; entitlement: string }>(
-        `SELECT user_id, revision, entitlement FROM billing_accounts WHERE delivered_revision < revision LIMIT 20`,
+      .exec<{ user_id: string; revision: number; entitlement: string; retry_at: number | null }>(
+        `SELECT a.user_id, a.revision, a.entitlement, r.next_attempt_at AS retry_at FROM billing_accounts a LEFT JOIN billing_delivery_retries r ON r.user_id = a.user_id AND r.revision = a.revision WHERE a.delivered_revision < a.revision AND COALESCE(r.next_attempt_at, 0) <= ? ORDER BY COALESCE(r.next_attempt_at, 0), a.user_id LIMIT 20`,
+        Date.now(),
       )
       .toArray()) {
       try {
@@ -299,8 +318,24 @@ revision = billing_accounts.revision + CASE WHEN billing_accounts.entitlement !=
           row.user_id,
           row.revision,
         );
+        // Do not erase a retry recorded for a newer revision while the RPC
+        // was in flight.
+        this.sql.exec(`DELETE FROM billing_delivery_retries WHERE user_id = ? AND revision <= ?`, row.user_id, row.revision);
       } catch {
         failed = true;
+        // Store backoff only if this exact entitlement is still undelivered.
+        // A newer revision, successful concurrent delivery, or account
+        // erasure must not be delayed or resurrected by a stale failure.
+        this.sql.exec(
+          `INSERT INTO billing_delivery_retries (user_id, revision, next_attempt_at)
+           SELECT user_id, revision, ? FROM billing_accounts WHERE user_id = ? AND revision = ? AND delivered_revision < revision
+           ON CONFLICT(user_id) DO UPDATE SET revision = excluded.revision, next_attempt_at = excluded.next_attempt_at
+           WHERE billing_delivery_retries.revision < excluded.revision OR (billing_delivery_retries.revision = excluded.revision AND billing_delivery_retries.next_attempt_at = ?)`,
+          Date.now() + RETRY_DELAY_MS,
+          row.user_id,
+          row.revision,
+          row.retry_at,
+        );
       }
     }
     if (failed)
@@ -323,5 +358,6 @@ revision = billing_accounts.revision + CASE WHEN billing_accounts.entitlement !=
       customerId ?? row?.customer_id ?? "",
     );
     this.sql.exec(`DELETE FROM billing_accounts WHERE user_id = ?`, userId);
+    this.sql.exec(`DELETE FROM billing_delivery_retries WHERE user_id = ?`, userId);
   }
 }

@@ -40,6 +40,7 @@ function priorVersion(fragment: string): number {
 }
 
 function removeShardReleaseMigration(sql: SqlStorage): void {
+  sql.exec(`DROP TABLE billing_delivery_retries`);
   sql.exec(`DROP INDEX billing_pending_by_time`);
   sql.exec(`ALTER TABLE billing_events DROP COLUMN next_attempt_at`);
   for (const trigger of ["guard_shard_google_identity_delete", "guard_global_google_shard_home_delete"]) sql.exec(`DROP TRIGGER ${trigger}`);
@@ -54,11 +55,31 @@ function removeGlobalAuthMigration(sql: SqlStorage): void {
 }
 
 describe("atomic schema migrations", () => {
+  it("rolls back billing delivery retry storage and its version together", async () => {
+    const stub = env.DIRECTORY.getByName(`billing-delivery-migration-${crypto.randomUUID()}`);
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec(`INSERT INTO billing_accounts(user_id,customer_id,revision,delivered_revision) VALUES ('u1','cus_1',2,1)`);
+      sql.exec(`DROP TABLE billing_delivery_retries`);
+      const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((q) => q.includes("CREATE TABLE billing_delivery_retries")));
+      expect(previous).toBeGreaterThan(0);
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrateDirectory(failAtVersion(sql, previous + 1), tx)).toThrow(/synthetic version-write interruption/);
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name='billing_delivery_retries'`).toArray()).toHaveLength(0);
+      expect(sql.exec<{value:string}>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(previous));
+      expect(sql.exec<{revision:number}>(`SELECT revision FROM billing_accounts WHERE user_id='u1'`).one().revision).toBe(2);
+      migrateDirectory(sql, tx);
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name='billing_delivery_retries'`).toArray()).toHaveLength(1);
+      expect(sql.exec<{value:string}>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(DIRECTORY_MIGRATIONS.length));
+    });
+  });
   it("rolls back the deferred billing column, index and version together, then preserves queued events on retry", async () => {
     const stub = env.DIRECTORY.getByName(`billing-migration-${crypto.randomUUID()}`);
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
       sql.exec(`INSERT INTO billing_events(id,customer_id,state,created_at) VALUES ('evt_legacy','cus_legacy','pending',123)`);
+      sql.exec(`DROP TABLE billing_delivery_retries`);
       sql.exec(`DROP INDEX billing_pending_by_time`);
       sql.exec(`ALTER TABLE billing_events DROP COLUMN next_attempt_at`);
       const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((q) => q.includes("ALTER TABLE billing_events ADD COLUMN next_attempt_at")));

@@ -3928,10 +3928,11 @@ export class Vault extends DurableObject<Env> {
     this.sql.exec(`INSERT OR IGNORE INTO workflow_redispatches (run_id, attempts, next_at) VALUES (?, 0, 0)`, id);
     await this.scheduleRunAlarm(Date.now() + 60_000);
     const current = this.redispatchableRun(id);
+    if (!current) return;
     row = this.sql.exec<{ attempts: number; next_at: number }>(
       `SELECT attempts, next_at FROM workflow_redispatches WHERE run_id = ?`, id,
     ).toArray()[0];
-    if (!current || !row || row.attempts >= REDISPATCH_DELAYS_MS.length || row.next_at > Date.now()) return;
+    if (!row || row.attempts >= REDISPATCH_DELAYS_MS.length || row.next_at > Date.now()) return;
     const delay = REDISPATCH_DELAYS_MS[row.attempts]!;
     this.sql.exec(`UPDATE workflow_redispatches SET attempts = attempts + 1, next_at = ? WHERE run_id = ?`, Date.now() + delay, id);
     try {
@@ -4016,17 +4017,35 @@ export class Vault extends DurableObject<Env> {
       return;
     }
     if (this.meta("state") !== "open") return;
+    const canContinue = () => !this.closing && !this.gone && this.initialised && this.meta("state") === "open";
+    // A failed or stalled external operation must not consume the only alarm
+    // that could retry queued work. A harmless final alarm may run once after
+    // that work completes; it does not rearm when nothing remains.
+    const uploadsToClean = this.uploads.cleanupCandidates();
+    if (uploadsToClean.length || this.runs.listPending().length) {
+      await this.scheduleRunAlarm(Date.now() + 60_000);
+      if (!canContinue()) return;
+    }
     this.shares.purgeExpired();
     this.mcpGrants.purgeExpired();
     this.sql.exec(
       `DELETE FROM refine_cache WHERE created_at <= ?`,
       Date.now() - REFINE_CACHE_TTL_MS,
     );
-    for (const intent of this.uploads.cleanupCandidates()) {
-      await this.env.FILES.delete(intent.r2Key);
-      this.uploads.markCleaned(intent.requestKey, intent.r2Key);
+    for (const intent of uploadsToClean) {
+      try {
+        await this.env.FILES.delete(intent.r2Key);
+        if (!canContinue()) return;
+        this.uploads.markCleaned(intent.requestKey, intent.r2Key);
+      } catch {
+        if (!canContinue()) return;
+        // Leave the reservation eligible for the already-scheduled retry and
+        // continue processing other uploads and Workflow runs.
+        console.error("upload cleanup pending", { code: "upload_cleanup_pending" });
+      }
     }
     for (const run of this.runs.listPending()) {
+      if (!canContinue()) return;
       if (run.kind === "embed") {
         if (Date.now() - run.createdAt > 600_000)
           this.runs.fail(run.id, "embedding_interrupted");
@@ -4043,10 +4062,13 @@ export class Vault extends DurableObject<Env> {
       if (!binding) continue;
       try {
         const instance = await binding.get(run.id);
+        if (!canContinue()) return;
         const { status } = await instance.status();
+        if (!canContinue()) return;
         if (run.state === "cancel_requested") {
           if (!["complete", "errored", "terminated"].includes(status))
             await instance.terminate();
+          if (!canContinue()) return;
           if (!this.hasUnsettledDispatch(run.id))
             this.finishCancelledRun(run);
         } else if (["complete", "errored", "terminated"].includes(status)) {
@@ -4075,6 +4097,7 @@ export class Vault extends DurableObject<Env> {
           }
         }
       } catch (error) {
+        if (!canContinue()) return;
         // The platform's explicit not-found result is the only safe reason to create again.
         if (isMissingWorkflowInstance(error) && run.state === "starting") {
           // The run may have been cancelled while get()/status() was pending.

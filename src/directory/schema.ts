@@ -1,4 +1,4 @@
-import { BILLING_MIGRATIONS, BILLING_DEFERRED_MIGRATIONS } from "./billing";
+import { BILLING_MIGRATIONS, BILLING_DEFERRED_MIGRATIONS, BILLING_DELIVERY_RETRY_MIGRATIONS } from "./billing";
 import { PLACEMENT_FENCE_MIGRATIONS } from "./placement-fence";
 // Directory tables. Holds identities and the vault directory; never career data.
 
@@ -102,6 +102,7 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
      BEGIN SELECT RAISE(ABORT, 'shard_deletion_barrier_required'); END`,
   ],
   BILLING_DEFERRED_MIGRATIONS,
+  BILLING_DELIVERY_RETRY_MIGRATIONS,
 ];
 
 export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T, global = false, shard = false): void {

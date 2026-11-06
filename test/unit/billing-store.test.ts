@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
-import { BillingStore, BILLING_MIGRATIONS, BILLING_DEFERRED_MIGRATIONS } from "../../src/directory/billing";
+import { BillingStore, BILLING_MIGRATIONS, BILLING_DEFERRED_MIGRATIONS, BILLING_DELIVERY_RETRY_MIGRATIONS } from "../../src/directory/billing";
 import {
   cleanupBillingCustomer,
   type BillingEvent,
@@ -77,6 +77,7 @@ function fixture() {
   } as unknown as SqlStorage;
   for (const statement of BILLING_MIGRATIONS) db.exec(statement);
   for (const statement of BILLING_DEFERRED_MIGRATIONS) db.exec(statement);
+  for (const statement of BILLING_DELIVERY_RETRY_MIGRATIONS) db.exec(statement);
   const state = {
     subscriptions: [
       subscription("sub_old", "canceled", "in_old"),
@@ -112,10 +113,200 @@ function fixture() {
     },
     fetcher,
   );
-  return { db, state, fetcher, deliver, store };
+  return { db, sql, state, fetcher, deliver, store };
 }
 
 describe("durable billing reconciliation", () => {
+  it("delivers a cancellation when a full batch of other vault deliveries fails", async () => {
+    const f = fixture();
+    let failBad = true;
+    const deliver = vi.fn(async (vaultId: string) => {
+      if (vaultId.startsWith("bad") && failBad) throw new Error("unavailable");
+    });
+    const store = new BillingStore(f.sql, billingEnv as Env, {
+      transaction: (fn) => fn(),
+      account: (uid) => ({ vaultId: uid }),
+      deliver,
+    }, f.fetcher);
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const insert = f.db.prepare("INSERT INTO billing_accounts(user_id,customer_id,entitlement,revision) VALUES (?,?,?,1)");
+      for (let i = 0; i < 20; i++) insert.run(`bad${String(i).padStart(2, "0")}`, `cus_bad${i}`, JSON.stringify({ planId: "pro" }));
+      insert.run("good", "cus_good", JSON.stringify({ planId: "free" }));
+      await expect(store.reconcile()).rejects.toThrow("pending");
+      expect(store.nextPendingAt()).toBe(now);
+      clock.mockReturnValue(now + 60_000);
+      await expect(store.reconcile()).rejects.toThrow("pending");
+      expect(deliver).toHaveBeenCalledWith("good", 1, { planId: "free" });
+      expect(f.db.prepare("SELECT delivered_revision FROM billing_accounts WHERE user_id='good'").get()!.delivered_revision).toBe(1);
+      failBad = false;
+      clock.mockReturnValue(now + 120_000);
+      await store.reconcile();
+      expect(store.pending()).toBe(false);
+      expect(f.db.prepare("SELECT COUNT(*) AS n FROM billing_delivery_retries").get()!.n).toBe(0);
+    } finally {
+      clock.mockRestore();
+      f.db.close();
+    }
+  });
+
+  it("does not back off a newer entitlement after an older delivery fails", async () => {
+    const f = fixture();
+    let release!: () => void;
+    let reached!: () => void;
+    const paused = new Promise<void>((resolve) => { reached = resolve; });
+    const unblock = new Promise<void>((resolve) => { release = resolve; });
+    let failFirst = true;
+    const deliver = vi.fn(async () => {
+      if (failFirst) { reached(); await unblock; throw new Error("lost reply"); }
+    });
+    const store = new BillingStore(f.sql, billingEnv as Env, {
+      transaction: (fn) => fn(), account: (uid) => ({ vaultId: uid }), deliver,
+    }, f.fetcher);
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      f.db.prepare("INSERT INTO billing_accounts(user_id,customer_id,entitlement,revision) VALUES ('u1','cus_1',?,1)").run(JSON.stringify({ planId: "pro" }));
+      f.db.prepare("INSERT INTO billing_delivery_retries(user_id,revision,next_attempt_at) VALUES ('u1',1,?)").run(now);
+      const old = store.reconcile();
+      await paused;
+      f.db.prepare("UPDATE billing_accounts SET entitlement=?,revision=2 WHERE user_id='u1'").run(JSON.stringify({ planId: "free" }));
+      release();
+      await expect(old).rejects.toThrow("pending");
+      expect(f.db.prepare("SELECT revision,next_attempt_at FROM billing_delivery_retries WHERE user_id='u1'").get()).toMatchObject({ revision: 1, next_attempt_at: now });
+      expect(store.nextPendingAt()).toBe(now);
+      failFirst = false;
+      await store.reconcile();
+      expect(deliver).toHaveBeenLastCalledWith("u1", 2, { planId: "free" });
+      expect(f.db.prepare("SELECT COUNT(*) AS n FROM billing_delivery_retries").get()!.n).toBe(0);
+    } finally {
+      release();
+      clock.mockRestore();
+      f.db.close();
+    }
+  });
+
+  it("does not recreate retry state when a vault is erased during delivery", async () => {
+    const f = fixture();
+    let release!: () => void;
+    let reached!: () => void;
+    const paused = new Promise<void>((resolve) => { reached = resolve; });
+    const unblock = new Promise<void>((resolve) => { release = resolve; });
+    const store = new BillingStore(f.sql, billingEnv as Env, {
+      transaction: (fn) => fn(), account: (uid) => ({ vaultId: uid }),
+      deliver: async () => { reached(); await unblock; throw new Error("lost reply"); },
+    }, f.fetcher);
+    try {
+      f.db.prepare("INSERT INTO billing_accounts(user_id,customer_id,entitlement,revision) VALUES ('u1','cus_1','{}',1)").run();
+      const attempt = store.reconcile();
+      await paused;
+      store.erase("u1");
+      release();
+      await expect(attempt).rejects.toThrow("pending");
+      expect(f.db.prepare("SELECT COUNT(*) AS n FROM billing_delivery_retries").get()!.n).toBe(0);
+      expect(store.pending()).toBe(false);
+    } finally {
+      release();
+      f.db.close();
+    }
+  });
+
+  it("does not postpone a newer retry after an older duplicate RPC fails", async () => {
+    const f = fixture();
+    let release!: () => void;
+    let reached!: () => void;
+    const paused = new Promise<void>((resolve) => { reached = resolve; });
+    const unblock = new Promise<void>((resolve) => { release = resolve; });
+    let first = true;
+    const store = new BillingStore(f.sql, billingEnv as Env, {
+      transaction: (fn) => fn(), account: (uid) => ({ vaultId: uid }),
+      deliver: async () => {
+        if (first) { first = false; reached(); await unblock; }
+        throw new Error("lost reply");
+      },
+    }, f.fetcher);
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      f.db.prepare("INSERT INTO billing_accounts(user_id,customer_id,entitlement,revision) VALUES ('u1','cus_1','{}',1)").run();
+      const older = store.reconcile();
+      await paused;
+      await expect(store.reconcile()).rejects.toThrow("pending");
+      expect(store.nextPendingAt()).toBe(now + 60_000);
+      clock.mockReturnValue(now + 10_000);
+      release();
+      await expect(older).rejects.toThrow("pending");
+      expect(store.nextPendingAt()).toBe(now + 60_000);
+    } finally {
+      release();
+      clock.mockRestore();
+      f.db.close();
+    }
+  });
+  it("lets a cancellation through when a full batch of older events fails repeatedly", async () => {
+    const f = fixture();
+    const original = f.fetcher.getMockImplementation()!;
+    let failingCustomer = true;
+    f.fetcher.mockImplementation(async (input, init) => {
+      if (new URL(String(input)).pathname === "/v1/customers/cus_bad") {
+        if (failingCustomer) throw new Error("temporary Stripe error");
+        return Response.json({ id: "cus_bad", metadata: {} });
+      }
+      return original(input, init);
+    });
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      f.store.accept(event("evt_initial"));
+      await f.store.reconcile();
+      expect(JSON.parse(String(f.db.prepare("SELECT entitlement FROM billing_accounts").get()!.entitlement)).planId).toBe("pro");
+      for (let i = 0; i < 20; i++)
+        f.store.accept(event(`evt_bad${String(i).padStart(2, "0")}`, "customer.subscription.updated", { id: "sub_bad", customer: "cus_bad" }));
+      f.state.subscriptions[1]!.status = "canceled";
+      f.store.accept(event("evt_cancel"));
+      await expect(f.store.reconcile()).rejects.toThrow("pending");
+      expect(f.db.prepare("SELECT state FROM billing_events WHERE id='evt_cancel'").get()!.state).toBe("pending");
+      expect(f.db.prepare("SELECT COUNT(*) AS n FROM billing_events WHERE id LIKE 'evt_bad%' AND next_attempt_at=?").get(now + 60_000)!.n).toBe(20);
+      // Even after the old failures are due again, untouched events sort
+      // before them by their original due time, not by event creation time.
+      clock.mockReturnValue(now + 60_000);
+      await expect(f.store.reconcile()).rejects.toThrow("pending");
+      expect(JSON.parse(String(f.db.prepare("SELECT entitlement FROM billing_accounts").get()!.entitlement)).planId).toBe("free");
+      expect(f.db.prepare("SELECT state FROM billing_events WHERE id='evt_cancel'").get()!.state).toBe("applied");
+      failingCustomer = false;
+      clock.mockReturnValue(now + 120_000);
+      await f.store.reconcile();
+      expect(f.store.pending()).toBe(false);
+    } finally {
+      clock.mockRestore();
+      f.db.close();
+    }
+  });
+  it("does not postpone an event whose retry was rescheduled during Stripe I/O", async () => {
+    const f = fixture();
+    let release!: () => void;
+    let reached!: () => void;
+    const paused = new Promise<void>((resolve) => { reached = resolve; });
+    const unblock = new Promise<void>((resolve) => { release = resolve; });
+    f.fetcher.mockImplementation(async () => {
+      reached();
+      await unblock;
+      throw new Error("temporary Stripe error");
+    });
+    try {
+      f.store.accept(event("evt_race"));
+      const attempt = f.store.reconcile();
+      await paused;
+      f.db.prepare("UPDATE billing_events SET next_attempt_at=? WHERE id='evt_race'").run(123);
+      release();
+      await expect(attempt).rejects.toThrow("pending");
+      expect(f.db.prepare("SELECT next_attempt_at FROM billing_events WHERE id='evt_race'").get()!.next_attempt_at).toBe(123);
+    } finally {
+      release();
+      f.db.close();
+    }
+  });
   it("retains current paid access, queues future invoices by ID, and processes other events", async () => {
     const f = fixture();
     const original = f.fetcher.getMockImplementation()!;
@@ -274,12 +465,15 @@ describe("durable billing reconciliation", () => {
   });
   it("does not grant a new quota period on failed renewal and retries outbox delivery", async () => {
     const f = fixture();
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
     try {
       f.store.accept(event("evt_initial"));
       f.state.failDelivery = true;
       await expect(f.store.reconcile()).rejects.toThrow("pending");
       expect(f.store.pending()).toBe(true);
       f.state.failDelivery = false;
+      clock.mockReturnValue(now + 60_000);
       await f.store.reconcile();
       expect(f.store.pending()).toBe(false);
       f.state.subscriptions[1]!.status = "past_due";
@@ -303,6 +497,7 @@ describe("durable billing reconciliation", () => {
         validUntil: end * 1000,
       });
     } finally {
+      clock.mockRestore();
       f.db.close();
     }
   });

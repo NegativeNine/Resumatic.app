@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { signToken, verifyToken } from "../../src/worker/crypto";
 import { clearKeyCache, verifyJwt } from "../../src/worker/jwt";
+import { verifyAccess } from "../../src/worker/access";
 import { SESSION_TTL_MS, createSession, readSession, sessionCookie } from "../../src/worker/session";
 import { nowSeconds, rsaSigner } from "../support/keys";
 
@@ -87,5 +88,26 @@ describe("verifyJwt", () => {
     const json = JSON.stringify({ ...claims, exp: null }).replace('"exp":null', '"exp":1e400');
     expect(JSON.parse(json).exp).toBe(Infinity);
     await expect(verifyJwt(await signer.signRaw(json), opts)).rejects.toThrow("token expired");
+  });
+
+  it("enforces signed not-before times with the existing clock allowance", async () => {
+    const { signer, opts, claims } = await setup();
+    const now = nowSeconds();
+    const fixed = { ...opts, now: now * 1000 };
+    for (const nbf of [now - 1, now, now + 60])
+      expect((await verifyJwt(await signer.sign({ ...claims, nbf }), fixed)).sub).toBe("s1");
+    for (const nbf of [now + 61, null, "0", true, []])
+      await expect(verifyJwt(await signer.sign({ ...claims, nbf }), fixed)).rejects.toThrow("token not yet valid");
+    const json = JSON.stringify({ ...claims, nbf: null }).replace('"nbf":null', '"nbf":1e400');
+    await expect(verifyJwt(await signer.signRaw(json), fixed)).rejects.toThrow("token not yet valid");
+  });
+
+  it("refuses future Cloudflare Access assertions at the admin boundary", async () => {
+    const { signer } = await setup();
+    const team = "https://synthetic.cloudflareaccess.com";
+    const env = { ACCESS_TEAM_DOMAIN: team, ACCESS_AUD: "app" } as Env;
+    const token = await signer.sign({ iss: team, aud: "app", exp: nowSeconds() + 3600, nbf: nowSeconds() + 300 });
+    const request = new Request("https://resumatic.test/admin", { headers: { "cf-access-jwt-assertion": token } });
+    await expect(verifyAccess(env, request, async () => Response.json(signer.jwks))).rejects.toThrow("Cloudflare Access token is not valid");
   });
 });
