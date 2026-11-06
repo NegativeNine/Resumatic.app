@@ -37,6 +37,10 @@ type VaultDbRow = {
  * and delete them, and is never on the path of an everyday request.
  */
 export class Directory extends DurableObject<Env> {
+  // Only coalesces calls during this object's lifetime. The durable marker,
+  // not this map, is the authority for deletion and crash recovery.
+  private readonly initializing = new Map<string, { userId: string; promise: Promise<void> }>();
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     void ctx.blockConcurrencyWhile(async () =>
@@ -124,18 +128,56 @@ export class Directory extends DurableObject<Env> {
     if (row.user_state !== "active")
       throw new AppError("forbidden", "this account is being deleted");
     if (row.vault_state === "creating") {
-      const id = this.env.VAULT.idFromString(row.vault_id);
       // Only the first get() of an object honours a location hint, so the vault is placed near the user now.
-      await this.env.VAULT.get(id, {
-        locationHint: row.hint as DurableObjectLocationHint,
-      }).init(row.user_id);
+      await this.initializeVault(row.vault_id, row.user_id, row.hint);
       this.sql.exec(
         `UPDATE vaults SET state = 'active', updated_at = ? WHERE vault_id = ? AND state = 'creating'`,
         Date.now(),
         row.vault_id,
       );
     }
+    // Deletion can begin while init is awaiting a different Durable Object.
+    const current = this.findAccount(p.provider, p.subject);
+    if (
+      !current || current.user_state !== "active" ||
+      current.vault_state !== "active" || current.vault_id !== row.vault_id
+    )
+      throw new AppError("forbidden", "this account is being deleted");
     return { userId: row.user_id, vaultId: row.vault_id };
+  }
+
+  /** A marker precedes cross-object init and survives an uncertain outcome. */
+  private async initializeVault(vaultId: string, userId: string, hint?: string): Promise<void> {
+    const ongoing = this.initializing.get(vaultId);
+    if (ongoing) {
+      if (ongoing.userId !== userId)
+        throw new AppError("conflict", "vault initialization owner changed");
+      return await ongoing.promise;
+    }
+    this.requireInitializationSettled(vaultId);
+    this.sql.exec(`INSERT INTO vault_initializations (vault_id) VALUES (?)`, vaultId);
+    const promise = (async () => {
+      const id = this.env.VAULT.idFromString(vaultId);
+      const stub = hint
+        ? this.env.VAULT.get(id, { locationHint: hint as DurableObjectLocationHint })
+        : this.env.VAULT.get(id);
+      // An exception, including an interrupted acknowledgement, cannot establish
+      // that init did not run or cannot arrive later. Keep the marker in that case.
+      await stub.init(userId);
+      this.sql.exec(`DELETE FROM vault_initializations WHERE vault_id = ?`, vaultId);
+    })();
+    this.initializing.set(vaultId, { userId, promise });
+    try {
+      await promise;
+    } finally {
+      if (this.initializing.get(vaultId)?.promise === promise)
+        this.initializing.delete(vaultId);
+    }
+  }
+
+  private requireInitializationSettled(vaultId: string): void {
+    if (this.sql.exec(`SELECT vault_id FROM vault_initializations WHERE vault_id = ?`, vaultId).toArray().length)
+      throw new AppError("unavailable", "vault initialization is unresolved");
   }
 
   async existingIdentity(
@@ -254,7 +296,7 @@ export class Directory extends DurableObject<Env> {
     operationId: string,
   ): Promise<{ targetVaultId: string }> {
     const prior = this.sql
-      .exec<{ source_id: string; target_id: string; user_id: string }>(
+      .exec<{ source_id: string; target_id: string; user_id: string; state: string }>(
         `SELECT * FROM vault_replacements WHERE operation_id=?`,
         operationId,
       )
@@ -262,9 +304,11 @@ export class Directory extends DurableObject<Env> {
     if (prior) {
       if (prior.source_id !== sourceId)
         throw new AppError("conflict", "operation belongs to another vault");
-      await this.env.VAULT.get(
-        this.env.VAULT.idFromString(prior.target_id),
-      ).init(prior.user_id);
+      this.requireActiveReplacement(prior.user_id, prior.source_id, prior.target_id, prior.state);
+      if (prior.state === "preparing") {
+        await this.initializeVault(prior.target_id, prior.user_id);
+        this.checkReplacementAfterInit(operationId, prior.user_id, sourceId, prior.target_id);
+      }
       return { targetVaultId: prior.target_id };
     }
     const source = this.sql
@@ -291,10 +335,27 @@ export class Directory extends DurableObject<Env> {
       targetId,
       source.user_id,
     );
-    await this.env.VAULT.get(this.env.VAULT.idFromString(targetId)).init(
-      source.user_id,
-    );
+    await this.initializeVault(targetId, source.user_id);
+    this.checkReplacementAfterInit(operationId, source.user_id, sourceId, targetId);
     return { targetVaultId: targetId };
+  }
+
+  private requireActiveReplacement(userId: string, sourceId: string, targetId: string, state: string): void {
+    const expected = state === "preparing" ? sourceId : state === "complete" ? targetId : "";
+    const active = this.sql.exec(
+      `SELECT v.vault_id FROM vaults v JOIN users u ON v.user_id=u.user_id WHERE v.vault_id=? AND v.user_id=? AND v.state='active' AND u.state='active'`,
+      expected, userId,
+    ).toArray().length > 0;
+    if (!active) throw new AppError("conflict", "replacement account is no longer active");
+  }
+
+  private checkReplacementAfterInit(operationId: string, userId: string, sourceId: string, targetId: string): void {
+    const operation = this.sql.exec<{ source_id: string; target_id: string; user_id: string; state: string }>(
+      `SELECT source_id,target_id,user_id,state FROM vault_replacements WHERE operation_id=?`, operationId,
+    ).toArray()[0];
+    if (!operation || operation.source_id !== sourceId || operation.target_id !== targetId || operation.user_id !== userId)
+      throw new AppError("conflict", "replacement changed during initialization");
+    this.requireActiveReplacement(userId, sourceId, targetId, operation.state);
   }
   async cutover(
     sourceId: string,
@@ -318,11 +379,14 @@ export class Directory extends DurableObject<Env> {
     )
       throw new AppError("conflict", "replacement does not match");
     if (operation.state === "complete") return;
+    this.requireInitializationSettled(targetId);
     await revokeOAuthUserGrants(this.env, operation.user_id);
+    this.requireInitializationSettled(targetId);
     await this.env.VAULT.get(
       this.env.VAULT.idFromString(targetId),
     ).activateImport(operationId, operation.user_id);
     this.ctx.storage.transactionSync(() => {
+      this.requireInitializationSettled(targetId);
       const source = this.sql
         .exec(
           `SELECT vault_id FROM vaults WHERE vault_id=? AND state='active'`,
@@ -446,6 +510,7 @@ export class Directory extends DurableObject<Env> {
       .toArray()) {
       try {
         if (retired.state === "deleting") {
+          this.requireInitializationSettled(retired.vault_id);
           const stub = this.env.VAULT.get(
             this.env.VAULT.idFromString(retired.vault_id),
           );
@@ -532,6 +597,7 @@ export class Directory extends DurableObject<Env> {
   }
 
   private async erase(vaultId: string): Promise<void> {
+    this.requireInitializationSettled(vaultId);
     const stub = this.env.VAULT.get(this.env.VAULT.idFromString(vaultId));
     const runs = await stub.close();
     const customer = await stub.billingCustomerForDeletion();

@@ -87,6 +87,17 @@ function SourceRow({
         </div>
         <SourceStatus source={source} />
       </div>
+      {source.state === "queued" && source.cancellationPending && (
+        <p className="source-error" role="status">
+          Cancellation is pending. Reading may still start or continue; please check back.
+        </p>
+      )}
+      {source.state === "queued" && source.dispatchUncertain && !source.cancellationPending && (
+        <p className="source-error" role="status">
+          Your upload was saved, but we can't confirm that reading started. It
+          may still begin; please check back.
+        </p>
+      )}
       {source.state === "failed" && (
         <p className="source-error">
           {source.error ?? "We couldn't read this file."} Try uploading it
@@ -188,6 +199,10 @@ function ScanRecovery({
 function SourceStatus({ source }: { source: SourceView }) {
   switch (source.state) {
     case "queued":
+      if (source.cancellationPending)
+        return <Badge tone="queued">Cancellation pending</Badge>;
+      if (source.dispatchUncertain)
+        return <Badge tone="queued">Start unconfirmed</Badge>;
       return (
         <Badge tone="queued">
           <span className="spinner" aria-hidden="true" />

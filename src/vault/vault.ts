@@ -665,8 +665,9 @@ export class Vault extends DurableObject<Env> {
         extractor: string | null;
         markdown: string | null;
         ocr_image_count: number | null;
+        run_id: string | null;
       }>(
-        `SELECT s.id, s.filename, s.state, s.error, s.created_at, s.origin, s.extractor, s.markdown, s.ocr_image_count,
+        `SELECT s.id, s.filename, s.state, s.error, s.created_at, s.origin, s.extractor, s.markdown, s.ocr_image_count, s.run_id,
            (SELECT COUNT(*) FROM facts f WHERE f.source_id = s.id AND f.state = 'proposed') AS proposed
          FROM sources s ORDER BY s.created_at DESC`,
       )
@@ -675,6 +676,8 @@ export class Vault extends DurableObject<Env> {
         id: r.id,
         filename: r.filename,
         state: r.state as SourceState,
+        dispatchUncertain: r.state === "queued" && this.dispatchUncertain(r.run_id),
+        cancellationPending: r.state === "queued" && this.cancellationPending(r.run_id),
         error: r.error,
         createdAt: r.created_at,
         proposed: r.proposed,
@@ -1373,8 +1376,9 @@ export class Vault extends DurableObject<Env> {
         application_id: string;
         state: string;
         created_at: number;
+        run_id: string | null;
       }>(
-        `SELECT id, application_id, state, created_at FROM resumes ORDER BY created_at DESC`,
+        `SELECT id, application_id, state, created_at, run_id FROM resumes ORDER BY created_at DESC`,
       )
       .toArray();
     return this.sql
@@ -1397,6 +1401,8 @@ export class Vault extends DurableObject<Env> {
           .map((r) => ({
             id: r.id,
             state: r.state as ResumeState,
+            dispatchUncertain: r.state === "running" && this.dispatchUncertain(r.run_id),
+            cancellationPending: r.state === "running" && this.cancellationPending(r.run_id),
             createdAt: r.created_at,
           })),
       }));
@@ -1501,6 +1507,8 @@ export class Vault extends DurableObject<Env> {
       id: row.id,
       applicationId: row.application_id,
       state: row.state as ResumeState,
+      dispatchUncertain: row.state === "running" && this.dispatchUncertain(row.run_id),
+      cancellationPending: row.state === "running" && this.cancellationPending(row.run_id),
       step: row.step,
       error: row.error,
       version: version ?? row.version,
@@ -2268,6 +2276,8 @@ export class Vault extends DurableObject<Env> {
       applicationId: row.application_id,
       kind: row.kind,
       state: row.state,
+      dispatchUncertain: row.state === "running" && this.dispatchUncertain(row.id),
+      cancellationPending: row.state === "running" && this.cancellationPending(row.id),
       version: row.version,
       createdAt: row.created_at,
       error: row.error,
@@ -3176,6 +3186,30 @@ export class Vault extends DurableObject<Env> {
       throw new AppError("unavailable", "workflow creation is unresolved; retry after it is settled");
   }
 
+  private hasUnsettledDispatch(runId: string | null): boolean {
+    return Boolean(
+      runId &&
+        this.sql
+          .exec(`SELECT run_id FROM workflow_dispatches WHERE run_id = ?`, runId)
+          .toArray().length,
+    );
+  }
+
+  private dispatchUncertain(runId: string | null): boolean {
+    const run = runId ? this.runs.get(runId) : null;
+    return Boolean(
+      run?.state === "starting" &&
+        this.hasUnsettledDispatch(runId) &&
+        (run.errorCode === "dispatch_uncertain" ||
+          run.errorCode === "status_uncertain" ||
+          Date.now() - run.updatedAt >= 30_000),
+    );
+  }
+
+  private cancellationPending(runId: string | null): boolean {
+    return Boolean(runId && this.runs.get(runId)?.state === "cancel_requested");
+  }
+
   async alarm(): Promise<void> {
     if (!this.initialised || this.meta("state") !== "open") return;
     this.shares.purgeExpired();
@@ -3209,7 +3243,8 @@ export class Vault extends DurableObject<Env> {
         if (run.state === "cancel_requested") {
           if (!["complete", "errored", "terminated"].includes(status))
             await instance.terminate();
-          this.finishCancelledRun(run);
+          if (!this.hasUnsettledDispatch(run.id))
+            this.finishCancelledRun(run);
         } else if (["complete", "errored", "terminated"].includes(status)) {
           if (run.kind === "tailor")
             this.markResumeFailed(
@@ -3229,11 +3264,14 @@ export class Vault extends DurableObject<Env> {
         }
       } catch (error) {
         // The platform's explicit not-found result is the only safe reason to create again.
-        if (isMissingWorkflow(error) && run.state === "starting")
-          await this.dispatchRun(run);
-        else if (isMissingWorkflow(error) && run.state === "cancel_requested")
+        if (isMissingWorkflow(error) && run.state === "starting") {
+          if (this.hasUnsettledDispatch(run.id))
+            this.runs.noteUncertain(run.id, "dispatch_uncertain");
+          else await this.dispatchRun(run);
+        } else if (isMissingWorkflow(error) && run.state === "cancel_requested" && !this.hasUnsettledDispatch(run.id))
           this.finishCancelledRun(run);
-        else this.runs.noteUncertain(run.id, "status_uncertain");
+        else if (!this.dispatchUncertain(run.id))
+          this.runs.noteUncertain(run.id, "status_uncertain");
       }
     }
     const expiry = this.sql
@@ -3469,7 +3507,11 @@ export class Vault extends DurableObject<Env> {
       )
       .toArray();
     for (const row of stale) {
-      if (await runStopped(this.env.TAILOR, row.run_id))
+      if (this.hasUnsettledDispatch(row.run_id)) continue;
+      if (
+        (await runStopped(this.env.TAILOR, row.run_id)) &&
+        !this.hasUnsettledDispatch(row.run_id)
+      )
         this.markResumeFailed(
           row.id,
           "Tailoring stopped unexpectedly. Try again.",
@@ -3486,7 +3528,9 @@ export class Vault extends DurableObject<Env> {
       )
       .toArray();
     for (const row of stale) {
+      if (this.hasUnsettledDispatch(row.run_id)) continue;
       if (await runStopped(this.env.DISTILL, row.run_id)) {
+        if (this.hasUnsettledDispatch(row.run_id)) continue;
         this.sql.exec(
           `UPDATE sources SET state = 'failed', error = ? WHERE id = ? AND state = 'queued'`,
           "Reading this file stopped unexpectedly.",

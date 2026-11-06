@@ -25,6 +25,14 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
     `CREATE TABLE vault_replacements (operation_id TEXT PRIMARY KEY, source_id TEXT NOT NULL, target_id TEXT NOT NULL, user_id TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'preparing')`,
     `CREATE TABLE retired_vaults (vault_id TEXT PRIMARY KEY,user_id TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'deleting',swept_at INTEGER)`,
   ],
+  [
+    `CREATE TABLE vault_initializations (vault_id TEXT PRIMARY KEY)`,
+    // Older sign-in and replacement attempts may still be in flight even if
+    // another concurrent request already marked the same object active.
+    `INSERT OR IGNORE INTO vault_initializations (vault_id) SELECT vault_id FROM vaults`,
+    `INSERT OR IGNORE INTO vault_initializations (vault_id) SELECT target_id FROM vault_replacements`,
+    `INSERT OR IGNORE INTO vault_initializations (vault_id) SELECT vault_id FROM retired_vaults`,
+  ],
 ];
 
 export function migrateDirectory(sql: SqlStorage): void {

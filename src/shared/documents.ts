@@ -9,6 +9,10 @@ export interface NewDocument {
   lineIds?: string[];
 }
 export interface DocumentView {
+  /** The request was saved, but starting its workflow is unconfirmed. */
+  dispatchUncertain?: boolean;
+  /** Cancellation was requested but has not yet been confirmed. */
+  cancellationPending?: boolean;
   id: string;
   applicationId: string;
   kind: DocumentKind;

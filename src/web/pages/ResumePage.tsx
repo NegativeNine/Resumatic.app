@@ -29,7 +29,7 @@ export function ResumePage({ id }: { id: string }) {
         <ErrorNote message={resume.error} onRetry={resume.reload} />
       )}
       {!r && !resume.error && <Loading>Loading this resume…</Loading>}
-      {r?.state === "running" && <TailorProgress step={r.step} />}
+      {r?.state === "running" && <TailorProgress step={r.step} dispatchUncertain={r.dispatchUncertain} cancellationPending={r.cancellationPending} />}
       {r?.state === "failed" && <TailorFailed resume={r} />}
       {r?.state === "ready" &&
         (r.body ? (

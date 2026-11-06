@@ -287,7 +287,11 @@ function ApplicationCard({
                 Resume tailored {formatDateTime(resume.createdAt)}
               </a>
               <Badge tone={resume.state}>
-                {RESUME_STATE_LABEL[resume.state]}
+                {resume.state === "running" && resume.cancellationPending
+                  ? "Cancellation pending"
+                  : resume.state === "running" && resume.dispatchUncertain
+                  ? "Start unconfirmed"
+                  : RESUME_STATE_LABEL[resume.state]}
               </Badge>
             </li>
           ))}

@@ -104,6 +104,10 @@ export interface Me {
 }
 
 export interface SourceView {
+  /** The upload was saved, but starting its reading workflow is unconfirmed. */
+  dispatchUncertain?: boolean;
+  /** Cancellation was requested but has not yet been confirmed. */
+  cancellationPending?: boolean;
   /** Number of page images submitted for OCR; null for ordinary PDFs and old sources.
    * This does not assert the number of pages in the original PDF. */
   conversionImageCount?: number | null;
@@ -204,7 +208,7 @@ export interface ApplicationView {
   /** The start of the job description, at most about 100 characters. */
   excerpt: string;
   createdAt: number;
-  resumes: { id: string; state: ResumeState; createdAt: number }[];
+  resumes: { id: string; state: ResumeState; createdAt: number; dispatchUncertain?: boolean; cancellationPending?: boolean }[];
 }
 
 export interface ResumeLine {
@@ -240,6 +244,10 @@ export interface ResumeReport {
 }
 
 export interface ResumeView {
+  /** The request was saved, but starting its workflow is unconfirmed. */
+  dispatchUncertain?: boolean;
+  /** Cancellation was requested but has not yet been confirmed. */
+  cancellationPending?: boolean;
   provenance?: "snapshot" | "legacy";
   id: string;
   applicationId: string;

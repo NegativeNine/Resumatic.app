@@ -192,13 +192,24 @@ function DocumentCard({ doc, reload }: { doc: DocumentView; reload: Reload }) {
         </div>
         <Badge tone={doc.state}>
           {doc.state === "running"
-            ? "Preparing"
+            ? doc.cancellationPending ? "Cancellation pending" : doc.dispatchUncertain ? "Start unconfirmed" : "Preparing"
             : doc.state === "ready"
               ? "Ready"
               : "Not completed"}
         </Badge>
       </div>
-      {doc.state === "running" && (
+      {doc.state === "running" && doc.cancellationPending && (
+        <p role="status">
+          Cancellation is pending. Preparation may still start or continue; please check back.
+        </p>
+      )}
+      {doc.state === "running" && doc.dispatchUncertain && !doc.cancellationPending && (
+        <p role="status">
+          Your request was saved, but we can't confirm that preparation started.
+          It may still begin; please check back.
+        </p>
+      )}
+      {doc.state === "running" && !doc.dispatchUncertain && !doc.cancellationPending && (
         <>
           <Loading>Preparing and checking your document…</Loading>
           <button
