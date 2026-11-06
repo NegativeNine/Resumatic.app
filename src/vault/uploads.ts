@@ -233,14 +233,38 @@ export class UploadStore {
   cleanupCandidates(limit = 100): UploadIntent[] {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000)
       throw new AppError("invalid", "invalid upload cleanup limit");
-    this.expire();
-    return this.sql
-      .exec<Row>(
-        `SELECT * FROM upload_intents WHERE state = 'expired' AND cleaned_at IS NULL ORDER BY expires_at, request_key LIMIT ?`,
-        limit,
-      )
-      .toArray()
-      .map(fromRow);
+    // Persist the scan position, not an outcome: interrupted and failed
+    // deletes remain eligible and are reached again after the scan wraps.
+    // rowid avoids retaining another copy of a user-supplied request key.
+    return this.transaction(() => {
+      this.expire();
+      const saved = this.sql.exec<{ value: string }>(
+        `SELECT value FROM meta WHERE key = 'upload_cleanup_cursor'`,
+      ).toArray()[0]?.value;
+      // Keep the integer as text so SQLite's full signed 64-bit rowid range
+      // cannot be rounded by JavaScript. An invalid cursor safely starts a
+      // new scan; the wrap below also includes negative and zero rowids.
+      const cursor = saved !== undefined && saved.length <= 20 && /^-?(?:0|[1-9]\d*)$/.test(saved)
+        ? saved : "0";
+      type Candidate = Row & { cleanup_rowid: string };
+      const rows = this.sql.exec<Candidate>(
+        `SELECT CAST(rowid AS TEXT) AS cleanup_rowid, * FROM upload_intents
+         WHERE state = 'expired' AND cleaned_at IS NULL AND rowid > CAST(? AS INTEGER) ORDER BY rowid LIMIT ?`,
+        cursor, limit,
+      ).toArray();
+      if (rows.length < limit) rows.push(...this.sql.exec<Candidate>(
+        `SELECT CAST(rowid AS TEXT) AS cleanup_rowid, * FROM upload_intents
+         WHERE state = 'expired' AND cleaned_at IS NULL AND rowid <= CAST(? AS INTEGER) ORDER BY rowid LIMIT ?`,
+        cursor, limit - rows.length,
+      ).toArray());
+      const last = rows.at(-1);
+      if (last) this.sql.exec(
+        `INSERT INTO meta (key, value) VALUES ('upload_cleanup_cursor', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        last.cleanup_rowid,
+      );
+      return rows.map(fromRow);
+    });
   }
 
   /** A failed or ambiguous R2 delete is retried; only an acknowledged delete is marked. */

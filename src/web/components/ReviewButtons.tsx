@@ -69,6 +69,7 @@ interface Props {
   review: ReviewControl;
   onEdit?: () => void;
   confirmDisabled?: boolean;
+  disabled?: boolean;
 }
 
 export function ReviewButtons({
@@ -78,8 +79,9 @@ export function ReviewButtons({
   review,
   onEdit,
   confirmDisabled = false,
+  disabled = false,
 }: Props) {
-  const busy = review.deciding !== null;
+  const busy = review.deciding !== null || disabled;
   const suffix = noun ? ` ${noun}` : "";
 
   return (

@@ -4688,28 +4688,34 @@ export class Vault extends DurableObject<Env> {
       `DELETE FROM refine_cache WHERE created_at <= ?`,
       Date.now() - REFINE_CACHE_TTL_MS,
     );
-    for (const intent of uploadsToClean) {
-      // Expiry prevents another authorization for this reservation. New
-      // attempts have an atomic server-generated reservation link; old or
-      // unlinked attempts cannot be attributed and conservatively block all
-      // cleanup. Never use the diagnostic key digest as proof of attribution.
-      if (this.sql.exec(
-        `SELECT d.attempt_id FROM r2_cache_dispatches d
-         LEFT JOIN source_write_links l ON l.attempt_id = d.attempt_id
-         WHERE d.kind = 'source' AND (l.attempt_id IS NULL OR l.source_id = ?) LIMIT 1`,
-        intent.sourceId,
-      ).toArray().length) continue;
-      try {
-        await this.env.FILES.delete(intent.r2Key);
-        if (!canContinue()) return;
-        this.uploads.markCleaned(intent.requestKey, intent.r2Key);
-      } catch {
-        if (!canContinue()) return;
-        // Leave the reservation eligible for the already-scheduled retry and
-        // continue processing other uploads and Workflow runs.
-        console.error("upload cleanup pending", { code: "upload_cleanup_pending" });
+    // Keep a stalled R2 delete from preventing independent upload cleanup or
+    // Workflow reconciliation. Acknowledgements are still checked against
+    // the expired reservation, and unresolved writes keep their existing fence.
+    let cleanupIndex = 0;
+    const cleanupLanes = Array.from({ length: Math.min(4, uploadsToClean.length) }, async () => {
+      while (canContinue()) {
+        const intent = uploadsToClean[cleanupIndex++];
+        if (!intent) return;
+        // Expiry prevents another authorization for this reservation. New
+        // attempts have an atomic server-generated reservation link; old or
+        // unlinked attempts cannot be attributed and conservatively block all
+        // cleanup. Never use the diagnostic key digest as proof of attribution.
+        if (this.sql.exec(
+          `SELECT d.attempt_id FROM r2_cache_dispatches d
+           LEFT JOIN source_write_links l ON l.attempt_id = d.attempt_id
+           WHERE d.kind = 'source' AND (l.attempt_id IS NULL OR l.source_id = ?) LIMIT 1`,
+          intent.sourceId,
+        ).toArray().length) continue;
+        try {
+          await this.env.FILES.delete(intent.r2Key);
+          if (!canContinue()) return;
+          this.uploads.markCleaned(intent.requestKey, intent.r2Key);
+        } catch {
+          if (!canContinue()) return;
+          console.error("upload cleanup pending", { code: "upload_cleanup_pending" });
+        }
       }
-    }
+    });
     // One stalled Workflow RPC must not keep every other cancellation and
     // reconciliation from making progress. Each lane rechecks the lifecycle
     // before taking another run; unresolved RPCs and their dispatch fences
@@ -4805,7 +4811,7 @@ export class Vault extends DurableObject<Env> {
     });
     // Wait for every lane before returning or throwing, so a failed lane
     // cannot leave unobserved, still-running operations behind.
-    const results = await Promise.allSettled(lanes);
+    const results = await Promise.allSettled([...cleanupLanes, ...lanes]);
     for (const result of results) if (result.status === "rejected") throw result.reason;
     if (this.closing || this.gone || !this.initialised || this.meta("state") !== "open") return;
     const expiry = this.sql

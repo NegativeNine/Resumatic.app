@@ -1,6 +1,6 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   UploadStore,
   UPLOAD_INTENT_TTL_MS,
@@ -31,6 +31,7 @@ async function withStore(
     sql.exec(
       `CREATE TABLE IF NOT EXISTS sources (id TEXT PRIMARY KEY, filename TEXT NOT NULL, r2_key TEXT NOT NULL, state TEXT NOT NULL)`,
     );
+    sql.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
     for (const migration of [...UPLOAD_MIGRATIONS, ...RUN_MIGRATIONS])
       sql.exec(migration);
     const clock = { now: Date.UTC(2026, 10, 6) };
@@ -206,6 +207,89 @@ describe("durable upload reservations", () => {
         store.reserve({ ...input, requestKey: "other-request" }),
       ).toThrow("storage key is already reserved");
       expect(sql.exec(`SELECT id FROM sources`).toArray()).toEqual([]);
+    });
+  });
+
+  it("persists a wrapping cleanup cursor so failed and interrupted pages are revisited", async () => {
+    await withStore((store, _runs, sql, clock, id) => {
+      for (let i = 0; i < 201; i++) {
+        const key = `upload-${String(i).padStart(3, "0")}`;
+        sql.exec(`INSERT INTO upload_intents
+          (request_key,descriptor_digest,source_id,filename,r2_key,byte_length,content_type,origin,state,created_at,expires_at)
+          VALUES (?,?,?,?,?,1,'application/pdf','upload','expired',0,0)`,
+          key, "a".repeat(64), `source-${i}`, "resume.pdf", `vaults/${id}/sources/${key}`);
+      }
+      const first = store.cleanupCandidates();
+      expect(first.map((item) => item.requestKey)).toEqual(Array.from({ length: 100 }, (_, i) => `upload-${String(i).padStart(3, "0")}`));
+      // Recreate the store to simulate interruption after reserving a page but
+      // before any R2 acknowledgement. Those rows must still be revisited.
+      const reopened = new UploadStore(sql, (fn) => fn(), { vaultId: id, maxSources: 50, maxQueued: 3 }, () => clock.now);
+      expect(reopened.cleanupCandidates().map((item) => item.requestKey)).toEqual(
+        Array.from({ length: 100 }, (_, i) => `upload-${String(i + 100).padStart(3, "0")}`),
+      );
+      const wrapped = reopened.cleanupCandidates();
+      expect(wrapped[0]?.requestKey).toBe("upload-200");
+      expect(wrapped[1]?.requestKey).toBe("upload-000");
+      reopened.markCleaned(wrapped[0]!.requestKey, wrapped[0]!.r2Key);
+      expect(reopened.nextAlarm()).toBe(clock.now);
+      expect(reopened.cleanupCandidates().some((item) => item.requestKey === "upload-200")).toBe(false);
+    });
+  });
+
+  it("wraps negative and full-width rowids even when the stored cursor is malformed", async () => {
+    await withStore((store, _runs, sql, _clock, id) => {
+      for (const [rowid, key] of [["-7", "negative"], ["9007199254740992", "large-a"], ["9007199254740993", "large-b"]]) {
+        // rowids are fixed literals here: using JS numbers would lose precision.
+        sql.exec(`INSERT INTO upload_intents
+          (rowid,request_key,descriptor_digest,source_id,filename,r2_key,byte_length,content_type,origin,state,created_at,expires_at)
+          VALUES (${rowid},?,?,?,?,?,1,'application/pdf','upload','expired',0,0)`,
+          key, "a".repeat(64), `source-${key}`, "resume.pdf", `vaults/${id}/sources/${key}`);
+      }
+      sql.exec(`INSERT INTO meta(key,value) VALUES ('upload_cleanup_cursor','broken')`);
+      expect(store.cleanupCandidates(1)[0]?.requestKey).toBe("large-a");
+      expect(store.cleanupCandidates(1)[0]?.requestKey).toBe("large-b");
+      expect(store.cleanupCandidates(1)[0]?.requestKey).toBe("negative");
+      expect(store.cleanupCandidates(1)[0]?.requestKey).toBe("large-a");
+    });
+  });
+
+  it("retries an alarm past a page of failed deletes while retaining an unresolved source-write fence", async () => {
+    const id = env.VAULT.newUniqueId().toString();
+    const stub = vault(env, id);
+    await stub.init("upload-rotation");
+    await runInDurableObject(stub, async (instance, state) => {
+      const local = (instance as unknown as { env: Env }).env;
+      const previous = local.FILES;
+      const remove = vi.fn(async (key: string) => {
+        if (!key.endsWith("/upload-100")) throw new Error("synthetic failure");
+      });
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      local.FILES = { delete: remove } as unknown as R2Bucket;
+      try {
+        for (let i = 0; i < 101; i++) {
+          const key = `upload-${String(i).padStart(3, "0")}`;
+          state.storage.sql.exec(`INSERT INTO upload_intents
+            (request_key,descriptor_digest,source_id,filename,r2_key,byte_length,content_type,origin,state,created_at,expires_at)
+            VALUES (?,?,?,?,?,1,'application/pdf','upload','expired',0,0)`,
+            key, "a".repeat(64), `source-${i}`, "resume.pdf", `vaults/${id}/sources/${key}`);
+        }
+        const attempt = crypto.randomUUID();
+        state.storage.sql.exec(`INSERT INTO r2_cache_dispatches(attempt_id,kind,created_at) VALUES (?,'source',0)`, attempt);
+        state.storage.sql.exec(`INSERT INTO source_write_links(attempt_id,source_id) VALUES (?,'source-0')`, attempt);
+        await state.storage.deleteAlarm();
+        await instance.alarm();
+        expect(remove).not.toHaveBeenCalledWith(`vaults/${id}/sources/upload-100`);
+        expect(await state.storage.getAlarm()).toEqual(expect.any(Number));
+        await instance.alarm();
+        expect(remove).toHaveBeenCalledWith(`vaults/${id}/sources/upload-100`);
+        expect(remove).not.toHaveBeenCalledWith(`vaults/${id}/sources/upload-000`);
+        expect(state.storage.sql.exec<{ cleaned_at: number | null }>(`SELECT cleaned_at FROM upload_intents WHERE request_key='upload-100'`).one().cleaned_at).toEqual(expect.any(Number));
+        expect(state.storage.sql.exec(`SELECT attempt_id FROM r2_cache_dispatches WHERE attempt_id=?`, attempt).toArray()).toHaveLength(1);
+        expect(await state.storage.getAlarm()).toEqual(expect.any(Number));
+      } finally {
+        local.FILES = previous;
+        log.mockRestore();
+      }
     });
   });
 

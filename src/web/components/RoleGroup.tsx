@@ -17,6 +17,8 @@ interface Props {
   filter: ReviewState;
   filenames: ReadonlyMap<string, string>;
   reload: Reload;
+  reviewLocked: boolean;
+  onEditingChange: (id: string, active: boolean) => void;
 }
 
 export function RoleGroup({
@@ -26,6 +28,8 @@ export function RoleGroup({
   filter,
   filenames,
   reload,
+  reviewLocked,
+  onEditingChange,
 }: Props) {
   const [editing, setEditing] = useState(false);
   const ref = useRef<HTMLElement>(null);
@@ -41,6 +45,7 @@ export function RoleGroup({
 
   function closeEditor() {
     setEditing(false);
+    onEditingChange(`role:${role.id}`, false);
     ref.current?.focus();
   }
 
@@ -80,8 +85,9 @@ export function RoleGroup({
           noun="role"
           describedBy={headingId}
           review={review}
+          disabled={reviewLocked}
           onEdit={
-            role.state === "rejected" ? undefined : () => setEditing(true)
+            role.state === "rejected" ? undefined : () => { onEditingChange(`role:${role.id}`, true); setEditing(true); }
           }
         />
       )}
@@ -92,6 +98,8 @@ export function RoleGroup({
           roles={roles}
           filenames={filenames}
           reload={reload}
+          reviewLocked={reviewLocked}
+          onEditingChange={onEditingChange}
         />
       ) : (
         <p className="meta group-empty">

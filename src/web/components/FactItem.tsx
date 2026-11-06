@@ -22,9 +22,11 @@ interface Props {
   roles: RoleView[];
   filenames: ReadonlyMap<string, string>;
   reload: Reload;
+  reviewLocked: boolean;
+  onEditingChange: (id: string, active: boolean) => void;
 }
 
-export function FactList({ facts, roles, filenames, reload }: Props) {
+export function FactList({ facts, roles, filenames, reload, reviewLocked, onEditingChange }: Props) {
   return (
     <ul className="plain-list facts">
       {facts.map((fact) => (
@@ -34,6 +36,8 @@ export function FactList({ facts, roles, filenames, reload }: Props) {
           roles={roles}
           filenames={filenames}
           reload={reload}
+          reviewLocked={reviewLocked}
+          onEditingChange={onEditingChange}
         />
       ))}
     </ul>
@@ -45,6 +49,8 @@ function FactItem({
   roles,
   filenames,
   reload,
+  reviewLocked,
+  onEditingChange,
 }: { fact: FactView } & Omit<Props, "facts">) {
   const [editing, setEditing] = useState(false);
   const ref = useRef<HTMLLIElement>(null);
@@ -55,6 +61,7 @@ function FactItem({
 
   function closeEditor() {
     setEditing(false);
+    onEditingChange(`fact:${fact.id}`, false);
     ref.current?.focus();
   }
 
@@ -123,8 +130,9 @@ function FactItem({
           describedBy={textId}
           review={review}
           confirmDisabled={roleRejected}
+          disabled={reviewLocked}
           onEdit={
-            fact.state === "rejected" ? undefined : () => setEditing(true)
+            fact.state === "rejected" ? undefined : () => { onEditingChange(`fact:${fact.id}`, true); setEditing(true); }
           }
         />
       )}

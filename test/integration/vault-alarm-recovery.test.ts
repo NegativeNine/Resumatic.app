@@ -3,6 +3,85 @@ import { env } from "cloudflare:workers";
 import { expect, it, vi } from "vitest";
 import { vault } from "../../src/shared/stubs";
 
+it("reconciles other cleanup and Workflow work while an R2 delete is stalled", async () => {
+  const id = env.VAULT.newUniqueId().toString();
+  const stub = vault(env, id), who = { userId: "vault-alarm-stalled-delete", gen: 1 };
+  await stub.init(who.userId);
+  await runInDurableObject(stub, async (instance, state) => {
+    const local = (instance as unknown as { env: Env }).env;
+    const previousFiles = local.FILES, previousTailor = local.TAILOR;
+    let enter!: () => void, release!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const remove = vi.fn(async (key: string) => {
+      if (key.endsWith("/first")) { enter(); await held; }
+    });
+    const status = vi.fn(async () => ({ status: "errored" }));
+    local.FILES = { delete: remove } as unknown as R2Bucket;
+    local.TAILOR = { async create() { return {}; }, async get() { return { status }; } } as unknown as Workflow;
+    let alarm: Promise<void> | undefined;
+    try {
+      const { applicationId } = await instance.addApplication(who, "A detailed engineering job description for an application.");
+      const { runId } = await instance.tailor(who, applicationId);
+      for (const name of ["first", "second"]) await instance.reserveUpload(who, {
+        requestKey: name, descriptorDigest: "a".repeat(64), filename: `${name}.pdf`,
+        r2Key: `vaults/${id}/sources/${name}`, byteLength: 1, contentType: "application/pdf",
+      });
+      state.storage.sql.exec(`UPDATE upload_intents SET expires_at=0`);
+      await state.storage.deleteAlarm();
+      alarm = instance.alarm();
+      await entered;
+      await vi.waitFor(() => {
+        expect(state.storage.sql.exec<{ cleaned_at: number | null }>(`SELECT cleaned_at FROM upload_intents WHERE request_key='second'`).one().cleaned_at).toEqual(expect.any(Number));
+        expect(state.storage.sql.exec<{ state: string }>(`SELECT state FROM runs WHERE id=?`, runId).one().state).toBe("failed");
+      }, { timeout: 5_000 });
+      expect(state.storage.sql.exec<{ cleaned_at: number | null }>(`SELECT cleaned_at FROM upload_intents WHERE request_key='first'`).one().cleaned_at).toBeNull();
+      expect(await state.storage.getAlarm()).toEqual(expect.any(Number));
+      release();
+      await alarm;
+      expect(state.storage.sql.exec<{ cleaned_at: number | null }>(`SELECT cleaned_at FROM upload_intents WHERE request_key='first'`).one().cleaned_at).toEqual(expect.any(Number));
+    } finally {
+      release();
+      await alarm?.catch(() => {});
+      local.FILES = previousFiles;
+      local.TAILOR = previousTailor;
+    }
+  });
+}, 30_000);
+
+it("does not touch erased state when an upload delete returns after Vault destruction", async () => {
+  const id = env.VAULT.newUniqueId().toString();
+  const stub = vault(env, id), who = { userId: "vault-alarm-delete-after-destroy", gen: 1 };
+  await stub.init(who.userId);
+  await runInDurableObject(stub, async (instance, state) => {
+    const local = (instance as unknown as { env: Env }).env, previous = local.FILES;
+    let enter!: () => void, release!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    local.FILES = { delete: async () => { enter(); await held; } } as unknown as R2Bucket;
+    let alarm: Promise<void> | undefined;
+    try {
+      await instance.reserveUpload(who, {
+        requestKey: "expired", descriptorDigest: "a".repeat(64), filename: "resume.pdf",
+        r2Key: `vaults/${id}/sources/expired`, byteLength: 1, contentType: "application/pdf",
+      });
+      state.storage.sql.exec(`UPDATE upload_intents SET expires_at=0`);
+      await state.storage.deleteAlarm();
+      alarm = instance.alarm();
+      await entered;
+      await instance.destroy();
+      expect(await state.storage.getAlarm()).toBeNull();
+      release();
+      await expect(alarm).resolves.toBeUndefined();
+      expect(await state.storage.getAlarm()).toBeNull();
+    } finally {
+      release();
+      await alarm?.catch(() => {});
+      local.FILES = previous;
+    }
+  });
+}, 30_000);
+
 it("reconciles another cancellation while one Workflow status is stalled", async () => {
   const id = env.VAULT.newUniqueId().toString();
   const stub = vault(env, id);
