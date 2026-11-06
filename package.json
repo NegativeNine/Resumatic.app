@@ -23,7 +23,8 @@
     "models:record": "node scripts/record-models.mjs",
     "check:release": "node scripts/check-release.mjs",
     "audit:deletion": "node scripts/audit-deletion.mjs",
-    "check:ats": "node scripts/ats-smoke.mjs"
+    "check:ats": "node scripts/ats-smoke.mjs",
+    "check:render-local": "node scripts/local-render-smoke.mjs"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "1.2.4",

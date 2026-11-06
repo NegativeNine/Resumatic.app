@@ -89,15 +89,12 @@ async function generate<T>(path: string, body?: unknown): Promise<T> {
   const fingerprint = JSON.stringify([path, body]);
   const key = generationKeys.get(fingerprint) ?? crypto.randomUUID();
   generationKeys.set(fingerprint, key);
-  try {
-    const result = await request<T>("POST", path, body, key);
-    generationKeys.delete(fingerprint);
-    return result;
-  } catch (error) {
-    if (error instanceof ApiError && error.status < 500)
-      generationKeys.delete(fingerprint);
-    throw error;
-  }
+  // A later rejection does not establish whether an earlier request reached
+  // the server. Keep the original key across every failure until a response
+  // confirms the result, including a 4xx received while another attempt runs.
+  const result = await request<T>("POST", path, body, key);
+  if (generationKeys.get(fingerprint) === key) generationKeys.delete(fingerprint);
+  return result;
 }
 
 // The caller keeps a key for retries of one upload action; a new action gets a new key.

@@ -24,6 +24,25 @@ const escape = (value: string) =>
   );
 
 describe("synthetic source document fixtures", () => {
+  it.each(["dev", "holdout"] as const)("labels varied dates, ownership levels and instruction traps in %s", (split) => {
+    const cases = CASES.filter((c) => c.split === split);
+    const roles = cases.map((c) => c.gold.roles[0]!);
+    expect(roles.some((r) => r.current === true)).toBe(true);
+    expect(roles.some((r) => r.start === "2018-01" && r.end === "2020-06")).toBe(true);
+    expect(roles.some((r) => r.start === "2016" && r.end === "2019")).toBe(true);
+    expect(roles.some((r) => r.start === "2020" && r.end === null && r.current !== true)).toBe(true);
+    expect(new Set(cases.flatMap((c) => c.gold.facts.map((f) => f.level).filter(Boolean))))
+      .toEqual(new Set(["contributed", "implemented", "led", "owned", "founded"]));
+    const traps = cases.flatMap((c) => c.gold.traps.map((t) => c.markdown.slice(...t.span)));
+    expect(new Set(traps).size).toBeGreaterThanOrEqual(3);
+    for (const c of cases) {
+      for (const item of [...c.gold.facts, ...c.gold.traps]) {
+        expect(item.span[0]).toBeGreaterThanOrEqual(0);
+        expect(item.span[1]).toBeLessThanOrEqual(c.markdown.length);
+        expect(c.markdown.slice(...item.span).trim()).not.toBe("");
+      }
+    }
+  });
   it("includes varied occupations, additional education, languages, and individually labeled skills", () => {
     expect(new Set(CASES.map((c) => c.gold.roles[0]!.title)).size).toBeGreaterThanOrEqual(8);
     expect(new Set(CASES.map((c) => c.meta.language))).toEqual(new Set(["en", "es", "de"]));
