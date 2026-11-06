@@ -125,12 +125,14 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
               m,
               referenceDate,
               info.filename,
+              this.env.ROLE_UNKNOWN_END_ENABLED === "true",
             );
           } else
             result = await extractFacts(m, markdown, {
               extractor,
               filename: info.filename,
               referenceDate,
+              preserveUnknownEnd: this.env.ROLE_UNKNOWN_END_ENABLED === "true",
             });
           const { extraction, dropped } = result;
           const saved = await v.saveExtraction(

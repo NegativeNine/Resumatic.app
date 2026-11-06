@@ -253,9 +253,11 @@ describe("composeBody", () => {
       { id: "unknown", kind: "education", org: "Unknown", title: null, startDate: null, endDate: null },
       { id: "past", kind: "education", org: "Past", title: null, startDate: "2018", endDate: "2020" },
       { id: "current", kind: "education", org: "Current", title: null, startDate: "2021", endDate: null },
+      { id: "unknown-end", kind: "education", org: "Known start", title: null, startDate: null, endDate: null, unknownEndStartDate: "2019" },
     ];
     const body = composeBody({ lines: [], report: { kept: 0, repaired: 0, replaced: 0, dropped: 0, gaps: [] } }, roles, [], { factIds: [], skillIds: [], gaps: [] });
-    expect(body.sections.map((section) => section.org)).toEqual(["Current", "Past", "Unknown"]);
+    expect(body.sections.map((section) => section.org)).toEqual(["Current", "Past", "Known start", "Unknown"]);
+    expect(body.sections[2]).toMatchObject({ startDate: null, endDate: null, unknownEndStartDate: "2019" });
   });
   it("orders roles by recency, prints headers and skills from the record, and keeps education", async () => {
     const { body } = await pipeline({ summary: { text: "Led the migration of 40 services to Kubernetes", cites: ["Led the migration of 40 services to Kubernetes, cutting deploy time by 60%"] } });

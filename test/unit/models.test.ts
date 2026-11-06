@@ -206,4 +206,11 @@ describe("resume template", () => {
     expect(formatDate("2021")).toBe("2021");
     expect(formatDate(null)).toBe("");
   });
+  it("renders a known start and unknown end without inventing present employment", () => {
+    const value = structuredClone(data);
+    Object.assign(value.body.sections[0]!, { startDate: null, endDate: null, unknownEndStartDate: "2020" });
+    const html = renderResumeHtml(value);
+    expect(html).toContain("Start: 2020 (end unknown)");
+    expect(html).not.toContain("2020 – Present");
+  });
 });

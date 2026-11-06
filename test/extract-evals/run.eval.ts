@@ -196,6 +196,7 @@ describe.sequential("extraction evaluation", () => {
             const { extraction, dropped } = verifyExtraction(
               testCase.markdown,
               raw,
+              { preserveUnknownEnd: configuration.behavior.roleUnknownEnd },
             );
             requirePilotExtraction(
               extraction,
@@ -241,6 +242,7 @@ describe.sequential("extraction evaluation", () => {
                           title,
                           startDate,
                           endDate,
+                          unknownEndStartDate,
                           quote,
                           span,
                         }) => ({
@@ -250,6 +252,7 @@ describe.sequential("extraction evaluation", () => {
                           title,
                           startDate,
                           endDate,
+                          unknownEndStartDate,
                           quote,
                           span,
                         }),

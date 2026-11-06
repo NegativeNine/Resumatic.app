@@ -91,7 +91,9 @@ async function validExtractionConfiguration(extraction) {
     const tested = extractionConfiguration(promotion.strategies, promotion.environment, opts);
     const production = extractionConfiguration(promotion.strategies, "production", opts);
     return tested.hash === promotion.configurationHash &&
-      JSON.stringify(tested.models) === JSON.stringify(production.models);
+      JSON.stringify(tested.models) === JSON.stringify(production.models) &&
+      JSON.stringify(tested.behavior) === JSON.stringify(production.behavior) &&
+      !production.behavior.roleUnknownEnd;
   } catch {
     return false;
   }

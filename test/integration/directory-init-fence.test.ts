@@ -120,7 +120,7 @@ describe("Directory initialization fence", () => {
         release();
         expect(await pending).toEqual({ userId: row.user_id, vaultId: row.vault_id });
         expect(ctx.storage.sql.exec<{sticky: number}>(`SELECT sticky FROM vault_initializations WHERE vault_id=?`, row.vault_id).one().sticky).toBe(1);
-        await instance.deleteAccount(row.user_id);
+        await instance.deleteAccount(row.user_id, row.vault_id);
         await instance.alarm();
         expect(await instance.hasVault(row.vault_id)).toBe(true);
       } finally {
@@ -155,7 +155,7 @@ describe("Directory initialization fence", () => {
         concurrent = instance.signIn(input).then(() => "ok", (error: unknown) => String(error));
         local.VAULT = original;
         const row = ctx.storage.sql.exec<{user_id: string; vault_id: string}>(`SELECT user_id,vault_id FROM vaults`).one();
-        await instance.deleteAccount(row.user_id);
+        await instance.deleteAccount(row.user_id, row.vault_id);
         await instance.alarm();
         expect(await instance.hasVault(row.vault_id)).toBe(true);
         expect(ctx.storage.sql.exec(`SELECT vault_id FROM vault_initializations WHERE vault_id=?`, row.vault_id).toArray()).toHaveLength(1);
@@ -195,7 +195,7 @@ describe("Directory initialization fence", () => {
       expect(recovered).toEqual({ userId: row.user_id, vaultId: row.vault_id });
       expect(spy).toHaveBeenCalledTimes(2);
       expect(await runInDurableObject(d, (_instance, ctx) => ctx.storage.sql.exec<{sticky: number}>(`SELECT sticky FROM vault_initializations WHERE vault_id=?`, row.vault_id).one().sticky)).toBe(1);
-      await d.deleteAccount(row.user_id);
+      await d.deleteAccount(row.user_id, row.vault_id);
       await runDurableObjectAlarm(d);
       expect(await d.hasVault(row.vault_id)).toBe(true);
       expect(await runInDurableObject(d, (_instance, ctx) => ctx.storage.sql.exec(`SELECT vault_id FROM vault_initializations WHERE vault_id=?`, row.vault_id).toArray())).toHaveLength(1);
@@ -237,7 +237,7 @@ describe("Directory initialization fence", () => {
           const internals = instance as unknown as { initializeVault(vaultId: string, userId: string): Promise<void> };
           await expect(internals.initializeVault(row.vault_id, "another-owner")).rejects.toThrow(/owner changed/);
           local.VAULT = original;
-          await instance.deleteAccount(row.user_id);
+          await instance.deleteAccount(row.user_id, row.vault_id);
           await instance.alarm();
           expect(await instance.hasVault(row.vault_id)).toBe(true);
           release();
@@ -274,7 +274,7 @@ describe("Directory initialization fence", () => {
       await evictDurableObject(d);
       expect(await d.prepareReplacement(vaultId, operation)).toEqual({ targetVaultId: target });
       expect(await runInDurableObject(d, (_instance, ctx) => ctx.storage.sql.exec<{sticky: number}>(`SELECT sticky FROM vault_initializations WHERE vault_id=?`, target).one().sticky)).toBe(1);
-      await d.deleteAccount(userId);
+      await d.deleteAccount(userId, vaultId);
       await runDurableObjectAlarm(d);
       expect(await d.hasVault(target)).toBe(true);
     } finally {
@@ -305,7 +305,7 @@ describe("Directory initialization fence", () => {
         await ready;
         local.VAULT = original;
         const targetId = ctx.storage.sql.exec<{target_id: string}>(`SELECT target_id FROM vault_replacements WHERE operation_id=?`, operation).one().target_id;
-        await instance.deleteAccount(userId);
+        await instance.deleteAccount(userId, vaultId);
         await instance.alarm();
         expect(await instance.hasVault(targetId)).toBe(true);
         release();
@@ -337,7 +337,7 @@ describe("Directory initialization fence", () => {
     const marked = await runInDurableObject(d, (_instance, ctx) => ctx.storage.sql.exec<{vault_id: string; sticky: number}>(`SELECT vault_id,sticky FROM vault_initializations`).toArray());
     expect(marked.map((row) => row.vault_id).sort()).toEqual([vaultId, target, retired].sort());
     expect(marked.every((row) => row.sticky === 1)).toBe(true);
-    await d.deleteAccount(userId);
+    await d.deleteAccount(userId, vaultId);
     await runDurableObjectAlarm(d);
     expect(await d.hasVault(vaultId)).toBe(true);
   });

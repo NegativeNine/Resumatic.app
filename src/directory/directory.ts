@@ -433,12 +433,20 @@ export class Directory extends DurableObject<Env> {
   }
 
   /** Marks the account for deletion; alarm() does the work and retries until it is done. */
-  async deleteAccount(userId: string): Promise<void> {
+  async deleteAccount(userId: string, expectedVaultId: string): Promise<void> {
+    if (typeof expectedVaultId !== "string" || !expectedVaultId)
+      throw new AppError("conflict", "the account vault has changed");
     const now = Date.now();
     // Keep the deletion state and its first alarm in the same SQLite-backed
     // storage transaction. If scheduling fails, the account remains active
     // and the caller can retry with the same session.
     const active = await this.ctx.storage.transaction(async () => {
+      const expected = this.sql.exec(
+        `SELECT vault_id FROM vaults WHERE user_id = ? AND vault_id = ? AND state IN ('creating', 'active', 'deleting')`,
+        userId, expectedVaultId,
+      ).toArray();
+      if (expected.length !== 1)
+        throw new AppError("conflict", "the account vault has changed");
       const active = this.sql.exec<{ vault_id: string }>(
         `SELECT vault_id FROM vaults WHERE user_id = ? AND state IN ('active', 'deleting')`,
         userId,

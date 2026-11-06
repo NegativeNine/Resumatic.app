@@ -98,7 +98,9 @@ describe("deletion and Workflow dispatch", () => {
         state.storage.sql.exec(`INSERT INTO resumes (id, application_id, state, run_id, created_at) VALUES (?, ?, 'ready', ?, 1)`, oldResume, appId, oldResume);
         state.storage.sql.exec(`DROP TABLE workflow_dispatches`);
         state.storage.sql.exec(`DROP TABLE workflow_redispatches`);
-        state.storage.sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(SCHEMA_VERSION - 2));
+        state.storage.sql.exec(`DROP TRIGGER clear_unknown_end_start`);
+        state.storage.sql.exec(`ALTER TABLE roles DROP COLUMN unknown_end_start_date`);
+        state.storage.sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(SCHEMA_VERSION - 3));
         return [created.sourceId, oldSource, oldResume].sort();
       } finally {
         local.DISTILL = original;
@@ -120,7 +122,7 @@ describe("deletion and Workflow dispatch", () => {
     await runInDurableObject(stub, (_instance, state) => {
       state.storage.sql.exec(`INSERT INTO workflow_dispatches (run_id) VALUES (?)`, runId);
     });
-    await d.deleteAccount(userId);
+    await d.deleteAccount(userId, vaultId);
     await runDurableObjectAlarm(d);
     expect(await d.hasVault(vaultId)).toBe(true);
     // The first test exercises real acknowledgement clearing. Model that

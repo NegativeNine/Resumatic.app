@@ -114,6 +114,25 @@ function store() {
 }
 
 describe("coach share snapshots", () => {
+  it("retains the unknown-end start in selected role and resume snapshots", () => {
+    const original = selection();
+    const role = original.roles[0]!;
+    role.startDate = null;
+    role.unknownEndStartDate = "2020";
+    original.resumes[0]!.render.body.sections.push({
+      roleId: role.id, kind: role.kind, org: role.org, title: role.title,
+      startDate: null, endDate: null, unknownEndStartDate: "2020", lines: [],
+    });
+    const snapshot = snapshotSelection(original, now);
+    expect(snapshot.facts[0]!.role).toMatchObject({
+      startDate: null, endDate: null, unknownEndStartDate: "2020",
+    });
+    expect(snapshot.resumes[0]!.sections[0]).toMatchObject({
+      startDate: null, endDate: null, unknownEndStartDate: "2020",
+    });
+    role.unknownEndStartDate = "2024";
+    expect(snapshot.facts[0]!.role!.unknownEndStartDate).toBe("2020");
+  });
   it("copies only selected public fields and preserves user-authored status", () => {
     const original = selection();
     original.facts[0]!.interview = {

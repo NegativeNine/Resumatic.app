@@ -25,7 +25,8 @@ export function formatMonthAfter(value: string): string | null {
   return match ? dayUtc.format(Date.UTC(Number(match[1]), Number(match[2]), 1)) : null;
 }
 
-export function formatDateRange(start: string | null, end: string | null): string {
+export function formatDateRange(start: string | null, end: string | null, unknownEndStart?: string | null): string {
+  if (unknownEndStart) return `Start: ${formatMonth(unknownEndStart)} (end unknown)`;
   if (!start) return end ? formatMonth(end) : "";
   return `${formatMonth(start)} – ${end ? formatMonth(end) : "present"}`;
 }

@@ -105,6 +105,10 @@ describe("verified refinement cache", () => {
     instructionChange.instruction = "Emphasize leadership";
     expect(await refinementCacheKey(factChange, "writer/v1")).not.toBe(key);
     expect(await refinementCacheKey(roleChange, "writer/v1")).not.toBe(key);
+    const roleDateChange = structuredClone(same);
+    roleDateChange.roles[0]!.startDate = null;
+    roleDateChange.roles[0]!.unknownEndStartDate = "2020";
+    expect(await refinementCacheKey(roleDateChange, "writer/v1")).not.toBe(key);
     expect(await refinementCacheKey(instructionChange, "writer/v1")).not.toBe(
       key,
     );

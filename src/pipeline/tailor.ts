@@ -356,6 +356,7 @@ export function composeBody(
       title: role.title,
       startDate: role.startDate,
       endDate: role.endDate,
+      ...(role.unknownEndStartDate ? { unknownEndStartDate: role.unknownEndStartDate } : {}),
       lines,
     });
   }
@@ -366,9 +367,9 @@ export function composeBody(
 }
 
 function byRecency(a: RoleRecord, b: RoleRecord): number {
-  const end = (r: RoleRecord) => r.endDate ?? (r.startDate ? "9999" : "");
+  const end = (r: RoleRecord) => r.unknownEndStartDate ?? r.endDate ?? (r.startDate ? "9999" : "");
   return (
     end(b).localeCompare(end(a)) ||
-    (b.startDate ?? "").localeCompare(a.startDate ?? "")
+    (b.startDate ?? b.unknownEndStartDate ?? "").localeCompare(a.startDate ?? a.unknownEndStartDate ?? "")
   );
 }

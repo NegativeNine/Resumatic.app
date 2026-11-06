@@ -134,6 +134,13 @@ function dateMatches(source: string | null, expected: string): boolean {
   return parsed === expected || Boolean(expected.length === 4 && parsed?.startsWith(expected));
 }
 
+/** Only a labeled start supports this distinction; a lone year may be an end. */
+function supportsUnknownStart(quote: string, start: string): boolean {
+  const labeled = [...quote.matchAll(/(?:^|\n)[ \t]*(?:started on|start date)[ \t]*:[ \t]*([^\r\n]+)/gi)];
+  const ends = [...quote.matchAll(/(?:^|\n)[ \t]*(?:finished on|end date)[ \t]*:[ \t]*([^\r\n]+)/gi)];
+  return labeled.length === 1 && ends.length === 0 && dateMatches(labeled[0]![1]!, start);
+}
+
 function writtenRanges(quote: string): RegExpMatchArray[] {
   return [...quote.matchAll(
     /\b((?:[A-Za-zÀ-ž]{3,12}\.?\s+)?(?:19|20)\d{2}(?:[-/.](?:0?[1-9]|1[0-2]))?)\s*(?:[-–—]|to|bis|hasta)\s*((?:[A-Za-zÀ-ž]{3,12}\.?\s+)?(?:19|20)\d{2}(?:[-/.](?:0?[1-9]|1[0-2]))?)\b/gi,
@@ -206,7 +213,7 @@ const ProvenanceSchema = z.object({
 export function verifyExtraction(
   markdown: string,
   raw: RawExtraction,
-  opts: { structuredSkillSpans?: ReadonlySet<string> } = {},
+  opts: { structuredSkillSpans?: ReadonlySet<string>; preserveUnknownEnd?: boolean } = {},
 ): ExtractionVerification {
   if (markdown.length > MAX_MARKDOWN_CHARS)
     throw new AppError(
@@ -273,6 +280,8 @@ export function verifyExtraction(
     const invalidRange = ambiguousRoleDateLine(quote) || reversedDates(role.startDate, role.endDate) ||
       Boolean(role.startDate && role.endDate && !supportsRange(quote, role.startDate, role.endDate)) ||
       Boolean(!role.startDate && role.endDate && !supportsEndOnly(quote, role.endDate));
+    const unknownEndStartDate = !invalidRange && role.startDate && !role.endDate && !supportsCurrent(quote, role.startDate)
+      ? role.startDate : null;
     result.extraction.roles.push({
       ...role,
       org: role.org.trim(),
@@ -280,10 +289,14 @@ export function verifyExtraction(
       // A start without an end is rendered as ongoing. Do not turn an omitted
       // or missed end date into a claim of current employment.
       startDate:
-        invalidRange || (role.startDate && !role.endDate && !supportsCurrent(quote, role.startDate))
+        invalidRange || unknownEndStartDate
           ? null
           : role.startDate,
       endDate: invalidRange ? null : role.endDate,
+      // Only a verified source-supported start is retained; ignore any
+      // similarly named value supplied by a model or strategy.
+      unknownEndStartDate: opts.preserveUnknownEnd && unknownEndStartDate && supportsUnknownStart(quote, unknownEndStartDate)
+        ? unknownEndStartDate : null,
       quote,
       span,
     });

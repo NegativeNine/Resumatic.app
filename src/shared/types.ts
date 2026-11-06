@@ -47,6 +47,7 @@ export interface ExtractedRole {
   title: string | null;
   startDate: string | null;
   endDate: string | null;
+  unknownEndStartDate?: string | null;
   quote: string;
 }
 
@@ -87,6 +88,7 @@ export interface RoleRecord {
   title: string | null;
   startDate: string | null;
   endDate: string | null;
+  unknownEndStartDate?: string | null;
 }
 
 export interface Analysis {

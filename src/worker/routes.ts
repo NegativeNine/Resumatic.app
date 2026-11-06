@@ -39,7 +39,7 @@ import {
 } from "../shared/api";
 import { AppError, errorCode, errorDetail, httpStatus } from "../shared/errors";
 import { hintFor, type CfLocation } from "../shared/location";
-import { pdfKey, sourceKey } from "../shared/r2";
+import { docxKey, pdfKey, sourceKey } from "../shared/r2";
 import { directoryForSignIn } from "../directory/routing";
 import { maintenance } from "./maintenance";
 import {
@@ -173,9 +173,10 @@ app.post("/auth/logout", (c) => {
 
 app.delete("/auth/account", requireSession(), async (c) => {
   const s = c.get("session");
-  // A revoked cookie must not be able to delete the account.
-  await vault(c.env, s.vid).checkSession(c.get("who"));
-  await directoryForUser(c.env, s.uid).deleteAccount(s.uid);
+  // Establish authorization and stop access in one vault event, before a
+  // sign-out or other request can revoke this session between objects.
+  await vault(c.env, s.vid).beginAccountDeletion(c.get("who"));
+  await directoryForUser(c.env, s.uid).deleteAccount(s.uid, s.vid);
   // Do not acknowledge deletion while a copied session can still use an
   // initialized vault. Inventory and destruction remain asynchronous.
   await vault(c.env, s.vid).quiesce();
@@ -270,6 +271,10 @@ const NewRoleBody = z.object({
 const RolePatch = NewRoleBody.partial().extend({
   expectedRevision: z.number().int().positive().optional(),
 });
+const NewRoleV2Body = NewRoleBody.extend({ unknownEndStartDate: roleDate }).strict();
+const RolePatchV2 = NewRoleV2Body.partial().extend({
+  expectedRevision: z.number().int().positive().optional(),
+}).strict();
 
 const FactPatchBody = z
   .object({
@@ -330,7 +335,15 @@ api.post("/test/model-budget", JSON_LIMIT, async (c) => {
   return c.body(null, 204);
 });
 
-api.get("/me", async (c) => c.json(await myVault(c).me(c.get("who"))));
+api.get("/me", async (c) => {
+  const me = await myVault(c).me(c.get("who"));
+  return c.json({ ...me, capabilities: {
+    ocr: me.capabilities?.ocr ?? false,
+    connectedApps: me.capabilities?.connectedApps ?? false,
+    // Both this Worker and the Vault must understand v2 writes.
+    roleDateUnknownEnd: c.env.ROLE_UNKNOWN_END_ENABLED === "true" && me.capabilities?.roleDateUnknownEnd === true,
+  } });
+});
 
 api.get("/profile", async (c) =>
   c.json(
@@ -523,6 +536,20 @@ api.patch("/roles/:id", JSON_LIMIT, async (c) => {
   return c.body(null, 204);
 });
 
+// New method names ensure an old Worker or Vault cannot silently strip this
+// field. The feature remains disabled until mixed-version rollout is verified.
+api.post("/v2/roles", JSON_LIMIT, async (c) => {
+  if (c.env.ROLE_UNKNOWN_END_ENABLED !== "true")
+    throw new AppError("unavailable", "unknown end dates are not enabled");
+  return c.json(await myVault(c).addRoleV2(c.get("who"), await jsonBody(c, NewRoleV2Body)), 201);
+});
+api.patch("/v2/roles/:id", JSON_LIMIT, async (c) => {
+  if (c.env.ROLE_UNKNOWN_END_ENABLED !== "true")
+    throw new AppError("unavailable", "unknown end dates are not enabled");
+  await myVault(c).editRoleV2(c.get("who"), c.req.param("id"), await jsonBody(c, RolePatchV2));
+  return c.body(null, 204);
+});
+
 api.get("/facts", async (c) => {
   const state = c.req.query("state");
   if (state && !["proposed", "confirmed", "rejected"].includes(state))
@@ -631,7 +658,10 @@ api.get("/resumes/:id/pdf", async (c) => {
     resumeId,
     versionQuery(c),
   );
-  const key = pdfKey(c.get("session").vid, resumeId, data.version);
+  // Legacy renderers ignore unknown-end starts. Isolate their cached output
+  // from new output for this same immutable version; old versions keep keys.
+  const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
+  const key = pdfKey(c.get("session").vid, resumeId, data.version, hasUnknownEndDates);
   let pdf: ArrayBuffer | Uint8Array;
   const cached = await c.env.FILES.get(key);
   if (cached) {
@@ -694,7 +724,8 @@ api.get("/resumes/:id/docx", async (c) => {
     c.req.param("id"),
     versionQuery(c),
   );
-  const key = `vaults/${c.get("session").vid}/exports/${c.req.param("id")}-${data.version}-word1.docx`;
+  const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
+  const key = docxKey(c.get("session").vid, c.req.param("id"), data.version, hasUnknownEndDates);
   const stored = await c.env.FILES.get(key);
   const bytes = stored ? await stored.arrayBuffer() : renderDocx(data);
   if (!stored)

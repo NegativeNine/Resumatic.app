@@ -85,6 +85,8 @@ export async function validate({
       missing.push("vars.DAILY_SPEND_CAP_USD");
     if (environment === "production" && config.vars?.RESTORE_FENCE_IDS?.trim())
       missing.push("PRODUCTION_MAINTENANCE_FENCE_ACTIVE");
+    if (environment === "production" && config.vars?.ROLE_UNKNOWN_END_ENABLED === "true")
+      missing.push("ROLE_UNKNOWN_END_ROLLOUT_UNVERIFIED");
     if (
       config.vars?.ACCESS_TEAM_DOMAIN &&
       !httpsOrigin(config.vars.ACCESS_TEAM_DOMAIN)

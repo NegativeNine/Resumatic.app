@@ -361,6 +361,21 @@ describe("strategy verification", () => {
       endDate: null,
     });
   });
+  it("preserves only an explicitly labeled start with an unknown end behind the rollout gate", () => {
+    const quote = "Company: Acme\nTitle: Engineer\nStarted On: 2019";
+    const raw: RawExtraction = { roles: [{ key: "r", kind: "job", org: "Acme", title: "Engineer", startDate: "2019", endDate: null, quote }], facts: [] };
+    expect(verifyExtraction(quote, raw).extraction.roles[0]).toMatchObject({ startDate: null, endDate: null, unknownEndStartDate: null });
+    expect(verifyExtraction(quote, raw, { preserveUnknownEnd: true }).extraction.roles[0]).toMatchObject({ startDate: null, endDate: null, unknownEndStartDate: "2019" });
+    const predicted = verifyExtraction(quote, raw, { preserveUnknownEnd: true }).extraction;
+    const gold = { roles: [{ id: "r", kind: "job" as const, org: "Acme", title: "Engineer", start: "2019", end: null, unknownEnd: true as const, header: [0, quote.length] as [number, number] }], facts: [], traps: [] };
+    expect(scoreCase(predicted, gold, quote)).toMatchObject({ roleRecall: 1, dateAccuracy: 1 });
+    predicted.roles[0]!.startDate = "2019";
+    predicted.roles[0]!.unknownEndStartDate = null;
+    expect(scoreCase(predicted, gold, quote)).toMatchObject({ roleRecall: 0, dateAccuracy: 0.5 });
+    const ambiguous = "Acme — Engineer (2019 – 2022)";
+    const wrong = { ...raw, roles: [{ ...raw.roles[0]!, quote: ambiguous }] };
+    expect(verifyExtraction(ambiguous, wrong, { preserveUnknownEnd: true }).extraction.roles[0]).toMatchObject({ startDate: null, endDate: null, unknownEndStartDate: null });
+  });
   it.each([
     ["Acme — Engineer (2019 – 2021)", "2021", "2019"],
     ["Acme — Engineer (Mar 2021 – Dec 2021)", "2021-12", "2021-03"],

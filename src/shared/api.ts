@@ -97,7 +97,7 @@ export interface Quota {
 }
 
 export interface Me {
-  capabilities?: { ocr: boolean; connectedApps: boolean };
+  capabilities?: { ocr: boolean; connectedApps: boolean; roleDateUnknownEnd?: boolean };
   userId: string;
   profile: Profile;
   quota: Quota;
@@ -133,6 +133,8 @@ export interface RoleView {
   startDate: string | null;
   /** Null with a start date means ongoing; both dates null means dates are unknown. */
   endDate: string | null;
+  /** A start whose end is unknown; startDate and endDate remain null for legacy clients. */
+  unknownEndStartDate?: string | null;
   state: ReviewState;
   quote: string | null;
   sourceId: string | null;
@@ -145,6 +147,7 @@ export interface RolePatch {
   title?: string | null;
   startDate?: string | null;
   endDate?: string | null;
+  unknownEndStartDate?: string | null;
 }
 
 export interface FactView {
@@ -174,6 +177,7 @@ export interface NewRole {
   title: string | null;
   startDate: string | null;
   endDate: string | null;
+  unknownEndStartDate?: string | null;
 }
 
 /** At least one field. Either change makes the fact the user's own claim. */
@@ -225,6 +229,7 @@ export interface ResumeSection {
   title: string | null;
   startDate: string | null;
   endDate: string | null;
+  unknownEndStartDate?: string | null;
   lines: ResumeLine[];
 }
 

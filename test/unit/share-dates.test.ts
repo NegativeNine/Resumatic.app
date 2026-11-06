@@ -55,4 +55,11 @@ describe("shared resume dates", () => {
     );
     expect(html).toContain("2021 – present");
   });
+  it("shows a supported start with an unknown end without adding present", () => {
+    const value = view(null, null);
+    value.snapshot.resumes[0]!.sections[0]!.unknownEndStartDate = "2020";
+    const html = renderToStaticMarkup(createElement(ShareSnapshotContent, { view: value }));
+    expect(html).toContain("Start: 2020 (end unknown)");
+    expect(html.toLowerCase()).not.toContain("present");
+  });
 });

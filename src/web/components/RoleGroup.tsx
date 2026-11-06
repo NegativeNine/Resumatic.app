@@ -34,7 +34,7 @@ export function RoleGroup({
   const details = [
     role.title,
     ROLE_KIND_LABEL[role.kind],
-    formatDateRange(role.startDate, role.endDate),
+    formatDateRange(role.startDate, role.endDate, role.unknownEndStartDate),
   ]
     .filter(Boolean)
     .join(" · ");

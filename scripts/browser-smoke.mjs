@@ -19,7 +19,7 @@ if (!browser?.startsWith("/")) {
   const temp = await mkdtemp(join(tmpdir(), "resumatic-browser-smoke-"));
   let vite, server, chrome, ws;
   let stage = "setup";
-  const state = { signedIn: false, source: false, roleState: "proposed", factState: "proposed", uploadKeys: [], applications: [], tailored: false };
+  const state = { signedIn: false, source: false, roleState: "proposed", factState: "proposed", uploadKeys: [], applications: [], documents: [], tailored: false };
   const role = { id: "role-1", kind: "job", org: "Acme Example", title: "Engineer", startDate: "2021", endDate: null, state: "proposed", quote: "Acme Example — Engineer", sourceId: "source-1", revision: 1 };
   const fact = { id: "fact-1", roleId: "role-1", kind: "accomplishment", text: "Built 12 payment services", level: "implemented", origin: "extracted", state: "proposed", quote: "Built 12 payment services", sourceId: "source-1", revision: 1 };
   const me = { userId: "synthetic-user", profile: { name: "Avery Example", email: "avery@example.test", phone: "", location: "", links: [] }, quota: { used: 0, limit: 3, month: "2026-11" } };
@@ -51,8 +51,15 @@ if (!browser?.startsWith("/")) {
     if (path === "/api/applications" && req.method === "POST") {
       const body = JSON.parse((await read(req)).toString("utf8"));
       if (typeof body.jdText !== "string" || body.jdText.length < 40) return send(res, 400, { error: "invalid" });
-      state.applications.push({ id: "application-1", company: null, title: null, excerpt: "Synthetic platform engineer job", createdAt: 1, resumes: [] });
+      state.applications.push({ id: "application-1", company: null, title: null, excerpt: "Synthetic platform engineer job", createdAt: 1, resumes: [], status: "saved", appliedAt: null, notes: "", revision: 1 });
       return send(res, 201, { applicationId: "application-1" });
+    }
+    if (path === "/api/applications/application-1" && req.method === "PATCH") {
+      const body = JSON.parse((await read(req)).toString("utf8"));
+      const application = state.applications[0];
+      if (!application || body.expectedRevision !== application.revision) return send(res, 409, { error: "conflict" });
+      Object.assign(application, { status: body.status, appliedAt: body.appliedAt, notes: body.notes, revision: application.revision + 1 });
+      return send(res, 204);
     }
     if (path === "/api/applications/application-1/resumes" && req.method === "POST") {
       if (state.roleState !== "confirmed" || state.factState !== "confirmed" || !req.headers["idempotency-key"]) return send(res, 400, { error: "invalid" });
@@ -60,7 +67,13 @@ if (!browser?.startsWith("/")) {
     }
     if (path === "/api/resumes/resume-1" && req.method === "GET") return send(res, 200, { id: "resume-1", applicationId: "application-1", state: "ready", step: null, error: null, version: 1, createdAt: 1, report: null, facts: { "fact-1": { text: fact.text, quote: fact.quote } }, body: { summary: null, sections: [{ roleId: "role-1", kind: "job", org: role.org, title: role.title, startDate: role.startDate, endDate: null, lines: [{ id: "line-1", text: fact.text, factIds: ["fact-1"], status: "kept" }] }], skills: [] } });
     if (path === "/api/resumes/resume-1/versions") return send(res, 200, { versions: [] });
-    if (path === "/api/applications/application-1/documents") return send(res, 200, { documents: [] });
+    if (path === "/api/applications/application-1/documents" && req.method === "GET") return send(res, 200, { documents: state.documents });
+    if (path === "/api/applications/application-1/documents" && req.method === "POST") {
+      const body = JSON.parse((await read(req)).toString("utf8"));
+      if (body.kind !== "letter" || !req.headers["idempotency-key"] || state.factState !== "confirmed") return send(res, 400, { error: "invalid" });
+      state.documents.push({ id: "document-1", applicationId: "application-1", kind: "letter", state: "ready", version: 1, createdAt: 1, error: null, result: { kind: "letter", units: [{ id: "unit-1", roleId: "role-1", text: "I built 12 payment services.", factIds: ["fact-1"], group: 0 }], questions: [], report: { kept: 1, repaired: 0, replaced: 0, dropped: 0, gaps: [] } }, facts: { "fact-1": { text: fact.text, quote: fact.quote } } });
+      return send(res, 202, { documentId: "document-1", runId: "document-1" });
+    }
     return send(res, 404, { error: "not_found" });
   };
   try {
@@ -105,9 +118,12 @@ if (!browser?.startsWith("/")) {
     stage = "sign_in"; await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Sign in with Google')`); await clickText("a", "Sign in with Google"); await wait(`document.body?.innerText.includes('Sources & facts') && !!document.querySelector('input[type=file]')`);
     stage = "upload_retry"; const root = await call("DOM.getDocument"); const input = await call("DOM.querySelector", { nodeId: root.root.nodeId, selector: "input[type=file]" }); await call("DOM.setFileInputFiles", { nodeId: input.nodeId, files: [file] }); await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Retry upload')`); await clickText("button", "Retry upload"); await wait(`document.body?.innerText.includes('Built 12 payment services')`); if (state.uploadKeys.length !== 2 || state.uploadKeys[0] !== state.uploadKeys[1]) throw new Error("UPLOAD_RETRY_KEY_MISMATCH");
     stage = "review"; await clickText("button", "Confirm role"); await wait(`!([...document.querySelectorAll('button')].some(x => x.textContent.trim() === 'Confirm role'))`); await clickText(".fact button", "Confirm"); await wait(`document.body?.innerText.includes('nothing is waiting for review')`);
-    stage = "application"; await clickText("nav a", "Applications"); await wait(`!!document.querySelector('textarea')`); await evalPage(`document.querySelector('textarea').focus()`); await call("Input.insertText", { text: "Synthetic platform engineer position requiring experience building reliable payment services and APIs." }); await clickText("button", "Save job"); await wait(`document.body?.innerText.includes('Synthetic platform engineer job')`); await clickText("button", "Tailor a resume"); await wait(`document.body?.innerText.includes('Resume preview') || !!document.querySelector('[aria-label="Resume preview"]')`); if (!state.tailored) throw new Error("TAILOR_NOT_STARTED");
+    stage = "application"; await clickText("nav a", "Applications"); await wait(`!!document.querySelector('textarea')`); await evalPage(`document.querySelector('textarea').focus()`); await call("Input.insertText", { text: "Synthetic platform engineer position requiring experience building reliable payment services and APIs." }); await clickText("button", "Save job"); await wait(`document.body?.innerText.includes('Synthetic platform engineer job')`);
+    stage = "tracking"; await clickText("button", "Track & prepare"); await wait(`!!document.querySelector('.application-workspace select')`); await evalPage(`(() => { const e = document.querySelector('.application-workspace select'); e.value = 'applied'; e.dispatchEvent(new Event('change', { bubbles: true })); })()`); await evalPage(`document.querySelector('.application-workspace textarea').focus()`); await call("Input.insertText", { text: "Synthetic follow-up note" }); await clickText("button", "Save tracking details"); await wait(`document.querySelector('.application-workspace')?.innerText.includes('Saved.')`); if (state.applications[0]?.status !== "applied" || state.applications[0]?.notes !== "Synthetic follow-up note") throw new Error("TRACKING_NOT_SAVED");
+    stage = "cover_letter"; await clickText("button", "Create cover letter"); await wait(`!![...document.querySelectorAll('summary')].find(x => x.textContent.trim() === 'Read cover letter')`); await clickText("summary", "Read cover letter"); await wait(`document.body?.innerText.includes('I built 12 payment services.')`);
+    stage = "resume"; await clickText("button", "Tailor a resume"); await wait(`document.body?.innerText.includes('Resume preview') || !!document.querySelector('[aria-label="Resume preview"]')`); if (!state.tailored) throw new Error("TAILOR_NOT_STARTED");
     await wait(`document.querySelector('[aria-label="Resume preview"]')?.innerText.includes('Built 12 payment services')`);
-    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, roleAndFactReview: true, applicationCreation: true, tailoredResumeDisplay: true } }));
+    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, roleAndFactReview: true, applicationCreation: true, applicationTracking: true, coverLetterDisplay: true, tailoredResumeDisplay: true } }));
   } catch {
     console.log(JSON.stringify({ status: "failed", reason: "BROWSER_SMOKE_FAILED", stage, promotionEligible: false })); process.exitCode = 1;
   } finally {

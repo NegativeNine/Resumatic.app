@@ -218,6 +218,10 @@ describe("structured LinkedIn extraction", () => {
       startDate: null,
       endDate: null,
     });
+    const enabled = await extractLinkedIn(document, none, models, "2026-11-06", "LinkedIn.zip", true);
+    expect(enabled.extraction.roles[0]).toMatchObject({
+      org: "Acme", startDate: null, endDate: null, unknownEndStartDate: "2021",
+    });
   });
 
   it("does not infer employers, titles, dates, or trust instructions in a CSV cell", async () => {

@@ -72,8 +72,8 @@ export function ShareSnapshotContent({ view }: { view: SharedView }) {
                 {section.title ? `${section.title} · ` : ""}
                 {section.org}
               </h3>
-              {formatDateRange(section.startDate, section.endDate) && (
-                <p>{formatDateRange(section.startDate, section.endDate)}</p>
+              {formatDateRange(section.startDate, section.endDate, section.unknownEndStartDate) && (
+                <p>{formatDateRange(section.startDate, section.endDate, section.unknownEndStartDate)}</p>
               )}
               <ul>{section.lines.map(line)}</ul>
             </section>

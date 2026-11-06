@@ -151,8 +151,12 @@ export const api = {
   roles: () => request<{ roles: RoleView[] }>("GET", "/api/roles"),
   addRole: (role: NewRole) =>
     request<{ roleId: string }>("POST", "/api/roles", role),
+  addRoleV2: (role: NewRole) =>
+    request<{ roleId: string }>("POST", "/api/v2/roles", role),
   updateRole: (id: string, patch: RolePatch) =>
     request<void>("PATCH", `/api/roles/${encodeURIComponent(id)}`, patch),
+  updateRoleV2: (id: string, patch: RolePatch) =>
+    request<void>("PATCH", `/api/v2/roles/${encodeURIComponent(id)}`, patch),
   facts: (state?: ReviewState) =>
     request<{ facts: FactView[] }>(
       "GET",

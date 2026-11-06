@@ -415,7 +415,11 @@ describe("uncertain Workflow redispatch", () => {
       let retry: Promise<void> | undefined;
       try {
         const { sourceId } = await instance.addSource(who, { filename: "resume.pdf", r2Key: `vaults/${vid}/sources/file` });
-        internal.scheduleRunAlarm = async () => { entered(); await held; };
+        let firstSchedule = true;
+        internal.scheduleRunAlarm = async (at) => {
+          if (firstSchedule) { firstSchedule = false; entered(); await held; }
+          else await schedule.call(instance, at);
+        };
         retry = internal.redispatchUncertain(sourceId);
         await started;
         if (action === "cancel") await instance.cancelRun(who, sourceId);

@@ -36,6 +36,8 @@ Each case has a separate, nonempty structured JSON attestation. A consent file c
 
 When a role is explicitly ongoing, label it with `current: true`, a known `start`, and `end: null`. The scorer then checks that the predicted role actually renders as current. Leave `current` absent when an end date is unknown; an absent end alone is not evidence of an ongoing role. A role cannot be labeled current and have a dated end.
 
+When the source explicitly states a start and the end is unknown, label `unknownEnd: true`, the known `start`, and `end: null`. The scorer then distinguishes the unknown-end representation from an incorrectly ongoing role. Do not label the same role both current and unknown-ended.
+
 Label each skill as its own `skill` fact, with its span covering the exact skill name rather than the full list. The scorer compares the proposed skill text with that literal span and requires the span to lie within the proposal's source evidence; it also reports skills precision, recall and F1. The broader evidence line is retained for qualifier checks. Missing skill labels distort overall precision and recall, so reviewers must label every in-scope skill.
 
 ## Run and audit

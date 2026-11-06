@@ -23,6 +23,7 @@ export async function extractFacts(
     extractor?: Extractor;
     filename?: string;
     referenceDate?: string;
+    preserveUnknownEnd?: boolean;
   } = {},
 ): Promise<ExtractResult> {
   if (markdown.length > MAX_MARKDOWN_CHARS)
@@ -36,6 +37,6 @@ export async function extractFacts(
     referenceDate: opts.referenceDate ?? "1970-01-01",
   };
   const raw = await (opts.extractor ?? llmExtractor()).extract(input, models);
-  const { extraction, dropped } = verifyExtraction(markdown, raw);
+  const { extraction, dropped } = verifyExtraction(markdown, raw, { preserveUnknownEnd: opts.preserveUnknownEnd });
   return { extraction, dropped: dropped.length };
 }

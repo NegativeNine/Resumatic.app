@@ -17,6 +17,8 @@ interface ResumaticSecrets {
   MODEL_PRICES_JSON?: string;
   MODEL_MAX_CALL_USD?: string;
   MODEL_TRANSCRIBE?: string;
+  /** Disabled until all readers/writers and rollout safety are verified. */
+  ROLE_UNKNOWN_END_ENABLED?: string;
   MCP_ENABLED?: string;
   MCP_ALLOWED_ORIGINS?: string;
   OAUTH_KV?: KVNamespace;

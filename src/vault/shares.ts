@@ -36,7 +36,7 @@ export interface ShareSelection {
 function roleSnapshot(
   role: Pick<
     RoleView,
-    "id" | "kind" | "org" | "title" | "startDate" | "endDate"
+    "id" | "kind" | "org" | "title" | "startDate" | "endDate" | "unknownEndStartDate"
   >,
 ): SharedRole {
   return {
@@ -46,6 +46,7 @@ function roleSnapshot(
     title: role.title,
     startDate: role.startDate,
     endDate: role.endDate,
+    ...(role.unknownEndStartDate ? { unknownEndStartDate: role.unknownEndStartDate } : {}),
   };
 }
 
@@ -116,6 +117,7 @@ export function snapshotSelection(
           title: section.title,
           startDate: section.startDate,
           endDate: section.endDate,
+          ...(section.unknownEndStartDate ? { unknownEndStartDate: section.unknownEndStartDate } : {}),
         }),
         lines: section.lines.map(line),
       }));

@@ -150,6 +150,15 @@ describe("DOCX generation", () => {
       ),
     ).toContain("Built 12 APIs.");
   });
+  it("renders a start with unknown end without claiming the role is current", () => {
+    const value = structuredClone(data);
+    value.body.sections[0]!.startDate = null;
+    value.body.sections[0]!.endDate = null;
+    Object.assign(value.body.sections[0]!, { unknownEndStartDate: "2020" });
+    const xml = strFromU8(unzipSync(renderDocx(value))["word/document.xml"]!);
+    expect(xml).toContain("Start: 2020 (end unknown)");
+    expect(xml).not.toContain("2020 – Present");
+  });
 });
 
 describe("authoritative user corrections", () => {

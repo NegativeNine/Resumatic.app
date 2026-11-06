@@ -13,6 +13,8 @@ export interface Gold {
     end: string | null;
     /** True only when evidence explicitly states that the role is ongoing. */
     current?: true;
+    /** True when a supported start is known but the end is not. */
+    unknownEnd?: true;
     header: Span;
   }[];
   facts: {

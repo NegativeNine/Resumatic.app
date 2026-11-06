@@ -36,9 +36,10 @@ import type {
   SourceState,
   SourceView,
 } from "../shared/api";
-import { MAX_LINE_CHARS } from "../shared/api";
+import { DATE_PATTERN, MAX_LINE_CHARS } from "../shared/api";
 import { AppError } from "../shared/errors";
 import { isMissingWorkflowInstance } from "../shared/workflow-errors";
+import { directoryForUser } from "../shared/stubs";
 import type {
   Analysis,
   Candidate,
@@ -113,6 +114,7 @@ type RoleRow = {
   title: string | null;
   start_date: string | null;
   end_date: string | null;
+  unknown_end_start_date: string | null;
   state: string;
   source_id: string | null;
   quote: string | null;
@@ -272,6 +274,7 @@ export function resetDay(month: string): string {
 export class Vault extends DurableObject<Env> {
   private initialised = false;
   private gone = false;
+  private destroying = false;
   // Set synchronously before deletion awaits any storage operation.
   private closing = false;
   private vectorCache: Map<string, Float32Array> | null = null;
@@ -375,6 +378,7 @@ export class Vault extends DurableObject<Env> {
       this.setMeta("state", "closing");
       this.requireNoUnsettledDispatches();
     }
+    this.destroying = true;
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
     this.gone = true;
@@ -396,6 +400,30 @@ export class Vault extends DurableObject<Env> {
 
   async checkSession(who: Who): Promise<void> {
     this.requireOwner(who);
+  }
+
+  /** Authenticate and close access atomically, before the cross-object deletion call. */
+  async beginAccountDeletion(who: Who): Promise<void> {
+    await this.ctx.storage.transaction(async () => {
+      this.requireNotUnderMaintenance();
+      if (
+        this.initialised && !this.gone &&
+        this.meta("state") === "closing" &&
+        this.meta("account_deletion_intent") === "1"
+      ) {
+        this.requireIdentity(who);
+      } else {
+        this.requireOwner(who);
+        this.setMeta("account_deletion_intent", "1");
+        this.setMeta("state", "closing");
+      }
+      // If the Worker crashes before notifying Directory, the Vault itself
+      // retries. Preserve any earlier alarm so other work is never delayed.
+      const at = Date.now() + 60_000;
+      const alarm = await this.ctx.storage.getAlarm();
+      if (alarm === null || alarm > at) await this.ctx.storage.setAlarm(at);
+    });
+    this.quiesce();
   }
 
   async signOutEverywhere(who: Who): Promise<void> {
@@ -476,6 +504,7 @@ export class Vault extends DurableObject<Env> {
       capabilities: {
         ocr: !!this.env.MODEL_TRANSCRIBE,
         connectedApps: this.env.MCP_ENABLED === "true",
+        roleDateUnknownEnd: this.env.ROLE_UNKNOWN_END_ENABLED === "true",
       },
     };
   }
@@ -549,10 +578,7 @@ export class Vault extends DurableObject<Env> {
       this.extractionStrategy(input.origin, input.filename);
     const reservation = store.reserve(input);
     const next = store.nextAlarm();
-    if (next !== null) {
-      const alarm = await this.ctx.storage.getAlarm();
-      if (alarm === null || alarm > next) await this.ctx.storage.setAlarm(next);
-    }
+    if (next !== null) await this.scheduleRunAlarm(next);
     return reservation;
   }
   async completeUpload(
@@ -950,15 +976,19 @@ export class Vault extends DurableObject<Env> {
       const roleIds = new Map<string, string>();
       for (const r of x.roles) {
         const id = crypto.randomUUID();
+        const unknownStart = this.env.ROLE_UNKNOWN_END_ENABLED === "true" ? (r.unknownEndStartDate ?? null) : null;
+        if (unknownStart && (!DATE_PATTERN.test(unknownStart) || r.startDate !== null || r.endDate !== null))
+          throw new AppError("invalid", "an unknown end cannot be combined with other dates");
         this.sql.exec(
-          `INSERT INTO roles (id, kind, org, title, start_date, end_date, evidence_id, source_id, state)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'proposed')`,
+          `INSERT INTO roles (id, kind, org, title, start_date, end_date, unknown_end_start_date, evidence_id, source_id, state)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed')`,
           id,
           r.kind,
           r.org,
           r.title,
           r.startDate,
           r.endDate,
+          unknownStart,
           evidenceFor(r.quote, r.span),
           sourceId,
         );
@@ -1066,9 +1096,10 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     return this.sql
       .exec<RoleRow>(
-        `SELECT r.id, r.kind, r.org, r.title, r.start_date, r.end_date, r.state, r.source_id, r.revision, e.quote, e.start, e.end
+        `SELECT r.id, r.kind, r.org, r.title, r.start_date, r.end_date, r.unknown_end_start_date, r.state, r.source_id, r.revision, e.quote, e.start, e.end
          FROM roles r LEFT JOIN evidence e ON e.id = r.evidence_id
-         ORDER BY COALESCE(r.end_date, '9999') DESC, r.start_date DESC`,
+         ORDER BY COALESCE(r.end_date, CASE WHEN r.unknown_end_start_date IS NOT NULL THEN r.unknown_end_start_date WHEN r.start_date IS NOT NULL THEN '9999' ELSE '' END) DESC,
+                  COALESCE(r.start_date, r.unknown_end_start_date) DESC`,
       )
       .toArray()
       .map(roleView);
@@ -1088,6 +1119,52 @@ export class Vault extends DurableObject<Env> {
       r.endDate,
     );
     return { roleId: id };
+  }
+
+  /** Versioned RPC: older Vault code cannot silently discard the new field. */
+  async addRoleV2(who: Who, r: NewRole): Promise<{ roleId: string }> {
+    this.requireOwner(who);
+    if (this.env.ROLE_UNKNOWN_END_ENABLED !== "true")
+      throw new AppError("unavailable", "unknown end dates are not enabled");
+    const unknown = r.unknownEndStartDate ?? null;
+    if (unknown && (!DATE_PATTERN.test(unknown) || r.startDate !== null || r.endDate !== null))
+      throw new AppError("invalid", "an unknown end cannot be combined with other dates");
+    const id = crypto.randomUUID();
+    this.sql.exec(
+      `INSERT INTO roles (id, kind, org, title, start_date, end_date, unknown_end_start_date, state) VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed')`,
+      id, r.kind, r.org, r.title, r.startDate, r.endDate, unknown,
+    );
+    return { roleId: id };
+  }
+
+  /** Versioned edit validates the effective dates before making any change. */
+  async editRoleV2(who: Who, id: string, patch: RolePatch): Promise<void> {
+    this.requireOwner(who);
+    if (this.env.ROLE_UNKNOWN_END_ENABLED !== "true")
+      throw new AppError("unavailable", "unknown end dates are not enabled");
+    const role = this.sql.exec<{ revision: number; start_date: string | null; end_date: string | null; unknown_end_start_date: string | null }>(
+      `SELECT revision, start_date, end_date, unknown_end_start_date FROM roles WHERE id = ?`, id,
+    ).toArray()[0];
+    if (!role) throw new AppError("not_found", "no such role");
+    if (patch.expectedRevision !== undefined && patch.expectedRevision !== role.revision)
+      throw new AppError("conflict", "this role changed; refresh and try again");
+    const start = patch.startDate === undefined ? role.start_date : patch.startDate;
+    const end = patch.endDate === undefined ? role.end_date : patch.endDate;
+    const unknown = patch.unknownEndStartDate === undefined ? role.unknown_end_start_date : patch.unknownEndStartDate;
+    if (unknown && (!DATE_PATTERN.test(unknown) || start !== null || end !== null))
+      throw new AppError("invalid", "an unknown end cannot be combined with other dates");
+    const fields: [string, string | null][] = [];
+    if (patch.kind !== undefined) fields.push(["kind", patch.kind]);
+    if (patch.org !== undefined) fields.push(["org", patch.org]);
+    if (patch.title !== undefined) fields.push(["title", patch.title]);
+    if (patch.startDate !== undefined) fields.push(["start_date", patch.startDate]);
+    if (patch.endDate !== undefined) fields.push(["end_date", patch.endDate]);
+    if (patch.unknownEndStartDate !== undefined) fields.push(["unknown_end_start_date", patch.unknownEndStartDate]);
+    this.ctx.storage.transactionSync(() => {
+      for (const [column, value] of fields)
+        this.sql.exec(`UPDATE roles SET ${column} = ? WHERE id = ?`, value, id);
+      if (fields.length) this.sql.exec(`UPDATE roles SET revision = revision + 1 WHERE id = ?`, id);
+    });
   }
 
   async editRole(who: Who, id: string, patch: RolePatch): Promise<void> {
@@ -1906,9 +1983,7 @@ export class Vault extends DurableObject<Env> {
         selection.expiresAt,
       );
     });
-    const alarm = await this.ctx.storage.getAlarm();
-    if (alarm === null || alarm > grant.expiresAt)
-      await this.ctx.storage.setAlarm(grant.expiresAt);
+    await this.scheduleRunAlarm(grant.expiresAt);
     return grant;
   }
   async listShares(who: Who) {
@@ -2271,14 +2346,7 @@ export class Vault extends DurableObject<Env> {
           REFINE_CACHE_TTL_MS,
         )
         .one().at;
-      const scheduled = await this.ctx.storage.getAlarm();
-      if (
-        next !== null &&
-        (scheduled === null || scheduled > next) &&
-        this.initialised &&
-        this.meta("state") === "open"
-      )
-        await this.ctx.storage.setAlarm(next);
+      if (next !== null) await this.scheduleRunAlarm(next);
     }
     this.broadcast("document", runId);
     if (options.resumeId) this.broadcast("resume", options.resumeId);
@@ -2607,6 +2675,8 @@ export class Vault extends DurableObject<Env> {
   }
   async prepareMaintenance(): Promise<void> {
     requireMaintenanceFence(this.vaultId, this.env.RESTORE_FENCE_IDS);
+    if (this.meta("account_deletion_intent") === "1")
+      throw new AppError("gone", "this account is being deleted");
     this.requireNoUnsettledDispatches();
     for (const run of this.runs.listPending()) {
       if (run.kind === "embed")
@@ -2764,6 +2834,14 @@ export class Vault extends DurableObject<Env> {
   // ---------------------------------------------------------------- helpers
 
   private requireOpen(): void {
+    this.requireNotUnderMaintenance();
+    if (this.gone || !this.initialised)
+      throw new AppError("gone", "this vault no longer exists");
+    if (this.meta("state") !== "open")
+      throw new AppError("gone", "this account is being deleted");
+  }
+
+  private requireNotUnderMaintenance(): void {
     if (
       (this.env.RESTORE_FENCE_IDS ?? "")
         .split(",")
@@ -2774,14 +2852,15 @@ export class Vault extends DurableObject<Env> {
         "unavailable",
         "this account is temporarily unavailable during maintenance",
       );
-    if (this.gone || !this.initialised)
-      throw new AppError("gone", "this vault no longer exists");
-    if (this.meta("state") !== "open")
-      throw new AppError("gone", "this account is being deleted");
   }
 
   private requireOwner(who: Who): void {
     this.requireOpen();
+    this.requireIdentity(who);
+  }
+
+  /** Called only after open-state checks or for an existing deletion intent. */
+  private requireIdentity(who: Who): void {
     if (who.userId !== this.meta("user_id"))
       throw new AppError("forbidden", "not this user's vault");
     if ((who.epoch ?? "legacy") !== (this.meta("security_epoch") ?? "legacy"))
@@ -3340,7 +3419,23 @@ export class Vault extends DurableObject<Env> {
       await this.ctx.storage.setAlarm(at);
       // A close can begin while setAlarm is in flight. An alarm is not useful
       // after closing and must not survive a completed destroy.
-      if (this.closing || this.gone || !this.initialised || this.meta("state") !== "open")
+      if (this.closing || this.gone || !this.initialised || this.meta("state") !== "open") {
+        if (!this.gone && !this.destroying && this.initialised && this.meta("account_deletion_intent") === "1")
+          await this.scheduleDeletionAlarm(Date.now() + 60_000);
+        else
+          await this.ctx.storage.deleteAlarm();
+      }
+    }
+  }
+
+  /** Preserve an earlier alarm and never reinstall one after destruction. */
+  private async scheduleDeletionAlarm(at: number): Promise<void> {
+    if (this.gone || this.destroying || !this.initialised || this.meta("account_deletion_intent") !== "1") return;
+    const current = await this.ctx.storage.getAlarm();
+    if (this.gone || this.destroying || !this.initialised || this.meta("account_deletion_intent") !== "1") return;
+    if (current === null || current > at) {
+      await this.ctx.storage.setAlarm(at);
+      if (this.gone || this.destroying || !this.initialised || this.meta("account_deletion_intent") !== "1")
         await this.ctx.storage.deleteAlarm();
     }
   }
@@ -3434,7 +3529,20 @@ export class Vault extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
-    if (!this.initialised || this.meta("state") !== "open") return;
+    if (!this.initialised || this.gone) return;
+    if (this.meta("account_deletion_intent") === "1") {
+      try {
+        const userId = this.meta("user_id");
+        if (!userId) throw new Error("deletion_owner_missing");
+        await directoryForUser(this.env, userId).deleteAccount(userId, this.vaultId);
+      } catch {
+        // Directory may have committed despite a lost reply. A durable retry
+        // is safe and must not recreate an alarm after the vault is destroyed.
+        await this.scheduleDeletionAlarm(Date.now() + 60_000);
+      }
+      return;
+    }
+    if (this.meta("state") !== "open") return;
     this.shares.purgeExpired();
     this.mcpGrants.purgeExpired();
     this.sql.exec(
@@ -3563,7 +3671,7 @@ export class Vault extends DurableObject<Env> {
   async cancelRun(who: Who, id: string): Promise<void> {
     this.requireOwner(who);
     this.runs.requestCancel(id);
-    await this.ctx.storage.setAlarm(Date.now());
+    await this.scheduleRunAlarm(Date.now());
     this.broadcast("run", id);
   }
 
@@ -3621,9 +3729,10 @@ export class Vault extends DurableObject<Env> {
       steps: ["embed"],
     });
     this.runs.claim(id);
-    await this.ctx.storage.setAlarm(Date.now() + 60_000);
+    await this.scheduleRunAlarm(Date.now() + 60_000);
     let vector: number[] | undefined;
     try {
+      this.requireOpen();
       [vector] = await runModels(this.env, this.vaultId, id, "embed").embed(
         [text],
         { model: embeddingModel },
@@ -3635,7 +3744,7 @@ export class Vault extends DurableObject<Env> {
       this.runs.commitStep(id, "embed", () => {});
       this.runs.finish(id, () => {});
     } catch {
-      if (this.initialised && !this.gone)
+      if (this.initialised && !this.gone && this.meta("state") === "open")
         this.runs.fail(id, "embedding_failed");
       throw new AppError(
         "unavailable",
@@ -3674,7 +3783,7 @@ export class Vault extends DurableObject<Env> {
   private confirmedRoles(): RoleRecord[] {
     return this.sql
       .exec<RoleRow>(
-        `SELECT id, revision, kind, org, title, start_date, end_date, state, source_id, NULL AS quote FROM roles WHERE state = 'confirmed'`,
+        `SELECT id, revision, kind, org, title, start_date, end_date, unknown_end_start_date, state, source_id, NULL AS quote FROM roles WHERE state = 'confirmed'`,
       )
       .toArray()
       .map((r) => ({
@@ -3685,6 +3794,7 @@ export class Vault extends DurableObject<Env> {
         title: r.title,
         startDate: r.start_date,
         endDate: r.end_date,
+        unknownEndStartDate: r.unknown_end_start_date,
       }));
   }
 
@@ -3848,6 +3958,7 @@ function roleView(r: RoleRow): RoleView {
     title: r.title,
     startDate: r.start_date,
     endDate: r.end_date,
+    unknownEndStartDate: r.unknown_end_start_date ?? null,
     state: r.state as ReviewState,
     quote: r.quote,
     sourceId: r.source_id,

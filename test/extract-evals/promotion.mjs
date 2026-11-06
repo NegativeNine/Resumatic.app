@@ -36,10 +36,12 @@ const PredRole = z
     title: z.string().max(200).nullable(),
     startDate: z.string().nullable(),
     endDate: z.string().nullable(),
+    unknownEndStartDate: z.string().regex(/^\d{4}(?:-(?:0[1-9]|1[0-2]))?$/).nullable().optional(),
     quote: z.string().max(800),
     span: Span,
   })
-  .strict();
+  .strict()
+  .refine((r) => !r.unknownEndStartDate || (r.startDate === null && r.endDate === null));
 const PredFact = z
   .object({
     roleKey: z.string().max(120).nullable(),
@@ -163,10 +165,11 @@ export function assessPromotion(root, runId, auditPath) {
       new Set(snapshot.strategies).size !== snapshot.strategies.length
     )
       throw new Error();
-    const currentConfiguration = extractionConfiguration(
+    const evaluatedConfiguration = extractionConfiguration(
       snapshot.strategies,
       snapshot.environment,
-    ).hash;
+    );
+    const currentConfiguration = evaluatedConfiguration.hash;
     const audit = auditPath
       ? Audit.parse(readPrivateJson(dataset.root, auditPath).value)
       : {
@@ -256,6 +259,10 @@ export function assessPromotion(root, runId, auditPath) {
           throw new Error();
         if (row.outcome === "ok") {
           const source = cases.get(row.caseId);
+          if (currentConfiguration === snapshot.configurationHash &&
+              !evaluatedConfiguration.behavior.roleUnknownEnd &&
+              row.prediction.roles.some((role) => !!role.unknownEndStartDate))
+            throw new Error();
           if (
             [...row.prediction.roles, ...row.prediction.facts].some(
               (item) =>

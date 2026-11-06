@@ -3,6 +3,7 @@ import { ROLE_KINDS, type RoleKind, type RoleView } from "../../shared/api";
 import { api } from "../api";
 import { ROLE_KIND_LABEL } from "../format";
 import { useAction, type Reload } from "../hooks";
+import { useSession } from "../session";
 import { ActionError, Field } from "./ui";
 
 interface Props {
@@ -15,31 +16,51 @@ interface Props {
 }
 
 export function RoleForm({ role, reload, onClose, onAdded }: Props) {
+  const { me } = useSession();
+  const allowUnknownEnd = me.capabilities?.roleDateUnknownEnd === true;
+  const datesLocked = Boolean(role?.unknownEndStartDate && !allowUnknownEnd);
   const [kind, setKind] = useState<RoleKind>(role?.kind ?? "job");
   const [org, setOrg] = useState(role?.org ?? "");
   const [title, setTitle] = useState(role?.title ?? "");
-  const [start, setStart] = useState(role?.startDate ?? "");
+  const [start, setStart] = useState(role?.unknownEndStartDate ?? role?.startDate ?? "");
   const [end, setEnd] = useState(role?.endDate ?? "");
+  const [unknownEnd, setUnknownEnd] = useState(Boolean(role?.unknownEndStartDate));
   const [baseRevision] = useState(role?.revision ?? 1);
-  const { run, pending, error } = useAction();
+  const { run, pending, error, setError } = useAction();
   const id = useId();
 
   async function save() {
+    if (allowUnknownEnd && unknownEnd && !start.trim()) {
+      setError("Enter the start date when the end date is unknown.");
+      return;
+    }
+    const dateFields = datesLocked ? {} : allowUnknownEnd
+      ? {
+          startDate: unknownEnd ? null : start.trim() || null,
+          endDate: unknownEnd ? null : end.trim() || null,
+          unknownEndStartDate: unknownEnd ? start.trim() : null,
+        }
+      : { startDate: start.trim() || null, endDate: end.trim() || null };
     const fields = {
       kind,
       org: org.trim(),
       title: title.trim() || null,
-      startDate: start.trim() || null,
-      endDate: end.trim() || null,
+      ...dateFields,
     };
     let added: string | null = null;
     const ok = await run(async () => {
-      if (role)
-        await api.updateRole(role.id, {
+      if (role) {
+        const update = allowUnknownEnd ? api.updateRoleV2 : api.updateRole;
+        await update(role.id, {
           ...fields,
           expectedRevision: baseRevision,
         });
-      else added = (await api.addRole(fields)).roleId;
+      } else {
+        const add = allowUnknownEnd ? api.addRoleV2 : api.addRole;
+        // New-role date fields are always present; only existing unavailable
+        // unknown-end dates lock their inputs and omit them from a patch.
+        added = (await add(fields as Parameters<typeof api.addRole>[0])).roleId;
+      }
       await reload();
     });
     if (!ok) return;
@@ -102,6 +123,7 @@ export function RoleForm({ role, reload, onClose, onAdded }: Props) {
             value={start}
             placeholder="2021-03"
             onChange={(e) => setStart(e.target.value)}
+            disabled={datesLocked}
             aria-describedby={`${id}-dates`}
           />
         </Field>
@@ -112,13 +134,23 @@ export function RoleForm({ role, reload, onClose, onAdded }: Props) {
             value={end}
             placeholder="Empty if current"
             onChange={(e) => setEnd(e.target.value)}
+            disabled={datesLocked || (allowUnknownEnd && unknownEnd)}
             aria-describedby={`${id}-dates`}
           />
         </Field>
       </div>
+      {allowUnknownEnd && (
+        <label>
+          <input type="checkbox" checked={unknownEnd} onChange={(e) => setUnknownEnd(e.target.checked)} />
+          End date is unknown
+        </label>
+      )}
       <p className="hint" id={`${id}-dates`}>
-        Use year and month, such as 2021-03. Leave the end date empty if you're
-        still there.
+        {datesLocked
+          ? "The saved start date is preserved; date editing is temporarily unavailable."
+          : allowUnknownEnd
+            ? "Use year and month, such as 2021-03. Leave the end date empty if you're still there; select unknown when you don't know it."
+            : "Use year and month, such as 2021-03. Leave the end date empty if you're still there."}
       </p>
       <div className="actions">
         <button

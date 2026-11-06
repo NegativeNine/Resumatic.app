@@ -32,6 +32,7 @@ function roleFromRow(
   document: LinkedInDocument,
   row: LinkedInRow,
   key: string,
+  preserveUnknownEnd: boolean,
 ): ExtractedRole | null {
   const job = row.file === "positions.csv";
   const org = own(
@@ -73,7 +74,7 @@ function roleFromRow(
   const startDate =
     begin &&
     sourceDate(begin.value) &&
-    (endDate || explicitlyCurrent) &&
+    (endDate || explicitlyCurrent || preserveUnknownEnd) &&
     include(begin)
       ? sourceDate(begin.value)
       : null;
@@ -101,6 +102,7 @@ export async function extractLinkedIn(
   models: Models,
   referenceDate: string,
   filename = "LinkedIn export.zip",
+  preserveUnknownEnd = false,
 ): Promise<{ extraction: VerifiedExtraction; dropped: number }> {
   const rawRoles: ExtractedRole[] = [];
   const directFacts: ExtractedFact[] = [];
@@ -112,7 +114,7 @@ export async function extractLinkedIn(
         dropped++;
         continue;
       }
-      const role = roleFromRow(document, row, `linkedin-${index}`);
+      const role = roleFromRow(document, row, `linkedin-${index}`, preserveUnknownEnd);
       if (!role) {
         dropped++;
         continue;
@@ -151,7 +153,7 @@ export async function extractLinkedIn(
   const checked = verifyExtraction(
     document.markdown,
     { roles: rawRoles, facts: directFacts.slice(0, 300) },
-    { structuredSkillSpans: new Set(directFacts.filter((f) => f.kind === "skill").map((f) => JSON.stringify(f.span))) },
+    { structuredSkillSpans: new Set(directFacts.filter((f) => f.kind === "skill").map((f) => JSON.stringify(f.span))), preserveUnknownEnd },
   );
   dropped += checked.dropped.length + Math.max(0, directFacts.length - 300);
   const acceptedRoles = new Set(

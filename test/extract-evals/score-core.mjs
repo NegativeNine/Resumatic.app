@@ -41,7 +41,7 @@ export function scoreVerified(pred, gold, markdown) {
       (role.title !== null &&
         normalized(role.title) === normalized(match.title));
     for (const [observed, expected] of [
-      [role.startDate, match.start],
+      [role.startDate ?? role.unknownEndStartDate ?? null, match.start],
       [role.endDate, match.end],
     ]) {
       // A null gold value does not distinguish unknown from current. Count only
@@ -55,10 +55,16 @@ export function scoreVerified(pred, gold, markdown) {
     // A null end alone is ambiguous: it can mean unknown or ongoing. Count
     // ongoing status only when the gold explicitly identifies a current role.
     if (match.current === true) {
-      const current = role.startDate !== null && role.endDate === null;
+      const current = role.startDate !== null && role.endDate === null && !role.unknownEndStartDate;
       dateCount++;
       dateCorrect += Number(current);
       if (!current) metadataCorrect = false;
+    }
+    if (match.unknownEnd === true) {
+      const unknown = role.startDate === null && role.endDate === null && role.unknownEndStartDate === match.start;
+      dateCount++;
+      dateCorrect += Number(unknown);
+      if (!unknown) metadataCorrect = false;
     }
     if (metadataCorrect) correctRoles++;
   }

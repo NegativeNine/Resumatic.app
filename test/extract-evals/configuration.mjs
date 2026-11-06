@@ -18,6 +18,9 @@ export function extractionConfiguration(strategies, environment, opts = {}) {
       .filter(([key]) => key.startsWith("MODEL_"))
       .sort(([a], [b]) => a.localeCompare(b)),
   );
+  if (vars.ROLE_UNKNOWN_END_ENABLED !== undefined && !["true", "false"].includes(vars.ROLE_UNKNOWN_END_ENABLED))
+    throw new Error("extract_eval_environment_invalid");
+  const behavior = { roleUnknownEnd: vars.ROLE_UNKNOWN_END_ENABLED === "true" };
   const paths = [
     "src/ai/prompts.ts",
     "src/ai/models.ts",
@@ -83,11 +86,13 @@ export function extractionConfiguration(strategies, environment, opts = {}) {
     strategies,
     environment,
     models,
+    behavior,
     prices,
     source: paths.map((file) => [file, readFileSync(join(root, file), "utf8")]),
   };
   return {
     models,
+    behavior,
     hash: createHash("sha256").update(JSON.stringify(payload)).digest("hex"),
   };
 }

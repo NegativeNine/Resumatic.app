@@ -7,8 +7,12 @@ export function sourceKey(vaultId: string, objectId: string): string {
   return `${vaultPrefix(vaultId)}sources/${objectId}`;
 }
 
-export function pdfKey(vaultId: string, resumeId: string, version: number): string {
-  return `${vaultPrefix(vaultId)}exports/${resumeId}-${version}.pdf`;
+export function pdfKey(vaultId: string, resumeId: string, version: number, unknownEndDates = false): string {
+  return `${vaultPrefix(vaultId)}exports/${resumeId}-${version}${unknownEndDates ? "-dates-v2" : ""}.pdf`;
+}
+
+export function docxKey(vaultId: string, resumeId: string, version: number, unknownEndDates = false): string {
+  return `${vaultPrefix(vaultId)}exports/${resumeId}-${version}-word1${unknownEndDates ? "-dates-v2" : ""}.docx`;
 }
 
 /** A malformed or repeated continuation cannot prove a prefix was fully scanned. */

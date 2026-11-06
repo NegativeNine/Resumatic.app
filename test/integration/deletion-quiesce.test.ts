@@ -42,14 +42,14 @@ describe("deletion access revocation", () => {
       await ctx.storage.deleteAlarm();
       const fail = vi.spyOn(ctx.storage, "setAlarm").mockRejectedValueOnce(new Error("synthetic scheduling failure"));
       try {
-        await expect(instance.deleteAccount(account.userId)).rejects.toThrow("synthetic scheduling failure");
+        await expect(instance.deleteAccount(account.userId, account.vaultId)).rejects.toThrow("synthetic scheduling failure");
         expect(ctx.storage.sql.exec<{ state: string }>(`SELECT state FROM users WHERE user_id=?`, account.userId).one().state).toBe("active");
         expect(ctx.storage.sql.exec<{ state: string }>(`SELECT state FROM vaults WHERE vault_id=?`, account.vaultId).one().state).toBe("active");
         expect(await ctx.storage.getAlarm()).toBeNull();
       } finally { fail.mockRestore(); }
     });
     expect((await v.me(who)).userId).toBe(account.userId);
-    await d.deleteAccount(account.userId);
+    await d.deleteAccount(account.userId, account.vaultId);
     expect(await v.me(who).then(() => "open", (error: unknown) => String(error))).toMatch(/gone:/);
     await runDurableObjectAlarm(d);
   });
@@ -68,7 +68,7 @@ describe("deletion access revocation", () => {
         get: () => ({ quiesce: async () => { throw new Error("synthetic RPC failure"); } }),
       } as unknown as typeof original;
       try {
-        await expect(instance.deleteAccount(account.userId)).rejects.toThrow("synthetic RPC failure");
+        await expect(instance.deleteAccount(account.userId, account.vaultId)).rejects.toThrow("synthetic RPC failure");
         expect(ctx.storage.sql.exec<{ state: string }>(`SELECT state FROM users WHERE user_id=?`, account.userId).one().state).toBe("deleting");
         expect(await ctx.storage.getAlarm()).not.toBeNull();
       } finally { local.VAULT = original; }

@@ -108,6 +108,16 @@ export const MIGRATIONS: readonly string[][] = [
        WHEN EXISTS (SELECT 1 FROM workflow_redispatches WHERE run_id = OLD.run_id)
        BEGIN SELECT RAISE(IGNORE); END`,
   ],
+  [
+    // A separate value keeps the legacy start/end pair empty, so an old reader
+    // cannot interpret an unknown end as ongoing employment.
+    `ALTER TABLE roles ADD COLUMN unknown_end_start_date TEXT`,
+    // Legacy writers know only start_date/end_date. A deliberate legacy date
+    // update supersedes the extra value and must not leave contradictory data.
+    `CREATE TRIGGER clear_unknown_end_start AFTER UPDATE OF start_date, end_date ON roles
+       WHEN NEW.start_date IS NOT NULL OR NEW.end_date IS NOT NULL
+       BEGIN UPDATE roles SET unknown_end_start_date = NULL WHERE id = NEW.id; END`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

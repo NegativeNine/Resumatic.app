@@ -34,9 +34,10 @@ export function formatDate(value: string | null): string {
   return value;
 }
 
-function dates(s: ResumeSection): string {
-  const start = formatDate(s.startDate);
-  const end = s.endDate ? formatDate(s.endDate) : start ? "Present" : "";
+export function formatRoleDates(startDate: string | null, endDate: string | null, unknownEndStartDate?: string | null): string {
+  if (unknownEndStartDate) return `Start: ${formatDate(unknownEndStartDate)} (end unknown)`;
+  const start = formatDate(startDate);
+  const end = endDate ? formatDate(endDate) : start ? "Present" : "";
   return [start, end].filter(Boolean).join(" – ");
 }
 
@@ -46,7 +47,7 @@ function section(s: ResumeSection): string {
     .map((t) => esc(t!))
     .join(", ");
   const lines = s.lines.map((l) => `<li>${esc(l.text)}</li>`).join("");
-  return `<section class="role"><div class="role-head"><h3>${heading}</h3><span class="dates">${esc(dates(s))}</span></div>${
+  return `<section class="role"><div class="role-head"><h3>${heading}</h3><span class="dates">${esc(formatRoleDates(s.startDate, s.endDate, s.unknownEndStartDate))}</span></div>${
     lines ? `<ul>${lines}</ul>` : ""
   }</section>`;
 }

@@ -2,22 +2,44 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseJsonc, httpsOrigin, readConfig } from "./lib/config.mjs";
 import { livePrerequisites, validate } from "./validate-config.mjs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { extractionConfiguration } from "../test/extract-evals/configuration.mjs";
 import { configuredExtractors } from "./lib/extractor-routes.mjs";
-import { validProductionSecretNames } from "./lib/release-secret-names.mjs";
+import { validEvaluationSecretNames, validProductionSecretNames } from "./lib/release-secret-names.mjs";
 
 test("production secrets cannot shadow the evaluated extractor or model configuration", () => {
   assert.equal(validProductionSecretNames([{ name: "SESSION_KEY" }, { name: "CF_AI_TOKEN" }]), true);
-  for (const name of ["TEST_SIGNIN_KEY", "MODEL_EXTRACT", "MODEL_JUDGE", "EXTRACTOR", "EXTRACTOR_BY_FORMAT", "EXTRACTOR_EXPERIMENT"]) {
+  for (const name of ["TEST_SIGNIN_KEY", "MODEL_EXTRACT", "MODEL_JUDGE", "EXTRACTOR", "EXTRACTOR_BY_FORMAT", "EXTRACTOR_EXPERIMENT", "ROLE_UNKNOWN_END_ENABLED"]) {
     assert.equal(validProductionSecretNames([{ name }]), false);
+    if (name !== "TEST_SIGNIN_KEY") assert.equal(validEvaluationSecretNames([{ name }]), false);
   }
+  assert.equal(validEvaluationSecretNames([{ name: "TEST_SIGNIN_KEY" }]), true);
   assert.equal(validProductionSecretNames({}), false);
   assert.equal(validProductionSecretNames([{}]), false);
+});
+
+test("unknown-end behavior changes evaluation hash and production activation stays blocked", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "role-date-config-"));
+  try {
+    const root = fileURLToPath(new URL("../", import.meta.url));
+    await symlink(join(root, "src"), join(dir, "src"), "dir");
+    await symlink(join(root, "test"), join(dir, "test"), "dir");
+    const configPath = join(dir, "wrangler.jsonc");
+    const config = { name: "example", vars: {}, env: { staging: { vars: {} } } };
+    await writeFile(configPath, JSON.stringify(config));
+    const disabled = extractionConfiguration(["llm:default"], "production", { root: dir, priceOverrides: {} });
+    config.vars.ROLE_UNKNOWN_END_ENABLED = "true";
+    await writeFile(configPath, JSON.stringify(config));
+    const enabled = extractionConfiguration(["llm:default"], "production", { root: dir, priceOverrides: {} });
+    assert.equal(disabled.behavior.roleUnknownEnd, false);
+    assert.equal(enabled.behavior.roleUnknownEnd, true);
+    assert.notEqual(disabled.hash, enabled.hash);
+    assert.ok((await validate({ environment: "production", purpose: "deploy", configPath, env: {} })).missing.includes("ROLE_UNKNOWN_END_ROLLOUT_UNVERIFIED"));
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
 test("release route inventory includes default, format routes and active experiment", () => {

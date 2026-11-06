@@ -132,7 +132,7 @@ export function ResumeSheet({
                       {s.title && <p className="entry-title">{s.title}</p>}
                     </div>
                     <p className="entry-dates">
-                      {formatDateRange(s.startDate, s.endDate)}
+                      {formatDateRange(s.startDate, s.endDate, s.unknownEndStartDate)}
                     </p>
                   </div>
                   {s.lines.length > 0 && (

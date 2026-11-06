@@ -1,6 +1,6 @@
 import { strToU8, zipSync } from "fflate";
 import type { RenderData } from "../shared/types";
-import { formatDate } from "./template";
+import { formatRoleDates } from "./template";
 
 const esc = (s: string) =>
   s
@@ -51,16 +51,7 @@ export function renderDocx(data: RenderData): Uint8Array<ArrayBuffer> {
       );
       parts.push(
         paragraph(
-          [
-            formatDate(role.startDate),
-            role.endDate
-              ? formatDate(role.endDate)
-              : role.startDate
-                ? "Present"
-                : "",
-          ]
-            .filter(Boolean)
-            .join(" – "),
+          formatRoleDates(role.startDate, role.endDate, role.unknownEndStartDate),
         ),
       );
       for (const line of role.lines) parts.push(paragraph(`• ${line.text}`));

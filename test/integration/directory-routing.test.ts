@@ -83,7 +83,7 @@ describe("Directory placement in Durable Objects", () => {
     const target = await directoryForSignIn(configured("16"), p);
     const account = await target.directory.signIn(target.input);
     const home = directoryForUser(env, account.userId);
-    await home.deleteAccount(account.userId);
+    await home.deleteAccount(account.userId, account.vaultId);
     await runDurableObjectAlarm(home);
     await eventually(
       async () => (await home.existingIdentity(p.provider, p.subject)) === null,

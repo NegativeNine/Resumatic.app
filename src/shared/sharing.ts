@@ -7,6 +7,8 @@ export interface SharedRole {
   title: string | null;
   startDate: string | null;
   endDate: string | null;
+  /** A supported start whose end is unknown; legacy startDate stays null. */
+  unknownEndStartDate?: string | null;
 }
 export interface SharedFact {
   id: string;

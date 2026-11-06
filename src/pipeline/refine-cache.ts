@@ -69,7 +69,7 @@ export async function refinementCacheKey(
     })),
     facts,
     roles: input.roles
-      .map(({ id, revision, kind, org, title, startDate, endDate }) => ({
+      .map(({ id, revision, kind, org, title, startDate, endDate, unknownEndStartDate }) => ({
         id,
         revision,
         kind,
@@ -77,6 +77,7 @@ export async function refinementCacheKey(
         title,
         startDate,
         endDate,
+        ...(unknownEndStartDate ? { unknownEndStartDate } : {}),
       }))
       .sort((a, b) => a.id.localeCompare(b.id)),
   };
