@@ -1952,6 +1952,56 @@ export class Vault extends DurableObject<Env> {
     return result;
   }
 
+  /** Remove a line from a checked resume in a new, independently printable version. */
+  removeResumeLine(who: Who, resumeId: string, lineId: string, expectedVersion: number): { version: number } {
+    this.requireOwner(who);
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || !lineId || lineId.length > 256)
+      throw new AppError("invalid", "the line and resume version are required");
+    const result = this.ctx.storage.transactionSync(() => {
+      this.requireOwner(who);
+      const row = this.resumeRow(resumeId);
+      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "the resume is not ready");
+      if (row.version === expectedVersion + 1) {
+        const saved = this.snapshots.read(resumeId, row.version);
+        if (saved?.provenance === "snapshot" && saved.lineRemoved?.fromVersion === expectedVersion && saved.lineRemoved.lineId === lineId)
+          return { version: row.version };
+      }
+      if (row.version !== expectedVersion) throw new AppError("conflict", "the resume changed; refresh and try again");
+      if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
+        throw new AppError("conflict", "wait for the current document to finish");
+      const base = this.resumeVersion(row);
+      // A deletion must never promote a blocked or legacy version into a checked one.
+      assertGroundedResume(base.render, base.facts, base.provenance, base.evidence);
+      const body = structuredClone(base.render.body);
+      const matches = Number(body.summary?.id === lineId) + body.sections.reduce((n, section) => n + section.lines.filter((line) => line.id === lineId).length, 0);
+      if (matches !== 1) throw new AppError("conflict", "the line is missing or ambiguous");
+      if (body.summary?.id === lineId) body.summary = null;
+      body.sections = body.sections.flatMap((section) => {
+        if (!section.lines.some((line) => line.id === lineId)) return [section];
+        const lines = section.lines.filter((line) => line.id !== lineId);
+        return lines.length ? [{ ...section, lines }] : [];
+      });
+      const lines = [...(body.summary ? [body.summary] : []), ...body.sections.flatMap((section) => section.lines)];
+      const report = base.report ? {
+        ...base.report,
+        kept: lines.filter((line) => line.status === "kept").length,
+        repaired: lines.filter((line) => line.status === "repaired").length,
+        replaced: lines.filter((line) => line.status === "replaced").length,
+      } : null;
+      const version = row.version + 1;
+      const saved: ResumeVersion = {
+        ...base, render: { ...base.render, body, version }, report,
+        lineRemoved: { fromVersion: expectedVersion, lineId },
+      };
+      assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence);
+      this.snapshots.save(resumeId, version, saved);
+      this.sql.exec(`UPDATE resumes SET body=?,report=?,version=? WHERE id=?`, JSON.stringify(body), JSON.stringify(report), version, resumeId);
+      return { version };
+    });
+    this.broadcast("resume", resumeId);
+    return result;
+  }
+
   /** Promote only a fully rechecked current legacy version; never mutate history. */
   finalizeLegacyResume(who: Who, resumeId: string, expectedVersion: number): { version: number } {
     this.requireOwner(who);
@@ -3347,22 +3397,29 @@ export class Vault extends DurableObject<Env> {
   }
 
   private quota(): Quota {
+    return this.ctx.storage.transactionSync(() => this.quotaInTransaction());
+  }
+
+  /** The caller holds a transaction, including when publishing an entitlement. */
+  private quotaInTransaction(): Quota {
     const month = monthOf(Date.now());
     const bucket = this.quotaBucket();
-    if (!this.runs.quota(bucket.key)) {
-      this.runs.setBucket(bucket);
-      const legacy =
-        bucket.key.startsWith("free:") && this.meta("quota_month") === month
-          ? Number(this.meta("quota_used") ?? 0)
-          : 0;
-      if (legacy)
-        this.sql.exec(
-          `UPDATE quota_buckets SET used = ? WHERE bucket_key = ?`,
-          legacy,
-          bucket.key,
-        );
+    const existed = !!this.runs.quota(bucket.key);
+    let balance = this.runs.setBucketInTransaction(bucket);
+    const legacy =
+      bucket.key.startsWith("free:") && this.meta("quota_month") === month
+        ? Number(this.meta("quota_used") ?? 0)
+        : 0;
+    // Existing buckets have no marker showing whether the legacy usage was
+    // copied. Adding it again would risk double-charging the user.
+    if (!existed && legacy) {
+      this.sql.exec(
+        `UPDATE quota_buckets SET used = ? WHERE bucket_key = ?`,
+        legacy,
+        bucket.key,
+      );
+      balance = this.runs.quota(bucket.key)!;
     }
-    const balance = this.runs.setBucket(bucket);
     return {
       used: balance.used,
       reserved: balance.reserved,
@@ -3380,7 +3437,7 @@ export class Vault extends DurableObject<Env> {
     this.ctx.storage.transactionSync(() => {
       this.setMeta("entitlement", JSON.stringify(plan));
       this.setMeta("entitlement_revision", String(revision));
-      this.runs.setBucket(this.quotaBucket());
+      this.quotaInTransaction();
     });
   }
 

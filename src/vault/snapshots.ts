@@ -32,6 +32,8 @@ export interface ResumeVersion {
   reviewStartedFrom?: number;
   /** Identifies an idempotently removed line in a review version. */
   legacyRemoved?: { fromVersion: number; lineId: string };
+  /** Identifies an idempotently removed line in a checked version. */
+  lineRemoved?: { fromVersion: number; lineId: string };
   provenance: "snapshot" | "legacy";
 }
 

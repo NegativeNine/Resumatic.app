@@ -124,7 +124,7 @@ if (!browser?.startsWith("/")) {
     }
     if (path === "/api/resumes/resume-1/cancel" && req.method === "POST") { state.resumeCancel = true; res.writeHead(202); res.end(); return; }
     if (path === "/api/resumes/resume-1" && req.method === "GET" && state.resumeRunning) return send(res, 200, { id: "resume-1", applicationId: "application-1", state: "running", step: null, error: null, version: 0, createdAt: 1, dispatchUncertain: true, cancellationPending: state.resumeCancel, body: null, report: null, facts: {} });
-    if (path === "/api/resumes/resume-1" && req.method === "GET") return send(res, 200, { id: "resume-1", applicationId: "application-1", state: "ready", provenance: state.resumeLegacy ? "legacy" : "snapshot", ...(state.resumeNeedsGroundingReview ? { needsGroundingReview: true } : {}), ...(state.resumeLegacy ? { legacyReview: { verifiedLineIds: state.legacyChecked ? ["line-1"] : [], totalLines: state.legacyExtraLine ? 2 : 1, headersReady: state.legacyHeadersReady, skillsReady: true } } : {}), step: null, error: null, version: state.resumeVersion, createdAt: 1, report: null, facts: { "fact-1": { text: fact.text, quote: fact.quote } }, body: { summary: null, sections: [{ roleId: "role-1", kind: "job", org: role.org, title: role.title, startDate: role.startDate, endDate: null, lines: [{ id: "line-1", text: state.resumeText, factIds: state.resumeUncited ? [] : ["fact-1"], status: state.resumeUncited ? "edited" : "kept" }, ...(state.legacyExtraLine ? [{ id: "line-extra", text: "Unsupported historical line", factIds: [], status: "edited" }] : [])] }], skills: [] } });
+    if (path === "/api/resumes/resume-1" && req.method === "GET") return send(res, 200, { id: "resume-1", applicationId: "application-1", state: "ready", provenance: state.resumeLegacy ? "legacy" : "snapshot", ...(state.resumeNeedsGroundingReview ? { needsGroundingReview: true } : {}), ...(state.resumeLegacy ? { legacyReview: { verifiedLineIds: state.legacyChecked ? ["line-1"] : [], totalLines: state.legacyExtraLine ? 2 : 1, headersReady: state.legacyHeadersReady, skillsReady: true } } : {}), step: null, error: null, version: state.resumeVersion, createdAt: 1, report: null, facts: { "fact-1": { text: fact.text, quote: fact.quote } }, body: { summary: null, sections: state.resumeLineRemoved ? [] : [{ roleId: "role-1", kind: "job", org: role.org, title: role.title, startDate: role.startDate, endDate: null, lines: [...(state.resumeLineRemoved ? [] : [{ id: "line-1", text: state.resumeText, factIds: state.resumeUncited ? [] : ["fact-1"], status: state.resumeUncited ? "edited" : "kept" }]), ...(state.legacyExtraLine ? [{ id: "line-extra", text: "Unsupported historical line", factIds: [], status: "edited" }] : [])] }], skills: [] } });
     if (path === "/api/resumes/resume-1/versions") return send(res, 200, { versions: [] });
     if (path === "/api/resumes/resume-1/grounding-review" && req.method === "POST") {
       const body = JSON.parse((await read(req)).toString("utf8"));
@@ -136,6 +136,12 @@ if (!browser?.startsWith("/")) {
       const body = JSON.parse((await read(req)).toString("utf8"));
       if (!state.resumeLegacy || !state.legacyExtraLine || body.lineId !== "line-extra" || body.expectedVersion !== state.resumeVersion) return send(res, 409, { error: "conflict" });
       state.legacyExtraLine = false; state.resumeVersion++;
+      return send(res, 200, { version: state.resumeVersion });
+    }
+    if (path === "/api/resumes/resume-1/remove-line" && req.method === "POST") {
+      const body = JSON.parse((await read(req)).toString("utf8"));
+      if (state.resumeLegacy || state.resumeLineRemoved || body.lineId !== "line-1" || body.expectedVersion !== state.resumeVersion) return send(res, 409, { error: "conflict" });
+      state.resumeLineRemoved = true; state.resumeVersion++;
       return send(res, 200, { version: state.resumeVersion });
     }
     if (path === "/api/resumes/resume-1/legacy-finalize" && req.method === "POST") {
@@ -361,7 +367,7 @@ if (!browser?.startsWith("/")) {
     await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Start review')`);
     await clickText("button", "Start review");
     await wait(`document.body?.innerText.includes('0 of 2 lines checked') && document.body?.innerText.includes("headings don't match")`);
-    await evalPage(`(() => { const line = [...document.querySelectorAll('.line')].find(x => x.innerText.includes('Unsupported historical line')); const button = [...line.querySelectorAll('button')].find(x => x.textContent.trim() === 'Remove line'); button.click(); })()`);
+    await evalPage(`(() => { const line = [...document.querySelectorAll('.line')].find(x => x.innerText.includes('Unsupported historical line')); const button = [...line.querySelectorAll('button')].find(x => x.textContent.trim() === 'Remove line (keeps earlier versions)'); button.click(); })()`);
     await wait(`document.body?.innerText.includes('0 of 1 lines checked') && !document.body?.innerText.includes('Unsupported historical line')`);
     if (state.legacyExtraLine) throw new Error("LEGACY_REMOVE_NOT_SENT");
     if (!state.resumeLegacy) throw new Error("SNAPSHOT_REVIEW_NOT_STARTED");
@@ -377,6 +383,11 @@ if (!browser?.startsWith("/")) {
     await clickText("button", "Create checked version");
     await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download PDF')`);
     if (!state.legacyFinalized || state.resumeLegacy || JSON.stringify(state.manualEdits.at(-1)?.manualFactIds) !== '["fact-1"]') throw new Error("LEGACY_REVIEW_NOT_COMPLETED");
+    stage = "remove_checked_line";
+    await clickText("button", "Remove line (keeps earlier versions)");
+    await wait(`document.body?.innerText.includes('This resume has no lines')`);
+    if (!state.resumeLineRemoved) throw new Error("CHECKED_LINE_REMOVE_NOT_SENT");
+    state.resumeLineRemoved = false;
     stage = "uncertain_resume_cancellation";
     state.resumeRunning = true; await call("Page.reload");
     await wait(`document.body?.innerText.includes("we can't confirm that tailoring started")`);
@@ -408,7 +419,7 @@ if (!browser?.startsWith("/")) {
     if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Revoke link')`)) throw new Error("SHARE_REVOKE_MISSING");
     if (!await evalPage(`!!document.querySelector('a[href="/api/export/archive"]')`)) throw new Error("ARCHIVE_LINK_MISSING");
     if (!await evalPage(`!!document.querySelector('a[href="/api/export"]') && [...document.querySelectorAll('a[href="#/sources"]')].some(x => x.textContent.includes('Sources & facts'))`)) throw new Error("EXPORT_DOWNLOAD_LINKS_MISSING");
-    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, factLevelReview: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, jobRetryKey: true, profileSubmissionLock: true, applicationTracking: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true } }));
+    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, factLevelReview: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, jobRetryKey: true, profileSubmissionLock: true, applicationTracking: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, checkedLineRemoval: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true } }));
   } catch {
     console.log(JSON.stringify({ status: "failed", reason: "BROWSER_SMOKE_FAILED", stage, promotionEligible: false })); process.exitCode = 1;
   } finally {

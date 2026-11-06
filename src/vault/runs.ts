@@ -189,10 +189,13 @@ export class RunStore {
 
   /** Explicit entitlement publication; changing limits never resets spent/reserved credits. */
   setBucket(bucket: QuotaBucket): QuotaBalance {
-    return this.transaction(() => {
-      this.writeBucket(bucket);
-      return this.quota(bucket.key)!;
-    });
+    return this.transaction(() => this.setBucketInTransaction(bucket));
+  }
+
+  /** The caller must already hold a transaction for related state changes. */
+  setBucketInTransaction(bucket: QuotaBucket): QuotaBalance {
+    this.writeBucket(bucket);
+    return this.quota(bucket.key)!;
   }
 
   quota(key: string): QuotaBalance | null {

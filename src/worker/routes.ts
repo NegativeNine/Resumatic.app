@@ -805,6 +805,11 @@ api.post("/resumes/:id/legacy-remove-line", JSON_LIMIT, async (c) => {
   return c.json(await myVault(c).removeLegacyLine(c.get("who"), c.req.param("id"), lineId, expectedVersion));
 });
 
+api.post("/resumes/:id/remove-line", JSON_LIMIT, async (c) => {
+  const { lineId, expectedVersion } = await jsonBody(c, z.object({ lineId: z.string().min(1).max(256), expectedVersion: z.number().int().positive() }));
+  return c.json(await myVault(c).removeResumeLine(c.get("who"), c.req.param("id"), lineId, expectedVersion));
+});
+
 api.post("/resumes/:id/grounding-review", JSON_LIMIT, async (c) => {
   const { expectedVersion } = await jsonBody(c, z.object({ expectedVersion: z.number().int().positive() }));
   return c.json(await myVault(c).beginResumeReview(c.get("who"), c.req.param("id"), expectedVersion));

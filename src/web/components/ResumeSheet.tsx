@@ -89,6 +89,7 @@ export function ResumeSheet({
       reload={reload}
       expectedVersion={resume.version}
       readOnly={readOnly}
+      canRemove={!needsEvidence}
     />
   );
 

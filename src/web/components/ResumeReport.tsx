@@ -45,9 +45,9 @@ export function ReportCard({ report }: { report: ResumeReport }) {
 export function GapsCard({ gaps }: { gaps: string[] }) {
   return (
     <section className="card gaps" aria-labelledby="gaps-heading">
-      <h2 id="gaps-heading">Requirements none of your confirmed facts cover</h2>
+      <h2 id="gaps-heading">Possible gaps identified when this draft was created</h2>
       {gaps.length === 0 ? (
-        <p>None. Every requirement Resumatic found in the job description is covered by a confirmed fact.</p>
+        <p>The initial matching found no potential gaps. Check the resume against the job description; matching does not guarantee every requirement appears in the resume.</p>
       ) : (
         <>
           <ul>
@@ -56,7 +56,7 @@ export function GapsCard({ gaps }: { gaps: string[] }) {
             ))}
           </ul>
           <p className="hint">
-            Resumatic never fills a gap by itself. The way to close one is to add a true fact: if you do have this
+            These are possible gaps in the confirmed facts used when this draft was made, not a coverage check on the current resume. If you do have this
             experience, <a href={href.sources}>add it under Sources & facts</a>, then tailor a new version.
           </p>
         </>

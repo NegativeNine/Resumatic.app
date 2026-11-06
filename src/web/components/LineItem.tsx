@@ -25,6 +25,7 @@ interface Props {
   reload: Reload;
   expectedVersion?: number;
   readOnly?: boolean;
+  canRemove?: boolean;
 }
 
 /** One resume line, with its status and, on request, the facts and quotes it cites. */
@@ -40,6 +41,7 @@ export function LineItem({
   reload,
   expectedVersion,
   readOnly = false,
+  canRemove = false,
 }: Props) {
   const [editing, setEditing] = useState(false);
   const removal = useAction();
@@ -100,13 +102,14 @@ export function LineItem({
             {legacyReview === "pending" ? "Review line" : "Edit line"}
           </button>
         )}
-        {!editing && !readOnly && legacyReview && expectedVersion !== undefined && (
+        {!editing && !readOnly && (legacyReview || canRemove) && expectedVersion !== undefined && (
           <button type="button" className="link-button" disabled={removal.pending} aria-describedby={`${id}-text`}
             onClick={() => void removal.run(async () => {
-              await api.removeLegacyLine(resumeId, line.id, expectedVersion);
+              if (legacyReview) await api.removeLegacyLine(resumeId, line.id, expectedVersion);
+              else await api.removeResumeLine(resumeId, line.id, expectedVersion);
               await reload();
             })}>
-            {removal.pending ? "Removing…" : "Remove line"}
+            {removal.pending ? "Removing…" : "Remove line (keeps earlier versions)"}
           </button>
         )}
       </div>
