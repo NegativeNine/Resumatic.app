@@ -23,6 +23,7 @@ import {
   type RawExtraction,
 } from "./types";
 import { sourceDate } from "./dates";
+import { supportedRoleAssignment } from "./role-assignment";
 
 /** Known injection patterns; eval and human gates still test semantic leakage. */
 export function isInstruction(text: string): boolean {
@@ -138,6 +139,13 @@ function supportsEndOnly(quote: string, end: string): boolean {
   return labeledEnds.length === 1 && dateMatches(labeledEnds[0]![1]!, end);
 }
 
+/** Semicolons may separate several roles on one converted source line. */
+function ambiguousRoleDateLine(quote: string): boolean {
+  return quote.split(/\r?\n/u).some((line) =>
+    /[;；]/u.test(line) && /\b(?:19|20)\d{2}\b/u.test(line),
+  );
+}
+
 const SKILL_QUALIFIER =
   /\b(?:no|not|never|without|lack(?:s|ed|ing)?|unfamiliar|inexperienced|learning|beginner|novice|limited)\b/i;
 
@@ -240,7 +248,9 @@ export function verifyExtraction(
       drop("role", "unsupported_role");
       continue;
     }
-    const invalidRange = reversedDates(role.startDate, role.endDate) ||
+    // A single range may belong to another role in the same line; range count
+    // alone cannot establish its owner. Keep the role but clear ambiguous dates.
+    const invalidRange = ambiguousRoleDateLine(quote) || reversedDates(role.startDate, role.endDate) ||
       Boolean(role.startDate && role.endDate && !supportsRange(quote, role.startDate, role.endDate)) ||
       Boolean(!role.startDate && role.endDate && !supportsEndOnly(quote, role.endDate));
     result.extraction.roles.push({
@@ -258,7 +268,6 @@ export function verifyExtraction(
       span,
     });
   }
-  const roleKeys = new Set(result.extraction.roles.map((r) => r.key));
   const seenFactLines = new Set<string>();
   for (const fact of raw.facts) {
     const matchedSpan = evidence(markdown, fact, fact.kind === "skill");
@@ -308,8 +317,12 @@ export function verifyExtraction(
       drop("fact", "unsupported_claim");
       continue;
     }
-    const resolvedRoleKey =
-      fact.roleKey && roleKeys.has(fact.roleKey) ? fact.roleKey : null;
+    const resolvedRoleKey = supportedRoleAssignment(
+      markdown,
+      span,
+      fact.roleKey,
+      result.extraction.roles,
+    );
     const factLineKey = JSON.stringify([resolvedRoleKey, ...span]);
     if (fact.kind !== "skill" && seenFactLines.has(factLineKey)) continue;
     const supportedRank = scopeRank(quote) || DEFAULT_RANK;

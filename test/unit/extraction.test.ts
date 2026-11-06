@@ -359,6 +359,17 @@ describe("strategy verification", () => {
     expect(verifyExtraction(quote, raw).extraction.roles[0]).toMatchObject({ startDate: "2019", endDate: "2021" });
   });
   it.each([
+    ["Acme — Engineer; Globex — Engineer (2019–2021)", "2019", "2021"],
+    ["Acme — Engineer; Globex — Engineer (2019–Present)", "2019", null],
+    ["Acme — Engineer；Globex — Engineer (2019–2021)", null, "2021"],
+  ])("does not assign another semicolon-separated role's dates: %s", (quote, startDate, endDate) => {
+    const raw: RawExtraction = {
+      roles: [{ key: "r", kind: "job", org: "Acme", title: "Engineer", startDate, endDate, quote }],
+      facts: [],
+    };
+    expect(verifyExtraction(quote, raw).extraction.roles[0]).toMatchObject({ startDate: null, endDate: null });
+  });
+  it.each([
     ["Acme — Engineer (2019 – 2021)", "2019", null],
     ["Acme — Engineer (2019 – 2021)", "2021", "2021"],
     ["Acme — Engineer (2021)", "2021", null],

@@ -219,7 +219,7 @@ function FactEditor(props: {
         value={roleId}
         onChange={(e) => setRoleId(e.target.value)}
       >
-        <option value="">No role (a general skill or credential)</option>
+        <option value="">No role</option>
         {choices.map((r) => (
           <option key={r.id} value={r.id}>
             {roleLabel(r)}
