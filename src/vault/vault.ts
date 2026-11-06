@@ -1638,6 +1638,39 @@ export class Vault extends DurableObject<Env> {
     return { applicationId: id };
   }
 
+  /** A retried job submission returns its original application. */
+  async addApplicationIdempotent(
+    who: Who,
+    jdText: string,
+    requestKey: string,
+  ): Promise<{ applicationId: string }> {
+    this.requireOwner(who);
+    if (!/^[a-zA-Z0-9_-]{1,100}$/.test(requestKey))
+      throw new AppError("invalid", "invalid request key");
+    const digest = base64url(await sha256(JSON.stringify([jdText])));
+    this.requireOwner(who);
+    return this.ctx.storage.transactionSync(() => {
+      const prior = this.sql.exec<{ input_digest: string; application_id: string }>(
+        `SELECT input_digest, application_id FROM application_create_requests WHERE request_key = ?`, requestKey,
+      ).toArray()[0];
+      if (prior) {
+        if (prior.input_digest !== digest)
+          throw new AppError("conflict", "this job request changed");
+        return { applicationId: prior.application_id };
+      }
+      const id = crypto.randomUUID();
+      this.sql.exec(
+        `INSERT INTO applications (id, jd_text, created_at) VALUES (?, ?, ?)`,
+        id, jdText, Date.now(),
+      );
+      this.sql.exec(
+        `INSERT INTO application_create_requests (request_key, input_digest, application_id) VALUES (?, ?, ?)`,
+        requestKey, digest, id,
+      );
+      return { applicationId: id };
+    });
+  }
+
   async listApplications(who: Who): Promise<ApplicationView[]> {
     this.requireOwner(who);
     await this.rearmPendingCancellation();

@@ -39,12 +39,40 @@ function priorVersion(fragment: string): number {
   return index;
 }
 
+function removeShardReleaseMigration(sql: SqlStorage): void {
+  for (const trigger of ["guard_shard_google_identity_delete", "guard_global_google_shard_home_delete"]) sql.exec(`DROP TRIGGER ${trigger}`);
+  for (const table of ["shard_deletion_releases", "shard_identity_delete_marker", "global_shard_home_release_marker"]) sql.exec(`DROP TABLE ${table}`);
+  sql.exec(`DELETE FROM meta WHERE key='shard_deletion_guard'`);
+}
+
 function removeGlobalAuthMigration(sql: SqlStorage): void {
+  removeShardReleaseMigration(sql);
   for (const trigger of ["global_auth_delete_epoch", "global_auth_identity_insert", "global_auth_identity_delete", "global_auth_home_insert", "global_auth_home_bind"]) sql.exec(`DROP TRIGGER ${trigger}`);
   sql.exec(`DROP TABLE global_auth_marker`);
 }
 
 describe("atomic schema migrations", () => {
+  it.each(["global", "shard"] as const)("installs the %s shard-release guard atomically with its version", async (mode) => {
+    const stub = env.DIRECTORY.getByName(`release-migration-${crypto.randomUUID()}`);
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      removeShardReleaseMigration(sql);
+      if (mode === "global") {
+        sql.exec(`INSERT INTO meta(key,value) VALUES ('global_auth_guard','1')`);
+        sql.exec(`INSERT INTO meta(key,value) VALUES ('global_auth_epoch','0')`);
+      }
+      const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((q) => q.includes("CREATE TABLE shard_deletion_releases")));
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrateDirectory(failAtVersion(sql, previous + 1), tx, mode === "global", mode === "shard")).toThrow(/synthetic version-write interruption/);
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name='shard_deletion_releases'`).toArray()).toHaveLength(0);
+      expect(sql.exec(`SELECT key FROM meta WHERE key='shard_deletion_guard'`).toArray()).toHaveLength(0);
+      migrateDirectory(sql, tx, mode === "global", mode === "shard");
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name='guard_global_google_shard_home_delete'`).toArray()).toHaveLength(1);
+      expect(sql.exec(`SELECT key FROM meta WHERE key='shard_deletion_guard'`).toArray()).toHaveLength(mode === "shard" ? 1 : 0);
+      expect(sql.exec<{value:string}>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(DIRECTORY_MIGRATIONS.length));
+    });
+  });
   it("atomically installs the global authentication guard with its schema version", async () => {
     const stub = env.DIRECTORY.getByName(`auth-migration-${crypto.randomUUID()}`);
     await runInDurableObject(stub, (_instance, state) => {
@@ -114,6 +142,7 @@ describe("atomic schema migrations", () => {
     await stub.init("migration-owner");
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
+      sql.exec(`DROP TABLE application_create_requests`);
       sql.exec(`DROP TABLE role_create_requests`);
       sql.exec(`DROP TABLE fact_create_requests`);
       sql.exec(`DROP TABLE r2_cache_dispatches`);
@@ -139,6 +168,7 @@ describe("atomic schema migrations", () => {
     await stub.init("migration-owner");
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
+      sql.exec(`DROP TABLE application_create_requests`);
       sql.exec(`DROP TABLE role_create_requests`);
       sql.exec(`DROP TABLE fact_create_requests`);
       sql.exec(`DROP TABLE r2_cache_dispatches`);
@@ -164,6 +194,7 @@ describe("atomic schema migrations", () => {
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
       sql.exec(`UPDATE profile SET name='preserved' WHERE id=1`);
+      sql.exec(`DROP TABLE application_create_requests`);
       sql.exec(`DROP TABLE role_create_requests`);
       sql.exec(`DROP TABLE fact_create_requests`);
       sql.exec(`DROP TABLE r2_cache_dispatches`);
@@ -188,6 +219,7 @@ describe("atomic schema migrations", () => {
     await stub.beginCacheWrite({ userId: "migration-owner", gen: 1 }, attemptId, "pdf");
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
+      sql.exec(`DROP TABLE application_create_requests`);
       sql.exec(`DROP TABLE role_create_requests`);
       sql.exec(`DROP TABLE fact_create_requests`);
       sql.exec(`ALTER TABLE r2_cache_dispatches DROP COLUMN key_digest`);
@@ -208,6 +240,7 @@ describe("atomic schema migrations", () => {
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
       sql.exec(`UPDATE profile SET name='preserved' WHERE id=1`);
+      sql.exec(`DROP TABLE application_create_requests`);
       sql.exec(`DROP TABLE role_create_requests`);
       sql.exec(`DROP TABLE fact_create_requests`);
       const previous = priorVersion("CREATE TABLE fact_create_requests");
@@ -229,6 +262,7 @@ describe("atomic schema migrations", () => {
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
       sql.exec(`UPDATE profile SET name='preserved' WHERE id=1`);
+      sql.exec(`DROP TABLE application_create_requests`);
       sql.exec(`DROP TABLE role_create_requests`);
       const previous = priorVersion("CREATE TABLE role_create_requests");
       sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
@@ -240,6 +274,25 @@ describe("atomic schema migrations", () => {
       migrate(sql, tx);
       expect(sql.exec<{value: string}>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(SCHEMA_VERSION));
       expect(sql.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='role_create_requests'`).toArray()).toHaveLength(1);
+    });
+  });
+  it("rolls back the job receipt table and version together, then retries", async () => {
+    const stub = env.VAULT.get(env.VAULT.newUniqueId());
+    await stub.init("migration-owner");
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec(`UPDATE profile SET name='preserved' WHERE id=1`);
+      sql.exec(`DROP TABLE application_create_requests`);
+      const previous = priorVersion("CREATE TABLE application_create_requests");
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrate(failAtVersion(sql, previous + 1), tx)).toThrow(/synthetic version-write interruption/);
+      expect(sql.exec<{value: string}>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(previous));
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='application_create_requests'`).toArray()).toHaveLength(0);
+      expect(sql.exec<{name: string}>(`SELECT name FROM profile WHERE id=1`).one().name).toBe("preserved");
+      migrate(sql, tx);
+      expect(sql.exec<{value: string}>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(SCHEMA_VERSION));
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='application_create_requests'`).toArray()).toHaveLength(1);
     });
   });
 });

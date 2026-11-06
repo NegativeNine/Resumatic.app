@@ -180,7 +180,7 @@ export const api = {
   review: (r: ReviewRequest) => request<void>("POST", "/api/review", r),
 
   addApplication: (jdText: string) =>
-    request<{ applicationId: string }>("POST", "/api/applications", { jdText }),
+    generate<{ applicationId: string }>("/api/v2/applications", { jdText }),
   applications: () =>
     request<{ applications: ApplicationView[] }>("GET", "/api/applications"),
   updateApplication: (

@@ -94,4 +94,20 @@ describe("generation request keys", () => {
     expect(keys[1]).toBe(keys[0]);
     expect(keys[2]).not.toBe(keys[0]);
   });
+  it("reuses a job key after an uncertain response and makes a new key for the next action", async () => {
+    const keys: string[] = [], paths: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (path: RequestInfo | URL, init?: RequestInit) => {
+      paths.push(String(path));
+      keys.push((init?.headers as Record<string, string>)["idempotency-key"]!);
+      if (keys.length === 1) throw new TypeError("connection lost");
+      return Response.json({ applicationId: "job" });
+    }));
+    const job = `A detailed role description ${crypto.randomUUID()}`;
+    await expect(api.addApplication(job)).rejects.toThrow("connection lost");
+    await expect(api.addApplication(job)).resolves.toEqual({ applicationId: "job" });
+    await expect(api.addApplication(job)).resolves.toEqual({ applicationId: "job" });
+    expect(paths).toEqual(["/api/v2/applications", "/api/v2/applications", "/api/v2/applications"]);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
+  });
 });

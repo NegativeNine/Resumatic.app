@@ -82,9 +82,28 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
        AND NOT EXISTS(SELECT 1 FROM global_auth_marker WHERE slot=1 AND epoch = CAST((SELECT value FROM meta WHERE key='global_auth_epoch') AS INTEGER))
      BEGIN SELECT RAISE(ABORT, 'global_auth_required'); END`,
   ],
+  [
+    // A successful global release is durably acknowledged before other
+    // cleanup can retry. Ambiguous replies remain pending and are retried.
+    `CREATE TABLE shard_deletion_releases (user_id TEXT NOT NULL, provider TEXT NOT NULL, subject TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','acknowledged')), PRIMARY KEY(user_id,provider,subject))`,
+    // These markers exist only inside the transactions making the corresponding
+    // deletion. They let migrated SQLite reject legacy alarm code that would
+    // otherwise bypass the versioned epoch barrier.
+    `CREATE TABLE shard_identity_delete_marker (user_id TEXT PRIMARY KEY)`,
+    `CREATE TABLE global_shard_home_release_marker (provider TEXT NOT NULL, subject TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY(provider,subject,user_id))`,
+    `CREATE TRIGGER guard_shard_google_identity_delete BEFORE DELETE ON identities
+     WHEN OLD.provider='google' AND EXISTS(SELECT 1 FROM meta WHERE key='shard_deletion_guard' AND value='1')
+       AND NOT EXISTS(SELECT 1 FROM shard_identity_delete_marker WHERE user_id=OLD.user_id)
+     BEGIN SELECT RAISE(ABORT, 'shard_deletion_barrier_required'); END`,
+    `CREATE TRIGGER guard_global_google_shard_home_delete BEFORE DELETE ON identity_homes
+     WHEN OLD.provider='google' AND OLD.shard IS NOT NULL
+       AND EXISTS(SELECT 1 FROM meta WHERE key='global_auth_guard' AND value='1')
+       AND NOT EXISTS(SELECT 1 FROM global_shard_home_release_marker WHERE provider=OLD.provider AND subject=OLD.subject AND user_id=OLD.user_id)
+     BEGIN SELECT RAISE(ABORT, 'shard_deletion_barrier_required'); END`,
+  ],
 ];
 
-export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T, global = false): void {
+export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T, global = false, shard = false): void {
   sql.exec(
     `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
   );
@@ -105,6 +124,8 @@ export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) 
         sql.exec(`INSERT INTO meta(key,value) VALUES ('global_auth_epoch','0')`);
         sql.exec(`INSERT INTO meta(key,value) VALUES ('global_auth_guard','1')`);
       }
+      if (shard && next === 9)
+        sql.exec(`INSERT INTO meta(key,value) VALUES ('shard_deletion_guard','1')`);
       sql.exec(
         `INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
         String(next),

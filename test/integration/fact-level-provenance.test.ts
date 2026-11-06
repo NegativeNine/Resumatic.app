@@ -61,6 +61,7 @@ describe("fact level provenance", () => {
     await stub.init(owner);
     await runInDurableObject(stub, async (instance, state) => {
       const sql = state.storage.sql;
+      sql.exec(`DROP TABLE application_create_requests`);
       sql.exec(`DROP TABLE role_create_requests`);
       sql.exec(`DROP TABLE fact_create_requests`);
       sql.exec(`DROP TABLE r2_cache_dispatches`);

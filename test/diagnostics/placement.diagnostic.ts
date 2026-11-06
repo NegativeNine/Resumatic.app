@@ -23,9 +23,10 @@ it("does not create two accounts when an old placement resumes after deletion", 
   await runDurableObjectAlarm(home);
   await eventually(async () => (await home.existingIdentity(input.provider, input.subject)) === null, "identity deletion");
   await directory(env).addInvite(input.email);
-  const fresh = await directoryForSignIn(configured("1"), input);
+  const freshInput = { ...input, authEpoch: await directory(env).googleAuthEpoch() };
+  const fresh = await directoryForSignIn(configured("1"), freshInput);
   const replacement = await fresh.directory.signIn(fresh.input);
-  await directory(env).bindIdentityHome(input.provider, input.subject, replacement.userId, input.authEpoch);
+  await directory(env).bindIdentityHome(input.provider, input.subject, replacement.userId, freshInput.authEpoch);
   await held.directory.signIn(held.input);
   const locations = await Promise.all([...allDirectories(env)].map((d) => d.existingIdentity(input.provider, input.subject)));
   expect(locations.filter(Boolean), "a stale creation left two accounts for the same identity").toHaveLength(1);

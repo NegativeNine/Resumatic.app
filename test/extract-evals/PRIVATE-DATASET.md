@@ -48,11 +48,13 @@ An offline, no-model dry run validates the corpus and exercises scoring:
 npm run eval:extract -- --private-dataset=/absolute/private/staging --split=dev
 ```
 
-A live run requires configured model credentials and explicit, positive `EVAL_BUDGET_USD` and integer `EVAL_MAX_CALLS`. Price overrides in `EVAL_MODEL_PRICES` must be the same when later assessing promotion. Explicitly authorize the provider calls and use a held-out split for promotion:
+A live run requires configured model credentials, explicit positive `EVAL_BUDGET_USD` and integer `EVAL_MAX_CALLS`, verified shared accounting, and provider-side spending bounds. Live dispatch remains blocked until those safeguards are established. Price overrides in `EVAL_MODEL_PRICES` must match the later promotion assessment. After obtaining separate authorization for the full run, use the private held-out corpus:
 
 ```sh
-npm run eval:extract -- --live --synthetic --strategy=llm:default,clairic --split=holdout --repeat=3
+npm run eval:extract -- --live --private-dataset=/absolute/private/staging --strategy=llm:default,clairic --split=holdout --repeat=3
 ```
+
+This is the full held-out evaluation, not the authorized one-case pilot below; do not run it against the pilot authorization.
 
 The public `extract-report.json` is metadata only and includes the run ID and the SHA-256 of a private snapshot in `evaluation-snapshots/<run-id>.json`. That owner-only snapshot contains sensitive proposed text and evidence for human review; do not commit or publish it. An offline assessment with no audit reports pending status and a deterministic `sampleSeed` and list of 50 `sampleKeys` per strategy, derived from the manifest hash, tested configuration, snapshot hash and candidate keys. Look up those keys in the private snapshot; reviewers must examine those samples, examine every judge/human disagreement, and adjudicate disagreements. Do not cherry-pick a different 50. This reproducibility does not by itself establish impartial sampling: an operator could generate multiple runs and select among them. Have an independent reviewer verify the source data, run selection, seed and audit.
 

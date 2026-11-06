@@ -84,27 +84,35 @@ const UPLOAD_LIMIT = bodyLimit({
 });
 
 app.onError((err, c) => {
-  if (err instanceof z.ZodError)
-    return c.json({ error: "invalid", message: "invalid request" }, 400);
-  if (err instanceof HTTPException) {
-    return c.json(
-      {
-        error: err.status === 413 ? "too_large" : "invalid",
-        message: err.message || "bad request",
-      },
-      err.status,
-    );
+  // Errors from libraries and RPCs can have accessor-backed properties or
+  // hostile prototypes. Never let classifying one rethrow its contents.
+  try {
+    if (err instanceof z.ZodError)
+      return c.json({ error: "invalid", message: "invalid request" }, 400);
+    if (err instanceof HTTPException) {
+      return c.json(
+        {
+          error: err.status === 413 ? "too_large" : "invalid",
+          message: err.message || "bad request",
+        },
+        err.status,
+      );
+    }
+    const code = errorCode(err);
+    if (code)
+      return c.json(
+        { error: code, message: errorDetail(err) },
+        httpStatus(code) as 400,
+      );
+  } catch {
+    // The fixed response below does not inspect the thrown value.
   }
-  const code = errorCode(err);
-  if (code)
-    return c.json(
-      { error: code, message: errorDetail(err) },
-      httpStatus(code) as 400,
-    );
-  console.error("unhandled error", {
-    name: err instanceof Error ? err.name : "unknown",
-    route: httpRoute(new URL(c.req.url).pathname),
-  });
+  try {
+    console.error("unhandled error", {
+      code: "unexpected",
+      route: httpRoute(new URL(c.req.url).pathname),
+    });
+  } catch { /* Logging must not surface an exception either. */ }
   return c.json({ error: "internal", message: "something went wrong" }, 500);
 });
 
@@ -389,6 +397,10 @@ const NewFactBody = z.object({
   kind: z.enum(FACT_KINDS as [FactKind, ...FactKind[]]),
   text: z.string().trim().min(1).max(MAX_FACT_CHARS),
   level: z.enum(LEVELS as [Level, ...Level[]]).nullable(),
+});
+
+const NewApplicationBody = z.object({
+  jdText: z.string().trim().min(40, "paste the whole job description").max(MAX_JD_CHARS),
 });
 
 const Ids = z.array(z.string().max(64)).max(1000);
@@ -734,17 +746,14 @@ api.post("/review", JSON_LIMIT, async (c) => {
 });
 
 api.post("/applications", JSON_LIMIT, async (c) => {
-  const { jdText } = await jsonBody(
-    c,
-    z.object({
-      jdText: z
-        .string()
-        .trim()
-        .min(40, "paste the whole job description")
-        .max(MAX_JD_CHARS),
-    }),
-  );
+  const { jdText } = await jsonBody(c, NewApplicationBody);
   return c.json(await myVault(c).addApplication(c.get("who"), jdText), 201);
+});
+
+// Separate route and RPC fail closed if an older deployment cannot honor the key.
+api.post("/v2/applications", JSON_LIMIT, async (c) => {
+  const { jdText } = await jsonBody(c, NewApplicationBody);
+  return c.json(await myVault(c).addApplicationIdempotent(c.get("who"), jdText, requestKey(c)), 201);
 });
 
 api.get("/applications", async (c) =>

@@ -142,6 +142,10 @@ export const MIGRATIONS: readonly string[][] = [
     // Preserve the result of a manual role submission after a lost response.
     `CREATE TABLE role_create_requests (request_key TEXT PRIMARY KEY, input_digest TEXT NOT NULL, role_id TEXT NOT NULL REFERENCES roles(id))`,
   ],
+  [
+    // Preserve the result of a job submission after a lost response.
+    `CREATE TABLE application_create_requests (request_key TEXT PRIMARY KEY, input_digest TEXT NOT NULL, application_id TEXT NOT NULL REFERENCES applications(id))`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

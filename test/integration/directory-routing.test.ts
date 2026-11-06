@@ -146,21 +146,25 @@ describe("Directory placement in Durable Objects", () => {
     const p = await input();
     const global = directory(env);
     const shard = 3;
-    const oldUser = `s${shard}:old`;
-    const newUser = `s${shard}:new`;
+    const oldUser = `s${shard}:${crypto.randomUUID()}`;
+    const newUser = `s${shard}:${crypto.randomUUID()}`;
     await global.addInvite(p.email);
     await global.claimIdentityHome(p.provider, p.subject, shard, p.email, undefined, p.authEpoch);
     await global.bindIdentityHome(p.provider, p.subject, oldUser, p.authEpoch);
-    await global.forgetIdentityHome(p.provider, p.subject, shard, oldUser);
-    await global.claimIdentityHome(p.provider, p.subject, shard, p.email, undefined, p.authEpoch);
+    await runInDurableObject(global, async (instance) => {
+      await expect((instance as Directory).forgetIdentityHome(p.provider, p.subject, shard, oldUser)).rejects.toThrow("shard_deletion_barrier_required");
+    });
+    await global.forgetGoogleShardHomeV2(p.subject, shard, oldUser);
+    const freshEpoch = await global.googleAuthEpoch();
+    await global.claimIdentityHome(p.provider, p.subject, shard, p.email, undefined, freshEpoch);
     // An unbound new claim cannot safely be identified as the deleted user.
     await runInDurableObject(global, async (instance) => {
       await expect((instance as Directory).forgetIdentityHome(p.provider, p.subject, shard, oldUser)).rejects.toThrow("placement requires review");
     });
-    await global.bindIdentityHome(p.provider, p.subject, newUser, p.authEpoch);
+    await global.bindIdentityHome(p.provider, p.subject, newUser, freshEpoch);
     await global.forgetIdentityHome(p.provider, p.subject, shard, oldUser);
     await runInDurableObject(global, async (instance) => {
-      await expect((instance as Directory).bindIdentityHome(p.provider, p.subject, oldUser, p.authEpoch)).rejects.toThrow("placement changed");
+      await expect((instance as Directory).bindIdentityHome(p.provider, p.subject, oldUser, freshEpoch)).rejects.toThrow("placement changed");
       await expect((instance as Directory).forgetIdentityHome(p.provider, p.subject, shard + 1, newUser)).rejects.toThrow("placement requires review");
     });
     const rows = await runInDurableObject(global, (_instance, state) => state.storage.sql

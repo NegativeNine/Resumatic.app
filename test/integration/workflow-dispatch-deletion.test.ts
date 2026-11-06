@@ -96,6 +96,7 @@ describe("deletion and Workflow dispatch", () => {
         state.storage.sql.exec(`INSERT INTO sources (id, filename, r2_key, state, run_id, created_at) VALUES (?, 'old.pdf', ?, 'ready', ?, 1)`, oldSource, `vaults/${id}/sources/old`, oldSource);
         state.storage.sql.exec(`INSERT INTO applications (id, jd_text, created_at) VALUES (?, 'old job', 1)`, appId);
         state.storage.sql.exec(`INSERT INTO resumes (id, application_id, state, run_id, created_at) VALUES (?, ?, 'ready', ?, 1)`, oldResume, appId, oldResume);
+        state.storage.sql.exec(`DROP TABLE application_create_requests`);
         state.storage.sql.exec(`DROP TABLE role_create_requests`);
         state.storage.sql.exec(`DROP TABLE fact_create_requests`);
         state.storage.sql.exec(`DROP TABLE workflow_dispatches`);

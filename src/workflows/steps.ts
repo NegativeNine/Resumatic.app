@@ -55,6 +55,14 @@ function safeDetail(code: ErrorCode, error: unknown): string {
   return SAFE_DETAILS.has(detail) ? detail : GENERIC_DETAIL[code];
 }
 
+function isNonRetryable(error: unknown): boolean {
+  try {
+    return error instanceof NonRetryableError;
+  } catch {
+    return false;
+  }
+}
+
 /** Preserve normal retries, but never expose the original exception to a step. */
 export function retrySafely<T>(body: () => Promise<T>): () => Promise<T> {
   return async () => {
@@ -63,7 +71,7 @@ export function retrySafely<T>(body: () => Promise<T>): () => Promise<T> {
     } catch (error) {
       const code = errorCode(error);
       const message = code ? `${code}: ${safeDetail(code, error)}` : "workflow step failed";
-      if (error instanceof NonRetryableError) throw new NonRetryableError(message);
+      if (isNonRetryable(error)) throw new NonRetryableError(message);
       throw new Error(message);
     }
   };
@@ -76,7 +84,7 @@ export function once<T>(body: () => Promise<T>): () => Promise<T> {
       return await body();
     } catch (e) {
       const code = errorCode(e);
-      if (e instanceof NonRetryableError || (code && FINAL.has(code)))
+      if (isNonRetryable(e) || (code && FINAL.has(code)))
         throw new NonRetryableError(code ? `${code}: ${safeDetail(code, e)}` : "workflow step failed");
       throw new Error(code ? `${code}: ${safeDetail(code, e)}` : "workflow step failed");
     }

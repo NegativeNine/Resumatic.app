@@ -41,8 +41,11 @@ describe("sharded account invitation claims", () => {
     await global.addInvite(p.email);
     await runInDurableObject(global, async (instance) => {
       await expect((instance as Directory).claimIdentityHome(p.provider, p.subject, shard)).rejects.toThrow("sign-in service is updating");
+      // A renewed invite must not revive the authorization captured before
+      // the deleted shard's global home was released.
+      await expect((instance as Directory).claimIdentityHome(p.provider, p.subject, shard, p.email, undefined, p.authEpoch)).rejects.toThrow("sign-in is stale");
     });
-    const fresh = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
+    const fresh = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, { ...p, authEpoch: await global.googleAuthEpoch() });
     expect((await fresh.directory.signIn(fresh.input)).userId).toMatch(/^s(?:[0-9]|1[0-5]):/);
   }, 30_000);
 

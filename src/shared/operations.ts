@@ -16,6 +16,8 @@ export const TRANSFER_TABLES = [
   "extraction_feedback_facts",
   "extraction_feedback_manual",
   "applications",
+  // Preserve job submission idempotency across a fenced vault replacement.
+  "application_create_requests",
   "resumes",
   "resume_versions",
   "documents",

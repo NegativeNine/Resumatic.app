@@ -95,9 +95,14 @@ describe("maintenance replacement lifecycle", () => {
       confirm: [...facts, ...roles].map((item: { id: string }) => item.id),
       reject: [],
     });
-    const { applicationId } = (await (
-      await user.send("POST", "/api/applications", { jdText: JOB_DESCRIPTION })
-    ).json()) as { applicationId: string };
+    const jobKey = crypto.randomUUID();
+    const job = await user.fetch("/api/v2/applications", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": jobKey },
+      body: JSON.stringify({ jdText: JOB_DESCRIPTION }),
+    });
+    expect(job.status).toBe(201);
+    const { applicationId } = await job.json() as { applicationId: string };
     const { resumeId } = (await (
       await user.send("POST", `/api/applications/${applicationId}/resumes`)
     ).json()) as { resumeId: string };
@@ -278,6 +283,14 @@ describe("maintenance replacement lifecycle", () => {
     expect(nextSession.vid).toBe(targetVaultId);
     expect(nextSession.epoch).not.toBe(oldSession.epoch ?? "legacy");
     expect((await replacement.json("/api/me")).quota).toEqual(initialQuota);
+    const jobReplay = await replacement.fetch("/api/v2/applications", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": jobKey },
+      body: JSON.stringify({ jdText: JOB_DESCRIPTION }),
+    });
+    expect(jobReplay.status).toBe(201);
+    expect(await jobReplay.json()).toEqual({ applicationId });
+    expect((await replacement.json("/api/applications")).applications).toHaveLength(1);
     expect(await replacement.json(`/api/resumes/${resumeId}/versions`)).toEqual(
       savedVersions,
     );

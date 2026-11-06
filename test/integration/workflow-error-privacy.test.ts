@@ -48,6 +48,33 @@ describe("Workflow error privacy", () => {
     }
   });
 
+  it("does not trust a mutated AppError code or name as safe step metadata", async () => {
+    const forged = new AppError("invalid", "invalid input");
+    (forged as unknown as { code: string }).code = privateText;
+    forged.name = privateText;
+    const error = await caught(once(async () => { throw forged; }));
+    expect(error.message).toBe("workflow step failed");
+    expect(error.stack).not.toContain(privateText);
+    expect(errorCode(error)).toBeNull();
+  });
+
+  it("does not expose exceptions thrown by error accessors or proxies", async () => {
+    const malformed = new Error("initial");
+    Object.defineProperty(malformed, "message", { get() { throw new Error(privateText); } });
+    const coded = new AppError("conflict", "initial");
+    Object.defineProperty(coded, "message", { get() { throw new Error(privateText); } });
+    const proxy = new Proxy({}, { getPrototypeOf() { throw new Error(privateText); } });
+    for (const thrown of [malformed, coded, proxy]) {
+      for (const wrap of [once, retrySafely]) {
+        const error = await caught(wrap(async () => { throw thrown; }));
+        expect(error.message).not.toContain(privateText);
+        expect(error.stack).not.toContain(privateText);
+      }
+    }
+    expect((await caught(once(async () => { throw coded; }))).message)
+      .toContain("conflict: the requested item changed; try again");
+  });
+
   it.each(["list", "start", "status"] as const)("does not expose a fleet %s failure to the Workflow step", async (failAt) => {
     const step = { do: async (_name: string, _config: unknown, body: () => Promise<unknown>) => body() } as unknown as WorkflowStep;
     const services: FleetServices = {

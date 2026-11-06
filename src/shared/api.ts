@@ -26,6 +26,7 @@
 //   PATCH  /api/facts/:id              FactPatch -> 204          (new wording, another role, or both)
 //   POST   /api/review                 ReviewRequest -> 204   (role or fact IDs)
 //   POST   /api/applications           { jdText } -> 201 { applicationId }
+//   POST   /api/v2/applications        same, with an idempotency key
 //   GET    /api/applications           { applications: ApplicationView[] }
 //   POST   /api/applications/:id/resumes   202 { resumeId }
 //   GET    /api/resumes/:id            ResumeView               (poll while state is "running")
