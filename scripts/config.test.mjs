@@ -20,6 +20,9 @@ test("production secrets cannot shadow the evaluated extractor or model configur
   assert.equal(validEvaluationSecretNames([{ name: "TEST_SIGNIN_KEY" }]), true);
   assert.equal(validProductionSecretNames([{ name: "R2_CACHE_FENCE_ENABLED" }]), false);
   assert.equal(validProductionSecretNames([{ name: "PLACEMENT_FENCE_ENABLED" }]), false);
+  // Secret values cannot be inspected, so even a secret containing "1" could
+  // later be replaced with "16" and bypass the reviewed configuration.
+  assert.equal(validProductionSecretNames([{ name: "DIRECTORY_SHARDS" }]), false);
   assert.equal(validProductionSecretNames({}), false);
   assert.equal(validProductionSecretNames([{}]), false);
 });
@@ -39,6 +42,32 @@ test("experimental placement fencing cannot be enabled in production configurati
     const path = join(dir, "wrangler.jsonc");
     await writeFile(path, JSON.stringify({ name: "example", vars: { PLACEMENT_FENCE_ENABLED: "true" }, env: { staging: { vars: {} } } }));
     assert.ok((await validate({ environment: "production", purpose: "deploy", configPath: path, env: {} })).missing.includes("PLACEMENT_FENCE_ROLLOUT_UNVERIFIED"));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("production preflight blocks new sharded placement until deletion races are resolved", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "placement-rollout-config-"));
+  try {
+    const path = join(dir, "wrangler.jsonc");
+    const config = { name: "example", vars: {}, env: { staging: { vars: { DIRECTORY_SHARDS: "16" } } } };
+    for (const value of ["16", "unexpected", 16, null]) {
+      config.vars.DIRECTORY_SHARDS = value;
+      await writeFile(path, JSON.stringify(config));
+      const report = await validate({ environment: "production", purpose: "deploy", configPath: path, env: {} });
+      assert.ok(report.missing.includes("DIRECTORY_SHARD_ROLLOUT_UNVERIFIED"));
+    }
+    for (const value of ["", "0", "1"]) {
+      config.vars.DIRECTORY_SHARDS = value;
+      await writeFile(path, JSON.stringify(config));
+      const report = await validate({ environment: "production", purpose: "deploy", configPath: path, env: {} });
+      assert.ok(!report.missing.includes("DIRECTORY_SHARD_ROLLOUT_UNVERIFIED"));
+    }
+    delete config.vars.DIRECTORY_SHARDS;
+    await writeFile(path, JSON.stringify(config));
+    const defaultProduction = await validate({ environment: "production", purpose: "deploy", configPath: path, env: {} });
+    assert.ok(!defaultProduction.missing.includes("DIRECTORY_SHARD_ROLLOUT_UNVERIFIED"));
+    const staging = await validate({ environment: "staging", purpose: "deploy", configPath: path, env: {} });
+    assert.ok(!staging.missing.includes("DIRECTORY_SHARD_ROLLOUT_UNVERIFIED"));
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

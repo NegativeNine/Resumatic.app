@@ -91,6 +91,12 @@ export async function validate({
       missing.push("R2_CACHE_FENCE_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.PLACEMENT_FENCE_ENABLED && config.vars.PLACEMENT_FENCE_ENABLED !== "false")
       missing.push("PLACEMENT_FENCE_ROLLOUT_UNVERIFIED");
+    // A delayed sharded creation can recreate an identity after deletion.
+    // Keep new production placement on the global Directory until the
+    // dispatch fence and mixed-version recovery are independently verified.
+    if (environment === "production" && config.vars?.DIRECTORY_SHARDS !== undefined &&
+        !["", "0", "1"].includes(config.vars.DIRECTORY_SHARDS))
+      missing.push("DIRECTORY_SHARD_ROLLOUT_UNVERIFIED");
     if (
       config.vars?.ACCESS_TEAM_DOMAIN &&
       !httpsOrigin(config.vars.ACCESS_TEAM_DOMAIN)
