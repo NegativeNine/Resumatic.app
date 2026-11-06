@@ -33,6 +33,52 @@ function subscription(status: "active" | "canceled") {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("preliminary account cleanup", () => {
+  it("repeatedly deletes known Workflow instances without settling an uncertain create", async () => {
+    const d = env.DIRECTORY.getByName(`preliminary-${crypto.randomUUID()}`);
+    const user = await account(d);
+    const stub = vault(env, user.vaultId);
+    const ids = { distill: crypto.randomUUID(), tailor: crypto.randomUUID(), future: crypto.randomUUID(), letter: crypto.randomUUID() };
+    await runInDurableObject(stub, (_instance, state) => {
+      for (const [kind, id] of Object.entries(ids)) state.storage.sql.exec(
+        `INSERT INTO runs (id,kind,target_id,request_key,input_digest,state,steps,credit_state,created_at,updated_at)
+         VALUES (?, ?, ?, ?, 'digest', 'running', '[]', 'none', 1, 1)`,
+        id, kind, id, id,
+      );
+      state.storage.sql.exec(`INSERT INTO workflow_dispatches(run_id) VALUES (?)`, ids.distill);
+    });
+    await runInDurableObject(stub, (instance) => {
+      expect(() => instance.knownRunsForDeletion()).toThrow(/vault must be closed/);
+    });
+    let lateVisible = false;
+    const deleted: string[] = [];
+    const binding = (kind: "distill" | "tailor" | "letter") => ({ get: async (id: string) => {
+      if (deleted.includes(id) || (kind === "distill" && !lateVisible)) throw new Error(`Workflow instance ${id} not found`);
+      return { status: async () => ({ status: "running" }), terminate: async () => {}, delete: async () => { deleted.push(id); } };
+    } });
+    await d.deleteAccount(user.userId, user.vaultId);
+    await runInDurableObject(d, async (instance, state) => {
+      const local = (instance as unknown as { env: Record<string, unknown> }).env;
+      const old = { ...local };
+      Object.assign(local, { DISTILL: binding("distill"), TAILOR: binding("tailor"), DOCUMENTS: binding("letter") });
+      try {
+        await instance.alarm();
+        // Even an unknown run kind does not prevent cleanup of a later known kind.
+        expect(deleted.sort()).toEqual([ids.tailor, ids.letter].sort());
+        expect(state.storage.sql.exec<{ state: string }>(`SELECT state FROM vaults WHERE vault_id=?`, user.vaultId).one().state).toBe("deleting");
+        lateVisible = true;
+        await instance.alarm();
+        expect(deleted).toContain(ids.distill);
+        expect(state.storage.sql.exec<{ state: string }>(`SELECT state FROM vaults WHERE vault_id=?`, user.vaultId).one().state).toBe("deleting");
+      } finally {
+        for (const key of Object.keys(local)) if (!(key in old)) delete local[key];
+        Object.assign(local, old);
+      }
+    });
+    await runInDurableObject(stub, (_vault, state) => {
+      expect(state.storage.sql.exec(`SELECT run_id FROM workflow_dispatches WHERE run_id=?`, ids.distill).toArray()).toHaveLength(1);
+    });
+  }, 30_000);
+
   it("cancels known billing and repeatedly sweeps visible files while an uncertain write keeps deletion pending", async () => {
     const d = env.DIRECTORY.getByName(`preliminary-${crypto.randomUUID()}`);
     const user = await account(d);

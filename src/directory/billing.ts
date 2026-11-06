@@ -140,6 +140,16 @@ export class BillingStore {
       try {
         const customer = await stripe.customer(event.customer_id);
         const uid = customer.metadata.account_uid;
+        // Some legacy pending events stored an empty owner rather than NULL.
+        // Do not assign or discard those rows unless Stripe identifies the
+        // requested customer and its owner is currently active here.
+        if (event.user_id === "" && (customer.id !== event.customer_id || !uid || !this.hooks.account(uid)))
+          throw new AppError("unavailable", "billing customer attribution is unavailable");
+        if (event.user_id === "" && this.sql.exec(
+          `SELECT user_id FROM billing_accounts WHERE (user_id=? AND customer_id<>?) OR (customer_id=? AND user_id<>?) LIMIT 1`,
+          uid, event.customer_id, event.customer_id, uid,
+        ).toArray().length)
+          throw new AppError("unavailable", "billing customer attribution changed");
         // Once attributed, an event may never move to another user merely
         // because Stripe metadata changed while reconciliation was pending.
         if (event.user_id && event.user_id !== uid)
@@ -149,7 +159,7 @@ export class BillingStore {
           continue;
         }
         this.sql.exec(
-          `UPDATE billing_events SET user_id = ? WHERE id = ? AND (user_id IS NULL OR user_id = ?)`,
+          `UPDATE billing_events SET user_id = ? WHERE id = ? AND (user_id IS NULL OR user_id = '' OR user_id = ?)`,
           uid,
           event.id,
           uid,

@@ -17,11 +17,11 @@ import { ActionError } from "./ui";
 
 /** Sections grouped by kind, in the order each kind first appears. */
 function groupSections(sections: ResumeSection[]) {
-  const groups: { kind: RoleKind; sections: ResumeSection[] }[] = [];
-  for (const section of sections) {
+  const groups: { kind: RoleKind; sections: { section: ResumeSection; index: number }[] }[] = [];
+  for (const [index, section] of sections.entries()) {
     const group = groups.find((g) => g.kind === section.kind);
-    if (group) group.sections.push(section);
-    else groups.push({ kind: section.kind, sections: [section] });
+    if (group) group.sections.push({ section, index });
+    else groups.push({ kind: section.kind, sections: [{ section, index }] });
   }
   return groups;
 }
@@ -131,7 +131,7 @@ export function ResumeSheet({
         </div>
         {needsEvidence && (
           <p className="notice" role="status">
-            This version contains wording without verified evidence, so its PDF,
+            This version contains wording or headings without verified evidence, so its PDF,
             Word download and print preview are unavailable. Your text is still here.{" "}
             {!readOnly && resume.provenance === "snapshot"
               ? "Start a line-by-line review below, or confirm your facts and tailor a new version."
@@ -143,7 +143,7 @@ export function ResumeSheet({
         {!readOnly && needsEvidence && resume.provenance === "snapshot" && resume.needsGroundingReview && (
           <section className="card" aria-label="Review blocked resume">
             <h2>Review this resume</h2>
-            <p>Start a new review version, then check each line against confirmed facts. The review becomes your latest version and cannot be downloaded until all checks pass. Your existing versions and share links are preserved.</p>
+            <p>Start a new review version, then check each line against confirmed facts. The review becomes your latest version and cannot be downloaded until all checks pass. Your existing versions and share snapshots remain in your data; links to versions needing review are unavailable.</p>
             <button type="button" disabled={finalization.pending}
               onClick={() => void finalization.run(async () => {
                 await api.beginResumeReview(resume.id, resume.version);
@@ -166,6 +166,7 @@ export function ResumeSheet({
                     ? "Some headings don't match confirmed roles."
                     : "Some skills don't match confirmed facts."}{" "}
                 Review your confirmed experience in <a href={href.sources}>Sources &amp; facts</a>, then return and refresh this page.
+                You can also remove a section from this review version below.
               </p>
             )}
             <button type="button" className="primary" disabled={!readyToFinalize || finalization.pending}
@@ -195,8 +196,8 @@ export function ResumeSheet({
           {groupSections(body.sections).map(({ kind, sections }) => (
             <section className="paper-section" key={kind}>
               <h2>{SECTION_HEADING[kind]}</h2>
-              {sections.map((s) => (
-                <div className="entry" key={s.roleId}>
+              {sections.map(({ section: s, index }) => (
+                <div className="entry" key={index}>
                   <div className="entry-head">
                     <div>
                       <p className="entry-org">{s.org}</p>
@@ -208,6 +209,15 @@ export function ResumeSheet({
                   </div>
                   {s.lines.length > 0 && (
                     <ul className="plain-list lines">{s.lines.map((item) => line(item, s.roleId))}</ul>
+                  )}
+                  {!readOnly && review && (
+                    <button type="button" disabled={finalization.pending} aria-label={`Remove section ${s.org}`}
+                      onClick={() => void finalization.run(async () => {
+                        await api.removeLegacySection(resume.id, index, resume.version);
+                        await reload();
+                      })}>
+                      Remove section
+                    </button>
                   )}
                 </div>
               ))}

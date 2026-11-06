@@ -204,15 +204,15 @@ describe("durable billing reconciliation", () => {
     } finally { f.db.close(); }
   });
 
-  it("does not overwrite another reconciliation's attribution of a legacy event", async () => {
+  it.each([null, ""])("does not overwrite another reconciliation's attribution of a legacy event with owner %s", async (initialOwner) => {
     const f = fixture();
     let release!: () => void;
     let entered!: () => void;
     const holding = new Promise<void>((resolve) => { release = resolve; });
     const ready = new Promise<void>((resolve) => { entered = resolve; });
     try {
-      f.db.prepare("INSERT INTO billing_events(id,customer_id,created_at) VALUES(?,?,?)")
-        .run("evt_legacy", "cus_123", Date.now());
+      f.db.prepare("INSERT INTO billing_events(id,customer_id,user_id,created_at) VALUES(?,?,?,?)")
+        .run("evt_legacy", "cus_123", initialOwner, Date.now());
       f.fetcher.mockImplementation(async () => {
         entered();
         await holding;
@@ -229,6 +229,47 @@ describe("durable billing reconciliation", () => {
       expect(f.deliver).not.toHaveBeenCalled();
     } finally { release(); f.db.close(); }
   });
+
+  it("reconciles an empty legacy owner only after Stripe resolves its active account", async () => {
+    const f = fixture();
+    try {
+      f.db.prepare("INSERT INTO billing_events(id,customer_id,user_id,created_at) VALUES('evt_empty','cus_123','',?)").run(Date.now());
+      await f.store.reconcile();
+      expect(f.db.prepare("SELECT user_id,state FROM billing_events WHERE id='evt_empty'").get())
+        .toMatchObject({ user_id: "u1", state: "applied" });
+      expect(f.db.prepare("SELECT customer_id FROM billing_accounts WHERE user_id='u1'").get())
+        .toMatchObject({ customer_id: "cus_123" });
+      expect(f.deliver).toHaveBeenCalledOnce();
+    } finally { f.db.close(); }
+  });
+
+  it.each(["missing_uid", "unknown_uid", "wrong_customer", "conflicting_account", "conflicting_customer", "deleting"])(
+    "keeps an empty legacy owner pending when Stripe attribution is %s",
+    async (scenario) => {
+      const f = fixture();
+      try {
+        f.db.prepare("INSERT INTO billing_events(id,customer_id,user_id,created_at) VALUES('evt_empty','cus_123','',?)").run(Date.now());
+        if (scenario === "deleting") f.state.active = false;
+        if (scenario === "conflicting_account") f.db.prepare("INSERT INTO billing_accounts(user_id,customer_id) VALUES('u1','cus_other')").run();
+        if (scenario === "conflicting_customer") f.db.prepare("INSERT INTO billing_accounts(user_id,customer_id) VALUES('u2','cus_123')").run();
+        if (scenario !== "deleting") f.fetcher.mockImplementation(async () => Response.json({
+          id: scenario === "wrong_customer" ? "cus_other" : "cus_123",
+          metadata: scenario === "missing_uid" ? {} : { account_uid: scenario === "unknown_uid" ? "u2" : "u1" },
+        }));
+        await expect(f.store.reconcile()).rejects.toThrow("pending");
+        expect(f.db.prepare("SELECT user_id,state FROM billing_events WHERE id='evt_empty'").get())
+          .toMatchObject({ user_id: "", state: "pending" });
+        expect(f.db.prepare("SELECT COUNT(*) AS n FROM billing_accounts").get()!.n).toBe(scenario.startsWith("conflicting_") ? 1 : 0);
+        expect(f.deliver).not.toHaveBeenCalled();
+        if (scenario === "deleting") {
+          // An independently known customer may still be erased by the
+          // account-deletion path; metadata alone did not authorize it here.
+          f.store.erase("u1", "cus_123");
+          expect(f.db.prepare("SELECT COUNT(*) AS n FROM billing_events").get()!.n).toBe(0);
+        }
+      } finally { f.db.close(); }
+    },
+  );
 
   it("delivers a cancellation when a full batch of other vault deliveries fails", async () => {
     const f = fixture();

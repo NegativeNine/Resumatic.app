@@ -11,6 +11,48 @@ beforeEach(() => setModels(() => fakeModels()));
 afterEach(() => setModels(null));
 
 describe("historical share grounding", () => {
+  it.each(["missing role evidence", "forged heading"])('blocks %s on export and an existing share while preserving owner review', async (variant) => {
+    const user = await signIn();
+    const upload = await user.upload("synthetic.pdf", RESUME);
+    const { sourceId } = await upload.json() as { sourceId: string };
+    await waitForSource(user, sourceId);
+    const { facts } = await user.json<{ facts: FactView[] }>("/api/facts");
+    const { roles } = await user.json<{ roles: RoleView[] }>("/api/roles");
+    expect((await user.send("POST", "/api/review", { confirm: [...facts, ...roles].map((item) => item.id), reject: [] })).status).toBe(204);
+    const { applicationId } = await (await user.send("POST", "/api/applications", { jdText: JOB_DESCRIPTION })).json() as { applicationId: string };
+    const { resumeId } = await (await user.send("POST", `/api/applications/${applicationId}/resumes`)).json() as { resumeId: string };
+    await waitForResume(user, resumeId);
+    const share = await user.send("POST", "/api/shares", { factIds: [], resumes: [{ id: resumeId, version: 1 }] });
+    expect(share.status).toBe(201);
+    const { grant, url } = await share.json() as { grant: { id: string }; url: string };
+    const exchange = await call("/share/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: new URL(url).hash.slice(1) }) });
+    const cookie = cookieFrom(exchange, "__Host-share")!;
+    const payload = user.cookie.slice("__Host-session=".length).split(".")[0]!;
+    const { vid } = JSON.parse(new TextDecoder().decode(fromBase64url(payload))) as { vid: string };
+    await runInDurableObject(vault(env, vid), (_instance, state) => {
+      const sql = state.storage.sql;
+      const row = sql.exec<{ data: string }>(`SELECT data FROM resume_versions WHERE resume_id=? AND version=1`, resumeId).one();
+      const saved = JSON.parse(row.data);
+      if (variant === "missing role evidence") delete saved.roleEvidence;
+      else {
+        saved.render.body.sections[0].org = "Invented employer";
+        const shared = JSON.parse(sql.exec<{ snapshot: string }>(`SELECT snapshot FROM share_grants WHERE id=?`, grant.id).one().snapshot);
+        shared.resumes[0].sections[0].org = "Invented employer";
+        sql.exec(`UPDATE share_grants SET snapshot=? WHERE id=?`, JSON.stringify(shared), grant.id);
+      }
+      sql.exec(`UPDATE resume_versions SET data=? WHERE resume_id=? AND version=1`, JSON.stringify(saved), resumeId);
+    });
+    expect((await user.json(`/api/resumes/${resumeId}`)).needsGroundingReview).toBe(true);
+    for (const suffix of ["pdf", "docx", "preview"])
+      expect((await user.fetch(`/api/resumes/${resumeId}/${suffix}`)).status).toBe(409);
+    expect((await call("/share/snapshot", { cookie })).status).toBe(410);
+    expect((await user.send("POST", "/api/shares", { factIds: [], resumes: [{ id: resumeId, version: 1 }] })).status).toBe(409);
+    expect((await user.send("POST", `/api/resumes/${resumeId}/grounding-review`, { expectedVersion: 1 })).status).toBe(200);
+    const review = await user.json<{ provenance: string; legacyReview: { headersReady: boolean } }>(`/api/resumes/${resumeId}`);
+    expect(review.provenance).toBe("legacy");
+    expect(review.legacyReview.headersReady).toBe(variant === "missing role evidence");
+  }, 30_000);
+
   it.each([
     ["ownership level", "Led the migration project", "Migration project participant"],
     ["number", "Built 987654321 services", "Built services"],

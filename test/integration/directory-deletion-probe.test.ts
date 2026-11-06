@@ -37,3 +37,18 @@ it("counts orphaned billing, deletion and initialization markers for the request
     expect(await instance.deletionProbe(userId, vaultId)).toBe(0);
   });
 });
+
+it("holds every probe pending for customer-only legacy billing events", async () => {
+  const stub = env.DIRECTORY.getByName(`billing-probe-${crypto.randomUUID()}`);
+  await runInDurableObject(stub, async (instance, state) => {
+    const sql = state.storage.sql;
+    sql.exec(`INSERT INTO billing_events(id,customer_id,user_id,created_at) VALUES
+      ('unattributed','cus_legacy',NULL,0),('empty','cus_empty','',0),
+      ('owned','cus_owned','owner',0),('other','cus_other','other',0)`);
+    expect(await instance.deletionProbe("owner", "vault")).toBe(3);
+    expect(await instance.deletionProbe("unrelated", "vault")).toBe(2);
+    sql.exec(`DELETE FROM billing_events WHERE id IN ('unattributed','empty')`);
+    expect(await instance.deletionProbe("unrelated", "vault")).toBe(0);
+    expect(await instance.deletionProbe("owner", "vault")).toBe(1);
+  });
+});

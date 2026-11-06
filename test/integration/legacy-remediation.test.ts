@@ -66,6 +66,68 @@ async function checkLine(user: User, applicationId: string, resumeId: string, ve
 }
 
 describe("legacy resume remediation", () => {
+  it("fences section removal during work and serializes concurrent removals even with duplicate role IDs", async () => {
+    const { user, resumeId, version, stub } = await fixture("legacy");
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      const row = sql.exec<{ data: string }>(`SELECT data FROM resume_versions WHERE resume_id=? AND version=?`, resumeId, version).one();
+      const saved = JSON.parse(row.data);
+      saved.render.body.sections.push({ ...saved.render.body.sections[0], lines: [] });
+      saved.render.body.sections.push({ kind: "education", org: "Missing identifier", title: null, startDate: null, endDate: null, lines: [] });
+      sql.exec(`UPDATE resume_versions SET data=? WHERE resume_id=? AND version=?`, JSON.stringify(saved), resumeId, version);
+      sql.exec(`UPDATE resumes SET body=? WHERE id=?`, JSON.stringify(saved.render.body), resumeId);
+      sql.exec(`INSERT INTO runs (id,kind,target_id,request_key,input_digest,state,steps,credit_state,created_at,updated_at)
+        VALUES ('pending-section','refine',?,'pending-section','digest','running','[]','none',1,1)`, resumeId);
+    });
+    const path = `/api/resumes/${resumeId}/legacy-remove-section`;
+    expect((await user.send("POST", path, { sectionIndex: 1, expectedVersion: version })).status).toBe(409);
+    await runInDurableObject(stub, (_instance, state) => { state.storage.sql.exec(`UPDATE runs SET state='failed' WHERE id='pending-section'`); });
+    const requests = [0, 1].map((sectionIndex) => ({ sectionIndex, expectedVersion: version }));
+    const results = await Promise.all(requests.map((input) => user.send("POST", path, input)));
+    expect(results.map((response) => response.status).sort()).toEqual([200, 409]);
+    const winner = results.findIndex((response) => response.status === 200);
+    expect((await user.send("POST", path, requests[winner]!)).status).toBe(200);
+    expect((await user.send("POST", path, requests[1 - winner]!)).status).toBe(409);
+    const after = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(after.body!.sections).toHaveLength(2);
+    const missingIndex = after.body!.sections.findIndex((section) => !section.roleId);
+    expect(missingIndex).toBeGreaterThanOrEqual(0);
+    expect((await user.send("POST", path, { sectionIndex: missingIndex, expectedVersion: after.version })).status).toBe(200);
+    expect((await user.json<ResumeView>(`/api/resumes/${resumeId}`)).body!.sections).toHaveLength(1);
+  }, 30_000);
+
+  it("removes review sections, including empty ones, without changing prior versions or unrelated receipts", async () => {
+    const { user, applicationId, resumeId, original, version, stub } = await fixture("legacy");
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      const row = sql.exec<{ data: string }>(`SELECT data FROM resume_versions WHERE resume_id=? AND version=?`, resumeId, version).one();
+      const saved = JSON.parse(row.data);
+      saved.render.body.sections.push({ roleId: "missing-education", kind: "education", org: "Old school", title: null, startDate: null, endDate: null, lines: [] });
+      sql.exec(`UPDATE resume_versions SET data=? WHERE resume_id=? AND version=?`, JSON.stringify(saved), resumeId, version);
+      sql.exec(`UPDATE resumes SET body=? WHERE id=?`, JSON.stringify(saved.render.body), resumeId);
+    });
+    expect((await checkLine(user, applicationId, resumeId, version, original.id, original.text, original.factIds)).state).toBe("ready");
+    const before = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(before.legacyReview?.headersReady).toBe(false);
+    const path = `/api/resumes/${resumeId}/legacy-remove-section`;
+    const input = { sectionIndex: 1, expectedVersion: before.version };
+    const stranger = await signIn();
+    expect((await stranger.send("POST", path, input)).status).toBe(404);
+    expect(await (await user.send("POST", path, input)).json()).toEqual({ version: before.version + 1 });
+    expect(await (await user.send("POST", path, input)).json()).toEqual({ version: before.version + 1 });
+    const after = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(after.legacyReview).toMatchObject({ headersReady: true, verifiedLineIds: [original.id] });
+    expect((await user.json<ResumeView>(`/api/resumes/${resumeId}?version=${before.version}`)).body).toEqual(before.body);
+    expect((await user.send("POST", path, { sectionIndex: 0, expectedVersion: after.version })).status).toBe(200);
+    const empty = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(empty.body!.sections).toHaveLength(0);
+    await runInDurableObject(stub, (_instance, state) => {
+      const data = JSON.parse(state.storage.sql.exec<{ data: string }>(`SELECT data FROM resume_versions WHERE resume_id=? AND version=?`, resumeId, empty.version).one().data);
+      expect(Object.keys(data.legacyReceipts)).toHaveLength(0);
+    });
+    expect((await user.send("POST", `/api/resumes/${resumeId}/legacy-finalize`, { expectedVersion: empty.version })).status).toBe(409);
+  }, 30_000);
+
   it("removes a line from a checked resume while preserving printable history", async () => {
     const { user, resumeId, original, version } = await fixture("verifiedSnapshot");
     const before = await user.json<ResumeView>(`/api/resumes/${resumeId}`);

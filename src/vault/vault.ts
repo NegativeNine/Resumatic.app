@@ -67,7 +67,7 @@ import {
 } from "../shared/operations";
 import { vault as vaultStub } from "../shared/stubs";
 import { createSchema, hasSchema, migrate, SCHEMA_VERSION } from "./schema";
-import { assertGroundedResume, evidenceForFacts, SnapshotStore, type ResumeVersion } from "./snapshots";
+import { assertGroundedResume, evidenceForFacts, evidenceForRoles, SnapshotStore, type ResumeVersion } from "./snapshots";
 import { mergeRefinementEvidence } from "./refinement-evidence";
 import { validateTailorCheckpoint, validateTailorPublication } from "./tailor-publication";
 import { finalLegacyEvidence, legacyReceipt, legacyReview } from "./legacy-remediation";
@@ -365,6 +365,29 @@ export class Vault extends DurableObject<Env> {
       return { distill: [], tailor: [] };
     }
     this.requireNoUnsettledDispatches();
+    return this.deletionRuns();
+  }
+
+  /** Provisional inventory only: unresolved dispatches still fence destruction. */
+  knownRunsForDeletion(): {
+    distill: string[];
+    tailor: string[];
+    other?: { kind: string; id: string }[];
+  } {
+    if (this.gone || !this.initialised) {
+      this.requireNoUnidentifiedTables();
+      return { distill: [], tailor: [] };
+    }
+    if (this.meta("state") !== "closing")
+      throw new AppError("conflict", "vault must be closed before listing deletion runs");
+    return this.deletionRuns();
+  }
+
+  private deletionRuns(): {
+    distill: string[];
+    tailor: string[];
+    other?: { kind: string; id: string }[];
+  } {
     const distill = this.sql
       .exec<{ run_id: string }>(
         `SELECT run_id FROM sources WHERE run_id IS NOT NULL UNION SELECT id AS run_id FROM runs WHERE kind = 'distill'`,
@@ -1949,7 +1972,7 @@ export class Vault extends DurableObject<Env> {
     const saved = ready ? this.resumeVersion(row, version) : null;
     let needsGroundingReview = false;
     if (saved) {
-      try { assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence); }
+      try { assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence, saved.roleEvidence); }
       catch { needsGroundingReview = true; }
     }
     return {
@@ -1998,7 +2021,7 @@ export class Vault extends DurableObject<Env> {
       const base = this.resumeVersion(row);
       if (base.provenance !== "snapshot") throw new AppError("conflict", "this resume is already in review");
       let blocked = false;
-      try { assertGroundedResume(base.render, base.facts, base.provenance, base.evidence); }
+      try { assertGroundedResume(base.render, base.facts, base.provenance, base.evidence, base.roleEvidence); }
       catch { blocked = true; }
       if (!blocked) throw new AppError("conflict", "this resume does not need grounding review");
       const version = row.version + 1;
@@ -2060,6 +2083,44 @@ export class Vault extends DurableObject<Env> {
     return result;
   }
 
+  /** Remove a whole section from a new review version, retaining immutable history. */
+  removeLegacySection(who: Who, resumeId: string, sectionIndex: number, expectedVersion: number): { version: number } {
+    this.requireOwner(who);
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || !Number.isSafeInteger(sectionIndex) || sectionIndex < 0)
+      throw new AppError("invalid", "the section and resume version are required");
+    const result = this.ctx.storage.transactionSync(() => {
+      this.requireOwner(who);
+      const row = this.resumeRow(resumeId);
+      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "the resume is not ready");
+      if (row.version === expectedVersion + 1) {
+        const saved = this.snapshots.read(resumeId, row.version);
+        if (saved?.provenance === "legacy" && saved.legacySectionRemoved?.fromVersion === expectedVersion && saved.legacySectionRemoved.sectionIndex === sectionIndex)
+          return { version: row.version };
+      }
+      if (row.version !== expectedVersion) throw new AppError("conflict", "the resume changed; refresh and try again");
+      if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
+        throw new AppError("conflict", "wait for the current document to finish");
+      const base = this.resumeVersion(row);
+      if (base.provenance !== "legacy") throw new AppError("conflict", "only a review version can remove a section");
+      const body = structuredClone(base.render.body);
+      const section = body.sections[sectionIndex];
+      if (!section || !Array.isArray(section.lines))
+        throw new AppError("conflict", "the review section is missing or invalid");
+      const receipts = { ...base.legacyReceipts };
+      for (const line of section.lines) if (line && typeof line.id === "string") delete receipts[line.id];
+      body.sections.splice(sectionIndex, 1);
+      const version = row.version + 1;
+      this.snapshots.save(resumeId, version, {
+        ...base, render: { ...base.render, body, version }, legacyReceipts: receipts,
+        legacySectionRemoved: { fromVersion: expectedVersion, sectionIndex },
+      });
+      this.sql.exec(`UPDATE resumes SET body=?,version=? WHERE id=?`, JSON.stringify(body), version, resumeId);
+      return { version };
+    });
+    this.broadcast("resume", resumeId);
+    return result;
+  }
+
   /** Remove a line from a checked resume in a new, independently printable version. */
   removeResumeLine(who: Who, resumeId: string, lineId: string, expectedVersion: number): { version: number } {
     this.requireOwner(who);
@@ -2079,7 +2140,7 @@ export class Vault extends DurableObject<Env> {
         throw new AppError("conflict", "wait for the current document to finish");
       const base = this.resumeVersion(row);
       // A deletion must never promote a blocked or legacy version into a checked one.
-      assertGroundedResume(base.render, base.facts, base.provenance, base.evidence);
+      assertGroundedResume(base.render, base.facts, base.provenance, base.evidence, base.roleEvidence);
       const body = structuredClone(base.render.body);
       const matches = Number(body.summary?.id === lineId) + body.sections.reduce((n, section) => n + section.lines.filter((line) => line.id === lineId).length, 0);
       if (matches !== 1) throw new AppError("conflict", "the line is missing or ambiguous");
@@ -2101,7 +2162,7 @@ export class Vault extends DurableObject<Env> {
         ...base, render: { ...base.render, body, version }, report,
         lineRemoved: { fromVersion: expectedVersion, lineId },
       };
-      assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence);
+      assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence, saved.roleEvidence);
       this.snapshots.save(resumeId, version, saved);
       this.sql.exec(`UPDATE resumes SET body=?,report=?,version=? WHERE id=?`, JSON.stringify(body), JSON.stringify(report), version, resumeId);
       return { version };
@@ -2128,18 +2189,20 @@ export class Vault extends DurableObject<Env> {
       if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
         throw new AppError("conflict", "wait for the current document to finish");
       const base = this.resumeVersion(row);
-      const verified = finalLegacyEvidence(base, this.usableFacts(), this.confirmedRoles());
+      const roles = this.confirmedRoles();
+      const verified = finalLegacyEvidence(base, this.usableFacts(), roles);
       const version = row.version + 1;
       const saved: ResumeVersion = {
         ...base,
         render: { ...base.render, profile: this.readProfile(), version },
         facts: verified.facts,
         evidence: verified.evidence,
+        roleEvidence: evidenceForRoles(roles),
         report: { kept: verified.count, repaired: 0, replaced: 0, dropped: 0, gaps: [] },
         provenance: "snapshot",
         legacyFinalizedFrom: expectedVersion,
       };
-      assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence);
+      assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence, saved.roleEvidence);
       this.snapshots.save(resumeId, version, saved);
       this.sql.exec(`UPDATE resumes SET version=?,body=?,report=? WHERE id=?`, version,
         JSON.stringify(saved.render.body), JSON.stringify(saved.report), resumeId);
@@ -2192,7 +2255,7 @@ export class Vault extends DurableObject<Env> {
     if (row.state !== "ready" || !row.body)
       throw new AppError("conflict", "the resume is not ready yet");
     const saved = this.resumeVersion(row, version);
-    assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence);
+    assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence, saved.roleEvidence);
     return saved.render;
   }
 
@@ -2332,12 +2395,13 @@ export class Vault extends DurableObject<Env> {
           report: publication.report,
           facts,
           evidence: evidenceForFacts(capturedFacts),
+          roleEvidence: evidenceForRoles(this.snapshots.items<RoleRecord>(id, "role")),
           provenance: "snapshot",
         };
         // Rendering and sharing apply this same deterministic gate. Check it
         // before committing the run so a bad checkpoint cannot consume credit
         // and leave the user with a "ready" resume that cannot be exported.
-        assertGroundedResume(snapshot.render, snapshot.facts, snapshot.provenance, snapshot.evidence);
+        assertGroundedResume(snapshot.render, snapshot.facts, snapshot.provenance, snapshot.evidence, snapshot.roleEvidence);
         this.snapshots.save(resumeId, row.version, snapshot);
       }
       for (const [column, value] of updates)
@@ -2599,7 +2663,7 @@ export class Vault extends DurableObject<Env> {
       if (base.provenance === "legacy" && (options.manualText === undefined || !options.manualFactIds?.length))
         throw new AppError("invalid", "choose confirmed facts to verify this historical line");
       if (options.manualText === undefined)
-        assertGroundedResume(base.render, base.facts, base.provenance, base.evidence);
+        assertGroundedResume(base.render, base.facts, base.provenance, base.evidence, base.roleEvidence);
     }
     const id = crypto.randomUUID();
     this.quota();

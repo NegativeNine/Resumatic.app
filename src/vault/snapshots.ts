@@ -24,6 +24,8 @@ export interface ResumeVersion {
   facts: Record<string, { text: string; quote: string | null }>;
   /** Full immutable generation evidence. Missing on versions created before this field existed. */
   evidence?: Record<string, FactRecord>;
+  /** Immutable confirmed Vault roles used to compose the section headings. */
+  roleEvidence?: Record<string, RoleRecord>;
   /** Independent exact-line checks performed while remediating a legacy version. */
   legacyReceipts?: Record<string, { text: string; roleId: string | null; factIds: string[]; facts: FactRecord[]; roles: RoleRecord[] }>;
   /** Identifies an idempotently finalized legacy version. */
@@ -32,6 +34,8 @@ export interface ResumeVersion {
   reviewStartedFrom?: number;
   /** Identifies an idempotently removed line in a review version. */
   legacyRemoved?: { fromVersion: number; lineId: string };
+  /** Identifies an idempotently removed section in a review version. */
+  legacySectionRemoved?: { fromVersion: number; sectionIndex: number };
   /** Identifies an idempotently removed line in a checked version. */
   lineRemoved?: { fromVersion: number; lineId: string };
   provenance: "snapshot" | "legacy";
@@ -61,6 +65,24 @@ export function evidenceForFacts(facts: FactRecord[]): Record<string, FactRecord
   }));
 }
 
+/** Capture headings from confirmed Vault rows, never from a generated body. */
+export function evidenceForRoles(roles: RoleRecord[]): Record<string, RoleRecord> {
+  const ids = new Set<string>();
+  return Object.fromEntries(roles.map((role) => {
+    if (!role || typeof role.id !== "string" || !role.id || ids.has(role.id) ||
+        !Number.isSafeInteger(role.revision) || (role.revision ?? 0) < 1 ||
+        !["job", "education", "project", "volunteer"].includes(role.kind) ||
+        typeof role.org !== "string" ||
+        (role.title !== null && typeof role.title !== "string") ||
+        (role.startDate !== null && typeof role.startDate !== "string") ||
+        (role.endDate !== null && typeof role.endDate !== "string") ||
+        (role.unknownEndStartDate != null && typeof role.unknownEndStartDate !== "string"))
+      throw new AppError("conflict", "role evidence is incomplete; generate the resume again");
+    ids.add(role.id);
+    return [role.id, { ...role }];
+  }));
+}
+
 /** Evidence without full metadata cannot prove that an older claim used the same inputs. */
 export function sameEvidence(a: FactRecord | undefined, b: FactRecord | undefined): boolean {
   return completeEvidence(a) && completeEvidence(b) &&
@@ -75,11 +97,26 @@ export function assertGroundedResume(
   facts: ResumeVersion["facts"] | undefined,
   provenance: ResumeVersion["provenance"] | undefined,
   evidence?: ResumeVersion["evidence"],
+  roleEvidence?: ResumeVersion["roleEvidence"],
 ): void {
   const unavailable = () => new AppError("conflict", "this resume version contains unverified content; review it before exporting or sharing");
   if (provenance !== "snapshot" || !facts || typeof facts !== "object" || Array.isArray(facts) ||
       !render?.body || !Array.isArray(render.body.sections) || !Array.isArray(render.body.skills)) throw unavailable();
   if (render.body.sections.some((section) => !section || !Array.isArray(section.lines))) throw unavailable();
+  const seenRoles = new Set<string>();
+  for (const section of render.body.sections) {
+    if (typeof section.roleId !== "string" || !section.roleId || seenRoles.has(section.roleId) ||
+        !roleEvidence || !Object.hasOwn(roleEvidence, section.roleId)) throw unavailable();
+    seenRoles.add(section.roleId);
+    const role = roleEvidence[section.roleId];
+    try {
+      if (!role || role.id !== section.roleId ||
+          !Object.hasOwn(evidenceForRoles([role]), section.roleId) ||
+          role.kind !== section.kind || role.org !== section.org || role.title !== section.title ||
+          role.startDate !== section.startDate || role.endDate !== section.endDate ||
+          (role.unknownEndStartDate ?? null) !== (section.unknownEndStartDate ?? null)) throw unavailable();
+    } catch { throw unavailable(); }
+  }
   const lines = [
     ...(render.body.summary ? [{ line: render.body.summary, roleId: null }] : []),
     ...render.body.sections.flatMap((section) => section.lines.map((line) => ({ line, roleId: section.roleId }))),
@@ -97,6 +134,9 @@ export function assertGroundedResume(
       const stored = facts[id]!;
       if (stored.quote !== null && typeof stored.quote !== "string") throw unavailable();
       const full = evidence?.[id];
+      // A section citation needs its immutable role binding, not just matching
+      // text, or a fact can be silently moved under another employer.
+      if (roleId !== null && !full) throw unavailable();
       if (full) {
         if (!completeEvidence(full) || full.id !== id || full.text !== stored.text || full.quote !== stored.quote ||
             (roleId !== null && full.roleId !== roleId)) throw unavailable();

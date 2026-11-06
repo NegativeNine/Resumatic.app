@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { FactRecord } from "../../src/shared/types";
-import { assertGroundedResume, evidenceForFacts, sameEvidence } from "../../src/vault/snapshots";
+import type { FactRecord, RoleRecord } from "../../src/shared/types";
+import { assertGroundedResume, evidenceForFacts, evidenceForRoles, sameEvidence } from "../../src/vault/snapshots";
 import type { RenderData } from "../../src/shared/types";
 
 const fact: FactRecord = {
@@ -9,6 +9,40 @@ const fact: FactRecord = {
 };
 
 describe("immutable resume evidence", () => {
+  it("checks all section headings, including empty education sections, against captured roles", () => {
+    const role: RoleRecord = { id: "r", revision: 2, kind: "education", org: "School", title: "Degree", startDate: "2020", endDate: "2022" };
+    const render: RenderData = {
+      profile: { name: "A User", email: "", phone: "", location: "", links: [] },
+      body: { summary: null, sections: [{ roleId: "r", kind: "education", org: "School", title: "Degree", startDate: "2020", endDate: "2022", lines: [] }], skills: [] },
+      version: 1, company: null, title: null,
+    };
+    const roles = evidenceForRoles([role]);
+    expect(() => assertGroundedResume(render, {}, "snapshot")).toThrow(/unverified/);
+    expect(() => assertGroundedResume(render, {}, "snapshot", {}, roles)).not.toThrow();
+    for (const change of [
+      { org: "Another School" }, { title: "Doctorate" }, { kind: "job" as const },
+      { startDate: "2010" }, { endDate: null }, { unknownEndStartDate: "2010" },
+    ]) {
+      const altered = structuredClone(render);
+      Object.assign(altered.body.sections[0]!, change);
+      expect(() => assertGroundedResume(altered, {}, "snapshot", {}, roles)).toThrow(/unverified/);
+    }
+    expect(() => evidenceForRoles([{ ...role, revision: undefined }])).toThrow(/incomplete/);
+  });
+
+  it("requires the immutable role binding of every section citation", () => {
+    const role: RoleRecord = { id: "role-1", revision: 1, kind: "job", org: "Employer", title: null, startDate: null, endDate: null };
+    const render: RenderData = {
+      profile: { name: "A User", email: "", phone: "", location: "", links: [] },
+      body: { summary: null, sections: [{ roleId: role.id, kind: role.kind, org: role.org, title: role.title, startDate: null, endDate: null, lines: [{ id: "line", text: fact.text, factIds: [fact.id], status: "kept" }] }], skills: [] },
+      version: 1, company: null, title: null,
+    };
+    const facts = { [fact.id]: { text: fact.text, quote: fact.quote } };
+    const roles = evidenceForRoles([role]);
+    expect(() => assertGroundedResume(render, facts, "snapshot", undefined, roles)).toThrow(/unverified/);
+    expect(() => assertGroundedResume(render, facts, "snapshot", evidenceForFacts([{ ...fact, roleId: "other-role" }]), roles)).toThrow(/unverified/);
+    expect(() => assertGroundedResume(render, facts, "snapshot", evidenceForFacts([fact]), roles)).not.toThrow();
+  });
   it("captures a detached copy of all verification-relevant fields", () => {
     const captured = evidenceForFacts([fact]);
     expect(captured[fact.id]).toEqual(fact);

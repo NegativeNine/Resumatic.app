@@ -5,6 +5,34 @@ import { vaultPrefix } from "../../src/shared/r2";
 import { stopVaultRuns } from "../../src/directory/directory";
 
 describe("retired vault deletion", () => {
+  it("stops a known retired run without clearing its unresolved dispatch fence", async () => {
+    const directory = env.DIRECTORY.getByName(`retirement-${crypto.randomUUID()}`);
+    const id = env.VAULT.newUniqueId(), stub = env.VAULT.get(id);
+    const userId = crypto.randomUUID(), runId = crypto.randomUUID();
+    await stub.init(userId);
+    await runInDurableObject(stub, (_instance, ctx) => {
+      ctx.storage.sql.exec(
+        `INSERT INTO runs (id,kind,target_id,request_key,input_digest,state,steps,credit_state,created_at,updated_at)
+         VALUES (?, 'distill', ?, ?, 'digest', 'running', '[]', 'none', 1, 1)`, runId, runId, runId,
+      );
+      ctx.storage.sql.exec(`INSERT INTO workflow_dispatches(run_id) VALUES (?)`, runId);
+    });
+    let deleted = false;
+    await runInDurableObject(directory, async (instance, ctx) => {
+      const local = (instance as unknown as { env: Env }).env, old = local.DISTILL;
+      local.DISTILL = { get: async () => ({ status: async () => ({ status: "running" }), terminate: async () => {}, delete: async () => { deleted = true; } }) } as unknown as Workflow;
+      try {
+        ctx.storage.sql.exec(`INSERT INTO retired_vaults (vault_id,user_id) VALUES (?,?)`, id.toString(), userId);
+        await instance.alarm();
+        expect(deleted).toBe(true);
+        expect(ctx.storage.sql.exec<{ state: string }>(`SELECT state FROM retired_vaults WHERE vault_id=?`, id.toString()).one().state).toBe("deleting");
+      } finally { local.DISTILL = old; }
+    });
+    await runInDurableObject(stub, (_instance, ctx) => {
+      expect(ctx.storage.sql.exec(`SELECT run_id FROM workflow_dispatches WHERE run_id=?`, runId).toArray()).toHaveLength(1);
+    });
+  });
+
   it("uses the matching binding for every supported run kind", async () => {
     const binding = () => ({ get: vi.fn(async (_id: string) => ({
       status: async () => ({ status: "complete" }),

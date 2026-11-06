@@ -127,6 +127,10 @@ describe("coach share snapshots", () => {
       roleId: role.id, kind: role.kind, org: role.org, title: role.title,
       startDate: null, endDate: null, unknownEndStartDate: "2020", lines: [],
     });
+    original.resumes[0]!.roleEvidence = { [role.id]: {
+      id: role.id, revision: 1, kind: role.kind, org: role.org, title: role.title,
+      startDate: null, endDate: null, unknownEndStartDate: "2020",
+    } };
     const snapshot = snapshotSelection(original, now);
     expect(snapshot.facts[0]!.role).toMatchObject({
       startDate: null, endDate: null, unknownEndStartDate: "2020",
@@ -136,6 +140,21 @@ describe("coach share snapshots", () => {
     });
     role.unknownEndStartDate = "2024";
     expect(snapshot.facts[0]!.role!.unknownEndStartDate).toBe("2020");
+  });
+  it("rejects a resume with a forged section heading or missing role evidence", () => {
+    const original = selection();
+    original.resumes[0]!.render.body.sections = [{
+      roleId: "r1", kind: "job", org: "Acme", title: "Engineer",
+      startDate: "2020", endDate: null, lines: [],
+    }];
+    expect(() => snapshotSelection(original)).toThrow(/unverified content/);
+    original.resumes[0]!.roleEvidence = { r1: {
+      id: "r1", revision: 1, kind: "job", org: "Acme", title: "Engineer",
+      startDate: "2020", endDate: null,
+    } };
+    expect(() => snapshotSelection(original)).not.toThrow();
+    original.resumes[0]!.render.body.sections[0]!.title = "Chief Executive";
+    expect(() => snapshotSelection(original)).toThrow(/unverified content/);
   });
   it("copies only selected public fields for grounded resumes", () => {
     const original = selection();

@@ -624,6 +624,13 @@ export class Directory extends DurableObject<Env> {
         userId,
       )
       .one().n;
+    // An older webhook could have persisted a customer-only event. We cannot
+    // attribute it after the customer's link has been erased, so conservatively
+    // hold every deletion probe pending while any such event remains. This does
+    // not prove that events attributed to the wrong user are absent.
+    count += this.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM billing_events WHERE user_id IS NULL OR user_id=''`,
+    ).one().n;
     // Initialization fences are keyed by vault rather than owner and can
     // outlive the Directory row that originally linked the two.
     count += this.sql
@@ -1086,6 +1093,11 @@ export class Directory extends DurableObject<Env> {
           // Revocation can proceed even while an old init acknowledgement is
           // unresolved. Destruction must still wait for that durable fence.
           await stub.quiesce();
+          try {
+            await stopKnownVaultRuns(this.env, await stub.knownRunsForDeletion());
+          } catch (error) {
+            console.error("preliminary retired workflow cleanup pending", { code: logErrorCode(error) });
+          }
           this.requireInitializationSettled(retired.vault_id);
           const runs = await stub.close();
           await stopVaultRuns(this.env, runs);
@@ -1216,9 +1228,10 @@ export class Directory extends DurableObject<Env> {
     // vault swept, and the authoritative billing check and R2 sweep below are
     // repeated only after close succeeds. Use separate stubs so a failed RPC
     // does not poison another concurrent operation.
-    const [billingAttempt, sweepAttempt, closeAttempt] = await Promise.allSettled([
+    const [billingAttempt, sweepAttempt, runsAttempt, closeAttempt] = await Promise.allSettled([
       this.preliminaryBillingCleanup(vaultId),
       deletePrefix(this.env.FILES, vaultPrefix(vaultId)),
+      (async () => stopKnownVaultRuns(this.env, await this.env.VAULT.get(id).knownRunsForDeletion()))(),
       (async () => {
         this.requireInitializationSettled(vaultId);
         return this.env.VAULT.get(id).close();
@@ -1228,6 +1241,8 @@ export class Directory extends DurableObject<Env> {
       console.error("preliminary billing cleanup pending", { code: logErrorCode(billingAttempt.reason) });
     if (sweepAttempt.status === "rejected")
       console.error("preliminary source cleanup pending", { code: logErrorCode(sweepAttempt.reason) });
+    if (runsAttempt.status === "rejected")
+      console.error("preliminary workflow cleanup pending", { code: logErrorCode(runsAttempt.reason) });
     if (closeAttempt.status === "rejected") throw closeAttempt.reason;
     const runs = closeAttempt.value;
     const stub = this.env.VAULT.get(id);
@@ -1349,6 +1364,35 @@ export class Directory extends DurableObject<Env> {
         .toArray().length > 0
     );
   }
+}
+
+/**
+ * Stop every locally known run even when another run is unavailable or its
+ * kind is unknown. This is provisional: a missing instance does not settle
+ * an in-flight create, and only close() can authorize final destruction.
+ */
+async function stopKnownVaultRuns(
+  env: Env,
+  runs: { distill: string[]; tailor: string[]; other?: { kind: string; id: string }[] },
+): Promise<void> {
+  const targets = [
+    ...runs.distill.map((id) => ({ kind: "distill", id })),
+    ...runs.tailor.map((id) => ({ kind: "tailor", id })),
+    ...(runs.other ?? []),
+  ];
+  let firstFailure: unknown;
+  let failed = false;
+  for (let offset = 0; offset < targets.length; offset += 4) {
+    const results = await Promise.allSettled(targets.slice(offset, offset + 4).map((target) =>
+      stopVaultRuns(env, { distill: [], tailor: [], other: [target] }),
+    ));
+    for (const result of results)
+      if (result.status === "rejected" && !failed) {
+        failed = true;
+        firstFailure = result.reason;
+      }
+  }
+  if (failed) throw firstFailure ?? new AppError("unavailable", "workflow cleanup failed");
 }
 
 /** Both account deletion and vault retirement must understand every run kind. */

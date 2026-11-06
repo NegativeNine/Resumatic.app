@@ -354,7 +354,7 @@ if (!browser?.startsWith("/")) {
     stage = "resume"; await clickText("button", "Tailor a resume"); await wait(`document.body?.innerText.includes('Resume preview') || !!document.querySelector('[aria-label="Resume preview"]')`); if (!state.tailored) throw new Error("TAILOR_NOT_STARTED");
     await wait(`document.querySelector('[aria-label="Resume preview"]')?.innerText.includes('Built 12 payment services')`);
     stage = "historic_level_guard"; state.resumeNeedsGroundingReview = true; await call("Page.reload");
-    await wait(`document.body?.innerText.includes('wording without verified evidence')`);
+    await wait(`document.body?.innerText.includes('wording or headings without verified evidence')`);
     if (await evalPage(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download PDF')`)) throw new Error('HISTORIC_LEVEL_DOWNLOAD_SHOWN');
     state.resumeNeedsGroundingReview = false; await call("Page.reload");
     await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download PDF')`);
@@ -368,7 +368,7 @@ if (!browser?.startsWith("/")) {
     await wait(`document.querySelector('[aria-label="Resume preview"]')?.innerText.includes('Built 12 reliable payment services') && !document.querySelector('.line textarea')`);
     stage = "uncited_remediation";
     state.resumeUncited = true; await call("Page.reload");
-    await wait(`document.body?.innerText.includes('wording without verified evidence')`);
+    await wait(`document.body?.innerText.includes('wording or headings without verified evidence')`);
     if (await evalPage(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download PDF')`)) throw new Error("UNVERIFIED_DOWNLOAD_SHOWN");
     await clickText("button", "Edit line");
     await wait(`!!document.querySelector('.line fieldset input[type="checkbox"]')`);
