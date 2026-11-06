@@ -49,7 +49,10 @@ function validResult(winner) {
     metrics.trapLeaks === 0 && metrics.levelInflation === 0 &&
     count(metrics.levelUnverified, 0) && metrics.levelReviewed === metrics.levelUnverified &&
     count(metrics.reviewedFacts, 50) &&
-    count(metrics.disagreements, 0) && finite(metrics.meanCostUsd) && metrics.meanCostUsd >= 0
+    count(metrics.disagreements, 0) &&
+    finite(metrics.reviewCost) && metrics.reviewCost >= 0 &&
+    finite(metrics.meanCostUsd) && metrics.meanCostUsd >= 0 &&
+    finite(metrics.p95Ms) && metrics.p95Ms >= 0
   );
 }
 function validPromotion(extraction) {
@@ -73,6 +76,25 @@ function validPromotion(extraction) {
   if (winners.length !== 1) return false;
   const winner = winners[0], metrics = winner.metrics;
   if (!validResult(winner)) return false;
+  // The protected environment is an attestation, but its aggregate must be
+  // internally consistent with the assessor's ranking. Do not accept a worse
+  // eligible default or an eligible competitor whose ranking data is missing.
+  if (promotion.results.some((result) => {
+    if (!Array.isArray(result?.pending) || !Array.isArray(result?.failed) ||
+        [...result.pending, ...result.failed].some((reason) => typeof reason !== "string" || !reason)) return true;
+    if (result.status === "eligible") return !validResult(result);
+    if (result.status === "failed") return result.failed.length === 0;
+    if (result.status === "pending") return result.failed.length > 0 || result.pending.length === 0;
+    return true;
+  })) return false;
+  const eligible = promotion.results.filter((result) => result.status === "eligible");
+  if (eligible.some((result) => result.metrics.cases !== metrics.cases || result.metrics.runs !== metrics.runs)) return false;
+  eligible.sort((a, b) =>
+    a.metrics.reviewCost - b.metrics.reviewCost ||
+    a.metrics.meanCostUsd - b.metrics.meanCostUsd ||
+    a.metrics.p95Ms - b.metrics.p95Ms,
+  );
+  if (eligible[0]?.strategy !== promotion.winner) return false;
   return extraction.evaluatedUploads === metrics.cases &&
     extraction.failureRate === metrics.failureRate && extraction.factRecall === metrics.recall &&
     extraction.factPrecision === metrics.precision && extraction.trapLeaks === metrics.trapLeaks;

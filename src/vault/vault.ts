@@ -2433,6 +2433,8 @@ export class Vault extends DurableObject<Env> {
       applicationId: row.application_id,
       kind: row.kind,
       state: row.state,
+      retryRunId: row.state === "failed" && ["failed", "cancelled"].includes(this.runs.get(row.id)?.state ?? "")
+        ? row.id : undefined,
       dispatchUncertain: row.state === "running" && this.dispatchUncertain(row.id),
       cancellationPending: row.state === "running" && this.cancellationPending(row.id),
       version: row.version,

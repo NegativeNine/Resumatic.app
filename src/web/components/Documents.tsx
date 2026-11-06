@@ -86,6 +86,15 @@ export function ApplicationDocuments({
     });
   }
 
+  async function retry(runId: string) {
+    await action.run(async () => {
+      const { targetId } = await api.retryRun(runId);
+      requested.current.add(targetId);
+      await list.reload();
+      void refreshMe();
+    });
+  }
+
   return (
     <section className="workspace-section" aria-labelledby={`${id}-heading`}>
       <h3 id={`${id}-heading`}>Prepare your application</h3>
@@ -173,7 +182,13 @@ export function ApplicationDocuments({
       {docs.length > 0 && (
         <ul className="plain-list document-list">
           {docs.map((doc) => (
-            <DocumentCard key={doc.id} doc={doc} reload={list.reload} />
+            <DocumentCard
+              key={doc.id}
+              doc={doc}
+              reload={list.reload}
+              retry={retry}
+              retryDisabled={action.pending || running || (available === 0 && doc.kind !== "questions")}
+            />
           ))}
         </ul>
       )}
@@ -181,7 +196,12 @@ export function ApplicationDocuments({
   );
 }
 
-function DocumentCard({ doc, reload }: { doc: DocumentView; reload: Reload }) {
+function DocumentCard({ doc, reload, retry, retryDisabled }: {
+  doc: DocumentView;
+  reload: Reload;
+  retry: (runId: string) => Promise<void>;
+  retryDisabled: boolean;
+}) {
   const cancel = useAction();
   return (
     <li className="document-card">
@@ -229,9 +249,14 @@ function DocumentCard({ doc, reload }: { doc: DocumentView; reload: Reload }) {
         </>
       )}
       {doc.state === "failed" && (
-        <p className="alert" role="status">
-          {documentError(doc.error)}
-        </p>
+        <div>
+          <p className="alert" role="status">{documentError(doc.error)}</p>
+          {doc.retryRunId && (
+            <button type="button" className="small" disabled={retryDisabled} onClick={() => void retry(doc.retryRunId!)}>
+              Retry {LABELS[doc.kind].toLowerCase()}
+            </button>
+          )}
+        </div>
       )}
       {doc.state === "ready" && doc.result && (
         <details className="document-detail">

@@ -273,7 +273,7 @@ test("release gates require passing evidence for the exact candidate commit", as
         metrics: {
           cases: 15, runs: 15, failures: 0, failureRate: 0,
           recall: 0.85, precision: 0.95, trapLeaks: 0,
-          reviewedFacts: 50, disagreements: 0, meanCostUsd: 0.01, levelInflation: 0, levelUnverified: 0, levelReviewed: 0,
+          reviewedFacts: 50, disagreements: 0, reviewCost: 1, meanCostUsd: 0.01, p95Ms: 1000, levelInflation: 0, levelUnverified: 0, levelReviewed: 0,
         },
       }],
     },
@@ -387,6 +387,9 @@ test("release gates require passing evidence for the exact candidate commit", as
       { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, levelInflation: undefined } }] },
       { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, levelUnverified: 1, levelReviewed: 0 } }] },
       { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, levelUnverified: undefined } }] },
+      { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, reviewCost: undefined } }] },
+      { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, p95Ms: undefined } }] },
+      { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, reviewCost: -1 } }] },
       { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, recall: 0.9 } }] },
       { ...promotion, results: [{ ...winner, metrics: { ...winner.metrics, failureRate: 0.001 } }] },
     ]) {
@@ -394,6 +397,27 @@ test("release gates require passing evidence for the exact candidate commit", as
       const result = JSON.parse(await readFile(join(directory, "release-report.json"), "utf8"));
       assert.ok(result.missing.includes("EXTRACTION_PROMOTION"));
     }
+    const challenger = { ...winner, strategy: "clairic", metrics: { ...winner.metrics } };
+    const compare = (change) => ({
+      ...evidence,
+      extraction: { ...evidence.extraction, promotion: {
+        ...promotion, strategies: [winner.strategy, challenger.strategy],
+        results: [winner, { ...challenger, ...change, metrics: { ...challenger.metrics, ...change.metrics } }],
+      } },
+    });
+    // Eligible competitors are ranked by review cost, then cost, then p95.
+    for (const metrics of [
+      { reviewCost: 0.5 },
+      { meanCostUsd: 0.005 },
+      { p95Ms: 999 },
+      { p95Ms: undefined },
+      { cases: 16 },
+    ]) assertMissing(compare({ metrics }), "EXTRACTION_PROMOTION");
+    assertMissing(compare({ status: "eligible", pending: ["missing"] }), "EXTRACTION_PROMOTION");
+    // A worse eligible challenger should not invalidate the aggregate. The
+    // independent configuration binding may still reject this synthetic case.
+    const lowerRank = run(compare({ metrics: { reviewCost: 2 } }));
+    assert.equal(JSON.parse(lowerRank.stdout).missing.includes("EXTRACTION_PROMOTION"), false);
     for (const [candidate, reason] of [
       [{ ...evidence, extraction: { ...evidence.extraction, evaluatedUploads: 1 } }, "EXTRACTION_MEASUREMENTS"],
       [{ ...evidence, extraction: { ...evidence.extraction, evaluatedUploads: "15" } }, "EXTRACTION_MEASUREMENTS"],

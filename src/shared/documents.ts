@@ -9,6 +9,8 @@ export interface NewDocument {
   lineIds?: string[];
 }
 export interface DocumentView {
+  /** The stopped generation run can be retried with its original options. */
+  retryRunId?: string;
   /** The request was saved, but starting its workflow is unconfirmed. */
   dispatchUncertain?: boolean;
   /** Cancellation was requested but has not yet been confirmed. */

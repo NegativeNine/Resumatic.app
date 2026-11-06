@@ -139,7 +139,7 @@ function RetryReading({ runId, reload }: { runId: string; reload: Reload }) {
   return (
     <div>
       <button type="button" className="small" disabled={pending} onClick={() => void run(async () => {
-        await api.retrySourceRun(runId);
+        await api.retryRun(runId);
         await reload();
       })}>
         {pending ? "Retrying…" : "Retry reading"}
