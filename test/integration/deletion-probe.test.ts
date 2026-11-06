@@ -44,4 +44,38 @@ describe("deletion Workflow probe", () => {
     }, mock);
     expect(response.status).toBe(500);
   });
+
+  it("normalizes uppercase vault IDs before probing the Directory, Vault and R2", async () => {
+    const canonical = "ab".repeat(32);
+    const directoryIds: string[] = [];
+    const vaultIds: string[] = [];
+    const prefixes: string[] = [];
+    const mock = {
+      DIRECTORY: {
+        idFromName: (name: string) => name,
+        get: () => ({ deletionProbe: async (_userId: string, vaultId: string) => { directoryIds.push(vaultId); return 0; } }),
+      },
+      VAULT: {
+        idFromString: (vaultId: string) => { vaultIds.push(vaultId); return vaultId; },
+        get: () => ({ deletionProbe: async () => ({ rows: 0 }) }),
+      },
+      FILES: {
+        list: async ({ prefix }: { prefix: string }) => {
+          prefixes.push(prefix);
+          return { objects: prefix === `vaults/${canonical}/` ? [{ key: `${prefix}exports/resume.pdf` }] : [], truncated: false };
+        },
+      },
+    } as unknown as Env;
+    const response = await maintenance.request(`/deletion-audits/${canonical.toUpperCase()}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ userId: "synthetic", sources: [], resumes: [] }),
+    }, mock);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ vaultId: canonical, r2Objects: 1 });
+    expect(prefixes).toEqual([`vaults/${canonical}/`]);
+    expect(vaultIds).toEqual([canonical]);
+    expect(directoryIds.length).toBeGreaterThan(0);
+    expect(directoryIds.every((value) => value === canonical)).toBe(true);
+  });
 });

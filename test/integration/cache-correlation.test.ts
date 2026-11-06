@@ -29,7 +29,7 @@ it("correlates a current object without exposing its key or settling the fence",
       return url === `${env.ACCESS_TEAM_DOMAIN}/cdn-cgi/access/certs` ? Response.json(signer.jwks) : new Response("unexpected", { status: 599 });
     });
     const token = await signer.sign({ iss: env.ACCESS_TEAM_DOMAIN, aud: [env.ACCESS_AUD], email: "admin@example.com", exp: nowSeconds() + 600 });
-    const response = await app.fetch(new Request(`https://resumatic.test/admin/vaults/${session.vid}/cache-write-correlation`, {
+    const response = await app.fetch(new Request(`https://resumatic.test/admin/vaults/${session.vid.toUpperCase()}/cache-write-correlation`, {
       headers: { "cf-access-jwt-assertion": token },
     }), env);
     expect(response.status).toBe(200);

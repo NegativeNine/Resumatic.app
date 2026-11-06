@@ -17,7 +17,7 @@ const result = (value) =>
     headers: { "content-type": "application/json" },
   });
 
-function fixture({ corrupt = false, finish = "ready" } = {}) {
+function fixture({ corrupt = false, finish = "ready", targetValue = targetVaultId } = {}) {
   const calls = [];
   const progress = [];
   const page = {
@@ -40,7 +40,7 @@ function fixture({ corrupt = false, finish = "ready" } = {}) {
       body: init.body ? JSON.parse(init.body) : null,
     });
     assert.equal(init.redirect, "error");
-    if (path.endsWith("/replacement")) return result({ targetVaultId });
+    if (path.endsWith("/replacement")) return result({ targetVaultId: targetValue });
     if (path.endsWith("/transfer"))
       return result({
         format: 1,
@@ -68,6 +68,19 @@ test("prepare only creates the replacement and requests an external fence", asyn
     "fence-required",
   );
   assert.equal(setup.calls.length, 1);
+});
+
+test("canonicalizes source and target IDs and rejects a same-vault replacement regardless of case", async () => {
+  const setup = fixture({ targetValue: targetVaultId.toUpperCase() });
+  const moved = await moveVault({ ...options, sourceVaultId: sourceVaultId.toUpperCase(), ...setup, copyAndCutover: true });
+  assert.equal(moved.sourceVaultId, sourceVaultId);
+  assert.equal(moved.targetVaultId, targetVaultId);
+  assert.equal(setup.calls[0].path, `/admin/vaults/${sourceVaultId}/replacement`);
+  let requests = 0;
+  await assert.rejects(moveVault({ ...options, sourceVaultId: sourceVaultId.toUpperCase(), copyAndCutover: true,
+    fetcher: async () => { requests++; return result({ targetVaultId: sourceVaultId }); },
+  }), /INVALID_REPLACEMENT_VAULT/);
+  assert.equal(requests, 1);
 });
 
 test("streams checked pages and only cuts over after finalization", async () => {

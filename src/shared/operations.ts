@@ -56,16 +56,25 @@ export async function contentDigest(value: unknown): Promise<string> {
   ).join("");
 }
 
+/** IDs are case-insensitive hex; match whole comma-separated entries only. */
+export function isMaintenanceFenced(
+  vaultId: string,
+  configuredIds: string | undefined,
+): boolean {
+  if (!vaultId) return false;
+  const ids = (configuredIds ?? "")
+    .split(",")
+    .map((id) => id.trim().toLowerCase())
+    .filter(Boolean);
+  return ids.includes(vaultId.toLowerCase());
+}
+
 /** This deployment configuration is outside the restored database and survives PITR. */
 export function requireMaintenanceFence(
   vaultId: string,
   configuredIds: string | undefined,
 ): void {
-  const ids = (configuredIds ?? "")
-    .split(",")
-    .map((id) => id.trim())
-    .filter(Boolean);
-  if (!ids.includes(vaultId))
+  if (!isMaintenanceFenced(vaultId, configuredIds))
     throw new AppError(
       "forbidden",
       "this vault must be fenced before maintenance",

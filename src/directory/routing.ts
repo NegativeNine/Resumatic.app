@@ -1,4 +1,5 @@
 import { AppError } from "../shared/errors";
+import { requireFreshAuth } from "../shared/auth-expiry";
 import { identityShard } from "../shared/operations";
 import { directory, directoryByName } from "../shared/stubs";
 import type { SignInInput } from "../shared/types";
@@ -18,6 +19,8 @@ type DirectoryStub = ReturnType<typeof directory> & {
     provider: SignInInput["provider"],
     subject: string,
     preferredShard: number | null,
+    email: string,
+    authExpiryMs?: number,
   ): Promise<number | null>;
   placementEpoch(): Promise<number>;
   reservePlacementAttempt(provider: string, subject: string, preferred: number | null, expectedEpoch: number): Promise<PlacementAttempt>;
@@ -56,7 +59,9 @@ export async function directoryForSignIn(
     subject: supplied.subject,
     email: supplied.email,
     hint: supplied.hint,
+    ...(supplied.authExpiryMs === undefined ? {} : { authExpiryMs: supplied.authExpiryMs }),
   };
+  if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
   const global = directory(env) as DirectoryStub;
   const fencedIdentity = placementFenceEnabled(env) && syntheticPlacementIdentity(input.provider, input.subject) && input.email.toLowerCase() === input.subject.toLowerCase();
   // Snapshot before any identity or invite lookup. A released synthetic claim
@@ -87,9 +92,10 @@ export async function directoryForSignIn(
   const attempt = fencedIdentity
     ? await global.reservePlacementAttempt(input.provider, input.subject, configuration === "16" ? shard : null, epoch!)
     : undefined;
-  const home = attempt?.shard ?? (attempt ? null : await global.claimIdentityHome(
-    input.provider, input.subject, configuration === "16" ? shard : null,
-  ));
+  const preferred = configuration === "16" ? shard : null;
+  const home = attempt?.shard ?? (attempt ? null : input.authExpiryMs === undefined
+    ? await global.claimIdentityHome(input.provider, input.subject, preferred, input.email)
+    : await global.claimIdentityHome(input.provider, input.subject, preferred, input.email, input.authExpiryMs));
   if (home !== null && (!Number.isInteger(home) || home < 0 || home >= 16))
     throw new AppError(
       "unavailable",

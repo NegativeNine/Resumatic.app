@@ -146,10 +146,11 @@ describe("Directory placement in Durable Objects", () => {
     const shard = 3;
     const oldUser = `s${shard}:old`;
     const newUser = `s${shard}:new`;
-    await global.claimIdentityHome(p.provider, p.subject, shard);
+    await global.addInvite(p.email);
+    await global.claimIdentityHome(p.provider, p.subject, shard, p.email);
     await global.bindIdentityHome(p.provider, p.subject, oldUser);
     await global.forgetIdentityHome(p.provider, p.subject, shard, oldUser);
-    await global.claimIdentityHome(p.provider, p.subject, shard);
+    await global.claimIdentityHome(p.provider, p.subject, shard, p.email);
     // An unbound new claim cannot safely be identified as the deleted user.
     await runInDurableObject(global, async (instance) => {
       await expect((instance as Directory).forgetIdentityHome(p.provider, p.subject, shard, oldUser)).rejects.toThrow("placement requires review");

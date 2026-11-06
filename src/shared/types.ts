@@ -20,6 +20,8 @@ export interface SignInInput {
   subject: string;
   email: string;
   hint: LocationHint;
+  /** Internal: expiry authenticated by the OAuth state cookie, in milliseconds. */
+  authExpiryMs?: number;
   /** Internal placement metadata supplied only by the Directory routing helper. */
   homeShard?: number;
   /** The global Directory has already authorized this new account's invite. */

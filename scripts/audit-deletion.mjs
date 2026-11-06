@@ -54,7 +54,7 @@ try {
     if (!response.ok) throw new Error(`STORE_PROBE_HTTP_${response.status}`);
     const result = await response.json();
     if (
-      result.vaultId !== manifest.vaultId ||
+      result.vaultId !== manifest.vaultId.toLowerCase() ||
       result.userId !== manifest.userId
     )
       throw new Error("STORE_PROBE_IDENTITY_MISMATCH");

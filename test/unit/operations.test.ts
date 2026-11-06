@@ -3,6 +3,7 @@ import {
   contentDigest,
   directoryNameForUser,
   identityShard,
+  isMaintenanceFenced,
   requireMaintenanceFence,
   shardedUserId,
 } from "../../src/shared/operations";
@@ -18,6 +19,9 @@ describe("maintenance configuration", () => {
     expect(() =>
       requireMaintenanceFence("vault-a", " vault-b, vault-a "),
     ).not.toThrow();
+    expect(isMaintenanceFenced("ab".repeat(32), ` ${"AB".repeat(32)} `)).toBe(true);
+    expect(isMaintenanceFenced("ab".repeat(32), `${"AB".repeat(32)}0`)).toBe(false);
+    expect(isMaintenanceFenced("", ", ")).toBe(false);
   });
 
   it("routes legacy accounts to the existing Directory and keeps assigned homes stable", async () => {

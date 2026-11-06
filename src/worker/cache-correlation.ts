@@ -38,7 +38,8 @@ export async function correlateCacheWrites(
     id: item.id, kind: item.kind, createdAt: item.createdAt, keyDigest: item.keyDigest,
     observation: (item.keyDigest ? "not-observed" : "no-digest") as Observation,
   }));
-  const prefix = `${vaultPrefix(vaultId)}exports/`;
+  // R2 keys are built from the canonical lowercase Durable Object ID.
+  const prefix = `${vaultPrefix(vaultId.toLowerCase())}exports/`;
   const matches = new Map<string, string>();
   let scan: "not-scanned" | "exhausted" | "limited" | "unavailable" = "not-scanned";
   let scanned = 0;

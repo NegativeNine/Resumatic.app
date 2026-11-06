@@ -44,6 +44,9 @@ export async function moveVault({
     !accessSecret
   )
     throw new Error("INVALID_MOVE_CONFIGURATION");
+  // Durable Object IDs are hexadecimal and case-insensitive. Use the
+  // canonical spelling for R2 prefixes and all cross-store comparisons.
+  sourceVaultId = sourceVaultId.toLowerCase();
   async function request(path, body) {
     let response;
     try {
@@ -74,9 +77,10 @@ export async function moveVault({
   const replacement = await request(`${sourcePath}/replacement`, {
     operationId,
   });
-  const targetVaultId = replacement?.targetVaultId ?? replacement?.targetId;
-  if (!vaultId(targetVaultId) || targetVaultId === sourceVaultId)
+  const target = replacement?.targetVaultId ?? replacement?.targetId;
+  if (!vaultId(target) || target.toLowerCase() === sourceVaultId)
     throw new Error("INVALID_REPLACEMENT_VAULT");
+  const targetVaultId = target.toLowerCase();
   const result = { operationId, sourceVaultId, targetVaultId };
   if (!copyAndCutover)
     return {

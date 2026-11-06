@@ -56,6 +56,7 @@ import type {
 import { UploadStore, type UploadDescriptor } from "./uploads";
 import { VaultOperations, ReembedStore } from "./operations";
 import {
+  isMaintenanceFenced,
   requireMaintenanceFence,
   type TransferManifest,
   type TransferPage,
@@ -3097,12 +3098,7 @@ export class Vault extends DurableObject<Env> {
   }
 
   private requireNotUnderMaintenance(): void {
-    if (
-      (this.env.RESTORE_FENCE_IDS ?? "")
-        .split(",")
-        .map((v) => v.trim())
-        .includes(this.vaultId)
-    )
+    if (isMaintenanceFenced(this.vaultId, this.env.RESTORE_FENCE_IDS))
       throw new AppError(
         "unavailable",
         "this account is temporarily unavailable during maintenance",
@@ -3651,7 +3647,7 @@ export class Vault extends DurableObject<Env> {
     // The marker is durable before external I/O. Once closing starts, no new
     // create may begin, even if an alarm resumed after an unrelated await.
     if (this.closing || this.gone || !this.initialised || this.meta("state") !== "open") return;
-    if ((this.env.RESTORE_FENCE_IDS ?? "").split(",").map((v) => v.trim()).includes(this.vaultId)) return;
+    if (isMaintenanceFenced(this.vaultId, this.env.RESTORE_FENCE_IDS)) return;
     if (this.hasUnsettledDispatch(run.id)) return;
     this.sql.exec(`INSERT INTO workflow_dispatches (run_id) VALUES (?)`, run.id);
     let createIssued = false;
@@ -3764,7 +3760,7 @@ export class Vault extends DurableObject<Env> {
   /** Re-read after every await; a stale alarm must not start new work. */
   private redispatchableRun(id: string): RunRecord | null {
     if (this.closing || this.gone || !this.initialised || this.meta("state") !== "open") return null;
-    if ((this.env.RESTORE_FENCE_IDS ?? "").split(",").map((v) => v.trim()).includes(this.vaultId)) return null;
+    if (isMaintenanceFenced(this.vaultId, this.env.RESTORE_FENCE_IDS)) return null;
     const run = this.runs.get(id);
     if (!run || run.state !== "starting") return null;
     if (run.kind === "distill") {

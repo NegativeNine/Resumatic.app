@@ -27,7 +27,7 @@ describe("deletion and Workflow dispatch", () => {
         const runId = state.storage.sql.exec<{ run_id: string }>(`SELECT run_id FROM workflow_dispatches`).one().run_id;
         const internal = instance as unknown as { runs: { get(id: string): Record<string, unknown> }; dispatchRun(run: Record<string, unknown>): Promise<void> };
         const previousFence = local.RESTORE_FENCE_IDS;
-        local.RESTORE_FENCE_IDS = id;
+        local.RESTORE_FENCE_IDS = id.toUpperCase();
         try {
           await expect(instance.prepareMaintenance()).rejects.toThrow(/workflow creation is unresolved/);
           await expect(instance.controlCheckpoint()).rejects.toThrow(/workflow creation is unresolved/);

@@ -28,7 +28,10 @@ async function home(env: Env, id: string) {
     throw new AppError("not_found", "vault directory entry is unavailable");
   return found[0]!;
 }
-const id = (value: string) => VaultId.parse(value);
+// Durable Object IDs parse case-insensitively but their canonical string and
+// the R2 prefixes we write are lowercase. Normalize before any cross-store
+// lookup so a valid uppercase spelling cannot look like an empty prefix.
+const id = (value: string) => VaultId.parse(value).toLowerCase();
 function requireSyntheticPlacement(env: Env): void {
   if (env.PLACEMENT_FENCE_ENABLED !== "true" || env.ALLOW_TEST_SIGNIN !== "true" || !env.PILOT_BUDGET)
     throw new AppError("unavailable", "placement reconciliation requires staging configuration");

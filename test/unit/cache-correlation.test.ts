@@ -16,7 +16,7 @@ describe("cache-write correlation", () => {
     const list = vi.fn(async () => ({ objects: [{ key }], truncated: false }));
     const head = vi.fn(async () => ({ key, customMetadata: { resumatic_cache_attempt: uuid(1), other: "private-career-text" } }));
     const snapshot = { status: "available" as const, total: 3, attempts: [marker(1, hash), marker(2, hash), marker(3, null)] };
-    const report = await correlateCacheWrites(bucket(list, head), vid, snapshot);
+    const report = await correlateCacheWrites(bucket(list, head), vid.toUpperCase(), snapshot);
     expect(report).toMatchObject({ status: "pending", scan: "exhausted", scanned: 1, total: 3, omitted: 0 });
     expect(report.observations.map((item) => item.observation)).toEqual(["current-match", "current-other", "no-digest"]);
     expect(list).toHaveBeenCalledWith({ prefix, limit: 100, cursor: undefined });

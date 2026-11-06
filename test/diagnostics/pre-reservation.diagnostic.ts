@@ -37,18 +37,17 @@ it("does not create an account using an invite check completed before deletion r
   const input: SignInInput = { provider: "google", subject: `stale-invite-${nonce}`, email: `stale-invite-${nonce}@example.test`, hint: "enam" };
   const global = directory(env);
   await global.addInvite(input.email);
-  // A's invite check has passed, but its placement RPC has not reached global.
-  await global.requireInvite(input.email);
-  const first = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "1" }, input);
+  // A's claim was already dispatched to the sharded target, but that target
+  // has not received it. Claim-time revalidation cannot cancel an older RPC.
+  const held = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, input);
+  const first = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, input);
   const account = await first.directory.signIn(first.input);
   await global.bindIdentityHome(input.provider, input.subject, account.userId);
-  await global.deleteAccount(account.userId, account.vaultId);
-  await runDurableObjectAlarm(global);
-  await eventually(async () => !(await global.existingIdentity(input.provider, input.subject)), "invited identity erasure");
-  const shard = await identityShard(input.provider, input.subject);
-  const claimed = await global.claimIdentityHome(input.provider, input.subject, shard);
-  const target = claimed === null ? global : directoryByName(env, `directory-${claimed}`);
-  await target.signIn({ ...input, inviteAuthorized: true, ...(claimed === null ? {} : { homeShard: claimed }) });
+  const home = directoryForUser(env, account.userId);
+  await home.deleteAccount(account.userId, account.vaultId);
+  await runDurableObjectAlarm(home);
+  await eventually(async () => !(await home.existingIdentity(input.provider, input.subject)), "invited identity erasure");
+  await held.directory.signIn(held.input);
   const locations = await Promise.all([...allDirectories(env)].map((d) => d.existingIdentity(input.provider, input.subject)));
   expect(locations.filter(Boolean), "a stale invite authorization recreated the deleted account").toHaveLength(0);
 }, 30_000);

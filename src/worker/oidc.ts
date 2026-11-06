@@ -7,6 +7,7 @@ import {
   verifyToken,
 } from "./crypto";
 import { verifyJwt } from "./jwt";
+import { requireFreshAuth } from "../shared/auth-expiry";
 
 export const GOOGLE = {
   authorize: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -82,11 +83,12 @@ export async function finishLogin(
   query: URLSearchParams,
   cookieValue: string | undefined,
   fetcher: typeof fetch = fetch,
-): Promise<{ subject: string; email: string; returnTo?: string }> {
+): Promise<{ subject: string; email: string; authExpiryMs: number; returnTo?: string }> {
   requireConfig(env);
   const pending = await verifyToken<PendingLogin>(env.SESSION_KEY, cookieValue);
-  if (!pending || pending.exp < Date.now())
+  if (!pending)
     throw new AppError("unauthenticated", "sign-in took too long; try again");
+  requireFreshAuth(pending.exp);
   if (query.get("error"))
     throw new AppError("unauthenticated", "sign-in was cancelled");
   const code = query.get("code");
@@ -147,9 +149,12 @@ export async function finishLogin(
     !verified
   )
     throw new AppError("forbidden", "a verified email address is required");
+  // Token exchange and JWKS retrieval can outlive the signed OAuth state.
+  requireFreshAuth(pending.exp);
   return {
     subject: claims.sub,
     email: claims.email,
+    authExpiryMs: pending.exp,
     ...(safeReturnTo(pending.returnTo)
       ? { returnTo: safeReturnTo(pending.returnTo) }
       : {}),

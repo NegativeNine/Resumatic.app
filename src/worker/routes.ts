@@ -1,4 +1,5 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { requireFreshAuth } from "../shared/auth-expiry";
 import { bodyLimit } from "hono/body-limit";
 import { getCookie } from "hono/cookie";
 import { HTTPException } from "hono/http-exception";
@@ -152,7 +153,7 @@ app.get("/auth/callback", async (c) => {
   const url = new URL(c.req.url);
   c.header("set-cookie", clearOidcCookie(), { append: true });
   try {
-    const { subject, email, returnTo } = await finishLogin(
+    const { subject, email, authExpiryMs, returnTo } = await finishLogin(
       c.env,
       url.origin,
       url.searchParams,
@@ -162,6 +163,7 @@ app.get("/auth/callback", async (c) => {
       provider: "google",
       subject,
       email,
+      authExpiryMs,
       hint: hintFor(cfOf(c)),
     });
     c.header("set-cookie", cookie, { append: true });
@@ -278,9 +280,11 @@ app.post("/auth/test/pilot-budget/identity/consume", JSON_LIMIT, async (c) => {
   return c.json(await pilot.consumeIdentity(body.nonce, body.runId));
 });
 
-async function startSession(env: Env, input: SignInInput): Promise<string> {
+/** Establish a session only while the OAuth state that authorized it is fresh. */
+export async function startSession(env: Env, input: SignInInput): Promise<string> {
   if (!env.SESSION_KEY)
     throw new AppError("unavailable", "sessions are not configured");
+  if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
   const target = await directoryForSignIn(env, input);
   let account: { userId: string; vaultId: string };
   try {
@@ -289,9 +293,11 @@ async function startSession(env: Env, input: SignInInput): Promise<string> {
     await settleRoutedPlacement(env, target.directory, target.input);
   }
   const { userId, vaultId } = account;
+  if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
   await directory(env).bindIdentityHome(input.provider, input.subject, userId);
+  if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
   const { gen, epoch } = await vault(env, vaultId).openSession(userId);
-  return sessionCookie(
+  const cookie = sessionCookie(
     await createSession(env.SESSION_KEY, {
       uid: userId,
       vid: vaultId,
@@ -299,6 +305,8 @@ async function startSession(env: Env, input: SignInInput): Promise<string> {
       epoch,
     }),
   );
+  if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
+  return cookie;
 }
 
 function cfOf(c: C): CfLocation | undefined {

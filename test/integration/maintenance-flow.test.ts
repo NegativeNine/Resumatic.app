@@ -72,6 +72,13 @@ async function session(user: Awaited<ReturnType<typeof signIn>>) {
 }
 
 describe("maintenance replacement lifecycle", () => {
+  it("enforces an uppercase configured fence for owner requests", async () => {
+    const user = await signIn();
+    const current = await session(user);
+    await setFence(vault(env, current.vid), [current.vid.toUpperCase()]);
+    expect((await user.fetch("/api/profile")).status).toBe(503);
+  });
+
   it("copies files and immutable versions, preserves current ledgers and switches the Directory under a fresh epoch", async () => {
     const user = await signIn();
     const oldSession = await session(user);

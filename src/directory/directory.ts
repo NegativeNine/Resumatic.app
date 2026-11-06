@@ -5,6 +5,7 @@ import { directory, directoryByName } from "../shared/stubs";
 import { requireMaintenanceFence, shardedUserId } from "../shared/operations";
 import { DurableObject } from "cloudflare:workers";
 import { AppError } from "../shared/errors";
+import { requireFreshAuth } from "../shared/auth-expiry";
 import { isMissingWorkflowInstance } from "../shared/workflow-errors";
 import { deletePrefix, vaultPrefix } from "../shared/r2";
 import type { SignInInput, VaultRow } from "../shared/types";
@@ -98,6 +99,7 @@ export class Directory extends DurableObject<Env> {
    * second sign-in racing the first finds them and gets the same vault. Safe to repeat.
    */
   async signIn(p: SignInInput): Promise<{ userId: string; vaultId: string }> {
+    if (p.authExpiryMs !== undefined) requireFreshAuth(p.authExpiryMs);
     const email = p.email.trim().toLowerCase();
     let row = this.findAccount(p.provider, p.subject);
     const attempt = p.placementAttempt;
@@ -193,6 +195,7 @@ export class Directory extends DurableObject<Env> {
       current.vault_state !== "active" || current.vault_id !== row.vault_id
     )
       throw new AppError("forbidden", "this account is being deleted");
+    if (p.authExpiryMs !== undefined) requireFreshAuth(p.authExpiryMs);
     return { userId: row.user_id, vaultId: row.vault_id };
   }
 
@@ -268,7 +271,10 @@ export class Directory extends DurableObject<Env> {
     provider: string,
     subject: string,
     preferredShard: number | null,
+    email?: string,
+    authExpiryMs?: number,
   ): Promise<number | null> {
+    if (authExpiryMs !== undefined) requireFreshAuth(authExpiryMs);
     if (
       preferredShard !== null &&
       (!Number.isInteger(preferredShard) ||
@@ -276,6 +282,15 @@ export class Directory extends DurableObject<Env> {
         preferredShard > 15)
     )
       throw new AppError("invalid", "invalid directory shard");
+    // Check the invitation in the same input-gated operation as the claim.
+    // A prior Worker check can outlive deletion and invite revocation. Older
+    // Workers that do not supply an email fail closed for new invited users.
+    if (provider !== "test" && this.env.INVITE_ONLY !== "false") {
+      if (typeof email !== "string" || !email.trim())
+        throw new AppError("unavailable", "sign-in service is updating; try again");
+      if (!this.isInvited(email.trim().toLowerCase()))
+        throw new AppError("forbidden", "this email has not been invited to the beta yet");
+    }
     this.sql.exec(
       `INSERT OR IGNORE INTO identity_homes (provider,subject,shard) VALUES (?,?,?)`,
       provider,
