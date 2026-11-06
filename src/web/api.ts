@@ -215,6 +215,8 @@ export const api = {
     request<void>("POST", `/api/runs/${encodeURIComponent(id)}/cancel`),
   cancelResume: (id: string) =>
     request<void>("POST", `/api/resumes/${encodeURIComponent(id)}/cancel`),
+  cancelSource: (id: string) =>
+    request<void>("POST", `/api/sources/${encodeURIComponent(id)}/cancel`),
   resume: (id: string, version?: number) =>
     request<ResumeView>(
       "GET",

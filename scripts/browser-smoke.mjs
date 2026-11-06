@@ -19,7 +19,7 @@ if (!browser?.startsWith("/")) {
   const temp = await mkdtemp(join(tmpdir(), "resumatic-browser-smoke-"));
   let vite, server, chrome, ws;
   let stage = "setup";
-  const state = { signedIn: false, source: false, roleState: "proposed", factState: "proposed", uploadKeys: [], applications: [], documents: [], tailored: false, resumeRunning: false, resumeCancel: false };
+  const state = { signedIn: false, source: false, sourceRunning: false, sourceCancel: false, roleState: "proposed", factState: "proposed", uploadKeys: [], applications: [], documents: [], tailored: false, resumeRunning: false, resumeCancel: false };
   const role = { id: "role-1", kind: "job", org: "Acme Example", title: "Engineer", startDate: "2021", endDate: null, state: "proposed", quote: "Acme Example — Engineer", sourceId: "source-1", revision: 1 };
   const fact = { id: "fact-1", roleId: "role-1", kind: "accomplishment", text: "Built 12 payment services", level: "implemented", origin: "extracted", state: "proposed", quote: "Built 12 payment services", sourceId: "source-1", revision: 1 };
   const me = { userId: "synthetic-user", profile: { name: "Avery Example", email: "avery@example.test", phone: "", location: "", links: [] }, quota: { used: 0, limit: 3, month: "2026-11" } };
@@ -31,7 +31,8 @@ if (!browser?.startsWith("/")) {
     if (!path.startsWith("/api/")) return next();
     if (path === "/api/me") return state.signedIn ? send(res, 200, me) : send(res, 401, { error: "unauthenticated", message: "sign in" });
     if (!state.signedIn) return send(res, 401, { error: "unauthenticated" });
-    if (path === "/api/sources" && req.method === "GET") return send(res, 200, { sources: state.source ? [{ id: "source-1", filename: "synthetic.pdf", state: "ready", error: null, createdAt: 1, proposed: 2 }] : [] });
+    if (path === "/api/sources" && req.method === "GET") return send(res, 200, { sources: state.source ? [{ id: "source-1", filename: "synthetic.pdf", state: state.sourceRunning ? "queued" : "ready", dispatchUncertain: state.sourceRunning, cancellationPending: state.sourceCancel, error: null, createdAt: 1, proposed: 2 }] : [] });
+    if (path === "/api/sources/source-1/cancel" && req.method === "POST") { state.sourceCancel = true; res.writeHead(202); res.end(); return; }
     if (path === "/api/roles" && req.method === "GET") return send(res, 200, { roles: state.source ? [{ ...role, state: state.roleState }] : [] });
     if (path === "/api/facts" && req.method === "GET") return send(res, 200, { facts: state.source ? [{ ...fact, state: state.factState }] : [] });
     if (path === "/api/sources" && req.method === "POST") {
@@ -120,7 +121,15 @@ if (!browser?.startsWith("/")) {
     await call("Page.enable"); await call("Runtime.enable"); await call("Fetch.enable", { patterns: [{ urlPattern: "*" }] }); await call("Page.navigate", { url: origin });
     stage = "sign_in"; await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Sign in with Google')`); await clickText("a", "Sign in with Google"); await wait(`document.body?.innerText.includes('Sources & facts') && !!document.querySelector('input[type=file]')`);
     stage = "upload_retry"; const root = await call("DOM.getDocument"); const input = await call("DOM.querySelector", { nodeId: root.root.nodeId, selector: "input[type=file]" }); await call("DOM.setFileInputFiles", { nodeId: input.nodeId, files: [file] }); await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Retry upload')`); await clickText("button", "Retry upload"); await wait(`document.body?.innerText.includes('Built 12 payment services')`); if (state.uploadKeys.length !== 2 || state.uploadKeys[0] !== state.uploadKeys[1]) throw new Error("UPLOAD_RETRY_KEY_MISMATCH");
-    stage = "review"; await clickText("button", "Confirm role"); await wait(`!([...document.querySelectorAll('button')].some(x => x.textContent.trim() === 'Confirm role'))`); await clickText(".fact button", "Confirm"); await wait(`document.body?.innerText.includes('nothing is waiting for review')`);
+    stage = "uncertain_source_cancellation";
+    state.sourceRunning = true; await call("Page.reload");
+    await wait(`document.body?.innerText.includes("we can't confirm that reading started")`);
+    await clickText("button", "Cancel reading");
+    await wait(`document.body?.innerText.includes('Cancellation is pending')`);
+    if (!state.sourceCancel) throw new Error("SOURCE_CANCEL_NOT_SENT");
+    state.sourceRunning = false; state.sourceCancel = false; await call("Page.reload");
+    await wait(`document.body?.innerText.includes('Ready · 2 facts to review')`);
+    stage = "review_role"; await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Confirm role')`); await clickText("button", "Confirm role"); await wait(`!([...document.querySelectorAll('button')].some(x => x.textContent.trim() === 'Confirm role'))`); stage = "review_fact"; await wait(`!![...document.querySelectorAll('.fact button')].find(x => x.textContent.trim() === 'Confirm' && !x.disabled)`); await clickText(".fact button", "Confirm"); await wait(`document.body?.innerText.includes('nothing is waiting for review')`);
     stage = "application"; await clickText("nav a", "Applications"); await wait(`!!document.querySelector('textarea')`); await evalPage(`document.querySelector('textarea').focus()`); await call("Input.insertText", { text: "Synthetic platform engineer position requiring experience building reliable payment services and APIs." }); await clickText("button", "Save job"); await wait(`document.body?.innerText.includes('Synthetic platform engineer job')`);
     stage = "tracking"; await clickText("button", "Track & prepare"); await wait(`!!document.querySelector('.application-workspace select')`); await evalPage(`(() => { const e = document.querySelector('.application-workspace select'); e.value = 'applied'; e.dispatchEvent(new Event('change', { bubbles: true })); })()`); await evalPage(`document.querySelector('.application-workspace textarea').focus()`); await call("Input.insertText", { text: "Synthetic follow-up note" }); await clickText("button", "Save tracking details"); await wait(`document.querySelector('.application-workspace')?.innerText.includes('Saved.')`); if (state.applications[0]?.status !== "applied" || state.applications[0]?.notes !== "Synthetic follow-up note") throw new Error("TRACKING_NOT_SAVED");
     stage = "cover_letter"; await clickText("button", "Create cover letter"); await wait(`!![...document.querySelectorAll('summary')].find(x => x.textContent.trim() === 'Read cover letter')`); await clickText("summary", "Read cover letter"); await wait(`document.body?.innerText.includes('I built 12 payment services.')`);
@@ -145,7 +154,7 @@ if (!browser?.startsWith("/")) {
     await wait(`document.body?.innerText.includes('up to 128 source files and 100 MiB')`);
     if (!await evalPage(`!!document.querySelector('a[href="/api/export/archive"]')`)) throw new Error("ARCHIVE_LINK_MISSING");
     if (!await evalPage(`!!document.querySelector('a[href="/api/export"]') && [...document.querySelectorAll('a[href="#/sources"]')].some(x => x.textContent.includes('Sources & facts'))`)) throw new Error("EXPORT_DOWNLOAD_LINKS_MISSING");
-    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, roleAndFactReview: true, applicationCreation: true, applicationTracking: true, coverLetterDisplay: true, tailoredResumeDisplay: true, uncertainDocumentCancellation: true, uncertainResumeCancellation: true, exportDisclosure: true } }));
+    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, uncertainSourceCancellation: true, roleAndFactReview: true, applicationCreation: true, applicationTracking: true, coverLetterDisplay: true, tailoredResumeDisplay: true, uncertainDocumentCancellation: true, uncertainResumeCancellation: true, exportDisclosure: true } }));
   } catch {
     console.log(JSON.stringify({ status: "failed", reason: "BROWSER_SMOKE_FAILED", stage, promotionEligible: false })); process.exitCode = 1;
   } finally {

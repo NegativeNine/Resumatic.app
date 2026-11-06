@@ -11,6 +11,33 @@ const uncertainWorkflow = () => ({
 }) as unknown as Workflow;
 
 describe("uncertain workflow starts", () => {
+  it("lets the owner cancel an unconfirmed source read without clearing its dispatch fence", async () => {
+    const user = await signIn();
+    const payload = user.cookie.slice("__Host-session=".length).split(".")[0]!;
+    const session = JSON.parse(new TextDecoder().decode(fromBase64url(payload))) as { uid: string; vid: string; gen: number; epoch?: string };
+    const stub = vault(env, session.vid);
+    const { sourceId, runId } = await runInDurableObject(stub, async (instance, state) => {
+      const local = (instance as unknown as { env: Env }).env;
+      const original = local.DISTILL;
+      local.DISTILL = uncertainWorkflow();
+      try {
+        const who = { userId: session.uid, gen: session.gen, epoch: session.epoch };
+        const { sourceId } = await instance.addSource(who, { filename: "resume.pdf", r2Key: `vaults/${session.vid}/sources/test` });
+        const runId = state.storage.sql.exec<{ run_id: string }>(`SELECT run_id FROM sources WHERE id = ?`, sourceId).one().run_id;
+        return { sourceId, runId };
+      } finally { local.DISTILL = original; }
+    });
+    const stranger = await signIn();
+    expect((await stranger.send("POST", `/api/sources/${sourceId}/cancel`)).status).toBe(404);
+    expect((await user.send("POST", `/api/sources/${sourceId}/cancel`)).status).toBe(202);
+    await runInDurableObject(stub, async (instance, state) => {
+      const who = { userId: session.uid, gen: session.gen, epoch: session.epoch };
+      expect(await instance.runInfo(who, runId)).toMatchObject({ state: "cancel_requested" });
+      expect((await instance.listSources(who))[0]).toMatchObject({ cancellationPending: true });
+      expect(state.storage.sql.exec(`SELECT run_id FROM workflow_dispatches WHERE run_id = ?`, runId).toArray()).toHaveLength(1);
+      await expect(instance.close()).rejects.toThrow(/workflow creation is unresolved/);
+    });
+  });
   it("lets the owner request resume cancellation over HTTP while preserving an unresolved dispatch", async () => {
     const user = await signIn();
     const payload = user.cookie.slice("__Host-session=".length).split(".")[0]!;
@@ -33,6 +60,31 @@ describe("uncertain workflow starts", () => {
       const who = { userId: session.uid, gen: session.gen, epoch: session.epoch };
       expect(await instance.runInfo(who, runId)).toMatchObject({ state: "cancel_requested", creditState: "reserved" });
       expect(state.storage.sql.exec(`SELECT run_id FROM workflow_dispatches WHERE run_id = ?`, runId).toArray()).toHaveLength(1);
+    });
+  });
+  it("cancels a source's current retry rather than the original run", async () => {
+    const id = env.VAULT.newUniqueId().toString();
+    const stub = vault(env, id);
+    const who = { userId: "cancel-source-retry", gen: 1 };
+    await stub.init(who.userId);
+    await runInDurableObject(stub, async (instance) => {
+      const local = (instance as unknown as { env: Env }).env;
+      const original = local.DISTILL;
+      local.DISTILL = {
+        async create() { return {}; },
+        async get() { return { async status() { return { status: "terminated" }; } }; },
+      } as unknown as Workflow;
+      try {
+        const { sourceId } = await instance.addSource(who, { filename: "resume.pdf", r2Key: `vaults/${id}/sources/file` });
+        await instance.cancelSource(who, sourceId);
+        await instance.alarm();
+        expect(await instance.runInfo(who, sourceId)).toMatchObject({ state: "cancelled" });
+        const retry = await instance.retryRun(who, sourceId, crypto.randomUUID());
+        expect(retry.runId).not.toBe(sourceId);
+        await instance.cancelSource(who, sourceId);
+        expect(await instance.runInfo(who, retry.runId)).toMatchObject({ state: "cancel_requested" });
+        expect(await instance.runInfo(who, sourceId)).toMatchObject({ state: "cancelled" });
+      } finally { local.DISTILL = original; }
     });
   });
   it("shows saved uploads as unconfirmed without treating a missing instance as failure", async () => {

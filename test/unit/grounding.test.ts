@@ -52,6 +52,34 @@ describe("numbers", () => {
     expect(unsupportedNumbers("Saved $1.2M", "saved $1,200,000")).toEqual([]);
     expect(unsupportedNumbers("Grew 40%", "grew 40 percent")).toEqual([]);
   });
+
+  it("distinguishes counts, multipliers, percentages and currencies", () => {
+    expect(unsupportedNumbers("Improved throughput 5x", "processed 5 invoices")).toEqual(["5x"]);
+    expect(unsupportedNumbers("Processed 5 invoices", "improved throughput 5×")).toEqual(["5"]);
+    for (const expression of ["5x", "5×", "5 times", "5-fold", "fivefold", "five times"]) {
+      expect(unsupportedNumbers(`Improved throughput ${expression}`, "improved throughput 5x")).toEqual([]);
+    }
+    expect(unsupportedNumbers("Improved throughput five times", "processed five invoices")).toEqual(["five times"]);
+    expect(unsupportedNumbers("Improved 5%", "improved five percent")).toEqual([]);
+    expect(unsupportedNumbers("Raised $5", "raised 5 euros")).toEqual(["$5"]);
+    expect(unsupportedNumbers("Raised $5", "served 5 customers")).toEqual(["$5"]);
+    expect(unsupportedNumbers("Served 5 customers", "raised $5")).toEqual(["5"]);
+    expect(unsupportedNumbers("Raised €5", "raised 5 euros")).toEqual([]);
+    expect(unsupportedNumbers("Raised £5", "raised 5 pounds sterling")).toEqual([]);
+    expect(unsupportedNumbers("Raised $5 euros", "raised $5 euros")).toEqual(["$5 euros"]);
+    expect(unsupportedNumbers("Grew 5%", "changed by -5%")).toEqual(["5%"]);
+    expect(unsupportedNumbers("Changed by -5%", "changed by 5%")).toEqual(["-5%"]);
+    expect(unsupportedNumbers("Changed by −5%", "changed by minus five percent")).toEqual([]);
+    expect(unsupportedNumbers("From 2019 to 2021", "2019-2021")).toEqual([]);
+    expect(unsupportedNumbers("From 2019 to 2021", "2019 - 2021")).toEqual([]);
+    expect(unsupportedNumbers("Built one service", "built services")).toEqual(["one"]);
+    expect(unsupportedNumbers("Saved $1,000,000,001", "saved $1 billion")).toEqual(["$1,000,000,001"]);
+    expect(unsupportedNumbers("Processed 1001 events", "processed 1.001k events")).toEqual([]);
+    expect(unsupportedNumbers("Lost -$5", "lost $5")).toEqual(["-$5"]);
+    expect(unsupportedNumbers("Changed by -5%", "changed by minus 5%")).toEqual([]);
+    expect(unsupportedNumbers("Changed by $5", "changed by negative $5")).toEqual(["$5"]);
+    expect(unsupportedNumbers("Changed by -$5", "changed by negative $five")).toEqual([]);
+  });
 });
 
 describe("names", () => {
@@ -95,6 +123,11 @@ describe("scope", () => {
     const result = checkClaim("Led a Rust rewrite that cut costs by 50%", [{ text: "Helped with a Go rewrite", level: "contributed" }]);
     expect(result.ok).toBe(false);
     expect(result.problems).toHaveLength(3);
+  });
+
+  it("rejects a multiplier or currency invented from an unrelated count", () => {
+    expect(checkClaim("Improved throughput 5x", [{ text: "Processed 5 invoices" }]).ok).toBe(false);
+    expect(checkClaim("Raised $5", [{ text: "Processed 5 invoices" }]).ok).toBe(false);
   });
 });
 

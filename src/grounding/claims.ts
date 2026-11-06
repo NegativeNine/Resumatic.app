@@ -6,10 +6,13 @@ import type { Level } from "../shared/api";
 export interface NumberToken {
   value: number;
   percent: boolean;
+  multiplier: boolean;
+  currency: "dollar" | "euro" | "sterling" | "conflicting" | null;
   raw: string;
 }
 
 const NUMBER_WORDS: Record<string, number> = {
+  one: 1,
   two: 2,
   three: 3,
   four: 4,
@@ -37,29 +40,60 @@ const SCALES: Record<string, number> = {
   billion: 1e9,
 };
 
-const NUMBER = /(?<![\w.])[$€£]?\s?(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(?:\s?(%|percent\b|per cent\b|x\b|k\b|thousand\b|mm\b|m\b|million\b|bn\b|b\b|billion\b))?(?![\w])/gi;
+const NUMBER = /(?<![\w.])(?:([+\-−])\s*)?(?:([$€£]|USD\b|EUR\b|GBP\b)\s*)?([+\-−])?(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(?:\s?(%|percent\b|per cent\b|x\b|×|times\b|-?fold\b|k\b|thousand\b|mm\b|m\b|million\b|bn\b|b\b|billion\b))?(?:\s?(dollars?|euros?|pounds?\s+sterling|USD|EUR|GBP)\b)?(?![\w])/gi;
+const WORD_NUMBER = /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozen|twenty|hundred)(?=\b|fold\b)(?:\s*(%|percent\b|per cent\b|x\b|×|times\b|-?fold\b))?(?:\s*(dollars?|euros?|pounds?\s+sterling|USD|EUR|GBP)\b)?/gi;
+
+function currencyOf(unit: string | undefined): NumberToken["currency"] {
+  const normalized = unit?.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "$" || normalized === "usd" || /^dollars?$/.test(normalized)) return "dollar";
+  if (normalized === "€" || normalized === "eur" || /^euros?$/.test(normalized)) return "euro";
+  if (normalized === "£" || normalized === "gbp" || /^pounds?\s+sterling$/.test(normalized)) return "sterling";
+  return null;
+}
+
+function isMultiplier(unit: string): boolean {
+  return /^(?:x|×|times|-?fold)$/.test(unit);
+}
 
 /** Every number in the text, with scale words applied and percentages flagged. */
 export function numbersIn(text: string): NumberToken[] {
   const out: NumberToken[] = [];
   for (const match of text.matchAll(NUMBER)) {
-    const digits = (match[1] ?? "").replace(/,/g, "");
-    const unit = (match[2] ?? "").toLowerCase().replace(/\s+/g, " ");
+    const digits = (match[4] ?? "").replace(/,/g, "");
+    const unit = (match[5] ?? "").toLowerCase().replace(/\s+/g, " ");
     let value = Number(digits);
     if (!Number.isFinite(value)) continue;
+    const prefix = text.slice(0, match.index);
+    // A spaced hyphen between two years is a date range, not a negative year.
+    const yearRange = match[1] === "-" && !match[2] && !match[3] && /\b(?:19|20)\d{2}\s*$/.test(prefix) && /^(?:19|20)\d{2}$/.test(digits);
+    if (!yearRange && ([match[1], match[3]].some((sign) => sign === "-" || sign === "−") || /\b(?:minus|negative)\s+$/i.test(prefix))) value = -value;
     const percent = unit === "%" || unit === "percent" || unit === "per cent";
     if (!percent && unit) value *= SCALES[unit] ?? 1;
-    out.push({ value, percent, raw: match[0].trim() });
+    const prefixCurrency = currencyOf(match[2]);
+    const suffixCurrency = currencyOf(match[6]);
+    // Conflicting units cannot be treated as any supported quantity.
+    const currency = prefixCurrency && suffixCurrency && prefixCurrency !== suffixCurrency ? "conflicting" : prefixCurrency ?? suffixCurrency;
+    out.push({ value, percent, multiplier: isMultiplier(unit), currency, raw: match[0].trim() });
   }
-  for (const word of text.toLowerCase().match(/\b[a-z]+\b/g) ?? []) {
-    const value = NUMBER_WORDS[word];
-    if (value !== undefined) out.push({ value, percent: false, raw: word });
+  for (const match of text.matchAll(WORD_NUMBER)) {
+    const magnitude = NUMBER_WORDS[match[1]!.toLowerCase()];
+    if (magnitude === undefined) continue;
+    const value = /\b(?:minus|negative)\s+(?:(?:[$€£]|USD|EUR|GBP)\s*)?$/i.test(text.slice(0, match.index)) ? -magnitude : magnitude;
+    const unit = (match[2] ?? "").toLowerCase().replace(/\s+/g, " ");
+    const prefix = text.slice(0, match.index).match(/(?:[$€£]|\b(?:USD|EUR|GBP))\s*$/i)?.[0];
+    const prefixCurrency = currencyOf(prefix);
+    const suffixCurrency = currencyOf(match[3]);
+    const currency = prefixCurrency && suffixCurrency && prefixCurrency !== suffixCurrency ? "conflicting" : prefixCurrency ?? suffixCurrency;
+    out.push({ value, percent: unit === "%" || unit === "percent" || unit === "per cent", multiplier: isMultiplier(unit), currency, raw: match[0].trim() });
   }
   return out;
 }
 
 function sameNumber(a: NumberToken, b: NumberToken): boolean {
-  return a.percent === b.percent && Math.abs(a.value - b.value) <= 1e-9 * Math.max(1, Math.abs(a.value));
+  if ((Number.isInteger(a.value) && !Number.isSafeInteger(a.value)) ||
+      (Number.isInteger(b.value) && !Number.isSafeInteger(b.value))) return false;
+  return a.currency !== "conflicting" && b.currency !== "conflicting" && a.percent === b.percent && a.multiplier === b.multiplier && a.currency === b.currency && Math.abs(a.value - b.value) <= 2 * Number.EPSILON * Math.max(1, Math.abs(a.value), Math.abs(b.value));
 }
 
 /** Numbers in the claim that no evidence number matches. */

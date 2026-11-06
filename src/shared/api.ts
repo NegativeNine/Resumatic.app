@@ -16,6 +16,7 @@
 //   POST   /api/sources                multipart field "file" (PDF or DOCX, at most 10 MB) -> 201 { sourceId }
 //   GET    /api/sources                { sources: SourceView[] }
 //   GET    /api/sources/:id/file       the original upload, as an attachment
+//   POST   /api/sources/:id/cancel     request cancellation of the current reading run
 //   GET    /api/roles                  { roles: RoleView[] }
 //   POST   /api/roles                  NewRole -> 201 { roleId }   (a role the uploads missed)
 //   PATCH  /api/roles/:id              RolePatch -> 204

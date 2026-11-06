@@ -3776,6 +3776,16 @@ export class Vault extends DurableObject<Env> {
     await this.cancelRun(who, resume.run_id);
   }
 
+  async cancelSource(who: Who, sourceId: string): Promise<void> {
+    this.requireOwner(who);
+    const source = this.sourceRow(sourceId);
+    if (source.state !== "queued" || !source.run_id)
+      throw new AppError("conflict", "this source is no longer being read");
+    // A retry can use a different run ID; only cancel the current reading run.
+    this.workflowRun(source.run_id, "distill", sourceId);
+    await this.cancelRun(who, source.run_id);
+  }
+
   private readProfile(): Profile {
     const row = this.sql
       .exec<{

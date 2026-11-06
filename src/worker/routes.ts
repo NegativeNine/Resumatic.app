@@ -489,6 +489,11 @@ api.get("/sources", async (c) =>
   c.json({ sources: await myVault(c).listSources(c.get("who")) }),
 );
 
+api.post("/sources/:id/cancel", async (c) => {
+  await myVault(c).cancelSource(c.get("who"), c.req.param("id"));
+  return c.body(null, 202);
+});
+
 /** The original upload, as the user sent it. */
 api.get("/sources/:id/file", async (c) => {
   const { r2Key, filename } = await myVault(c).sourceFile(

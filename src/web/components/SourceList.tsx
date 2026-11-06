@@ -98,6 +98,9 @@ function SourceRow({
           may still begin; please check back.
         </p>
       )}
+      {source.state === "queued" && !source.cancellationPending && (
+        <CancelReading sourceId={source.id} reload={reload} />
+      )}
       {source.state === "failed" && (
         <p className="source-error">
           {source.error ?? "We couldn't read this file."} Try uploading it
@@ -125,6 +128,21 @@ function SourceRow({
           <ScanRecovery sourceId={source.id} reload={reload} />
         )}
     </li>
+  );
+}
+
+function CancelReading({ sourceId, reload }: { sourceId: string; reload: Reload }) {
+  const { run, pending, error } = useAction();
+  return (
+    <div>
+      <button type="button" className="small" disabled={pending} onClick={() => void run(async () => {
+        await api.cancelSource(sourceId);
+        await reload();
+      })}>
+        {pending ? "Stopping…" : "Cancel reading"}
+      </button>
+      <ActionError message={error} />
+    </div>
   );
 }
 
