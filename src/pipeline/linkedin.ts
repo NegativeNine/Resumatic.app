@@ -27,6 +27,7 @@ function checkDirectory(bytes: Uint8Array): { crc: number; data: number }[] {
   };
   const u16 = (pos: number): number => { bounds(pos, 2); return view.getUint16(pos, true); };
   const u32 = (pos: number): number => { bounds(pos, 4); return view.getUint32(pos, true); };
+  const u64 = (pos: number): bigint => { bounds(pos, 8); return view.getBigUint64(pos, true); };
   let end = -1;
   for (let pos = bytes.length - 22; pos >= Math.max(0, bytes.length - 65557); pos--) {
     if (u32(pos) === 0x06054b50 && pos + 22 + u16(pos + 20) === bytes.length) {
@@ -60,13 +61,43 @@ function checkDirectory(bytes: Uint8Array): { crc: number; data: number }[] {
     bounds(local + 30, nameLength + localExtra);
     for (let j = 0; j < nameLength; j++)
       if (bytes[local + 30 + j] !== bytes[at + 46 + j]) bad();
-    if (!(flags & 8) && (u32(local + 14) !== checksum || u32(local + 18) !== compressed || u32(local + 22) !== original)) bad();
+    const localCompressed = u32(local + 18), localOriginal = u32(local + 22);
+    const localZip64 = localCompressed === 0xffffffff || localOriginal === 0xffffffff;
+    if (localZip64) {
+      // Some writers use ZIP64 local headers even for small members while the
+      // central directory and EOCD remain ZIP32. Verify both 64-bit sizes;
+      // with a data descriptor the header values may be zero until it arrives.
+      if (localCompressed !== 0xffffffff || localOriginal !== 0xffffffff) bad();
+      const extraEnd = local + 30 + nameLength + localExtra;
+      let pos = local + 30 + nameLength, found = false;
+      while (pos < extraEnd) {
+        if (extraEnd - pos < 4) bad();
+        const id = u16(pos), length = u16(pos + 2);
+        pos += 4;
+        if (length > extraEnd - pos) bad();
+        if (id === 1) {
+          if (found || length < 16) bad();
+          found = true;
+          const localSize = u64(pos), localPacked = u64(pos + 8);
+          if (flags & 8) {
+            if ((localSize !== 0n && localSize !== BigInt(original)) ||
+                (localPacked !== 0n && localPacked !== BigInt(compressed))) bad();
+          } else if (localSize !== BigInt(original) || localPacked !== BigInt(compressed)) bad();
+        }
+        pos += length;
+      }
+      if (!found) bad();
+    }
+    if (!(flags & 8) && (u32(local + 14) !== checksum ||
+        (!localZip64 && (localCompressed !== compressed || localOriginal !== original)))) bad();
     const data = local + 30 + nameLength + localExtra;
     if (data > start || compressed > start - data) bad();
     if (flags & 8) {
       const descriptor = data + compressed;
-      const matches = (pos: number): boolean => pos >= 0 && pos + 12 <= start &&
-        u32(pos) === checksum && u32(pos + 4) === compressed && u32(pos + 8) === original;
+      const matches = (pos: number): boolean => pos >= 0 && pos + (localZip64 ? 20 : 12) <= start &&
+        u32(pos) === checksum && (localZip64
+          ? u64(pos + 4) === BigInt(compressed) && u64(pos + 12) === BigInt(original)
+          : u32(pos + 4) === compressed && u32(pos + 8) === original);
       const unsigned = matches(descriptor);
       const signed = descriptor + 4 <= start && u32(descriptor) === 0x08074b50 && matches(descriptor + 4);
       if (unsigned === signed) bad();

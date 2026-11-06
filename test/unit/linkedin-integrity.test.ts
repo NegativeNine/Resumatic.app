@@ -57,6 +57,16 @@ function unsignedDescriptorArchive(): Uint8Array {
   return out;
 }
 
+// Python zipfile.open(..., force_zip64=True), with ZIP32 central directory.
+// These represent stored and deflated files, on seekable and streaming outputs.
+const PYTHON_LOCAL_ZIP64 = [
+  "UEsDBC0AAAAAAAAAIQAV/nbe//////////8KABQAU2tpbGxzLmNzdgEAEAANAAAAAAAAAA0AAAAAAAAATmFtZQpHbwpSdXN0ClBLAQItAy0AAAAAAAAAIQAV/nbeDQAAAA0AAAAKAAAAAAAAAAAAAACAAQAAAABTa2lsbHMuY3N2UEsFBgAAAAABAAEAOAAAAEkAAAAAAA==",
+  "UEsDBC0ACAAAAAAAIQAAAAAA//////////8KABQAU2tpbGxzLmNzdgEAEAAAAAAAAAAAAAAAAAAAAAAATmFtZQpHbwpSdXN0ClBLBwgV/nbeDQAAAAAAAAANAAAAAAAAAFBLAQItAy0ACAAAAAAAIQAV/nbeDQAAAA0AAAAKAAAAAAAAAAAAAACAAQAAAABTa2lsbHMuY3N2UEsFBgAAAAABAAEAOAAAAGEAAAAAAA==",
+  "UEsDBC0AAAAIAAAAIQAV/nbe//////////8KABQAU2tpbGxzLmNzdgEAEAANAAAAAAAAAA8AAAAAAAAA80vMTeVyz+cKKi0u4QIAUEsBAi0DLQAAAAgAAAAhABX+dt4PAAAADQAAAAoAAAAAAAAAAAAAAIABAAAAAFNraWxscy5jc3ZQSwUGAAAAAAEAAQA4AAAASwAAAAAA",
+  "UEsDBC0ACAAIAAAAIQAAAAAA//////////8KABQAU2tpbGxzLmNzdgEAEAAAAAAAAAAAAAAAAAAAAAAA80vMTeVyz+cKKi0u4QIAUEsHCBX+dt4PAAAAAAAAAA0AAAAAAAAAUEsBAi0DLQAIAAgAAAAhABX+dt4PAAAADQAAAAoAAAAAAAAAAAAAAIABAAAAAFNraWxscy5jc3ZQSwUGAAAAAAEAAQA4AAAAYwAAAAAA",
+] as const;
+const fixture = (index: number): Uint8Array => Uint8Array.from(Buffer.from(PYTHON_LOCAL_ZIP64[index]!, "base64"));
+
 describe("LinkedIn archive content integrity", () => {
   it.each([false, true])("rejects underreported decoded size, including a falsified local header: %s", (local) => {
     const zip = zipSync({ "Skills.csv": strToU8("Name\nGo\nRust\n") });
@@ -109,6 +119,45 @@ describe("LinkedIn archive content integrity", () => {
 
   it("accepts a streaming ZIP with an unsigned data descriptor", () => {
     expect(linkedInMarkdown(unsignedDescriptorArchive())).toContain("Name: Go");
+  });
+
+  it.each(PYTHON_LOCAL_ZIP64.map((_, index) => index))(
+    "imports Python's small ZIP64 local-header archive %i",
+    (index) => {
+      const markdown = linkedInMarkdown(fixture(index));
+      expect(markdown).toContain("Name: Go");
+      expect(markdown).toContain("Name: Rust");
+    },
+  );
+
+  it("accepts an unsigned ZIP64 data descriptor", () => {
+    const original = fixture(3);
+    const signature = header(original, 0x08074b50);
+    const out = new Uint8Array(original.length - 4);
+    out.set(original.subarray(0, signature));
+    out.set(original.subarray(signature + 4), signature);
+    const eocd = header(out, 0x06054b50);
+    const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+    view.setUint32(eocd + 16, view.getUint32(eocd + 16, true) - 4, true);
+    expect(linkedInMarkdown(out)).toContain("Name: Rust");
+  });
+
+  it("rejects corrupt local ZIP64 sizes and descriptors", () => {
+    const corruptLocal = fixture(0);
+    const localView = new DataView(corruptLocal.buffer, corruptLocal.byteOffset, corruptLocal.byteLength);
+    const localExtra = 30 + localView.getUint16(26, true);
+    localView.setBigUint64(localExtra + 4, 0x1_0000_0000n, true);
+    expect(() => linkedInMarkdown(corruptLocal)).toThrow("ZIP export could not be read");
+
+    const corruptDescriptor = fixture(3);
+    const descriptorView = new DataView(corruptDescriptor.buffer, corruptDescriptor.byteOffset, corruptDescriptor.byteLength);
+    descriptorView.setBigUint64(header(corruptDescriptor, 0x08074b50) + 8, 0x1_0000_0000n, true);
+    expect(() => linkedInMarkdown(corruptDescriptor)).toThrow("ZIP export could not be read");
+
+    const missingExtra = fixture(0);
+    const missingView = new DataView(missingExtra.buffer, missingExtra.byteOffset, missingExtra.byteLength);
+    missingView.setUint16(30 + missingView.getUint16(26, true), 2, true);
+    expect(() => linkedInMarkdown(missingExtra)).toThrow("ZIP export could not be read");
   });
 
   it("still rejects duplicate career basenames in streaming archives", () => {

@@ -786,7 +786,7 @@ export class Directory extends DurableObject<Env> {
     // Keep the deletion state and its first alarm in the same SQLite-backed
     // storage transaction. If scheduling fails, the account remains active
     // and the caller can retry with the same session.
-    const active = await this.ctx.storage.transaction(async () => {
+    const toQuiesce = await this.ctx.storage.transaction(async () => {
       const expected = this.sql.exec(
         `SELECT vault_id FROM vaults WHERE user_id = ? AND vault_id = ? AND state IN ('creating', 'active', 'deleting')`,
         userId, expectedVaultId,
@@ -795,6 +795,10 @@ export class Directory extends DurableObject<Env> {
         throw new AppError("conflict", "the account vault has changed");
       const active = this.sql.exec<{ vault_id: string }>(
         `SELECT vault_id FROM vaults WHERE user_id = ? AND state IN ('active', 'deleting')`,
+        userId,
+      ).toArray();
+      const targets = this.sql.exec<{ vault_id: string }>(
+        `SELECT target_id AS vault_id FROM vault_replacements WHERE user_id=? AND state='preparing'`,
         userId,
       ).toArray();
       this.sql.exec(
@@ -813,12 +817,17 @@ export class Directory extends DurableObject<Env> {
       const existing = await this.ctx.storage.getAlarm();
       if (existing === null || existing > now + RETRY_MS)
         await this.ctx.storage.setAlarm(now + RETRY_MS);
-      return active;
+      return [...new Set([...active, ...targets].map((v) => v.vault_id))];
     });
-    // Creating vaults cannot have issued a session. Active or already deleting
-    // vaults may have copied cookies; the durable alarm retries failed RPCs.
-    for (const v of active)
-      await this.env.VAULT.get(this.env.VAULT.idFromString(v.vault_id)).quiesce();
+    // A preparing replacement may still be copying files. Revoke its Vault
+    // as well as the active one immediately, rather than waiting for the
+    // retirement alarm. The alarm remains responsible for retry and cleanup.
+    // Attempt every Vault even if another one is unavailable.
+    const results = await Promise.allSettled(toQuiesce.map(async (id) =>
+      this.env.VAULT.get(this.env.VAULT.idFromString(id)).quiesce(),
+    ));
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
   }
 
   async listVaults(p: { after?: string; limit: number }): Promise<VaultRow[]> {
