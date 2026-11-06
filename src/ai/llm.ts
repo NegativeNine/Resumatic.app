@@ -105,6 +105,9 @@ async function callOnce(
         // Responses may persist application state by default. Each call is
         // independent and must not retain career text in the provider's store.
         store: false,
+        // Disable OpenAI's separate implicit prompt cache: explicit mode with
+        // no breakpoints does not write a cache entry.
+        prompt_cache_options: { mode: "explicit" },
       }
     : {
         model: cfg.model,

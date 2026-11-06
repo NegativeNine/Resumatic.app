@@ -20,6 +20,11 @@ export function runModels(
         throw new AppError("unavailable", "model spending is not configured");
       started.set(attempt.attemptId, Date.now());
       const price = prices[attempt.model];
+      if (price && (price[0] <= 0 || (attempt.maxOutputTokens > 0 && price[1] <= 0)))
+        throw new AppError(
+          "unavailable",
+          "this model has no configured cost bound",
+        );
       // Four tokens per input character is conservative for byte tokenizers; bound unknown services explicitly.
       const upper = price
         ? Math.ceil(

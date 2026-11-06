@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { deletionProbeInput, workflowCoverage } from "./lib/deletion-audit.mjs";
+import { deletionProbeInput, workflowCoverage, workflowInventoryAuditCapability } from "./lib/deletion-audit.mjs";
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const manifest = () => ({
   base: "https://staging.example",
@@ -23,6 +23,10 @@ const manifest = () => ({
 });
 test("probe includes superseded workflow attempts and excludes local embedding calls", () => {
   const input = deletionProbeInput(manifest(), "https://staging.example");
+  assert.deepEqual(workflowInventoryAuditCapability(), {
+    scope: "supplied_ids_only",
+    complete: false,
+  });
   assert.deepEqual(input.sources, [id(1), id(3)]);
   assert.deepEqual(input.resumes, [id(2)]);
   assert.deepEqual(

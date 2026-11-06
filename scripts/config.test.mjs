@@ -268,6 +268,11 @@ test("release gates require passing evidence for the exact candidate commit", as
   });
   Object.assign(evidence.latency, { p95Seconds: 70, sampleSize: 100 });
   Object.assign(evidence.security, { openHighFindings: 0 });
+  Object.assign(evidence.billing, {
+    testModePassed: true,
+    livePaymentPassed: true,
+    liveCancellationPassed: true,
+  });
   Object.assign(evidence.betaOperations, { quietDays: 14 });
   const run = (input) =>
     spawnSync(
@@ -278,32 +283,41 @@ test("release gates require passing evidence for the exact candidate commit", as
         env: {
           GITHUB_SHA: commit,
           RELEASE_EVIDENCE_JSON: JSON.stringify(input),
+          DELETION_INVENTORY_COMPLETE: "true",
         },
         encoding: "utf8",
       },
     );
+  const assertMissing = (input, reason) => {
+    const result = run(input);
+    assert.equal(result.status, 2);
+    assert.ok(JSON.parse(result.stdout).missing.includes(reason));
+  };
   try {
     assert.equal(run({}).status, 2);
-    assert.equal(run(evidence).status, 0);
-    assert.equal(
-      run({ ...evidence, models: { ...evidence.models, status: "pending" } })
-        .status,
-      2,
+    // An operator attestation and environment flag cannot manufacture the
+    // complete Workflow inventory that the deletion audit cannot yet prove.
+    assert.equal(run(evidence).status, 2);
+    assert.deepEqual(
+      JSON.parse(await readFile(join(directory, "release-report.json"), "utf8")).missing,
+      ["DELETION_INVENTORY_AUDIT_UNAVAILABLE"],
     );
-    assert.equal(
-      run({
+    for (const field of ["testModePassed", "livePaymentPassed", "liveCancellationPassed"]) {
+      for (const value of [false, undefined, "true"]) {
+        assert.equal(run({ ...evidence, billing: { ...evidence.billing, [field]: value } }).status, 2);
+        const result = JSON.parse(await readFile(join(directory, "release-report.json"), "utf8"));
+        assert.ok(result.missing.includes("BILLING_VALIDATION"));
+      }
+    }
+    assertMissing({ ...evidence, models: { ...evidence.models, status: "pending" } }, "models");
+    assertMissing({
         ...evidence,
         models: { ...evidence.models, commit: "b".repeat(40) },
-      }).status,
-      2,
-    );
-    assert.equal(
-      run({
+      }, "models");
+    assertMissing({
         ...evidence,
         extraction: { ...evidence.extraction, failureRate: 0.01 },
-      }).status,
-      2,
-    );
+      }, "EXTRACTION_MEASUREMENTS");
     for (const ats of [
       { ...evidence.ats, syntheticPdfPassed: false },
       { ...evidence.ats, syntheticDocxPassed: false },
@@ -354,14 +368,14 @@ test("release gates require passing evidence for the exact candidate commit", as
       const result = JSON.parse(await readFile(join(directory, "release-report.json"), "utf8"));
       assert.ok(result.missing.includes("EXTRACTION_PROMOTION"));
     }
-    for (const candidate of [
-      { ...evidence, extraction: { ...evidence.extraction, evaluatedUploads: 1 } },
-      { ...evidence, extraction: { ...evidence.extraction, evaluatedUploads: "15" } },
-      { ...evidence, grounding: { ...evidence.grounding, evaluatedLines: "1" } },
-      { ...evidence, latency: { ...evidence.latency, p95Seconds: "70" } },
-      { ...evidence, latency: { ...evidence.latency, sampleSize: 1.5 } },
-      { ...evidence, betaOperations: { ...evidence.betaOperations, quietDays: "14" } },
-    ]) assert.equal(run(candidate).status, 2);
+    for (const [candidate, reason] of [
+      [{ ...evidence, extraction: { ...evidence.extraction, evaluatedUploads: 1 } }, "EXTRACTION_MEASUREMENTS"],
+      [{ ...evidence, extraction: { ...evidence.extraction, evaluatedUploads: "15" } }, "EXTRACTION_MEASUREMENTS"],
+      [{ ...evidence, grounding: { ...evidence.grounding, evaluatedLines: "1" } }, "GROUNDING_MEASUREMENTS"],
+      [{ ...evidence, latency: { ...evidence.latency, p95Seconds: "70" } }, "LATENCY_MEASUREMENTS"],
+      [{ ...evidence, latency: { ...evidence.latency, sampleSize: 1.5 } }, "LATENCY_MEASUREMENTS"],
+      [{ ...evidence, betaOperations: { ...evidence.betaOperations, quietDays: "14" } }, "BETA_OBSERVATION_WINDOW"],
+    ]) assertMissing(candidate, reason);
     const badConfiguration = {
       ...evidence,
       extraction: { ...evidence.extraction, promotion: { ...promotion, configurationHash: "f".repeat(64) } },

@@ -48,7 +48,8 @@ describe("Responses-only model adapter", () => {
     expect(headers.get("cf-aig-collect-log-payload")).toBe("false");
     expect(headers.get("cf-aig-skip-cache")).toBe("true");
     expect(headers.get("cf-aig-max-attempts")).toBe("1");
-    expect(body).toMatchObject({ model: cfg.model, store: false, max_output_tokens: 8192, text: { format: { type: "json_object" } } });
+    expect(body).toMatchObject({ model: cfg.model, store: false, prompt_cache_options: { mode: "explicit" }, max_output_tokens: 8192, text: { format: { type: "json_object" } } });
+    expect(JSON.stringify(body)).not.toContain("prompt_cache_breakpoint");
     expect(body).not.toHaveProperty("temperature");
     expect(body).not.toHaveProperty("messages");
     expect(body.input[0]).toEqual({ role: "user", content: "synthetic request" });

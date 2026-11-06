@@ -349,9 +349,16 @@ describe("private extraction evaluation evidence", () => {
     Object.assign(evidence.ats, { syntheticPdfPassed: true, syntheticDocxPassed: true, externalParsersTested: 2, unresolvedFailures: 0 });
     Object.assign(evidence.latency, { p95Seconds: 1, sampleSize: 1 });
     Object.assign(evidence.security, { openHighFindings: 0 });
+    Object.assign(evidence.billing, { testModePassed: true, livePaymentPassed: true, liveCancellationPassed: true });
     Object.assign(evidence.betaOperations, { quietDays: 14 });
     const check = spawnSync(process.execPath, [resolve("scripts/check-release.mjs")], { cwd: root, env: { ...process.env, GITHUB_SHA: commit, RELEASE_EVIDENCE_JSON: JSON.stringify(evidence) }, encoding: "utf8" });
-    expect(check.status, check.stderr || check.stdout).toBe(0);
+    expect(check.status, check.stderr || check.stdout).toBe(2);
+    // Extraction evidence is accepted; deletion alone blocks release until
+    // the audit can independently establish complete Workflow inventory.
+    expect(JSON.parse(check.stdout)).toMatchObject({
+      status: "pending",
+      missing: ["DELETION_INVENTORY_AUDIT_UNAVAILABLE"],
+    });
   });
   it("keeps missing audits, missing adjudication, and unpriced usage pending", () => {
     const { root } = dataset();

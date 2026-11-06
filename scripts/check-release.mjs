@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { readConfig } from "./lib/config.mjs";
 import { configuredExtractors } from "./lib/extractor-routes.mjs";
+import { workflowInventoryAuditCapability } from "./lib/deletion-audit.mjs";
 import { extractionConfiguration } from "../test/extract-evals/configuration.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const required = [
@@ -162,6 +163,16 @@ try {
     report.missing.push("ATS_VALIDATION");
   if (evidence.security?.openHighFindings !== 0)
     report.missing.push("SECURITY_FINDINGS");
+  if (
+    evidence.billing?.testModePassed !== true ||
+    evidence.billing?.livePaymentPassed !== true ||
+    evidence.billing?.liveCancellationPassed !== true
+  )
+    report.missing.push("BILLING_VALIDATION");
+  // The protected environment is an attestation, but cannot supply a capability
+  // that the deletion audit itself does not implement.
+  if (workflowInventoryAuditCapability().complete !== true)
+    report.missing.push("DELETION_INVENTORY_AUDIT_UNAVAILABLE");
   if (!count(evidence.betaOperations?.quietDays, 14))
     report.missing.push("BETA_OBSERVATION_WINDOW");
   if (report.missing.length === 0) report.status = "passed";

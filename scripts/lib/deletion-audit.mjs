@@ -9,6 +9,11 @@ const WORKFLOWS = {
   questions: "documents",
   reembed: "reembeddings",
 };
+/** The current probe can check supplied IDs, but cannot establish a complete inventory.
+ * A future complete-inventory implementation must change both the probe and this capability. */
+export function workflowInventoryAuditCapability() {
+  return { scope: "supplied_ids_only", complete: false };
+}
 /** Validate the actual pre-deletion ledger rows, not a caller-supplied completeness flag. */
 export function deletionProbeInput(manifest, base) {
   if (
@@ -62,6 +67,7 @@ export function deletionProbeInput(manifest, base) {
 }
 /** The protected server must disclose the coverage and count of checked IDs. */
 export function workflowCoverage(response, input) {
+  const capability = workflowInventoryAuditCapability();
   const expected =
     input.sources.length +
     input.resumes.length +
@@ -69,12 +75,12 @@ export function workflowCoverage(response, input) {
     input.reembeddings.length;
   if (
     !response ||
-    response.scope !== "supplied_ids_only" ||
+    response.scope !== capability.scope ||
     response.checked !== expected ||
-    response.complete !== false
+    response.complete !== capability.complete
   ) {
     throw new Error("INVALID_WORKFLOW_COVERAGE");
   }
   // A caller's pre-deletion snapshot cannot prove that no other run existed or raced deletion.
-  return { scope: response.scope, checked: expected, complete: false };
+  return { scope: response.scope, checked: expected, complete: capability.complete };
 }
