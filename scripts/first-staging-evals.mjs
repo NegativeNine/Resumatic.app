@@ -159,7 +159,7 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
         prices[model].some(
           (n) => typeof n !== "number" || !Number.isFinite(n) || n < 0,
         ) ||
-        prices[model].every((n) => n === 0),
+        prices[model][0] <= 0,
     ) ||
     chatModels.some((model) => prices[model][1] <= 0)
   )

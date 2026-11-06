@@ -292,6 +292,28 @@ test("preflight failures make no subprocess calls or campaign marker", () =>
     assert.ok(createPilotLedger(dir, 10_000_000, 50).file);
   }));
 
+test("preflight rejects zero input prices for every required model before creating the ledger", () =>
+  temporary(async (dir) => {
+    let subprocesses = 0;
+    let ledgers = 0;
+    const dependencies = {
+      ...deps(dir, () => { subprocesses++; return { status: 0 }; }),
+      createLedger: () => { ledgers++; throw new Error("unexpected ledger"); },
+    };
+    for (const model of Object.keys(prices)) {
+      await assert.rejects(
+        () => runFirstStagingEvals(
+          { ...input, env: { ...env, EVAL_MODEL_PRICES: JSON.stringify({ [model]: [0, 1] }) } },
+          dependencies,
+        ),
+        /PILOT_MODEL_PRICE_REQUIRED/,
+      );
+    }
+    assert.equal(subprocesses, 0);
+    assert.equal(ledgers, 0);
+    assert.ok(createPilotLedger(dir, 10_000_000, 50).file);
+  }));
+
 test("strategy-specific allocations preserve enough tailoring attempts", async () => {
   for (const [strategy, extractionCalls] of [
     ["llm:default", 12], ["clairic", 15], ["judge:llm:default", 18], ["judge:clairic", 21],
