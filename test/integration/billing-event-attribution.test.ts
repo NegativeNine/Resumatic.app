@@ -29,6 +29,10 @@ it.each([null, 3])("attributes events in the owning Directory and ignores delive
       expect(state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM billing_events WHERE id='evt_late'").one().n).toBe(0);
       await expect(instance.acceptBillingEvent(event("evt_legacy"))).rejects.toThrow("attribution");
     } finally {
+      // The event and deletion schedule immediate background alarms. This test
+      // exercises attribution only, so cancel its pending alarm before its
+      // isolated worker is torn down.
+      await state.storage.deleteAlarm();
       for (const key of Object.keys(local)) if (!(key in saved)) delete local[key];
       Object.assign(local, saved);
     }

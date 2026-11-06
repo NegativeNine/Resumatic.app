@@ -16,7 +16,7 @@ import { PILOT_IDENTITY_PATHS, PILOT_MAX_CALLS, PILOT_MAX_MICROS } from "./pilot
 import { stagingPilotBudget } from "./pilot/access";
 import { createArchive, MAX_ARCHIVE_BYTES, type ArchiveEntry } from "../render/archive";
 import { guardedStream } from "./guarded-stream";
-import { cacheFenceEnabled, putExportCache } from "./cache-write";
+import { cachedExport } from "./vault-export-cache";
 import { billingConfig } from "../shared/billing";
 import { verifyStripe, parseStripeEvent, stripeClient } from "./billing";
 import {
@@ -822,20 +822,8 @@ api.get("/resumes/:id/pdf", async (c) => {
   // from new output for this same immutable version; old versions keep keys.
   const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
   const key = pdfKey(c.get("session").vid, resumeId, data.version, hasUnknownEndDates);
-  let pdf: ArrayBuffer | Uint8Array;
-  const cached = await c.env.FILES.get(key);
-  if (cached) {
-    pdf = await cached.arrayBuffer();
-  } else {
-    pdf = await renderPdf(c.env, renderResumeHtml(data));
-    await putExportCache(c.env.FILES, myVault(c), c.get("who"), key, pdf, "pdf", cacheFenceEnabled(c.env));
-  }
-  try {
-    await myVault(c).checkSession(c.get("who"));
-  } catch (error) {
-    await c.env.FILES.delete(key);
-    throw error;
-  }
+  const pdf = await cachedExport(myVault(c), c.env.FILES, c.get("who"), key,
+    () => renderPdf(c.env, renderResumeHtml(data)));
   const name = fileName(
     [data.profile.name, data.company].filter(Boolean).join(" ") || "resume",
   );
@@ -971,16 +959,8 @@ api.get("/resumes/:id/docx", async (c) => {
   );
   const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
   const key = docxKey(c.get("session").vid, c.req.param("id"), data.version, hasUnknownEndDates);
-  const stored = await c.env.FILES.get(key);
-  const bytes = stored ? await stored.arrayBuffer() : renderDocx(data);
-  if (!stored)
-    await putExportCache(c.env.FILES, myVault(c), c.get("who"), key, bytes, "docx", cacheFenceEnabled(c.env));
-  try {
-    await myVault(c).checkSession(c.get("who"));
-  } catch (error) {
-    await c.env.FILES.delete(key);
-    throw error;
-  }
+  const bytes = await cachedExport(myVault(c), c.env.FILES, c.get("who"), key,
+    async () => renderDocx(data));
   return new Response(bytes, {
     headers: {
       "content-type":

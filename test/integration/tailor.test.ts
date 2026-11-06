@@ -1,8 +1,10 @@
 import { env } from "cloudflare:workers";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { runInDurableObject } from "cloudflare:test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setModels } from "../../src/ai/models";
 import { setPdfRenderer } from "../../src/render/pdf";
-import { vaultPrefix } from "../../src/shared/r2";
+import { docxKey, pdfKey, vaultPrefix } from "../../src/shared/r2";
+import { vault } from "../../src/shared/stubs";
 import {
   JOB_DESCRIPTION,
   RESUME,
@@ -296,14 +298,20 @@ describe("editing and PDF export", () => {
     const vid = JSON.parse(
       atob(user.cookie.slice("__Host-session=".length).split(".")[0]!.replace(/-/g, "+").replace(/_/g, "/")),
     ).vid;
-    const cached = await env.FILES.list({ prefix: `${vaultPrefix(vid)}exports/` });
-    expect(cached.objects).toHaveLength(1);
+    const key = pdfKey(vid, resume.id, resume.version, resume.body.sections.some((s: { unknownEndStartDate?: string }) => !!s.unknownEndStartDate));
+    expect((await env.FILES.list({ prefix: `${vaultPrefix(vid)}exports/` })).objects).toHaveLength(0);
     const previous = env.PILOT_SHARED_BUDGET;
     try {
       env.PILOT_SHARED_BUDGET = "true";
       expect(await bytesOf(await user.fetch(`/api/resumes/${resume.id}/pdf`))).toBe("%PDF-1.7 fake 1");
       expect(rendered).toHaveLength(1);
-      await env.FILES.delete(cached.objects[0]!.key);
+      await runInDurableObject(vault(env, vid), (_instance, state) => {
+        state.storage.sql.exec(`DELETE FROM export_cache_chunks WHERE cache_key=?`, key);
+        state.storage.sql.exec(`DELETE FROM export_cache WHERE cache_key=?`, key);
+      });
+      await env.FILES.put(key, new TextEncoder().encode("%PDF-1.7 historical"));
+      expect(await bytesOf(await user.fetch(`/api/resumes/${resume.id}/pdf`))).toBe("%PDF-1.7 historical");
+      await env.FILES.delete(key);
       const response = await user.fetch(`/api/resumes/${resume.id}/pdf`);
       expect(response.status).toBe(503);
       expect(await response.json()).toMatchObject({ error: "unavailable" });
@@ -311,6 +319,46 @@ describe("editing and PDF export", () => {
     } finally {
       env.PILOT_SHARED_BUDGET = previous;
     }
+  });
+
+  it("caches PDF and DOCX in the Vault without any new R2 writes", async () => {
+    const user = await readyUser();
+    const resume = await tailor(user, await newApplication(user));
+    const vid = JSON.parse(atob(user.cookie.slice("__Host-session=".length).split(".")[0]!.replace(/-/g, "+").replace(/_/g, "/"))).vid;
+    const put = vi.spyOn(env.FILES, "put");
+    try {
+      const pdf = await user.fetch(`/api/resumes/${resume.id}/pdf`);
+      expect(pdf.status).toBe(200);
+      expect(await bytesOf(pdf)).toBe("%PDF-1.7 fake 1");
+      expect(await bytesOf(await user.fetch(`/api/resumes/${resume.id}/pdf`))).toBe("%PDF-1.7 fake 1");
+      expect(rendered).toHaveLength(1);
+      const first = await user.fetch(`/api/resumes/${resume.id}/docx`);
+      expect(first.status).toBe(200);
+      const expected = new Uint8Array(await first.arrayBuffer());
+      const second = await user.fetch(`/api/resumes/${resume.id}/docx`);
+      expect(second.status).toBe(200);
+      expect(new Uint8Array(await second.arrayBuffer())).toEqual(expected);
+      expect(put).not.toHaveBeenCalled();
+      await runInDurableObject(vault(env, vid), (_instance, state) => {
+        expect(state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM export_cache`).one().count).toBe(2);
+      });
+    } finally { put.mockRestore(); }
+  });
+
+  it("reads legacy R2 PDF and DOCX cache entries without rendering or writing R2", async () => {
+    const user = await readyUser();
+    const resume = await tailor(user, await newApplication(user));
+    const vid = JSON.parse(atob(user.cookie.slice("__Host-session=".length).split(".")[0]!.replace(/-/g, "+").replace(/_/g, "/"))).vid;
+    const unknown = resume.body.sections.some((s: { unknownEndStartDate?: string }) => !!s.unknownEndStartDate);
+    await env.FILES.put(pdfKey(vid, resume.id, resume.version, unknown), new TextEncoder().encode("historical-pdf"));
+    await env.FILES.put(docxKey(vid, resume.id, resume.version, unknown), new TextEncoder().encode("historical-docx"));
+    const put = vi.spyOn(env.FILES, "put");
+    try {
+      expect(await bytesOf(await user.fetch(`/api/resumes/${resume.id}/pdf`))).toBe("historical-pdf");
+      expect(await bytesOf(await user.fetch(`/api/resumes/${resume.id}/docx`))).toBe("historical-docx");
+      expect(put).not.toHaveBeenCalled();
+      expect(rendered).toHaveLength(0);
+    } finally { put.mockRestore(); }
   });
 
   it("rejects direct unverified edits and keeps the cached resume unchanged", async () => {
@@ -362,7 +410,8 @@ describe("editing and PDF export", () => {
     const pdfs = await env.FILES.list({
       prefix: `${vaultPrefix(vid)}exports/`,
     });
-    expect(pdfs.objects).toHaveLength(1);
+    // New render caches live inside the Vault; legacy R2 objects remain readable.
+    expect(pdfs.objects).toHaveLength(0);
 
     expect(
       (

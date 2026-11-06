@@ -3,6 +3,11 @@ const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const STATES = new Set(["queued", "running", "paused", "errored", "terminated", "complete", "waitingForPause", "waiting", "rollingBack"]);
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_SCAN_BYTES = 32 * 1024 * 1024;
+const MAX_FULL_STEPS = 100;
+// Fleet creates these names from integer loop indexes only. The suffix form is
+// based on the local runtime and must be confirmed against staging; unknown
+// names are never sent in a URL or treated as fully inspected.
+const FLEET_STEP = /^(?:(?:list|start) (?:[0-9]|1[0-6]) (?:0|[1-9][0-9]{0,2})|poll (?:[0-9]|1[0-6]) (?:0|[1-9][0-9]{0,2}) (?:[0-9]|1[0-9]))-[1-9][0-9]{0,3}$/;
 
 /** Read provider responses without buffering an unbounded log or echoing it. */
 async function readJson(response, budget) {
@@ -44,36 +49,48 @@ async function readJson(response, budget) {
  * partial, redacted or changing view, and a running instance may write later.
  * No provider payload, step name or other vault ID leaves this function.
  */
-export async function inspectFleetWorkflowInventory({ vaultId, accountId, token, workflows, maxInstances = 50, fetcher = fetch }) {
+export async function inspectFleetWorkflowInventory({ vaultId, accountId, token, workflows, maxInstances = 50, maxFullSteps = 0, fetcher = fetch }) {
   if (!VAULT.test(vaultId ?? "") || !/^[a-f0-9]{32}$/i.test(accountId ?? "") ||
       typeof token !== "string" || !token || !Array.isArray(workflows) ||
-      !Number.isSafeInteger(maxInstances) || maxInstances < 1 || maxInstances > 250)
+      !Number.isSafeInteger(maxInstances) || maxInstances < 1 || maxInstances > 250 ||
+      !Number.isSafeInteger(maxFullSteps) || maxFullSteps < 0 || maxFullSteps > MAX_FULL_STEPS)
     throw new Error("INVALID_FLEET_INVENTORY_CONFIGURATION");
   const entries = workflows.filter((entry) => entry?.binding === "FLEET_REEMBED");
   if (entries.length !== 1 || typeof entries[0].name !== "string" || !/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(entries[0].name))
     throw new Error("INVALID_FLEET_INVENTORY_CONFIGURATION");
   const root = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workflows/${encodeURIComponent(entries[0].name)}/instances`;
   const budget = { used: 0 };
-  async function get(url) {
+  async function get(url, jsonOnly = false) {
     let response;
     try {
       response = await fetcher(url, { method: "GET", headers: { Authorization: `Bearer ${token}` }, redirect: "error", signal: AbortSignal.timeout(15000) });
     } catch { throw new Error("PROVIDER_REQUEST_FAILED"); }
+    // Full-step responses can be binary streams. Do not interpret binary
+    // content as JSON or retain it when this diagnostic only handles JSON.
+    if (jsonOnly && !/^application\/(?:[a-z0-9.+-]*\+)?json(?:\s*;|\s*$)/i.test(response.headers.get("content-type") ?? "")) {
+      await response.body?.cancel().catch(() => {});
+      throw new Error("INVALID_PROVIDER_RESPONSE");
+    }
     return readJson(response, budget);
   }
   let cursor;
-  let attempted = 0, inspected = 0, uninspectable = 0, scanLimited = false, pages = 0;
+  let attempted = 0, inspected = 0, uninspectable = 0, scanLimited = false, paginationUncertain = false, pages = 0;
+  let fullStepsRequested = 0, fullStepsInspected = 0, fullStepScanLimited = false;
   const seenCursors = new Set(), seenIds = new Set(), references = [];
   do {
     if (++pages > 200) throw new Error("PROVIDER_SCAN_LIMIT");
     const query = new URLSearchParams({ per_page: "100" });
     if (cursor) query.set("cursor", cursor);
     const page = await get(`${root}?${query}`);
-    if (!Array.isArray(page.result) || page.result.length > 100 || !page.result_info ||
-        typeof page.result_info !== "object" || Array.isArray(page.result_info) ||
-        (page.result_info.cursor !== undefined && page.result_info.cursor !== null && typeof page.result_info.cursor !== "string"))
+    const info = page.result_info;
+    // Cloudflare documents result_info as optional. Its absence, or a full
+    // page without a continuation cursor, leaves pagination uncertain; the
+    // available instances can still provide useful positive evidence.
+    if (!Array.isArray(page.result) || page.result.length > 100 ||
+        (info !== undefined && (info === null || typeof info !== "object" || Array.isArray(info))) ||
+        (info?.cursor !== undefined && info.cursor !== null && typeof info.cursor !== "string"))
       throw new Error("INVALID_PROVIDER_RESPONSE");
-    if (page.result.length === 100 && !page.result_info.cursor) throw new Error("PROVIDER_PAGINATION_AMBIGUOUS");
+    if (info === undefined || (page.result.length === 100 && !info.cursor)) paginationUncertain = true;
     for (const item of page.result) {
       const id = item?.id;
       if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(id) || seenIds.has(id))
@@ -102,22 +119,54 @@ export async function inspectFleetWorkflowInventory({ vaultId, accountId, token,
       // The search is positive evidence only. Provider strings include JSON
       // step results; substring matching deliberately does not claim an
       // exhaustive parse of every version or redacted output representation.
-      if (JSON.stringify(result).toLowerCase().includes(vaultId.toLowerCase()))
-        references.push({ id, status: result.status });
-      if (!Array.isArray(result.steps) ||
-          result.steps.some((step) => !step || typeof step !== "object" || Array.isArray(step) ||
-            step.config?.sensitive === "output" ||
-            (step.type === "step" && step.success === true && typeof step.output !== "string")) ||
-          (Number.isSafeInteger(result.step_count) && result.step_count > result.steps.length))
-        uninspectable++;
+      let matched = JSON.stringify(result).toLowerCase().includes(vaultId.toLowerCase());
+      let incomplete = !Array.isArray(result.steps) ||
+        (Number.isSafeInteger(result.step_count) && result.step_count > result.steps.length);
+      const seenStepNames = new Set();
+      for (const step of Array.isArray(result.steps) ? result.steps : []) {
+        if (!step || typeof step !== "object" || Array.isArray(step)) { incomplete = true; continue; }
+        if (step.type !== "step") { if (step.type !== "sleep" && step.type !== "termination") incomplete = true; continue; }
+        if (step.success !== true) { incomplete = true; continue; }
+        // Instance detail output can be a truncated preview. Fetching full
+        // output is opt-in; malformed or unknown names never leave the client.
+        if (step.config?.sensitive === "output" || typeof step.name !== "string" ||
+            !FLEET_STEP.test(step.name) || seenStepNames.has(step.name)) { incomplete = true; continue; }
+        seenStepNames.add(step.name);
+        if (fullStepsRequested >= maxFullSteps) {
+          incomplete = true;
+          if (maxFullSteps > 0) fullStepScanLimited = true;
+          continue;
+        }
+        fullStepsRequested++;
+        const query = new URLSearchParams({ name: step.name, type: "step" });
+        try {
+          const full = await get(`${root}/${encodeURIComponent(id)}/step?${query}`, true);
+          const value = full.result;
+          if (!value || typeof value !== "object" || Array.isArray(value) ||
+              value.status !== "complete" || !("output" in value) || value.output === null || value.output === "[REDACTED]") {
+            incomplete = true;
+            continue;
+          }
+          fullStepsInspected++;
+          if (JSON.stringify(value.output).toLowerCase().includes(vaultId.toLowerCase())) matched = true;
+        } catch {
+          // An unavailable, oversized, non-JSON or otherwise ambiguous step
+          // is not evidence of absence. Never echo its name or response.
+          incomplete = true;
+          if (budget.used > MAX_SCAN_BYTES) { scanLimited = true; break; }
+        }
+      }
+      if (matched) references.push({ id, status: result.status });
+      if (incomplete) uninspectable++;
+      if (scanLimited) break;
     }
-    if (scanLimited) break;
-    cursor = page.result_info.cursor || undefined;
+    if (scanLimited || paginationUncertain) break;
+    cursor = info.cursor || undefined;
     if (cursor && (cursor.length > 4096 || seenCursors.has(cursor))) throw new Error("INVALID_PROVIDER_PAGINATION");
     if (cursor) seenCursors.add(cursor);
   } while (cursor);
   return {
-    status: "pending", inspected, uninspectable, scanLimited, references,
-    reasons: ["FLEET_SNAPSHOT_NOT_PROVEN", "DELAYED_FLEET_EXECUTION_NOT_EXCLUDED", "STEP_OUTPUT_MAY_BE_REDACTED"],
+    status: "pending", inspected, uninspectable, scanLimited, paginationUncertain, fullStepsRequested, fullStepsInspected, fullStepScanLimited, references,
+    reasons: ["FLEET_SNAPSHOT_NOT_PROVEN", "DELAYED_FLEET_EXECUTION_NOT_EXCLUDED", "STEP_OUTPUT_MAY_BE_REDACTED", "STEP_PREVIEWS_MAY_BE_TRUNCATED", ...(paginationUncertain ? ["PROVIDER_PAGINATION_UNCERTAIN"] : [])],
   };
 }

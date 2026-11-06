@@ -54,6 +54,7 @@ import type {
   Who,
 } from "../shared/types";
 import { UploadStore, type UploadDescriptor } from "./uploads";
+import { ExportCache, EXPORT_CACHE_ITEM_BYTES } from "./export-cache";
 import { VaultOperations, ReembedStore } from "./operations";
 import {
   isMaintenanceFenced,
@@ -3375,6 +3376,27 @@ export class Vault extends DurableObject<Env> {
       this.setMeta("entitlement_revision", String(revision));
       this.runs.setBucket(this.quotaBucket());
     });
+  }
+
+  /** Regenerable output caches are owner-scoped and serialized with Vault closure. */
+  async readExportCache(who: Who, key: string): Promise<Uint8Array | null> {
+    this.requireOwner(who);
+    const entry = new ExportCache(this.sql, (fn) => this.ctx.storage.transactionSync(fn), this.vaultId).read(key);
+    if (!entry) return null;
+    const digest = base64url(await crypto.subtle.digest("SHA-256", new Uint8Array(entry.bytes).buffer));
+    this.requireOwner(who);
+    return digest === entry.digest ? entry.bytes : null;
+  }
+
+  async putExportCache(who: Who, key: string, input: ArrayBuffer | Uint8Array): Promise<boolean> {
+    this.requireOwner(who);
+    if (!(input instanceof Uint8Array) && !(input instanceof ArrayBuffer)) throw new AppError("invalid", "invalid export cache bytes");
+    if (!input.byteLength || input.byteLength > EXPORT_CACHE_ITEM_BYTES) return false;
+    // Isolate the bytes from callers while hashing can yield to closure or sign-out.
+    const bytes = new Uint8Array(input instanceof Uint8Array ? input : input.slice(0));
+    const digest = base64url(await crypto.subtle.digest("SHA-256", bytes.buffer));
+    this.requireOwner(who);
+    return new ExportCache(this.sql, (fn) => this.ctx.storage.transactionSync(fn), this.vaultId).put(key, bytes, digest);
   }
   async billingInfo(who: Who) {
     this.requireOwner(who);

@@ -28,11 +28,86 @@ test("finds visible fleet references without returning step state or other users
   const report = await inspectFleetWorkflowInventory({ ...cfg, fetcher });
   assert.equal(report.status, "pending");
   assert.equal(report.inspected, 2);
-  assert.equal(report.uninspectable, 0);
+  assert.equal(report.uninspectable, 1); // The detail response can contain truncated previews.
   assert.deepEqual(report.references, [{ id: id(1), status: "running" }]);
   assert.doesNotMatch(JSON.stringify(report), /secret|bbbbbbbb/);
   assert.ok(calls.every(({ options }) => options.method === "GET" && options.redirect === "error"));
   assert.ok(calls.filter(({ url }) => url.includes("/instances/")).every(({ url }) => url.endsWith("?simple=false")));
+});
+
+test("optionally inspects bounded full step output without reporting names or other Vault IDs", async () => {
+  const calls = [];
+  const fetcher = async (url) => {
+    calls.push(url);
+    const parsed = new URL(url);
+    if (parsed.pathname.endsWith("/instances")) return ok([{ id: id(1) }]);
+    if (parsed.pathname.endsWith("/step")) {
+      assert.equal(parsed.searchParams.get("name"), "list 3 9-1");
+      assert.equal(parsed.searchParams.get("type"), "step");
+      return ok({ status: "complete", output: { ids: [otherVault, vaultId] } });
+    }
+    return ok({ status: "complete", step_count: 1, steps: [{ type: "step", name: "list 3 9-1", success: true, output: "truncated preview" }] });
+  };
+  const preview = await inspectFleetWorkflowInventory({ ...cfg, fetcher });
+  assert.equal(preview.fullStepsRequested, 0);
+  assert.equal(preview.uninspectable, 1);
+  assert.deepEqual(preview.references, []);
+  const report = await inspectFleetWorkflowInventory({ ...cfg, maxFullSteps: 1, fetcher });
+  assert.equal(report.fullStepsRequested, 1);
+  assert.equal(report.fullStepsInspected, 1);
+  assert.equal(report.uninspectable, 0);
+  assert.deepEqual(report.references, [{ id: id(1), status: "complete" }]);
+  assert.equal(report.status, "pending");
+  assert.doesNotMatch(JSON.stringify(report), /list 3 9|bbbbbbbb/);
+  assert.equal(calls.filter((url) => new URL(url).pathname.endsWith("/step")).length, 1);
+});
+
+test("full step requests reject unsafe names and respect their shared limit", async () => {
+  const calls = [];
+  const fetcher = async (url) => {
+    calls.push(url);
+    const parsed = new URL(url);
+    if (parsed.pathname.endsWith("/instances")) return ok([{ id: id(1) }]);
+    if (parsed.pathname.endsWith("/step")) return ok({ status: "complete", output: "not present" });
+    return ok({ status: "complete", steps: [
+      { type: "step", name: "list 3 9-1", success: true },
+      { type: "step", name: "start 3 9-1", success: true },
+      { type: "step", name: "list 3 9-1&private=secret", success: true },
+      { type: "step", name: "poll 3 9 0-1", success: true, config: { sensitive: "output" } },
+    ] });
+  };
+  const report = await inspectFleetWorkflowInventory({ ...cfg, maxFullSteps: 1, fetcher });
+  assert.equal(report.fullStepsRequested, 1);
+  assert.equal(report.fullStepsInspected, 1);
+  assert.equal(report.fullStepScanLimited, true);
+  assert.equal(report.uninspectable, 1);
+  assert.ok(calls.every((url) => !url.includes("secret")));
+  assert.doesNotMatch(JSON.stringify(report), /secret|list 3 9/);
+  await assert.rejects(() => inspectFleetWorkflowInventory({ ...cfg, maxFullSteps: 101, fetcher }), /INVALID_FLEET_INVENTORY_CONFIGURATION/);
+});
+
+test("unavailable, oversized and redacted full step results remain uninspectable", async () => {
+  for (const response of [
+    () => new Response("sensitive", { status: 503 }),
+    () => new Response(new Uint8Array(4 * 1024 * 1024 + 1), { headers: { "content-type": "application/json" } }),
+    () => new Response(JSON.stringify({ success: true, result: { status: "complete", output: vaultId } }), { headers: { "content-type": "application/octet-stream" } }),
+    () => ok({ status: "complete", output: "[REDACTED]" }),
+    () => ok({ status: "running", output: null }),
+  ]) {
+    const fetcher = async (url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname.endsWith("/instances")) return ok([{ id: id(1) }]);
+      if (parsed.pathname.endsWith("/step")) return response();
+      return ok({ status: "running", steps: [{ type: "step", name: "poll 3 9 0-1", success: true }] });
+    };
+    const report = await inspectFleetWorkflowInventory({ ...cfg, maxFullSteps: 1, fetcher });
+    assert.equal(report.fullStepsRequested, 1);
+    assert.equal(report.fullStepsInspected, 0);
+    assert.equal(report.uninspectable, 1);
+    assert.equal(report.status, "pending");
+    assert.deepEqual(report.references, []);
+    assert.doesNotMatch(JSON.stringify(report), /sensitive|poll 3 9/);
+  }
 });
 
 test("reports unavailable step state, invalid instance IDs and limits without claiming absence", async () => {
@@ -47,6 +122,30 @@ test("reports unavailable step state, invalid instance IDs and limits without cl
   assert.equal(report.uninspectable, 2);
   assert.equal(report.scanLimited, true);
   assert.ok(report.reasons.includes("STEP_OUTPUT_MAY_BE_REDACTED"));
+});
+
+test("inspects available instances when optional pagination metadata is omitted", async () => {
+  const fetcher = async (url) => new URL(url).pathname.endsWith("/instances")
+    ? Response.json({ success: true, result: [{ id: id(1) }] })
+    : ok({ status: "complete", steps: [{ type: "step", success: true, output: JSON.stringify({ ids: [otherVault, vaultId] }) }] });
+  const report = await inspectFleetWorkflowInventory({ ...cfg, fetcher });
+  assert.deepEqual(report.references, [{ id: id(1), status: "complete" }]);
+  assert.equal(report.paginationUncertain, true);
+  assert.ok(report.reasons.includes("PROVIDER_PAGINATION_UNCERTAIN"));
+  assert.equal(report.status, "pending");
+  assert.doesNotMatch(JSON.stringify(report), /bbbbbbbb/);
+});
+
+test("retains positive findings from a full page without a continuation cursor", async () => {
+  const fetcher = async (url) => new URL(url).pathname.endsWith("/instances")
+    ? ok(Array.from({ length: 100 }, (_, index) => ({ id: id(index + 1) })))
+    : ok({ status: "running", steps: [{ type: "step", success: true, output: vaultId }] });
+  const report = await inspectFleetWorkflowInventory({ ...cfg, maxInstances: 1, fetcher });
+  assert.deepEqual(report.references, [{ id: id(1), status: "running" }]);
+  assert.equal(report.scanLimited, true);
+  assert.equal(report.paginationUncertain, true);
+  assert.ok(report.reasons.includes("PROVIDER_PAGINATION_UNCERTAIN"));
+  assert.equal(report.status, "pending");
 });
 
 test("marks redacted, missing and truncated step results as uninspectable", async () => {
@@ -79,6 +178,8 @@ test("bounds provider responses and rejects malformed scans without revealing re
   assert.equal(report.uninspectable, 1);
   assert.equal(report.inspected, 0);
   await assert.rejects(() => inspectFleetWorkflowInventory({ ...cfg, fetcher: async () => ok([], { cursor: "again" }) }), /INVALID_PROVIDER_PAGINATION/);
+  await assert.rejects(() => inspectFleetWorkflowInventory({ ...cfg, fetcher: async () => ok([], null) }), /INVALID_PROVIDER_RESPONSE/);
+  await assert.rejects(() => inspectFleetWorkflowInventory({ ...cfg, fetcher: async () => ok([], { cursor: 42 }) }), /INVALID_PROVIDER_RESPONSE/);
   await assert.rejects(() => inspectFleetWorkflowInventory({ ...cfg, fetcher: async () => new Response("private payload", { status: 403 }) }), /PROVIDER_REQUEST_FAILED/);
   await assert.rejects(() => inspectFleetWorkflowInventory({ ...cfg, workflows: [], fetcher }), /INVALID_FLEET_INVENTORY_CONFIGURATION/);
   await assert.rejects(() => inspectFleetWorkflowInventory({ ...cfg, fetcher: async (url) =>

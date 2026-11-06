@@ -28,6 +28,7 @@ try {
     token: process.env.CLOUDFLARE_API_TOKEN,
     workflows: config.workflows,
     maxInstances: Number(value("--max-instances") ?? 50),
+    maxFullSteps: Number(value("--max-full-steps") ?? 0),
   });
   const output = JSON.stringify({ ...report, environment, checkedAt: new Date().toISOString() }, null, 2) + "\n";
   if (reportPath) await writeFile(reportPath, output, { mode: 0o600, flag: "wx" });
