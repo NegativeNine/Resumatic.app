@@ -380,6 +380,16 @@ function DocumentDownload({ doc }: { doc: DocumentView }) {
   return (
     <div>
       <div className="actions">
+        {(doc.kind === "letter" || doc.kind === "prep") && (
+          <a
+            className="button small"
+            href={api.documentDocxUrl(doc.id)}
+            download={doc.kind === "letter" ? "cover-letter.docx" : "interview-preparation.docx"}
+            referrerPolicy="no-referrer"
+          >
+            Download Word
+          </a>
+        )}
         <button type="button" className="small" onClick={download}>
           Download text
         </button>

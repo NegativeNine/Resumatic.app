@@ -591,6 +591,17 @@ describe("segmentation and evaluation", () => {
       recall: 1,
     });
   });
+  it("counts dates on missed roles as incorrect instead of silently excluding them", () => {
+    const testCase = CASES[0]!;
+    const prediction = verifyExtraction(testCase.markdown, oraclePrediction(testCase)).extraction;
+    expect(scoreCase(prediction, testCase.gold, testCase.markdown)).toMatchObject({
+      dateCorrect: 2, dateCount: 2, dateAccuracy: 1,
+    });
+    prediction.roles = [];
+    expect(scoreCase(prediction, testCase.gold, testCase.markdown)).toMatchObject({
+      roleRecall: 0, dateCorrect: 0, dateCount: 2, dateAccuracy: 0,
+    });
+  });
   it("distinguishes explicitly current roles from roles whose end date is unknown", () => {
     const testCase = CASES[0]!;
     const prediction = verifyExtraction(testCase.markdown, oraclePrediction(testCase)).extraction;

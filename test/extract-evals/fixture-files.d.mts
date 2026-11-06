@@ -19,6 +19,7 @@ export interface SyntheticSourceFixture {
 export function docxFixture(markdown: string): Uint8Array;
 export function pdfSafe(text: string): string;
 export function pdfFixture(pages: string[], columns?: number): Uint8Array;
+export function taggedPdfFixture(): Uint8Array;
 export function scanPixels(text: string): { width: number; height: number; pixels: Uint8Array };
 export function scannedPdfFixture(text: string): Uint8Array;
 export function makeFixtures(): SyntheticSourceFixture[];

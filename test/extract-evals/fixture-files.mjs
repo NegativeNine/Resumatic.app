@@ -105,6 +105,46 @@ export function pdfFixture(pages, columns = 1) {
   return new Uint8Array(Buffer.from(pdf, "ascii"));
 }
 
+/** A minimal tagged source with a document, headings, paragraph and list. */
+export function taggedPdfFixture() {
+  const content = [
+    ["H1", "Avery Example", 16, 740],
+    ["P", "Software Engineer", 11, 716],
+    ["H2", "Acme Labs - Engineer - 2021 to 2024", 13, 688],
+    ["LBody", "Built a deployment tool for five services.", 11, 662],
+    ["LBody", "Reduced deployment time by 30%.", 11, 642],
+  ].map(([role, value, size, y], mcid) =>
+    `/${role} << /MCID ${mcid} >> BDC\nBT /F1 ${size} Tf 1 0 0 1 72 ${y} Tm (${pdfEscape(value)}) Tj ET\nEMC`,
+  ).join("\n");
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 6 0 R /MarkInfo << /Marked true >> /Lang (en-US) >>",
+    "<< /Type /Pages /Count 1 /Kids [4 0 R] >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R /StructParents 0 /Tabs /S >>",
+    `<< /Length ${Buffer.byteLength(content, "ascii")} >>\nstream\n${content}\nendstream`,
+    "<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 16 0 R /ParentTreeNextKey 1 >>",
+    "<< /Type /StructElem /S /Document /P 6 0 R /K [8 0 R 9 0 R 10 0 R 11 0 R] >>",
+    "<< /Type /StructElem /S /H1 /P 7 0 R /Pg 4 0 R /K 0 >>",
+    "<< /Type /StructElem /S /P /P 7 0 R /Pg 4 0 R /K 1 >>",
+    "<< /Type /StructElem /S /H2 /P 7 0 R /Pg 4 0 R /K 2 >>",
+    "<< /Type /StructElem /S /L /P 7 0 R /K [12 0 R 14 0 R] >>",
+    "<< /Type /StructElem /S /LI /P 11 0 R /K [13 0 R] >>",
+    "<< /Type /StructElem /S /LBody /P 12 0 R /Pg 4 0 R /K 3 >>",
+    "<< /Type /StructElem /S /LI /P 11 0 R /K [15 0 R] >>",
+    "<< /Type /StructElem /S /LBody /P 14 0 R /Pg 4 0 R /K 4 >>",
+    "<< /Nums [0 [8 0 R 9 0 R 10 0 R 13 0 R 15 0 R]] >>",
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(pdf, "ascii"));
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xref = Buffer.byteLength(pdf, "ascii");
+  pdf += `xref\n0 ${offsets.length}\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return new Uint8Array(Buffer.from(pdf, "ascii"));
+}
+
 // A small built-in bitmap font keeps the scan fixture deterministic without a
 // system font, browser, OCR engine or network service. Rows are five pixels.
 const GLYPHS = {
@@ -261,6 +301,17 @@ export function makeFixtures() {
       layout: "image-only-single-column", pages: 1, origin: "synthetic",
       pdfTextTransform: "ascii-uppercase-raster", goldOffsets: "none",
       conversionStatus: "not-run", promotionEligible: false, sha256: sha256(scan),
+    },
+  });
+  const tagged = taggedPdfFixture();
+  files.push({
+    name: "synthetic-tagged-dev.pdf",
+    bytes: tagged,
+    meta: {
+      id: "synthetic-tagged-dev", split: "dev", format: "pdf", language: "en",
+      layout: "tagged-single-column", pages: 1, origin: "synthetic",
+      pdfTextTransform: "ascii", goldOffsets: "none", conversionStatus: "not-run",
+      promotionEligible: false, sha256: sha256(tagged),
     },
   });
   return files;

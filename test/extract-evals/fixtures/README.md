@@ -4,6 +4,8 @@ These files are reproducibly generated, synthetic source documents. They are **n
 
 `synthetic-scan-dev.pdf` rasterizes the first development case in a built-in bitmap font, uppercased and transliterated to ASCII, and embeds the pixels without any text layer. It is a clean synthetic image, not a representative photographic scan. Its reference Markdown is not OCR output, so it has no gold offsets and is never eligible for promotion. It can exercise scan detection and image fallback once those paths are evaluated against real services.
 
+`synthetic-tagged-dev.pdf` is a separate one-page synthetic tagged PDF with a document structure, headings, a paragraph and a two-item list. PDF.js checks its mark information, structure tree, and marked-content references against the selectable text. It is a structural fixture, not evidence of how a conversion service renders tagged PDFs. Its conversion has not been run, it has no conversion gold offsets, and it is ineligible for promotion.
+
 The references include several occupations, English, Spanish and German text, some education sections, varied ownership levels, explicit current and ended dates, a seasonal date, multiple instruction traps, and individually labeled skills. A seasonal date can expose a recall limitation in the current verifier; the harness should report that rather than treating its own oracle input as model-quality evidence. These are still short, generated examples rather than a representative or independently labeled corpus; the five-page stress input has no gold labels.
 
 Regenerate with Node 22:

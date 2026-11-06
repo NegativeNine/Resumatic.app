@@ -65,7 +65,7 @@ describe("synthetic source document fixtures", () => {
   });
   it("reproduces every checked-in byte and marks conversion and promotion pending", () => {
     const generated = makeFixtures();
-    expect(generated).toHaveLength(42);
+    expect(generated).toHaveLength(43);
     const manifest = JSON.parse(
       readFileSync(resolve(root, "manifest.json"), "utf8"),
     ) as {
@@ -114,6 +114,68 @@ describe("synthetic source document fixtures", () => {
       } finally {
         await loading.destroy();
       }
+    }
+  });
+  it("has a tagged document structure whose content references resolve to the intended text", async () => {
+    const bytes = readFileSync(resolve(root, "synthetic-tagged-dev.pdf"));
+    const fixture = makeFixtures().find((item) => item.name === "synthetic-tagged-dev.pdf")!;
+    expect(fixture.meta).toMatchObject({ split: "dev", goldOffsets: "none", conversionStatus: "not-run", promotionEligible: false });
+    // The page's StructParents index resolves to the five structure-element
+    // references in MCID order through the document's ParentTree number tree.
+    const source = bytes.toString("ascii");
+    expect(source).toContain("/StructParents 0");
+    expect(source).toContain("/ParentTree 16 0 R");
+    expect(source).toContain("<< /Nums [0 [8 0 R 9 0 R 10 0 R 13 0 R 15 0 R]] >>");
+    const loading = getDocument({ data: new Uint8Array(bytes), useSystemFonts: true });
+    try {
+      const pdf = await loading.promise;
+      // The PDF.js runtime returns a Map; its published declaration says object.
+      const markInfo = await pdf.getMarkInfo() as unknown as Map<string, boolean> | null;
+      expect(markInfo?.get("Marked")).toBe(true);
+      const page = await pdf.getPage(1);
+      const content = await page.getTextContent({ includeMarkedContent: true });
+      const entries: { id: string; tag: string; text: string }[] = [];
+      for (const item of content.items) {
+        if ("type" in item && item.type === "beginMarkedContentProps") {
+          const marked = item as typeof item & { tag: string };
+          entries.push({ id: marked.id!, tag: marked.tag, text: "" });
+        } else if ("str" in item && entries.length) {
+          entries.at(-1)!.text += item.str;
+        }
+      }
+      expect(entries.map(({ tag, text }) => ({ tag, text }))).toEqual([
+        { tag: "H1", text: "Avery Example" },
+        { tag: "P", text: "Software Engineer" },
+        { tag: "H2", text: "Acme Labs - Engineer - 2021 to 2024" },
+        { tag: "LBody", text: "Built a deployment tool for five services." },
+        { tag: "LBody", text: "Reduced deployment time by 30%." },
+      ]);
+      const leaf = (i: number) => ({ type: "content", id: entries[i]!.id });
+      expect(await page.getStructTree()).toEqual({
+        role: "Root", children: [{ role: "Document", children: [
+          { role: "H1", children: [leaf(0)] },
+          { role: "P", children: [leaf(1)] },
+          { role: "H2", children: [leaf(2)] },
+          { role: "L", children: [
+            { role: "LI", children: [{ role: "LBody", children: [leaf(3)] }] },
+            { role: "LI", children: [{ role: "LBody", children: [leaf(4)] }] },
+          ] },
+        ] }],
+      });
+    } finally {
+      await loading.destroy();
+    }
+  });
+  it("does not label the normal PDF fixture as tagged", async () => {
+    const data = new Uint8Array(readFileSync(resolve(root, "synthetic-01.pdf")));
+    const loading = getDocument({ data, useSystemFonts: true });
+    try {
+      const pdf = await loading.promise;
+      const markInfo = await pdf.getMarkInfo() as unknown as Map<string, boolean> | null;
+      expect(markInfo?.get("Marked") ?? false).toBe(false);
+      expect(await (await pdf.getPage(1)).getStructTree()).toBeNull();
+    } finally {
+      await loading.destroy();
     }
   });
   it("contains a real image-only development PDF without selectable text", async () => {

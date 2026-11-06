@@ -13,8 +13,12 @@ export function scoreVerified(pred, gold, markdown) {
     usedRoles = new Set(),
     usedPredictedRoles = new Set();
   const normalized = (value) => value.trim().replace(/\s+/g, " ").toLowerCase();
+  // Count every known gold date/status, including roles the extractor missed.
+  // Otherwise omitting a difficult role can improve the reported accuracy.
+  const dateCount = gold.roles.reduce((count, role) =>
+    count + Number(role.start !== null) + Number(role.end !== null) +
+      Number(role.current === true) + Number(role.unknownEnd === true), 0);
   let dateCorrect = 0,
-    dateCount = 0,
     correctRoles = 0;
   const rolePairs = [];
   pred.roles.forEach((p, pi) =>
@@ -47,7 +51,6 @@ export function scoreVerified(pred, gold, markdown) {
       // A null gold value does not distinguish unknown from current. Count only
       // dates the reference supplies; precision must not be inferred.
       if (expected !== null) {
-        dateCount++;
         dateCorrect += Number(observed === expected);
         if (observed !== expected) metadataCorrect = false;
       }
@@ -56,13 +59,11 @@ export function scoreVerified(pred, gold, markdown) {
     // ongoing status only when the gold explicitly identifies a current role.
     if (match.current === true) {
       const current = role.startDate !== null && role.endDate === null && !role.unknownEndStartDate;
-      dateCount++;
       dateCorrect += Number(current);
       if (!current) metadataCorrect = false;
     }
     if (match.unknownEnd === true) {
       const unknown = role.startDate === null && role.endDate === null && role.unknownEndStartDate === match.start;
-      dateCount++;
       dateCorrect += Number(unknown);
       if (!unknown) metadataCorrect = false;
     }

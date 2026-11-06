@@ -38,6 +38,7 @@ export interface CaseScore {
   skillExpected: number;
   evidenceCoverageRecall: number;
   roleRecall: number;
+  /** Correct labeled dates and statuses / all labeled dates and statuses, including missed roles. */
   dateAccuracy: number;
   roleMatched: number;
   roleExpected: number;

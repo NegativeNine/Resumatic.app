@@ -630,6 +630,21 @@
       "conversionStatus": "not-run",
       "promotionEligible": false,
       "sha256": "868c0f376bd95e11cdbcea9114f1e33e52fda9316ffdf757e2a946c90ee703df"
+    },
+    {
+      "name": "synthetic-tagged-dev.pdf",
+      "id": "synthetic-tagged-dev",
+      "split": "dev",
+      "format": "pdf",
+      "language": "en",
+      "layout": "tagged-single-column",
+      "pages": 1,
+      "origin": "synthetic",
+      "pdfTextTransform": "ascii",
+      "goldOffsets": "none",
+      "conversionStatus": "not-run",
+      "promotionEligible": false,
+      "sha256": "c5b417abf474e2ba4a00daeadb03b1911f2256a262f82b3fb35ca2b9a189f6ff"
     }
   ]
 }

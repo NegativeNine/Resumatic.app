@@ -235,6 +235,8 @@ export const api = {
     `/api/resumes/${encodeURIComponent(resumeId)}/pdf${versionQuery(version)}`,
   docxUrl: (resumeId: string, version?: number) =>
     `/api/resumes/${encodeURIComponent(resumeId)}/docx${versionQuery(version)}`,
+  documentDocxUrl: (documentId: string) =>
+    `/api/documents/${encodeURIComponent(documentId)}/docx`,
   previewUrl: (resumeId: string, version?: number) =>
     `/api/resumes/${encodeURIComponent(resumeId)}/preview${versionQuery(version)}`,
   billing: () => request<BillingView>("GET", "/api/billing"),

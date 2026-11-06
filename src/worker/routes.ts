@@ -936,7 +936,12 @@ api.get("/documents/:id/docx", async (c) => {
           q.question,
           ...doc.result!.units.filter((u) => u.group === i).map((u) => u.text),
         ])
-      : doc.result.units.map((u) => u.text);
+      : [...new Set(doc.result.units.map((unit) => unit.group))]
+          .sort((a, b) => a - b)
+          .map((group) =>
+            doc.result!.units.filter((unit) => unit.group === group)
+              .map((unit) => unit.text).join(" "),
+          );
   return new Response(
     textDocx(
       doc.kind === "prep" ? "Interview preparation" : "Cover letter",
@@ -946,7 +951,11 @@ api.get("/documents/:id/docx", async (c) => {
       headers: {
         "content-type":
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "content-disposition": 'attachment; filename="document.docx"',
+        "content-disposition": doc.kind === "prep"
+          ? 'attachment; filename="interview-preparation.docx"'
+          : 'attachment; filename="cover-letter.docx"',
+        "cache-control": "private, no-store",
+        "x-content-type-options": "nosniff",
       },
     },
   );
