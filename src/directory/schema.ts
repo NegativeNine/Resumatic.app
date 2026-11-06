@@ -2,7 +2,9 @@ import { BILLING_MIGRATIONS, BILLING_DEFERRED_MIGRATIONS, BILLING_DELIVERY_RETRY
 import { PLACEMENT_FENCE_MIGRATIONS } from "./placement-fence";
 import { INVITE_BINDING_MIGRATIONS } from "./invite-binding";
 import { INVITE_INVENTORY_MIGRATIONS } from "./invite-inventory";
-import { INVITE_COORDINATOR_MIGRATIONS } from "./invite-coordinator";
+import { INVITE_COORDINATOR_MIGRATIONS, INVITE_COORDINATOR_TARGET_MIGRATIONS } from "./invite-coordinator";
+import { SHARD_INVITE_BINDING_MIGRATIONS } from "./shard-invite-binding";
+import { INVITE_TARGET_SEAL_MIGRATIONS } from "./invite-target-seal";
 // Directory tables. Holds identities and the vault directory; never career data.
 
 export const DIRECTORY_MIGRATIONS: readonly string[][] = [
@@ -203,6 +205,9 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
   INVITE_BINDING_MIGRATIONS,
   INVITE_INVENTORY_MIGRATIONS,
   INVITE_COORDINATOR_MIGRATIONS,
+  SHARD_INVITE_BINDING_MIGRATIONS,
+  INVITE_TARGET_SEAL_MIGRATIONS,
+  INVITE_COORDINATOR_TARGET_MIGRATIONS,
 ];
 
 export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T, global = false, shard = false): void {

@@ -22,12 +22,12 @@ describe("sharded account invitation claims", () => {
     // The first Worker has an invite approval but has not called claim yet.
     await global.requireInvite(p.email);
     const initial = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
-    const account = await initial.directory.signIn(initial.input);
-    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, initial.input.shardClaimToken);
+    const account = await initial.directory.signInWithInviteClaim({ ...initial.input, reportCreation: true });
+    expect(account.shardInviteClaim).toEqual(initial.input.shardInviteClaim);
+    await global.bindIdentityHomeV3(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, account.shardInviteClaim ?? null);
     const home = directoryForUser(env, account.userId);
     await home.deleteAccount(account.userId, account.vaultId);
-    // Sharded invite cleanup is held until an operator resolves the captured
-    // generation. Here explicit revocation makes the original invite absent.
+    // Explicit revocation makes the original invite absent before cleanup.
     await global.removeInviteV2(p.email);
     await runDurableObjectAlarm(home);
     await eventually(async () => !(await home.existingIdentity(p.provider, p.subject)), "sharded identity erasure");
@@ -49,7 +49,9 @@ describe("sharded account invitation claims", () => {
       await expect((instance as Directory).claimIdentityHome(p.provider, p.subject, shard, p.email, undefined, p.authEpoch)).rejects.toThrow("sign-in is stale");
     });
     const fresh = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, { ...p, authEpoch: await global.googleAuthEpoch() });
-    expect((await fresh.directory.signIn(fresh.input)).userId).toMatch(/^s(?:[0-9]|1[0-5]):/);
+    const replacement = await fresh.directory.signInWithInviteClaim({ ...fresh.input, reportCreation: true });
+    expect(replacement.userId).toMatch(/^s(?:[0-9]|1[0-5]):/);
+    await global.bindIdentityHomeV3(p.provider, p.subject, replacement.userId, fresh.input.authEpoch, undefined, false, replacement.shardInviteClaim ?? null);
   }, 30_000);
 
   it("keeps existing shard accounts accessible after invitation removal", async () => {
@@ -57,11 +59,16 @@ describe("sharded account invitation claims", () => {
     const global = directory(env);
     await global.addInvite(p.email);
     const initial = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
-    const account = await initial.directory.signIn(initial.input);
-    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, initial.input.shardClaimToken);
+    const account = await initial.directory.signInWithInviteClaim({ ...initial.input, reportCreation: true });
+    expect(account.shardInviteClaim).toEqual(initial.input.shardInviteClaim);
+    await global.bindIdentityHomeV3(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, account.shardInviteClaim ?? null);
     await global.removeInviteV2(p.email);
     const returning = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "1" }, p);
-    expect(await returning.directory.signIn(returning.input)).toEqual(account);
+    const recovered = await returning.directory.signInWithInviteClaim({ ...returning.input, reportCreation: true });
+    expect(recovered.userId).toBe(account.userId);
+    expect(recovered.vaultId).toBe(account.vaultId);
+    expect(recovered.shardInviteClaim).toEqual(account.shardInviteClaim);
+    await global.bindIdentityHomeV3(p.provider, p.subject, recovered.userId, p.authEpoch, undefined, true, recovered.shardInviteClaim ?? null);
   }, 30_000);
 
   it("preserves open registration and test sign-ins without an email argument", async () => {

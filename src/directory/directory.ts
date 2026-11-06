@@ -12,7 +12,10 @@ import type { SignInInput, VaultRow } from "../shared/types";
 import { migrateDirectory } from "./schema";
 import { PlacementFence, syntheticPlacementIdentity, type PlacementAttempt } from "./placement-fence";
 import { InviteInventory, type ShardInviteInventory } from "./invite-inventory";
+import type { InviteTarget } from "./invite-target-seal";
 import { InviteCoordinator, type InventoryIdentity } from "./invite-coordinator";
+import { validShardInviteClaim, type ShardInviteClaim } from "./shard-invite-binding";
+import { boundShardInviteClaim } from "./shard-invite-owner";
 
 /** How soon a failed deletion is retried. */
 const RETRY_MS = 60_000;
@@ -118,6 +121,15 @@ export class Directory extends DurableObject<Env> {
       .seal(operation, email, excludedUserId, epoch);
   }
 
+  /** Versioned target proof: older shards cannot silently ignore its tuple. */
+  async sealInviteInventoryV2(operation: string, email: string, excludedUserId: string, epoch: number, target: InviteTarget): Promise<ShardInviteInventory> {
+    if (!this.isShard || !target || typeof target !== "object" || Array.isArray(target))
+      throw new AppError("invalid", "invitation inventory requires a shard target");
+    return new InviteInventory(this.sql, (fn) => this.ctx.storage.transactionSync(fn), () => this.readShardAuthFloor(),
+      (userId) => this.ctx.id.equals(this.env.DIRECTORY.idFromName(directoryNameForUser(userId))))
+      .seal(operation, email, excludedUserId, epoch, target);
+  }
+
   async closeInviteInventory(operation: string, sealEpoch: number, closeEpoch: number): Promise<void> {
     if (!this.isShard) throw new AppError("invalid", "invitation inventory requires a shard");
     new InviteInventory(this.sql, (fn) => this.ctx.storage.transactionSync(fn), () => this.readShardAuthFloor(),
@@ -207,7 +219,15 @@ export class Directory extends DurableObject<Env> {
   }
 
   private requireInventoryOwner(b: InventoryIdentity): void {
-    if (!this.isGlobal || directoryNameForUser(b.userId) !== "global" || !this.sql.exec(
+    if (!this.isGlobal) throw new AppError("unavailable", "account deletion changed; retry cleanup");
+    if (directoryNameForUser(b.userId) !== "global") {
+      // The coordinator can establish the immutable account claim locally.
+      // The target shard independently proves and fences the finalization.
+      if (!boundShardInviteClaim(this.sql, b.userId, b.email))
+        throw new AppError("unavailable", "invitation binding requires review");
+      return;
+    }
+    if (!this.sql.exec(
       `SELECT v.vault_id FROM vaults v JOIN users u ON u.user_id=v.user_id
        JOIN account_final_sweeps a ON a.vault_id=v.vault_id AND a.user_id=u.user_id
        JOIN account_invite_deletions i ON i.vault_id=v.vault_id AND i.user_id=u.user_id
@@ -224,7 +244,18 @@ export class Directory extends DurableObject<Env> {
       transaction: (fn) => this.ctx.storage.transactionSync(fn),
       storage: this.ctx.storage,
       epoch: () => this.readGoogleAuthEpoch(),
-      seal: (shard, b, attempt, epoch) => directoryByName(this.env, `directory-${shard}`).sealInviteInventory(attempt, b.email, b.userId, epoch),
+      seal: (shard, b, attempt, epoch) => {
+        const stub = directoryByName(this.env, `directory-${shard}`);
+        if (directoryNameForUser(b.userId) !== `directory-${shard}`)
+          return stub.sealInviteInventory(attempt, b.email, b.userId, epoch);
+        // The barrier freezes both the global home and claim while the RPC is
+        // outstanding. Never accept caller-supplied claim details as proof.
+        const claim = boundShardInviteClaim(this.sql, b.userId, b.email);
+        if (!claim) throw new AppError("unavailable", "invitation binding requires review");
+        return stub.sealInviteInventoryV2(attempt, b.email, b.userId, epoch, {
+          ...b, claimToken: claim.token, generation: claim.generation, provider: claim.provider, subject: claim.subject,
+        });
+      },
       close: (shard, operation, sealEpoch, closeEpoch) => directoryByName(this.env, `directory-${shard}`).closeInviteInventory(operation, sealEpoch, closeEpoch),
       validate: (b) => {
         if (!this.inviteInventoryEnabled()) throw new AppError("unavailable", "invitation inventory rollout requires verification");
@@ -237,9 +268,11 @@ export class Directory extends DurableObject<Env> {
           `SELECT generation,binding_verified FROM invite_deletion_receipts WHERE operation_id=? AND user_id=? AND vault_id=? AND email=? AND state='captured'`,
           b.operationId, b.userId, b.vaultId, b.email,
         ).toArray()[0];
-        const binding = this.sql.exec<{ email: string; generation: string | null }>(
-          `SELECT email,generation FROM account_invite_bindings WHERE user_id=?`, b.userId,
-        ).toArray()[0];
+        const binding = directoryNameForUser(b.userId) === "global"
+          ? this.sql.exec<{ email: string; generation: string | null }>(
+              `SELECT email,generation FROM account_invite_bindings WHERE user_id=?`, b.userId,
+            ).toArray()[0]
+          : boundShardInviteClaim(this.sql, b.userId, b.email);
         if (!receipt || receipt.binding_verified !== 1 || !binding || binding.email !== b.email || binding.generation !== receipt.generation)
           throw new AppError("unavailable", "invitation binding requires review");
         if (receipt.generation && otherUsers === 0 && !this.hasOtherLocalInviteUser(b.userId, b.email))
@@ -290,7 +323,23 @@ export class Directory extends DurableObject<Env> {
    * Finds or creates the user and their vault. Rows are written before the first await, so a
    * second sign-in racing the first finds them and gets the same vault. Safe to repeat.
    */
-  async signIn(p: SignInInput): Promise<{ userId: string; vaultId: string; created?: boolean; shardClaimToken?: string | null }> {
+  async signIn(p: SignInInput): Promise<{ userId: string; vaultId: string; created?: boolean; shardClaimToken?: string | null; shardInviteClaim?: ShardInviteClaim | null }> {
+    if (p.shardInviteClaim !== undefined) throw new AppError("invalid", "invalid account placement claim");
+    return this.signInCore(p, false);
+  }
+
+  /** Versioned target call: an older shard cannot silently ignore the binding. */
+  async signInWithInviteClaim(p: SignInInput): Promise<{ userId: string; vaultId: string; created?: boolean; shardClaimToken?: string | null; shardInviteClaim?: ShardInviteClaim | null }> {
+    if (p.provider !== "google" || !this.isShard || p.homeShard === undefined ||
+        !this.ctx.id.equals(this.env.DIRECTORY.idFromName(`directory-${p.homeShard}`)))
+      throw new AppError("invalid", "invalid account placement claim");
+    if (p.shardInviteClaim !== undefined && (!validShardInviteClaim(p.shardInviteClaim) ||
+        p.shardInviteClaim.token !== p.shardClaimToken || p.shardInviteClaim.email !== p.email.trim().toLowerCase()))
+      throw new AppError("invalid", "invalid account placement claim");
+    return this.signInCore(p, true);
+  }
+
+  private async signInCore(p: SignInInput, inviteClaimV3: boolean): Promise<{ userId: string; vaultId: string; created?: boolean; shardClaimToken?: string | null; shardInviteClaim?: ShardInviteClaim | null }> {
     if (p.authExpiryMs !== undefined) requireFreshAuth(p.authExpiryMs);
     if (p.shardClaimToken !== undefined &&
         (p.provider !== "google" || !Number.isInteger(p.homeShard) || p.homeShard! < 0 || p.homeShard! > 15 ||
@@ -331,6 +380,8 @@ export class Directory extends DurableObject<Env> {
     if (p.expectedUserId !== undefined && (!row || row.user_id !== p.expectedUserId))
       throw new AppError("conflict", "the account changed; retry sign-in");
     if (!row) {
+      if (inviteClaimV3 && !p.shardInviteClaim)
+        throw new AppError("unavailable", "account invitation requires review");
       // The disposable test namespace remains fenced even after opt-out, so
       // a delayed unregistered call cannot recreate an experimental account.
       if (syntheticPlacementIdentity(p.provider, p.subject) && !attempt)
@@ -384,6 +435,9 @@ export class Directory extends DurableObject<Env> {
         );
         if (p.shardClaimToken)
           this.sql.exec(`INSERT INTO shard_identity_claim_tokens (provider,subject,user_id,token) VALUES (?,?,?,?)`, p.provider, p.subject, userId, p.shardClaimToken);
+        if (inviteClaimV3 && p.shardInviteClaim)
+          this.sql.exec(`INSERT INTO shard_invite_account_bindings(user_id,provider,subject,token,email,generation) VALUES (?,?,?,?,?,?)`,
+            userId, p.provider, p.subject, p.shardInviteClaim.token, p.shardInviteClaim.email, p.shardInviteClaim.generation);
         if (attempt) {
           this.sql.exec(`INSERT INTO placement_identities(provider,subject,generation,user_id) VALUES (?,?,?,?)`, p.provider, p.subject, attempt.generation, userId);
           this.placement.accept(attempt, userId);
@@ -429,7 +483,22 @@ export class Directory extends DurableObject<Env> {
     const shardClaimToken = storedShardClaim(row.user_id);
     if (p.shardClaimToken && p.shardClaimToken !== shardClaimToken)
       throw new AppError("conflict", "account placement changed; retry sign-in");
-    return { userId: row.user_id, vaultId: row.vault_id, ...(p.reportCreation ? { created, shardClaimToken } : {}) };
+    let shardInviteClaim: ShardInviteClaim | null = null;
+    if (inviteClaimV3) {
+      const binding = this.sql.exec<{ provider: string; subject: string; token: string; email: string; generation: string | null }>(
+        `SELECT provider,subject,token,email,generation FROM shard_invite_account_bindings WHERE user_id=?`, row.user_id,
+      ).toArray()[0];
+      if (binding) {
+        shardInviteClaim = { token: binding.token, email: binding.email, generation: binding.generation };
+        const storedEmail = this.sql.exec<{ email: string }>(`SELECT email FROM users WHERE user_id=?`, row.user_id).toArray()[0]?.email;
+        if (!validShardInviteClaim(shardInviteClaim) || binding.provider !== p.provider || binding.subject !== p.subject ||
+            storedEmail !== binding.email || p.email.trim().toLowerCase() !== binding.email || shardClaimToken !== binding.token ||
+            (p.shardInviteClaim && (p.shardInviteClaim.token !== binding.token || p.shardInviteClaim.email !== binding.email ||
+              p.shardInviteClaim.generation !== binding.generation)))
+          throw new AppError("unavailable", "account invitation requires review");
+      } else if (p.shardInviteClaim) throw new AppError("unavailable", "account invitation requires review");
+    }
+    return { userId: row.user_id, vaultId: row.vault_id, ...(p.reportCreation ? { created, shardClaimToken, ...(inviteClaimV3 ? { shardInviteClaim } : {}) } : {}) };
   }
 
   /** A marker precedes cross-object init and survives an uncertain outcome. */
@@ -581,6 +650,53 @@ export class Directory extends DurableObject<Env> {
       return { shard: home.shard, shardClaimToken: token };
     });
   }
+
+  /** Capture a shard's invitation before any target creation is dispatched. */
+  async claimIdentityHomeV3(provider: string, subject: string, preferredShard: number | null,
+    email: string, authExpiryMs?: number, authEpoch?: number): Promise<{ shard: number | null; shardInviteClaim: ShardInviteClaim | null }> {
+    if (!this.isGlobal || provider !== "google" || typeof email !== "string" || !email.trim() || email.length > 320 ||
+        (preferredShard !== null && (!Number.isInteger(preferredShard) || preferredShard < 0 || preferredShard > 15)))
+      throw new AppError("invalid", "invalid account placement");
+    if (authExpiryMs !== undefined) requireFreshAuth(authExpiryMs);
+    const normalized = email.trim().toLowerCase();
+    return this.googleWrite(provider, authEpoch, () => {
+      if (this.env.INVITE_ONLY !== "false" && !this.isInvited(normalized))
+        throw new AppError("forbidden", "this email has not been invited to the beta yet");
+      let home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null; placement_state: string }>(
+        `SELECT shard,user_id,generation,placement_state FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
+      ).toArray()[0];
+      if (!home) {
+        this.sql.exec(`INSERT INTO identity_homes(provider,subject,shard) VALUES (?,?,?)`, provider, subject, preferredShard);
+        if (preferredShard !== null) {
+          const token = crypto.randomUUID();
+          const grant = this.sql.exec<{ generation: string | null }>(`SELECT generation FROM invites WHERE email=?`, normalized).toArray()[0];
+          const claim: ShardInviteClaim = { token, email: normalized, generation: grant?.generation ?? null };
+          if (!validShardInviteClaim(claim) || (grant && grant.generation === null))
+            throw new AppError("unavailable", "invitation requires review");
+          this.sql.exec(`INSERT INTO shard_home_claim_tokens(provider,subject,token) VALUES (?,?,?)`, provider, subject, token);
+          this.sql.exec(`INSERT INTO shard_home_invite_claims(provider,subject,token,email,generation) VALUES (?,?,?,?,?)`,
+            provider, subject, token, normalized, claim.generation);
+        }
+        home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null; placement_state: string }>(
+          `SELECT shard,user_id,generation,placement_state FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
+        ).one();
+      }
+      if (home.generation || home.placement_state !== "open") throw new AppError("unavailable", "account placement requires review");
+      if (home.shard === null) return { shard: null, shardInviteClaim: null };
+      const row = this.sql.exec<{ token: string; email: string; generation: string | null; user_id: string | null }>(
+        `SELECT token,email,generation,user_id FROM shard_home_invite_claims WHERE provider=? AND subject=?`, provider, subject,
+      ).toArray()[0];
+      const token = this.sql.exec<{ token: string }>(`SELECT token FROM shard_home_claim_tokens WHERE provider=? AND subject=?`, provider, subject).toArray()[0]?.token;
+      if (!row) {
+        if (home.user_id === null) throw new AppError("unavailable", "legacy account placement requires review");
+        return { shard: home.shard, shardInviteClaim: null };
+      }
+      const claim: ShardInviteClaim = { token: row.token, email: row.email, generation: row.generation };
+      if (!validShardInviteClaim(claim) || token !== claim.token || claim.email !== normalized || row.user_id !== home.user_id)
+        throw new AppError("conflict", "account placement changed; retry sign-in");
+      return { shard: home.shard, shardInviteClaim: claim };
+    });
+  }
   async placementEpoch(): Promise<number> {
     return this.placement.epoch();
   }
@@ -698,6 +814,54 @@ export class Directory extends DurableObject<Env> {
       throw new AppError("invalid", "invalid account placement");
     return this.bindIdentityHome(provider, subject, userId, authEpoch, authExpiryMs, requireBound, shardClaimToken, true);
   }
+
+  /** Bind only the immutable claim actually persisted by the target shard. */
+  async bindIdentityHomeV3(provider: string, subject: string, userId: string, authEpoch: number | undefined,
+    authExpiryMs: number | undefined, requireBound: boolean, targetClaim: ShardInviteClaim | null): Promise<void> {
+    if (!this.isGlobal || provider !== "google" || directoryNameForUser(userId) === "global" || typeof requireBound !== "boolean" ||
+        (targetClaim !== null && !validShardInviteClaim(targetClaim)))
+      throw new AppError("invalid", "invalid account placement check");
+    if (authExpiryMs !== undefined) requireFreshAuth(authExpiryMs);
+    return this.googleWrite(provider, authEpoch, () => {
+      const home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null; placement_state: string }>(
+        `SELECT shard,user_id,generation,placement_state FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
+      ).toArray()[0];
+      const match = /^s(\d+):/i.exec(userId);
+      if (!home || !match || Number(match[1]) !== home.shard || home.placement_state !== "open" || home.generation ||
+          (home.user_id !== null && home.user_id !== userId))
+        throw new AppError("unavailable", "account placement requires review");
+      const claim = this.sql.exec<{ token: string; email: string; generation: string | null; user_id: string | null }>(
+        `SELECT token,email,generation,user_id FROM shard_home_invite_claims WHERE provider=? AND subject=?`, provider, subject,
+      ).toArray()[0];
+      if (!claim) {
+        // Never backfill a legacy home from today's invitation.
+        if (targetClaim !== null || home.user_id !== userId) throw new AppError("unavailable", "legacy account placement requires review");
+        return;
+      }
+      const storedToken = this.sql.exec<{ token: string }>(`SELECT token FROM shard_home_claim_tokens WHERE provider=? AND subject=?`, provider, subject).toArray()[0]?.token;
+      if (!targetClaim || !validShardInviteClaim({ token: claim.token, email: claim.email, generation: claim.generation }) ||
+          targetClaim.token !== claim.token || targetClaim.email !== claim.email || targetClaim.generation !== claim.generation ||
+          storedToken !== claim.token || (claim.user_id !== null && claim.user_id !== userId) || claim.user_id !== home.user_id)
+        throw new AppError("conflict", "account placement changed; retry sign-in");
+      if (home.user_id === userId) return;
+      // A target creation may have been delayed after the initial claim. An
+      // admin can revoke the invitation in that interval, so recheck inside
+      // the transaction that would first bind the account and issue access.
+      // A reissue authorizes the same email while the immutable original
+      // generation remains attached for later deletion.
+      if (this.env.INVITE_ONLY !== "false" && !this.isInvited(claim.email))
+        throw new AppError("forbidden", "this email has not been invited to the beta yet");
+      this.sql.exec(`INSERT INTO shard_home_bind_claim_marker(provider,subject,token) VALUES (?,?,?)`, provider, subject, claim.token);
+      this.sql.exec(`INSERT INTO shard_invite_bind_marker(provider,subject,token) VALUES (?,?,?)`, provider, subject, claim.token);
+      try {
+        this.sql.exec(`UPDATE identity_homes SET user_id=? WHERE provider=? AND subject=? AND user_id IS NULL`, userId, provider, subject);
+        this.sql.exec(`UPDATE shard_home_invite_claims SET user_id=? WHERE provider=? AND subject=? AND user_id IS NULL`, userId, provider, subject);
+      } finally {
+        this.sql.exec(`DELETE FROM shard_invite_bind_marker WHERE provider=? AND subject=?`, provider, subject);
+        this.sql.exec(`DELETE FROM shard_home_bind_claim_marker WHERE provider=? AND subject=?`, provider, subject);
+      }
+    });
+  }
   async deletionProbe(userId: string, vaultId: string): Promise<number> {
     let count = 0;
     for (const table of [
@@ -712,6 +876,9 @@ export class Directory extends DurableObject<Env> {
       "invite_deletion_receipts",
       "account_invite_deletions",
       "account_invite_bindings",
+      "shard_home_invite_claims",
+      "shard_invite_account_bindings",
+      "shard_invite_target_seals",
       "invite_inventory_barrier",
       "identity_homes",
       "placement_finalizations",
@@ -742,6 +909,15 @@ export class Directory extends DurableObject<Env> {
     ).one().n;
     // A nonempty transaction marker is not expected outside a successful bind.
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM shard_home_bind_claim_marker`).one().n;
+    count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM shard_invite_bind_marker`).one().n;
+    count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM shard_invite_target_close_marker`).one().n;
+    count += this.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM shard_invite_target_seals WHERE vault_id=? AND user_id<>?`, vaultId, userId,
+    ).one().n;
+    count += this.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM shard_home_invite_claims c LEFT JOIN identity_homes h ON h.provider=c.provider AND h.subject=c.subject
+       WHERE c.user_id IS NULL OR h.provider IS NULL OR h.user_id IS NULL OR h.user_id<>c.user_id`,
+    ).one().n;
     count += this.sql
       .exec<{ n: number }>(
         `SELECT COUNT(*) AS n FROM billing_events WHERE user_id=?`,
@@ -1273,7 +1449,7 @@ export class Directory extends DurableObject<Env> {
       ? this.sql.exec<{ email: string; generation: string | null }>(
           `SELECT email,generation FROM account_invite_bindings WHERE user_id=?`, userId,
         ).toArray()[0]
-      : undefined;
+      : boundShardInviteClaim(this.sql, userId, normalized);
     if (binding && (binding.email !== normalized ||
         (binding.generation !== null && (typeof binding.generation !== "string" || !/^[a-f0-9]{32}$/.test(binding.generation)))))
       throw new AppError("unavailable", "invitation binding requires review");
@@ -1297,11 +1473,20 @@ export class Directory extends DurableObject<Env> {
         throw new AppError("conflict", "invite deletion changed; retry cleanup");
       if (row.state === "removed") return null;
       if (directoryNameForUser(userId) !== "global") {
-        // A sharded capture has no trustworthy pre-intent binding. This branch
-        // never removes a grant; the sending shard rechecks its operation and
-        // finalization incarnation after this RPC returns.
-        if (row.generation && this.sql.exec(`SELECT email FROM invites WHERE email=? AND generation=?`, normalized, row.generation).toArray().length)
-          throw new AppError("unavailable", "sharded invite requires operator review");
+        // A legacy shard account has no creation-time binding. Never infer it
+        // from the currently visible invitation, which may be a reissue.
+        const current = row.generation && this.sql.exec(`SELECT email FROM invites WHERE email=? AND generation=?`, normalized, row.generation).toArray().length;
+        if (current) {
+          const binding = boundShardInviteClaim(this.sql, userId, normalized);
+          if (row.binding_verified !== 1 || !binding || binding.generation !== row.generation)
+            throw new AppError("unavailable", "sharded invite requires operator review");
+          if (typeof finalGeneration !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(finalGeneration))
+            throw new AppError("unavailable", "account deletion requires finalization identity");
+          if (!this.hasOtherLocalInviteUser(userId, normalized))
+            return { operationId, userId, vaultId, email: normalized, finalGeneration };
+        }
+        // No grant is deleted here. The sending shard still rechecks the
+        // original finalization after the RPC before completing deletion.
         this.sql.exec(`UPDATE invite_deletion_receipts SET state='removed' WHERE operation_id=? AND state='captured'`, operationId);
         return null;
       }

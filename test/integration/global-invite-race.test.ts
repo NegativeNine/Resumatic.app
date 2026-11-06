@@ -72,6 +72,10 @@ describe("global-home invite authorization", () => {
     await directory(env).addInvite(p.email);
     const routed = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
     expect(routed.input.inviteAuthorized).toBe(true);
-    expect((await routed.directory.signIn(routed.input)).userId).toMatch(/^s(?:[0-9]|1[0-5]):/);
+    expect(routed.input.shardInviteClaim).toBeDefined();
+    const account = await routed.directory.signInWithInviteClaim({ ...routed.input, reportCreation: true });
+    expect(account.userId).toMatch(/^s(?:[0-9]|1[0-5]):/);
+    expect(account.shardInviteClaim).toEqual(routed.input.shardInviteClaim);
+    await directory(env).bindIdentityHomeV3(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, account.shardInviteClaim ?? null);
   }, 30_000);
 });

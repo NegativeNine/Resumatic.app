@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { DIRECTORY_MIGRATIONS, migrateDirectory } from "../../src/directory/schema";
 import { MIGRATIONS, migrate, SCHEMA_VERSION } from "../../src/vault/schema";
-import { undoInviteCoordinatorMigration, undoInviteInventoryMigrations } from "../support/undo-invite-inventory";
+import { undoInviteCoordinatorMigration, undoInviteCoordinatorTargetMigration, undoInviteInventoryMigrations, undoInviteTargetSealMigration, undoShardInviteBindingMigration } from "../support/undo-invite-inventory";
 
 /** Interrupt a migration after its first DDL statement has executed. */
 function failAtTrigger(sql: SqlStorage, trigger: string): SqlStorage {
@@ -125,6 +125,8 @@ describe("atomic schema migrations", () => {
   it.each([
     { table: "shard_invite_inventory", trigger: "shard_invite_seal_insert", undo: undoInviteInventoryMigrations },
     { table: "invite_inventory_barrier", trigger: "inventory_barrier_users_insert", undo: undoInviteCoordinatorMigration },
+    { table: "shard_home_invite_claims", trigger: "shard_invite_claim_immutable", undo: undoShardInviteBindingMigration },
+    { table: "shard_invite_target_seals", trigger: "shard_invite_target_insert_guard", undo: undoInviteTargetSealMigration },
   ])("rolls back the $table migration and its guards together", async ({ table, trigger, undo }) => {
     const stub = env.DIRECTORY.getByName(`inventory-migration-${crypto.randomUUID()}`);
     await runInDurableObject(stub, (_instance, state) => {
@@ -140,6 +142,25 @@ describe("atomic schema migrations", () => {
       migrateDirectory(sql, tx);
       expect(sql.exec(`SELECT name FROM sqlite_master WHERE name=?`, table).toArray()).toHaveLength(1);
       expect(sql.exec(`SELECT name FROM sqlite_master WHERE name=?`, trigger).toArray()).toHaveLength(1);
+    });
+  });
+  it("adds target verification as unproven for old receipts and rolls it back with the version on failure", async () => {
+    const stub = env.DIRECTORY.getByName(`target-receipt-migration-${crypto.randomUUID()}`);
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      undoInviteCoordinatorTargetMigration(sql);
+      const attempt = crypto.randomUUID();
+      sql.exec(`INSERT INTO invite_inventory_receipts(operation_id,shard,other_users,closed) VALUES (?,3,1,0)`, attempt);
+      const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((q) => q.includes("ALTER TABLE invite_inventory_receipts ADD COLUMN target_verified")));
+      expect(previous).toBeGreaterThan(0);
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrateDirectory(failAtVersion(sql, previous + 1), tx)).toThrow(/synthetic version-write interruption/);
+      expect(sql.exec<{ name: string }>(`PRAGMA table_info(invite_inventory_receipts)`).toArray().some((c) => c.name === "target_verified")).toBe(false);
+      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(previous));
+      expect(sql.exec<{ other_users: number }>(`SELECT other_users FROM invite_inventory_receipts WHERE operation_id=?`, attempt).one().other_users).toBe(1);
+      migrateDirectory(sql, tx);
+      expect(sql.exec<{ other_users: number; target_verified: number }>(`SELECT other_users,target_verified FROM invite_inventory_receipts WHERE operation_id=?`, attempt).one()).toEqual({ other_users: 1, target_verified: 0 });
     });
   });
   it("installs invite incarnation and guards atomically while preserving legacy invites", async () => {

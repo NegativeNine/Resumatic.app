@@ -97,8 +97,9 @@ describe("sharded Google home release: adversarial ordering", () => {
     const p = { provider: "google" as const, subject, email: subject, hint: "enam" as const, authEpoch: await g.googleAuthEpoch() };
     await g.addInvite(subject);
     const target = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
-    const account = await target.directory.signIn(target.input);
-    await g.bindIdentityHome("google", subject, account.userId, p.authEpoch, undefined, false, target.input.shardClaimToken);
+    const created = await target.directory.signInWithInviteClaim({ ...target.input, reportCreation: true });
+    await g.bindIdentityHomeV3("google", subject, created.userId, p.authEpoch, undefined, false, created.shardInviteClaim!);
+    const account = { userId: created.userId, vaultId: created.vaultId };
     const shard = directoryForUser(env, account.userId);
     await shard.deleteAccount(account.userId, account.vaultId);
     // Explicitly resolve the captured invite so this test reaches the
@@ -156,8 +157,9 @@ describe("sharded Google home release: adversarial ordering", () => {
     const p = { provider: "google" as const, subject, email: subject, hint: "enam" as const, authEpoch: await g.googleAuthEpoch() };
     await g.addInvite(subject);
     const target = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
-    const account = await target.directory.signIn(target.input);
-    await g.bindIdentityHome("google", subject, account.userId, p.authEpoch, undefined, false, target.input.shardClaimToken);
+    const created = await target.directory.signInWithInviteClaim({ ...target.input, reportCreation: true });
+    await g.bindIdentityHomeV3("google", subject, created.userId, p.authEpoch, undefined, false, created.shardInviteClaim!);
+    const account = { userId: created.userId, vaultId: created.vaultId };
     const shard = directoryForUser(env, account.userId);
     await shard.deleteAccount(account.userId, account.vaultId);
     // Explicitly resolve the captured invite so this test reaches the
@@ -210,8 +212,9 @@ describe("sharded Google home release: adversarial ordering", () => {
     const p = { provider: "google" as const, subject, email: subject, hint: "enam" as const, authEpoch: await g.googleAuthEpoch() };
     await g.addInvite(subject);
     const target = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
-    const account = await target.directory.signIn(target.input);
-    await g.bindIdentityHome("google", subject, account.userId, p.authEpoch, undefined, false, target.input.shardClaimToken);
+    const created = await target.directory.signInWithInviteClaim({ ...target.input, reportCreation: true });
+    await g.bindIdentityHomeV3("google", subject, created.userId, p.authEpoch, undefined, false, created.shardInviteClaim!);
+    const account = { userId: created.userId, vaultId: created.vaultId };
     const shard = directoryForUser(env, account.userId);
     await shard.deleteAccount(account.userId, account.vaultId);
     // Explicitly resolve the captured invite so this test reaches the

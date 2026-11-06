@@ -4,6 +4,7 @@ import { identityShard } from "../shared/operations";
 import { directory, directoryByName } from "../shared/stubs";
 import type { SignInInput } from "../shared/types";
 import { syntheticPlacementIdentity, type PlacementAttempt } from "./placement-fence";
+import { validShardInviteClaim, type ShardInviteClaim } from "./shard-invite-binding";
 
 interface IdentityLocation {
   userId: string;
@@ -27,6 +28,10 @@ type DirectoryStub = ReturnType<typeof directory> & {
     provider: SignInInput["provider"], subject: string, preferredShard: number | null,
     email: string, authExpiryMs?: number, authEpoch?: number,
   ): Promise<{ shard: number | null; shardClaimToken: string | null }>;
+  claimIdentityHomeV3(
+    provider: SignInInput["provider"], subject: string, preferredShard: number | null,
+    email: string, authExpiryMs?: number, authEpoch?: number,
+  ): Promise<{ shard: number | null; shardInviteClaim: ShardInviteClaim | null }>;
   placementEpoch(): Promise<number>;
   reservePlacementAttempt(provider: string, subject: string, preferred: number | null, expectedEpoch: number): Promise<PlacementAttempt>;
   sealPlacementAttempt(attempt: PlacementAttempt): Promise<{ userId: string | null }>;
@@ -101,15 +106,17 @@ export async function directoryForSignIn(
   const preferred = configuration === "16" ? shard : null;
   let home: number | null;
   let shardClaimToken: string | null = null;
+  let shardInviteClaim: ShardInviteClaim | null = null;
   if (attempt) home = attempt.shard;
   else if (input.provider === "google") {
-    const claim = await global.claimIdentityHomeV2(input.provider, input.subject, preferred, input.email, input.authExpiryMs, input.authEpoch);
-    if (!claim || !Object.hasOwn(claim, "shardClaimToken") ||
-        (claim.shardClaimToken !== null && (typeof claim.shardClaimToken !== "string" ||
-          !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(claim.shardClaimToken))))
+    const claim = await global.claimIdentityHomeV3(input.provider, input.subject, preferred, input.email, input.authExpiryMs, input.authEpoch);
+    if (!claim || !Object.hasOwn(claim, "shardInviteClaim") ||
+        (claim.shardInviteClaim !== null && (!validShardInviteClaim(claim.shardInviteClaim) ||
+          claim.shardInviteClaim.email !== input.email.trim().toLowerCase() || claim.shard === null)))
       throw new AppError("unavailable", "account placement requires review");
     home = claim.shard;
-    shardClaimToken = claim.shardClaimToken;
+    shardInviteClaim = claim.shardInviteClaim;
+    shardClaimToken = shardInviteClaim?.token ?? null;
   } else home = await global.claimIdentityHome(input.provider, input.subject, preferred, input.email, input.authExpiryMs, input.authEpoch);
   if (home !== null && (!Number.isInteger(home) || home < 0 || home >= 16))
     throw new AppError(
@@ -127,6 +134,7 @@ export async function directoryForSignIn(
       ...(attempt ? { placementAttempt: attempt } : {}),
       ...(home === null ? {} : { homeShard: home }),
       ...(home !== null && shardClaimToken ? { shardClaimToken } : {}),
+      ...(home !== null && shardInviteClaim ? { shardInviteClaim } : {}),
     },
   };
 }

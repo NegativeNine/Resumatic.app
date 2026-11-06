@@ -1,4 +1,5 @@
 import { AppError } from "../shared/errors";
+import { directoryNameForUser } from "../shared/operations";
 
 // A single global barrier serializes cross-shard inventories. The guards apply
 // on every Directory but are inert unless the coordinator installs a barrier.
@@ -38,12 +39,19 @@ export const INVITE_COORDINATOR_MIGRATIONS = [
    BEGIN SELECT RAISE(ABORT, 'invite_delete_authorization_v3_required'); END`,
 ];
 
+// A count received from the target shard is not enough to authorize a shard
+// account's deletion: that shard must also have sealed its exact owner and
+// finalization. Existing rows default to unproven across migration.
+export const INVITE_COORDINATOR_TARGET_MIGRATIONS = [
+  `ALTER TABLE invite_inventory_receipts ADD COLUMN target_verified INTEGER NOT NULL DEFAULT 0 CHECK(target_verified IN (0,1))`,
+];
+
 export type InventoryIdentity = { operationId: string; userId: string; vaultId: string; email: string; finalGeneration: string };
 type Barrier = {
   operation_id: string; attempt_id: string; user_id: string; vault_id: string; email: string; final_generation: string;
   seal_epoch: number; close_epoch: number | null; phase: "sealing" | "closing"; outcome: "decided" | "retry" | null;
 };
-type SealResult = { state: "active"; otherUsers: number } | { state: "closed" };
+type SealResult = { state: "active"; otherUsers: number; targetVerified?: boolean } | { state: "closed" };
 type Deps = {
   sql: SqlStorage;
   transaction: <T>(f: () => T) => T;
@@ -108,25 +116,29 @@ export class InviteCoordinator {
     let row = this.row();
     if (!row) return;
     const b = this.identity(row);
+    const home = directoryNameForUser(b.userId);
+    const targetShard = home === "global" ? null : Number(home.slice("directory-".length));
     const attempt = row.attempt_id;
     if (row.phase === "sealing") {
       const sealEpoch = row.seal_epoch;
       const pending = Array.from({ length: 16 }, (_, shard) => shard).filter((shard) => !this.d.sql.exec(
-        `SELECT shard FROM invite_inventory_receipts WHERE operation_id=? AND shard=? AND other_users IS NOT NULL`, attempt, shard,
+        `SELECT shard FROM invite_inventory_receipts WHERE operation_id=? AND shard=? AND other_users IS NOT NULL AND target_verified=?`, attempt, shard, Number(shard === targetShard),
       ).toArray().length);
       let wake!: () => void;
       const failed = new Promise<void>((resolve) => { wake = resolve; });
       const tasks = Promise.allSettled(pending.map(async (shard) => {
         try {
           const receipt = await this.d.seal(shard, b, attempt, sealEpoch);
-          if (receipt.state !== "active" || !Number.isSafeInteger(receipt.otherUsers) || receipt.otherUsers < 0 || receipt.otherUsers > 10_000)
+          const target = shard === targetShard;
+          if (receipt.state !== "active" || !Number.isSafeInteger(receipt.otherUsers) || receipt.otherUsers < 0 || receipt.otherUsers > 10_000 ||
+              (target ? receipt.targetVerified !== true : receipt.targetVerified !== undefined && receipt.targetVerified !== false))
             throw new Error("invalid_inventory_receipt");
           this.d.transaction(() => {
             const current = this.row();
             if (!current || !this.same(current, b) || current.attempt_id !== attempt || current.phase !== "sealing" || current.seal_epoch !== sealEpoch) return;
-            const old = this.d.sql.exec<{ other_users: number | null }>(`SELECT other_users FROM invite_inventory_receipts WHERE operation_id=? AND shard=?`, attempt, shard).toArray()[0];
-            if (old && old.other_users !== receipt.otherUsers) throw new AppError("unavailable", "invitation inventory changed");
-            this.d.sql.exec(`INSERT OR IGNORE INTO invite_inventory_receipts(operation_id,shard,other_users) VALUES (?,?,?)`, attempt, shard, receipt.otherUsers);
+            const old = this.d.sql.exec<{ other_users: number | null; target_verified: number }>(`SELECT other_users,target_verified FROM invite_inventory_receipts WHERE operation_id=? AND shard=?`, attempt, shard).toArray()[0];
+            if (old && (old.other_users !== receipt.otherUsers || old.target_verified !== Number(target))) throw new AppError("unavailable", "invitation inventory changed");
+            this.d.sql.exec(`INSERT OR IGNORE INTO invite_inventory_receipts(operation_id,shard,other_users,target_verified) VALUES (?,?,?,?)`, attempt, shard, receipt.otherUsers, Number(target));
           });
         } catch {
           this.d.transaction(() => this.startClose(b.operationId, attempt, "retry"));
@@ -147,8 +159,8 @@ export class InviteCoordinator {
         this.d.transaction(() => {
           const current = this.row();
           if (!current || !this.same(current, b) || current.attempt_id !== attempt || current.phase !== "sealing") return;
-          const receipts = this.d.sql.exec<{ shard: number; other_users: number }>(`SELECT shard,other_users FROM invite_inventory_receipts WHERE operation_id=? AND other_users IS NOT NULL ORDER BY shard`, attempt).toArray();
-          if (receipts.length !== 16 || receipts.some((r, i) => r.shard !== i || !Number.isSafeInteger(r.other_users) || r.other_users < 0 || r.other_users > 10_000)) return;
+          const receipts = this.d.sql.exec<{ shard: number; other_users: number; target_verified: number }>(`SELECT shard,other_users,target_verified FROM invite_inventory_receipts WHERE operation_id=? AND other_users IS NOT NULL ORDER BY shard`, attempt).toArray();
+          if (receipts.length !== 16 || receipts.some((r, i) => r.shard !== i || !Number.isSafeInteger(r.other_users) || r.other_users < 0 || r.other_users > 10_000 || r.target_verified !== Number(i === targetShard))) return;
           this.d.decide(b, receipts.reduce((sum, r) => sum + r.other_users, 0));
           this.startClose(b.operationId, attempt, "decided");
         });

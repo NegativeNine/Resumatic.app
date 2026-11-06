@@ -1,4 +1,5 @@
 import { AppError } from "../shared/errors";
+import { InviteTargetSeal, type InviteTarget } from "./invite-target-seal";
 
 // Installed in every Directory, but inactive until a shard explicitly seals.
 // The epoch marker remains required after closing, fencing old in-flight writes.
@@ -28,7 +29,7 @@ type SealRow = {
   email: string | null; excluded_user_id: string | null; seal_epoch: number;
   close_epoch: number | null; other_users: number | null; state: string;
 };
-export type ShardInviteInventory = { state: "active"; otherUsers: number } | { state: "closed" };
+export type ShardInviteInventory = { state: "active"; otherUsers: number; targetVerified?: true } | { state: "closed" };
 
 /**
  * Shard-side primitive only. Its count does not authorize invite removal:
@@ -58,32 +59,36 @@ export class InviteInventory {
     this.sql.exec(`INSERT INTO meta(key,value) VALUES ('shard_invite_epoch_guard','1') ON CONFLICT(key) DO UPDATE SET value='1'`);
   }
 
-  seal(operation: string, rawEmail: string, excludedUserId: string, epoch: number): ShardInviteInventory {
+  seal(operation: string, rawEmail: string, excludedUserId: string, epoch: number, target?: InviteTarget): ShardInviteInventory {
     this.identity(operation, epoch);
     if (typeof rawEmail !== "string" || !rawEmail.trim() || rawEmail.length > 320 ||
         typeof excludedUserId !== "string" || !excludedUserId || excludedUserId.length > 100)
       throw new AppError("invalid", "invalid invitation inventory");
     const email = rawEmail.trim().toLowerCase();
     return this.transaction(() => {
+      const targetSeal = new InviteTargetSeal(this.sql, this.mayExclude);
       const old = this.row(operation);
       if (old) {
         if (old.seal_epoch !== epoch) throw new AppError("conflict", "invitation inventory changed");
         if (old.state === "closed") {
-          if (old.email !== null || old.excluded_user_id !== null || old.other_users !== null || !Number.isSafeInteger(old.close_epoch) || old.close_epoch! <= epoch)
+          if (old.email !== null || old.excluded_user_id !== null || old.other_users !== null || !Number.isSafeInteger(old.close_epoch) || old.close_epoch! <= epoch || !targetSeal.matches(operation))
             throw new AppError("unavailable", "invitation inventory requires review");
           return { state: "closed" };
         }
         if (old.state !== "active" || old.email !== email || old.excluded_user_id !== excludedUserId || old.close_epoch !== null ||
-            !Number.isSafeInteger(old.other_users) || old.other_users! < 0)
+            !Number.isSafeInteger(old.other_users) || old.other_users! < 0 || !targetSeal.matches(operation, target))
           throw new AppError("conflict", "invitation inventory changed");
-        return { state: "active", otherUsers: old.other_users! };
+        return { state: "active", otherUsers: old.other_users!, ...(target ? { targetVerified: true as const } : {}) };
       }
       if (this.sql.exec(`SELECT operation_id FROM shard_invite_inventory WHERE state='active'`).toArray().length)
         throw new AppError("unavailable", "invitation inventory is busy");
+      if (!targetSeal.idle())
+        throw new AppError("unavailable", "invitation target requires review");
       // A delayed first seal must not install a new inventory from an epoch
       // that this shard has already superseded, even if its close was lost.
       if (epoch < this.floor())
         throw new AppError("conflict", "invitation inventory is stale");
+      if (target) targetSeal.validate(target, email, excludedUserId);
       this.setFloor(epoch);
       // Insert the seal before observing users, in the same transaction.
       this.sql.exec(`INSERT INTO shard_invite_inventory(operation_id,email,excluded_user_id,seal_epoch,state) VALUES (?,?,?,?,'active')`, operation, email, excludedUserId, epoch);
@@ -103,7 +108,10 @@ export class InviteInventory {
         if (user.state === "active" && (user.user_id !== excludedUserId || !this.mayExclude(excludedUserId)) && user.email.trim().toLowerCase() === email) otherUsers++;
       }
       this.sql.exec(`UPDATE shard_invite_inventory SET other_users=? WHERE operation_id=?`, otherUsers, operation);
-      return { state: "active", otherUsers };
+      // Install last: its triggers fence all proof-dependent writes and the
+      // inventory row itself until close, in the same transaction as counting.
+      if (target) targetSeal.install(operation, target);
+      return { state: "active", otherUsers, ...(target ? { targetVerified: true as const } : {}) };
     });
   }
 
@@ -113,15 +121,18 @@ export class InviteInventory {
       throw new AppError("invalid", "invalid invitation inventory close");
     this.transaction(() => {
       const old = this.row(operation);
+      if (!old && !new InviteTargetSeal(this.sql, this.mayExclude).matches(operation))
+        throw new AppError("unavailable", "invitation target requires review");
       if (old && old.seal_epoch !== sealEpoch) throw new AppError("conflict", "invitation inventory changed");
       if (old?.state === "closed") {
-        if (old.close_epoch !== closeEpoch || old.email !== null || old.excluded_user_id !== null || old.other_users !== null)
+        if (old.close_epoch !== closeEpoch || old.email !== null || old.excluded_user_id !== null || old.other_users !== null || !new InviteTargetSeal(this.sql, this.mayExclude).matches(operation))
           throw new AppError("conflict", "invitation inventory changed");
         return;
       }
       if (old && (old.state !== "active" || old.close_epoch !== null || old.email === null || old.excluded_user_id === null || !Number.isSafeInteger(old.other_users)))
         throw new AppError("unavailable", "invitation inventory requires review");
       this.setFloor(closeEpoch);
+      new InviteTargetSeal(this.sql, this.mayExclude).clear(operation);
       // Even a close received before seal must tombstone the operation: a
       // delayed first seal must not resurrect it or count as an observation.
       this.sql.exec(`INSERT INTO shard_invite_inventory(operation_id,seal_epoch,close_epoch,state) VALUES (?,?,?,'closed')

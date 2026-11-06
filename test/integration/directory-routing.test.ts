@@ -28,6 +28,15 @@ const configured = (shards: string): Env => ({
   ...env,
   DIRECTORY_SHARDS: shards,
 });
+type Routed = Awaited<ReturnType<typeof directoryForSignIn>>;
+const routedSignIn = (route: Routed, p = route.input) =>
+  p.provider === "google" && p.homeShard !== undefined
+    ? route.directory.signInWithInviteClaim(p)
+    : route.directory.signIn(p);
+const routedBind = (route: Routed, userId: string) =>
+  route.input.provider === "google" && route.input.homeShard !== undefined
+    ? directory(env).bindIdentityHomeV3(route.input.provider, route.input.subject, userId, route.input.authEpoch, route.input.authExpiryMs, false, route.input.shardInviteClaim ?? null)
+    : directory(env).bindIdentityHome(route.input.provider, route.input.subject, userId, route.input.authEpoch, route.input.authExpiryMs);
 
 describe("Directory placement in Durable Objects", () => {
   it("preserves legacy accounts and keeps newly sharded accounts reachable after disabling creation", async () => {
@@ -38,14 +47,14 @@ describe("Directory placement in Durable Objects", () => {
       configured("16"),
       legacyInput,
     );
-    expect(await legacyTarget.directory.signIn(legacyTarget.input)).toEqual(
+    expect(await routedSignIn(legacyTarget)).toEqual(
       legacy,
     );
 
     const shardInput = await input();
     await directory(env).addInvite(shardInput.email);
     const target = await directoryForSignIn(configured("16"), shardInput);
-    const created = await target.directory.signIn(target.input);
+    const created = await routedSignIn(target);
     expect(created.userId).toMatch(/^s(?:[0-9]|1[0-5]):/);
     expect(
       await directory(env).existingIdentity(
@@ -54,7 +63,7 @@ describe("Directory placement in Durable Objects", () => {
       ),
     ).toBeNull();
     const disabled = await directoryForSignIn(configured("1"), shardInput);
-    expect(await disabled.directory.signIn(disabled.input)).toEqual(created);
+    expect(await routedSignIn(disabled)).toEqual(created);
     expect(
       await directoryForUser(env, created.userId).existingIdentity(
         shardInput.provider,
@@ -71,7 +80,7 @@ describe("Directory placement in Durable Objects", () => {
       directoryForSignIn(configured("1"), p),
     ]);
     const accounts = await Promise.all(
-      choices.map((choice) => choice.directory.signIn(choice.input)),
+      choices.map((choice) => routedSignIn(choice)),
     );
     expect(accounts[0]).toEqual(accounts[1]);
     const locations = await Promise.all(
@@ -86,8 +95,8 @@ describe("Directory placement in Durable Objects", () => {
     const p = await input();
     await directory(env).addInvite(p.email);
     const target = await directoryForSignIn(configured("16"), p);
-    const account = await target.directory.signIn(target.input);
-    await directory(env).bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, target.input.shardClaimToken);
+    const account = await routedSignIn(target);
+    await routedBind(target, account.userId);
     const home = directoryForUser(env, account.userId);
     await home.deleteAccount(account.userId, account.vaultId);
     // Resolve the sharded account's ambiguous invitation before testing
@@ -122,8 +131,8 @@ describe("Directory placement in Durable Objects", () => {
       const p = await input();
       await directory(env).addInvite(p.email);
       const initial = await directoryForSignIn(configured(oldPlacement), p);
-      const old = await initial.directory.signIn(initial.input);
-      await directory(env).bindIdentityHome(p.provider, p.subject, old.userId, p.authEpoch, undefined, false, initial.input.shardClaimToken);
+      const old = await routedSignIn(initial);
+      await routedBind(initial, old.userId);
       // This routing result can be held by an in-flight sign-in while the
       // account is erased and an independently routed sign-in creates another.
       const stale = await directoryForSignIn(configured(oldPlacement), p);
@@ -139,8 +148,8 @@ describe("Directory placement in Durable Objects", () => {
       await directory(env).addInvite(p.email);
       const freshInput = { ...p, authEpoch: await directory(env).googleAuthEpoch() };
       const fresh = await directoryForSignIn(configured(newPlacement), freshInput);
-      const replacement = await fresh.directory.signIn(fresh.input);
-      await directory(env).bindIdentityHome(p.provider, p.subject, replacement.userId, freshInput.authEpoch, undefined, false, fresh.input.shardClaimToken);
+      const replacement = await routedSignIn(fresh);
+      await routedBind(fresh, replacement.userId);
       expect(replacement.userId).not.toBe(old.userId);
       await runInDurableObject(stale.directory, async (instance) => {
         await expect((instance as Directory).signIn(stale.input)).rejects.toThrow(/account changed|sign-in is stale/);
@@ -219,8 +228,8 @@ describe("Directory placement in Durable Objects", () => {
     const global = directory(env);
     await global.addInvite(p.email);
     const target = await directoryForSignIn(configured("16"), p);
-    const account = await target.directory.signIn(target.input);
-    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, target.input.shardClaimToken);
+    const account = await routedSignIn(target);
+    await routedBind(target, account.userId);
     const shard = Number(account.userId.match(/^s(\d+):/)![1]);
     expect(await startSession(configured("16"), p)).toContain("__Host-session=");
     const repeated = await Promise.all([startSession(configured("16"), p), startSession(configured("16"), p)]);
@@ -261,7 +270,7 @@ describe("Directory placement in Durable Objects", () => {
     await global.addInvite(p.email);
     const target = await directoryForSignIn(configured("16"), p);
     expect(target.input.shardClaimToken).toMatch(/^[0-9a-f-]{36}$/);
-    const account = await target.directory.signIn({ ...target.input, reportCreation: true });
+    const account = await routedSignIn(target, { ...target.input, reportCreation: true });
     expect(account).toMatchObject({ created: true, shardClaimToken: target.input.shardClaimToken });
     await runInDurableObject(global, async (instance) => {
       await expect((instance as Directory).bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch))
@@ -274,7 +283,7 @@ describe("Directory placement in Durable Objects", () => {
       sql.exec(`INSERT INTO global_auth_marker(slot,epoch) VALUES (1,?)`, p.authEpoch!);
       try {
         expect(() => sql.exec(`UPDATE identity_homes SET user_id=? WHERE provider=? AND subject=?`, account.userId, p.provider, p.subject))
-          .toThrow(/shard_claim_required/);
+          .toThrow(/shard_(?:claim|invite_binding)_required/);
       } finally { sql.exec(`DELETE FROM global_auth_marker WHERE slot=1`); }
     });
     // The first response is lost before the global home is bound. A later
@@ -296,13 +305,13 @@ describe("Directory placement in Durable Objects", () => {
     const global = directory(env);
     await global.addInvite(p.email);
     const target = await directoryForSignIn(configured("16"), p);
-    const account = await target.directory.signIn({ ...target.input, reportCreation: true });
-    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, account.shardClaimToken, true);
+    const account = await routedSignIn(target, { ...target.input, reportCreation: true });
+    await global.bindIdentityHomeV3(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, account.shardInviteClaim!);
     await global.forgetGoogleShardHomeV3(p.subject, target.input.homeShard!, account.userId);
     const freshEpoch = await global.googleAuthEpoch();
     const replacement = await global.claimIdentityHomeV2(p.provider, p.subject, target.input.homeShard!, p.email, undefined, freshEpoch);
     expect(replacement.shardClaimToken).not.toBe(account.shardClaimToken);
-    await expect(startSession(configured("16"), { ...p, authEpoch: freshEpoch })).rejects.toThrow("account placement changed");
+    await expect(startSession(configured("16"), { ...p, authEpoch: freshEpoch })).rejects.toThrow(/account placement (?:changed|requires review)/);
     const home = await runInDurableObject(global, (_instance, state) => state.storage.sql
       .exec<{ user_id: string | null }>(`SELECT user_id FROM identity_homes WHERE provider=? AND subject=?`, p.provider, p.subject).one());
     expect(home.user_id).toBeNull();
@@ -312,14 +321,14 @@ describe("Directory placement in Durable Objects", () => {
     const p = await input();
     await directory(env).addInvite(p.email);
     const target = await directoryForSignIn(configured("16"), p);
-    const account = await target.directory.signIn(target.input);
+    const account = await routedSignIn(target);
     await runInDurableObject(target.directory, async (instance, state) => {
       state.storage.sql.exec(`UPDATE vaults SET state='creating' WHERE vault_id=?`, account.vaultId);
       const internal = instance as unknown as { initializeVault: (...args: unknown[]) => Promise<void> };
       const init = vi.spyOn(internal, "initializeVault").mockRejectedValue(new Error("unexpected initialization"));
       try {
-        await expect((instance as Directory).signIn({ ...target.input, shardClaimToken: crypto.randomUUID() }))
-          .rejects.toThrow("account placement changed");
+        await expect((instance as Directory).signInWithInviteClaim({ ...target.input, shardClaimToken: crypto.randomUUID() }))
+          .rejects.toThrow("invalid account placement claim");
         expect(init).not.toHaveBeenCalled();
       } finally { init.mockRestore(); }
     });
@@ -329,13 +338,14 @@ describe("Directory placement in Durable Objects", () => {
     const p = await input();
     await directory(env).addInvite(p.email);
     const target = await directoryForSignIn(configured("16"), p);
-    const account = await target.directory.signIn({ ...target.input, shardClaimToken: undefined });
+    const { shardInviteClaim: _claim, ...legacyInput } = target.input;
+    const account = await target.directory.signIn({ ...legacyInput, shardClaimToken: undefined });
     await runInDurableObject(target.directory, async (instance, state) => {
       state.storage.sql.exec(`UPDATE vaults SET state='creating' WHERE vault_id=?`, account.vaultId);
       const internal = instance as unknown as { initializeVault: (...args: unknown[]) => Promise<void> };
       const init = vi.spyOn(internal, "initializeVault").mockRejectedValue(new Error("unexpected initialization"));
       try {
-        await expect((instance as Directory).signIn(target.input)).rejects.toThrow("account placement changed");
+        await expect((instance as Directory).signInWithInviteClaim(target.input)).rejects.toThrow("account placement changed");
         expect(init).not.toHaveBeenCalled();
       } finally { init.mockRestore(); }
     });
@@ -345,7 +355,7 @@ describe("Directory placement in Durable Objects", () => {
     const p = await input();
     await directory(env).addInvite(p.email);
     const target = await directoryForSignIn(configured("16"), p);
-    const account = await target.directory.signIn(target.input);
+    const account = await routedSignIn(target);
     await runInDurableObject(target.directory, async (instance, state) => {
       state.storage.sql.exec(`UPDATE vaults SET state='creating' WHERE vault_id=?`, account.vaultId);
       const internal = instance as unknown as { initializeVault: (...args: unknown[]) => Promise<void> };
@@ -353,7 +363,7 @@ describe("Directory placement in Durable Objects", () => {
         state.storage.sql.exec(`DELETE FROM shard_identity_claim_tokens WHERE provider=? AND subject=?`, p.provider, p.subject);
       });
       try {
-        await expect((instance as Directory).signIn(target.input)).rejects.toThrow("account placement changed");
+        await expect((instance as Directory).signInWithInviteClaim(target.input)).rejects.toThrow("account placement changed");
         expect(init).toHaveBeenCalledOnce();
       } finally { init.mockRestore(); }
     });
@@ -417,16 +427,16 @@ describe("Directory placement in Durable Objects", () => {
     const first = await directoryForSignIn(configured("16"), p);
     const late = await directoryForSignIn(configured("16"), p);
     expect(late.input.expectedUserId).toBeUndefined();
-    const inserted = await first.directory.signIn({ ...first.input, reportCreation: true });
-    const discovered = await late.directory.signIn({ ...late.input, reportCreation: true });
+    const inserted = await routedSignIn(first, { ...first.input, reportCreation: true });
+    const discovered = await routedSignIn(late, { ...late.input, reportCreation: true });
     expect(inserted).toMatchObject({ created: true });
     expect(discovered).toEqual({ ...inserted, created: false });
     await runInDurableObject(global, async (instance) => {
       await expect((instance as Directory).bindIdentityHome(p.provider, p.subject, discovered.userId, p.authEpoch, undefined, true))
         .rejects.toThrow("sharded account placement requires review");
     });
-    await global.bindIdentityHome(p.provider, p.subject, inserted.userId, p.authEpoch, undefined, false, inserted.shardClaimToken);
-    await expect(global.bindIdentityHome(p.provider, p.subject, discovered.userId, p.authEpoch, undefined, true)).resolves.toBeUndefined();
+    await global.bindIdentityHomeV3(p.provider, p.subject, inserted.userId, p.authEpoch, undefined, false, inserted.shardInviteClaim!);
+    await expect(global.bindIdentityHomeV3(p.provider, p.subject, discovered.userId, p.authEpoch, undefined, true, discovered.shardInviteClaim!)).resolves.toBeUndefined();
   });
 
   it("rejects a delayed creator's old authorization after its home is released and reclaimed", async () => {
@@ -434,9 +444,9 @@ describe("Directory placement in Durable Objects", () => {
     const global = directory(env);
     await global.addInvite(p.email);
     const target = await directoryForSignIn(configured("16"), p);
-    const account = await target.directory.signIn({ ...target.input, reportCreation: true });
+    const account = await routedSignIn(target, { ...target.input, reportCreation: true });
     expect(account.created).toBe(true);
-    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, account.shardClaimToken);
+    await global.bindIdentityHomeV3(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, account.shardInviteClaim!);
     const shard = target.input.homeShard!;
     await global.forgetGoogleShardHomeV3(p.subject, shard, account.userId);
     const epoch = await global.googleAuthEpoch();
@@ -453,6 +463,7 @@ describe("Directory placement in Durable Objects", () => {
   it("requires a bound home for late-discovered or old-runtime shard results", async () => {
     for (const reported of [false, undefined, "true"] as const) {
       const p = await input();
+      const shardInviteClaim = { token: crypto.randomUUID(), email: p.email, generation: null };
       const bind = vi.fn(async (...args: unknown[]) => {
         if (args[5] === true) throw new Error("unbound home blocked");
       });
@@ -461,12 +472,14 @@ describe("Directory placement in Durable Objects", () => {
         requireInvite: async () => {},
         claimIdentityHome: async (_provider: string, _subject: string, shard: number) => shard,
         claimIdentityHomeV2: async (_provider: string, _subject: string, shard: number) => ({ shard, shardClaimToken: crypto.randomUUID() }),
+        claimIdentityHomeV3: async (_provider: string, _subject: string, shard: number) => ({ shard, shardInviteClaim }),
         bindIdentityHome: bind,
         bindIdentityHomeV2: bind,
+        bindIdentityHomeV3: bind,
       };
       const shard = {
         existingIdentity: async () => null,
-        signIn: async () => ({ userId: `s1:${crypto.randomUUID()}`, vaultId: "synthetic-vault", created: reported }),
+        signInWithInviteClaim: async () => ({ userId: `s1:${crypto.randomUUID()}`, vaultId: "synthetic-vault", created: reported, shardClaimToken: shardInviteClaim.token, shardInviteClaim }),
       };
       const openSession = vi.fn(async () => ({ gen: 1, epoch: "synthetic" }));
       const bindings = {

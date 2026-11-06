@@ -78,6 +78,55 @@ it("retains the barrier after an unknown close reply and resumes idempotently", 
   });
 });
 
+it("requires a versioned proof from the exact target shard before deciding", async () => {
+  const stub = env.DIRECTORY.get(env.DIRECTORY.idFromName(`inventory-target-${crypto.randomUUID()}`));
+  await runInDurableObject(stub, async (_instance, ctx) => {
+    const sql = ctx.storage.sql;
+    sql.exec(`INSERT INTO meta(key,value) VALUES ('global_auth_epoch','1')`);
+    let proof = false, invalidOther = false, decisions = 0, finished = 0;
+    const closed: string[] = [];
+    const c = new InviteCoordinator({ sql, storage: ctx.storage,
+      transaction: (fn) => ctx.storage.transactionSync(fn),
+      epoch: () => Number(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='global_auth_epoch'`).one().value),
+      validate: () => {}, decide: () => { decisions++; }, finish: () => { finished++; }, sealWaitMs: 30,
+      seal: async (shard) => ({ state: "active" as const, otherUsers: 0,
+        ...(shard === 5 && proof ? { targetVerified: true } : {}),
+        ...(shard === 4 && invalidOther ? { targetVerified: "invalid" as unknown as boolean } : {}),
+      }),
+      close: async (shard, attempt) => { closed.push(`${attempt}:${shard}`); },
+    });
+    const target = { ...id(), userId: `s5:${crypto.randomUUID()}` };
+    await c.begin(target);
+    await c.resume();
+    expect(decisions).toBe(0);
+    expect(finished).toBe(0);
+    expect(c.active()).toBe(false);
+    expect(closed).toHaveLength(16);
+    proof = true;
+    await c.begin(target);
+    // A count persisted by an older coordinator is not a target proof.
+    const attempt = sql.exec<{ attempt_id: string }>(`SELECT attempt_id FROM invite_inventory_barrier WHERE slot=1`).one().attempt_id;
+    sql.exec(`INSERT INTO invite_inventory_receipts(operation_id,shard,other_users) VALUES (?,5,0)`, attempt);
+    await c.resume();
+    expect(decisions).toBe(0);
+    expect(c.active()).toBe(false);
+    expect(closed).toHaveLength(32);
+    invalidOther = true;
+    await c.begin(target);
+    await c.resume();
+    expect(decisions).toBe(0);
+    expect(c.active()).toBe(false);
+    expect(closed).toHaveLength(48);
+    invalidOther = false;
+    await c.begin(target);
+    await c.resume();
+    expect(decisions).toBe(1);
+    expect(finished).toBe(1);
+    expect(c.active()).toBe(false);
+    expect(closed).toHaveLength(64);
+  });
+});
+
 it("rolls back barrier and epoch if arming the recovery alarm fails", async () => {
   for (const failure of ["get", "set"] as const) {
     const stub = env.DIRECTORY.get(env.DIRECTORY.idFromName(`inventory-alarm-${failure}-${crypto.randomUUID()}`));

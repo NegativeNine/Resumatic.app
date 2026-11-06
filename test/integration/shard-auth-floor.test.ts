@@ -16,8 +16,8 @@ async function account() {
   const config = { ...env, DIRECTORY_SHARDS: "16" };
   const held = await directoryForSignIn(config, input);
   const first = await directoryForSignIn(config, input);
-  const current = await first.directory.signIn(first.input);
-  await global.bindIdentityHome("google", input.subject, current.userId, input.authEpoch, undefined, false, first.input.shardClaimToken);
+  const current = await first.directory.signInWithInviteClaim({ ...first.input, reportCreation: true });
+  await global.bindIdentityHomeV3("google", input.subject, current.userId, input.authEpoch, undefined, false, current.shardInviteClaim ?? null);
   return { global, input, held, current, home: directoryForUser(env, current.userId) };
 }
 
@@ -68,7 +68,10 @@ it("rejects a pre-migration create after a previously erased shard wakes", async
   });
   await evictDurableObject(f.home);
   await runInDurableObject(f.home, async (instance) => {
-    await expect(instance.signIn(beforeRollout)).rejects.toThrow("sign-in is stale");
+    const legacy = { ...beforeRollout };
+    delete legacy.shardInviteClaim;
+    await expect(instance.signIn(legacy)).rejects.toThrow("sign-in is stale");
+    await expect(instance.signInWithInviteClaim(beforeRollout)).rejects.toThrow("sign-in is stale");
   });
   expect((await Promise.all([...allDirectories(env)].map((d) => d.existingIdentity("google", f.input.subject)))).filter(Boolean)).toHaveLength(0);
 }, 30_000);
@@ -141,7 +144,10 @@ it("rejects a previously dispatched shard create after deletion and a new global
   const replacement = await target.directory.signIn(target.input);
   await f.global.bindIdentityHome("google", f.input.subject, replacement.userId, fresh.authEpoch);
   await runInDurableObject(f.home, async (instance) => {
-    await expect(instance.signIn(f.held.input)).rejects.toThrow("sign-in is stale");
+    const legacy = { ...f.held.input };
+    delete legacy.shardInviteClaim;
+    await expect(instance.signIn(legacy)).rejects.toThrow("sign-in is stale");
+    await expect(instance.signInWithInviteClaim(f.held.input)).rejects.toThrow("sign-in is stale");
   });
   const locations = await Promise.all([...allDirectories(env)].map((d) => d.existingIdentity("google", f.input.subject)));
   expect(locations.filter(Boolean)).toEqual([replacement]);
@@ -155,7 +161,10 @@ it("rejects a stale invited shard create after deletion even without a replaceme
   await runDurableObjectAlarm(f.home);
   await eventually(async () => !(await f.home.existingIdentity("google", f.input.subject)), "identity erasure");
   await runInDurableObject(f.home, async (instance) => {
-    await expect(instance.signIn(f.held.input)).rejects.toThrow("sign-in is stale");
+    const legacy = { ...f.held.input };
+    delete legacy.shardInviteClaim;
+    await expect(instance.signIn(legacy)).rejects.toThrow("sign-in is stale");
+    await expect(instance.signInWithInviteClaim(f.held.input)).rejects.toThrow("sign-in is stale");
   });
   expect((await Promise.all([...allDirectories(env)].map((d) => d.existingIdentity("google", f.input.subject)))).filter(Boolean)).toHaveLength(0);
 }, 30_000);
@@ -172,7 +181,7 @@ it("blocks a markerless legacy shard insertion and legacy global release after m
     await expect(instance.forgetGoogleShardHomeV2(f.input.subject, shard, f.current.userId)).rejects.toThrow("account placement requires review");
   });
   expect(await f.global.googleAuthEpoch()).toBe(before);
-  expect(await f.home.existingIdentity("google", f.input.subject)).toEqual(f.current);
+  expect(await f.home.existingIdentity("google", f.input.subject)).toEqual({ userId: f.current.userId, vaultId: f.current.vaultId });
   await f.home.deleteAccount(f.current.userId, f.current.vaultId);
   await runInDurableObject(f.home, (_instance, state) => {
     state.storage.sql.exec(`INSERT INTO shard_identity_delete_marker(user_id) VALUES (?)`, f.current.userId);

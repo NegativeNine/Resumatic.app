@@ -13,8 +13,8 @@ it("keeps a shared invitation while an unindexed shard identity may use it", asy
   const input: SignInInput = { provider: "google", subject: `original-${id}`, email, hint: "enam", authEpoch: await global.googleAuthEpoch() };
   await global.addInvite(email);
   const target = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, input);
-  const account = await target.directory.signIn(target.input);
-  await global.bindIdentityHomeV2(input.provider, input.subject, account.userId, input.authEpoch, undefined, false, target.input.shardClaimToken);
+  const account = await target.directory.signInWithInviteClaim({ ...target.input, reportCreation: true });
+  await global.bindIdentityHomeV3(input.provider, input.subject, account.userId, input.authEpoch, undefined, false, account.shardInviteClaim!);
 
   // Simulate an older direct shard creation whose coordinator claim is absent.
   // The coordinator cannot infer this account's email from its homes table.
@@ -40,6 +40,7 @@ it("keeps a shared invitation while an unindexed shard identity may use it", asy
     finally { local.SWEEP_DELAY_MS = delay; }
   });
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(true);
-  expect(await target.directory.deletionProbe(account.userId, account.vaultId)).toBeGreaterThan(0);
+  expect(await target.directory.deletionProbe(account.userId, account.vaultId)).toBe(0);
+  expect(await global.deletionProbe(account.userId, account.vaultId)).toBe(0);
   expect((await orphan.existingIdentity("google", otherSubject))?.userId).toBe(other.userId);
 });

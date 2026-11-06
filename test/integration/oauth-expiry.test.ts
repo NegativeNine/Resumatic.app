@@ -18,6 +18,8 @@ describe("OAuth expiry across Directory calls", () => {
     const expiry = Date.now() - 1;
     await runInDurableObject(global, async (instance, state) => {
       await expect(instance.claimIdentityHome(p.provider, p.subject, null, p.email, expiry)).rejects.toThrow("sign-in took too long");
+      // The current V3 claim must reject the same expired authorization.
+      await expect(instance.claimIdentityHomeV3(p.provider, p.subject, 0, p.email, expiry)).rejects.toThrow("sign-in took too long");
       await expect(instance.signIn({ ...p, inviteAuthorized: true, authExpiryMs: expiry })).rejects.toThrow("sign-in took too long");
       expect(state.storage.sql.exec(`SELECT subject FROM identities WHERE provider=? AND subject=?`, p.provider, p.subject).toArray()).toHaveLength(0);
       expect(state.storage.sql.exec(`SELECT subject FROM identity_homes WHERE provider=? AND subject=?`, p.provider, p.subject).toArray()).toHaveLength(0);
@@ -30,7 +32,10 @@ describe("OAuth expiry across Directory calls", () => {
     const expiry = Date.now() + 60_000;
     const target = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, { ...p, authExpiryMs: expiry, authEpoch: await directory(env).googleAuthEpoch() });
     expect(target.input.authExpiryMs).toBe(expiry);
-    expect((await target.directory.signIn(target.input)).userId).toMatch(/^s(?:[0-9]|1[0-5]):/);
+    expect(target.input.shardInviteClaim).toBeDefined();
+    const account = await target.directory.signInWithInviteClaim({ ...target.input, reportCreation: true });
+    expect(account.userId).toMatch(/^s(?:[0-9]|1[0-5]):/);
+    expect(account.shardInviteClaim).toEqual(target.input.shardInviteClaim);
   });
 
   it("does not bind a home when an RPC arrives after the signed state expires", async () => {

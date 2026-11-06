@@ -48,6 +48,7 @@ import { AppError, errorCode, errorDetail, httpStatus } from "../shared/errors";
 import { hintFor, type CfLocation } from "../shared/location";
 import { docxKey, pdfKey, sourceKey } from "../shared/r2";
 import { directoryForSignIn, settleRoutedPlacement } from "../directory/routing";
+import { validShardInviteClaim, type ShardInviteClaim } from "../directory/shard-invite-binding";
 import { maintenance } from "./maintenance";
 import {
   directory,
@@ -309,9 +310,11 @@ export async function startSession(env: Env, input: SignInInput): Promise<string
     throw new AppError("unavailable", "sessions are not configured");
   if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
   const target = await directoryForSignIn(env, input);
-  let account: { userId: string; vaultId: string; created?: boolean; shardClaimToken?: string | null };
+  let account: { userId: string; vaultId: string; created?: boolean; shardClaimToken?: string | null; shardInviteClaim?: ShardInviteClaim | null };
   try {
-    account = await target.directory.signIn({ ...target.input, reportCreation: true });
+    account = input.provider === "google" && target.input.homeShard !== undefined
+      ? await target.directory.signInWithInviteClaim({ ...target.input, reportCreation: true })
+      : await target.directory.signIn({ ...target.input, reportCreation: true });
   } finally {
     await settleRoutedPlacement(env, target.directory, target.input);
   }
@@ -322,8 +325,13 @@ export async function startSession(env: Env, input: SignInInput): Promise<string
   // An older Directory omits `created`, which fails closed on sharded homes.
   const requireBound = target.input.homeShard !== undefined && account.created !== true;
   const checkClaim = input.provider === "google" && target.input.homeShard !== undefined;
-  if (checkClaim)
-    await directory(env).bindIdentityHomeV2(input.provider, input.subject, userId, input.authEpoch, input.authExpiryMs, requireBound, account.shardClaimToken);
+  if (checkClaim) {
+    if (!Object.hasOwn(account, "shardInviteClaim") ||
+        (account.shardInviteClaim !== null && (!validShardInviteClaim(account.shardInviteClaim) ||
+          account.shardClaimToken !== account.shardInviteClaim.token)))
+      throw new AppError("unavailable", "account placement requires review");
+    await directory(env).bindIdentityHomeV3(input.provider, input.subject, userId, input.authEpoch, input.authExpiryMs, requireBound, account.shardInviteClaim ?? null);
+  }
   else
     await directory(env).bindIdentityHome(input.provider, input.subject, userId, input.authEpoch, input.authExpiryMs, requireBound);
   if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);

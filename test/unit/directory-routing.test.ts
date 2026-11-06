@@ -14,6 +14,7 @@ const input: SignInInput = {
 function fixture(shards?: string) {
   const homes = new Map<string, number | null>();
   const tokens = new Map<string, string>();
+  const claims = new Map<string, { token: string; email: string; generation: string | null }>();
   const identities = new Map<string, { userId: string; vaultId: string }>();
   const stubs = new Map<
     string,
@@ -23,6 +24,7 @@ function fixture(shards?: string) {
       requireInvite: ReturnType<typeof vi.fn>;
       claimIdentityHome: ReturnType<typeof vi.fn>;
       claimIdentityHomeV2: ReturnType<typeof vi.fn>;
+      claimIdentityHomeV3: ReturnType<typeof vi.fn>;
     }
   >();
   const get = (name: string) => {
@@ -48,6 +50,13 @@ function fixture(shards?: string) {
           const shard = homes.get(key)!;
           if (shard !== null && !tokens.has(key)) tokens.set(key, crypto.randomUUID());
           return { shard, shardClaimToken: tokens.get(key) ?? null };
+        }),
+        claimIdentityHomeV3: vi.fn(async (provider: string, subject: string, preferred: number | null, email: string) => {
+          const key = `${provider}:${subject}`;
+          if (!homes.has(key)) homes.set(key, preferred);
+          const shard = homes.get(key)!;
+          if (shard !== null && !claims.has(key)) claims.set(key, { token: crypto.randomUUID(), email: email.trim().toLowerCase(), generation: "1".repeat(32) });
+          return { shard, shardInviteClaim: claims.get(key) ?? null };
         }),
       });
     return stubs.get(name)!;
@@ -97,7 +106,7 @@ describe("Directory shard routing", () => {
     const shard = await identityShard(input.provider, input.subject);
     const result = await directoryForSignIn(f.env, input);
     expect(f.get("global").requireInvite).toHaveBeenCalledWith(input.email);
-    expect(f.get("global").claimIdentityHomeV2).toHaveBeenCalledWith(
+    expect(f.get("global").claimIdentityHomeV3).toHaveBeenCalledWith(
       "google",
       input.subject,
       shard,
@@ -111,7 +120,23 @@ describe("Directory shard routing", () => {
       homeShard: shard,
       inviteAuthorized: true,
       shardClaimToken: expect.any(String),
+      shardInviteClaim: { token: expect.any(String), email: input.email, generation: "1".repeat(32) },
     });
+    expect(result.input.shardClaimToken).toBe(result.input.shardInviteClaim?.token);
+  });
+
+  it("rejects malformed V3 claim responses instead of passing them to a shard", async () => {
+    const shard = await identityShard(input.provider, input.subject);
+    for (const response of [
+      { shard },
+      { shard, shardInviteClaim: { token: crypto.randomUUID(), email: "other@example.test", generation: null } },
+      { shard, shardInviteClaim: { token: "bad", email: input.email, generation: null } },
+      { shard: null, shardInviteClaim: { token: crypto.randomUUID(), email: input.email, generation: null } },
+    ]) {
+      const f = fixture("16");
+      f.get("global").claimIdentityHomeV3.mockResolvedValue(response);
+      await expect(directoryForSignIn(f.env, input)).rejects.toThrow("account placement requires review");
+    }
   });
 
   it("cannot bypass an invite by supplying trusted placement fields", async () => {

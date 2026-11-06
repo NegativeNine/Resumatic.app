@@ -34,6 +34,8 @@ export interface SignInInput {
   reportCreation?: boolean;
   /** Internal: opaque generation issued by the global coordinator for a new shard home. */
   shardClaimToken?: string;
+  /** Internal immutable invitation authorization for a V3 shard claim. */
+  shardInviteClaim?: import("../directory/shard-invite-binding").ShardInviteClaim;
   /** Internal experimental placement dispatch, reserved by the global Directory. */
   placementAttempt?: import("../directory/placement-fence").PlacementAttempt;
 }
