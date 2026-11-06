@@ -424,6 +424,26 @@ export class Directory extends DurableObject<Env> {
     const storedShardClaim = (userId: string) => this.sql.exec<{ token: string }>(
       `SELECT token FROM shard_identity_claim_tokens WHERE provider=? AND subject=? AND user_id=?`, p.provider, p.subject, userId,
     ).toArray()[0]?.token ?? null;
+    // Legacy RPC callers may omit the claim even for a tokenized identity.
+    // Check its persisted token before any Vault I/O, irrespective of the
+    // caller's RPC version, so a quarantined account cannot be reinitialized.
+    const assertStoredShardClaimOpen = (userId: string): void => {
+      if (!this.isShard || p.provider !== "google") return;
+      const token = storedShardClaim(userId);
+      // Preserve the caller-visible conflict for a supplied claim that no
+      // longer matches; an absent claim still cannot bypass a sealed binding.
+      if (p.shardClaimToken && p.shardClaimToken !== token)
+        throw new AppError("conflict", "account placement changed; retry sign-in");
+      const binding = this.sql.exec<{ provider: string; subject: string; token: string }>(
+        `SELECT provider,subject,token FROM shard_invite_account_bindings WHERE user_id=?`, userId,
+      ).toArray()[0];
+      // New bindings must have the same token in both tables. A missing or
+      // inconsistent token is not evidence that an old caller is unsealed.
+      if (binding && (binding.provider !== p.provider || binding.subject !== p.subject || binding.token !== token))
+        throw new AppError("unavailable", "account invitation requires review");
+      if (token) this.shardClaimRevocation.assertOpen(token);
+    };
+    if (row) assertStoredShardClaimOpen(row.user_id);
     // Do not initialize a vault for an already-known conflicting generation.
     // The check below is repeated after initialization because that I/O yields.
     if (row && p.shardClaimToken) {
@@ -537,21 +557,35 @@ export class Directory extends DurableObject<Env> {
     if (row.vault_state === "creating") {
       // Only the first get() of an object honours a location hint, so the vault is placed near the user now.
       await this.initializeVault(row.vault_id, row.user_id, row.hint);
+      // A token may be sealed during the cross-object call. Do not publish an
+      // active shard mapping when the account is already quarantined.
+      assertStoredShardClaimOpen(row.user_id);
       this.sql.exec(
-        `UPDATE vaults SET state = 'active', updated_at = ? WHERE vault_id = ? AND state = 'creating'`,
+        `UPDATE vaults SET state = 'active', updated_at = ? WHERE vault_id = ? AND user_id = ? AND state = 'creating'
+         AND EXISTS(SELECT 1 FROM users WHERE user_id=? AND state='active')
+         AND EXISTS(SELECT 1 FROM identities WHERE provider=? AND subject=? AND user_id=?)`,
         Date.now(),
         row.vault_id,
+        row.user_id,
+        row.user_id,
+        p.provider,
+        p.subject,
+        row.user_id,
       );
     }
     // Deletion can begin while init is awaiting a different Durable Object.
     const current = this.findAccount(p.provider, p.subject);
     if (
-      !current || current.user_state !== "active" ||
+      !current || current.user_state !== "active" || current.user_id !== row.user_id ||
       current.vault_state !== "active" || current.vault_id !== row.vault_id
     )
       throw new AppError("forbidden", "this account is being deleted");
     if (p.authExpiryMs !== undefined) requireFreshAuth(p.authExpiryMs);
     const shardClaimToken = storedShardClaim(row.user_id);
+    // The seal may have arrived while initialization was in flight. Older
+    // RPCs omit the claim input, so check the persisted token again for all
+    // Google shard callers before returning an account.
+    assertStoredShardClaimOpen(row.user_id);
     if (p.shardClaimToken && p.shardClaimToken !== shardClaimToken)
       throw new AppError("conflict", "account placement changed; retry sign-in");
     let shardInviteClaim: ShardInviteClaim | null = null;

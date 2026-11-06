@@ -365,6 +365,7 @@ describe("Directory placement in Durable Objects", () => {
       try {
         await expect((instance as Directory).signInWithInviteClaim(target.input)).rejects.toThrow("account placement changed");
         expect(init).toHaveBeenCalledOnce();
+        expect(state.storage.sql.exec<{ state: string }>(`SELECT state FROM vaults WHERE vault_id=?`, account.vaultId).one().state).toBe("creating");
       } finally { init.mockRestore(); }
     });
   });

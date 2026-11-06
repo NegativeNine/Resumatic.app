@@ -48,6 +48,11 @@ describe("shard invitation claim seals", () => {
   it("reports an already created account and does not erase or close it", async () => {
     const c = claim(6), home = directoryByName(env, `directory-${c.shard}`), epoch = await directory(env).googleAuthEpoch();
     const account = await home.signInWithInviteClaimV2(input(c, epoch));
+    // A retained V1 RPC can address the same identity without a claim. It
+    // continues to work for an unsealed account, including across eviction.
+    const legacy = { provider: "google" as const, subject: c.subject, email: c.email, hint: "enam" as const,
+      homeShard: c.shard, inviteAuthorized: true, authEpoch: epoch, expectedUserId: account.userId };
+    expect(await home.signIn(legacy)).toMatchObject({ userId: account.userId, vaultId: account.vaultId });
     expect(await home.sealShardInviteClaimV2(c)).toEqual({ state: "created", userId: account.userId, vaultId: account.vaultId });
     expect(await home.sealShardInviteClaimV2(c)).toEqual({ state: "created", userId: account.userId, vaultId: account.vaultId });
     await rejected(home, (d) => d.closeShardInviteClaimV2(c), /orphan account requires reconciliation/);
@@ -59,6 +64,20 @@ describe("shard invitation claim seals", () => {
     delete (retry as { shardInviteClaim?: unknown }).shardInviteClaim;
     delete (retry as { shardClaimToken?: unknown }).shardClaimToken;
     await rejected(home, (d) => d.signInWithInviteClaimV2(retry), /no longer available/);
+    await rejected(home, (d) => d.signIn(legacy), /no longer available/);
+    await evictDurableObject(home);
+    await rejected(home, (d) => d.signIn(legacy), /no longer available/);
+  }, 30_000);
+
+  it("refuses a legacy retry when a newer account binding has lost its token", async () => {
+    const c = claim(4), home = directoryByName(env, `directory-${c.shard}`), epoch = await directory(env).googleAuthEpoch();
+    const account = await home.signInWithInviteClaimV2(input(c, epoch));
+    const legacy = { provider: "google" as const, subject: c.subject, email: c.email, hint: "enam" as const,
+      homeShard: c.shard, inviteAuthorized: true, authEpoch: epoch, expectedUserId: account.userId };
+    await runInDurableObject(home, (_instance, state) => {
+      state.storage.sql.exec(`DELETE FROM shard_identity_claim_tokens WHERE provider=? AND subject=?`, c.provider, c.subject);
+    });
+    await rejected(home, (d) => d.signIn(legacy), /requires review/);
   }, 30_000);
 
   it("never treats an unexpected committed creation marker as absence", async () => {
@@ -95,8 +114,13 @@ describe("shard invitation claim seals", () => {
         }),
       } as unknown as typeof original;
       const pending = object.signInWithInviteClaimV2(input(c, epoch)).then(() => "ok", (error: unknown) => String(error));
+      let legacy: Promise<string> | undefined;
       try {
         await started;
+        // The identity exists but its first initialization is unresolved. A
+        // pre-seal V1 retry joins that work with no claim parameter.
+        legacy = object.signIn({ provider: "google", subject: c.subject, email: c.email, hint: "enam",
+          homeShard: c.shard, inviteAuthorized: true, authEpoch: epoch }).then(() => "ok", (error: unknown) => String(error));
         const row = state.storage.sql.exec<{ user_id: string; vault_id: string }>(
           `SELECT user_id,vault_id FROM vaults WHERE user_id IN (SELECT user_id FROM identities WHERE provider='google' AND subject=?)`, c.subject,
         ).one();
@@ -104,8 +128,10 @@ describe("shard invitation claim seals", () => {
         expect(state.storage.sql.exec(`SELECT vault_id FROM vault_initializations WHERE vault_id=?`, row.vault_id).toArray()).toHaveLength(1);
         release();
         expect(await pending).toContain("no longer available");
+        expect(await legacy).toContain("no longer available");
+        expect(state.storage.sql.exec<{ state: string }>(`SELECT state FROM vaults WHERE vault_id=?`, row.vault_id).one().state).toBe("creating");
         expect((await object.sealShardInviteClaimV2(c)).state).toBe("created");
-      } finally { release(); await pending; local.VAULT = original; }
+      } finally { release(); await pending; await legacy; local.VAULT = original; }
     });
   }, 30_000);
 });
