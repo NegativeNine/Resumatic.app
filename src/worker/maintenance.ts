@@ -61,6 +61,46 @@ maintenance.post("/placement/cleanup-orphan", bodyLimit({ maxSize: 2048 }), asyn
   const { subject, generation } = await syntheticPlacementBody(c.req.raw, true);
   return c.json(await directory(c.env).cleanupSyntheticOrphan("test", subject, generation!));
 });
+
+// This is an observation for operator review, not an authorization to remove
+// an invitation. Each Directory is read at a different time and neither
+// current nor previously dispatched sign-ins are fenced by this endpoint.
+maintenance.post("/invite-user-inventory", bodyLimit({ maxSize: 2048 }), async (c) => {
+  let raw: unknown;
+  try { raw = await c.req.json(); } catch { throw new AppError("invalid", "expected a JSON body"); }
+  const body = z.object({ email: z.string().min(1).max(320) }).strict().safeParse(raw);
+  if (!body.success || !body.data.email.trim()) throw new AppError("invalid", "invalid inventory request");
+  const email = body.data.email.trim().toLowerCase();
+  if (email.length > 320) throw new AppError("invalid", "invalid inventory request");
+  const locations = [...allDirectories(c.env)];
+  const observations = await Promise.all(locations.map(async (location, index) => {
+    const name = index === 0 ? "global" : `directory-${index - 1}`;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        location.inviteUserInventory(email),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("timeout")), 5000); }),
+      ]);
+      if (result.status === "observed" && Number.isSafeInteger(result.active) && result.active >= 0 &&
+          Number.isSafeInteger(result.deleting) && result.deleting >= 0)
+        return { directory: name, status: "observed" as const, active: result.active, deleting: result.deleting };
+      if (result.status === "row_limit" || result.status === "invalid_rows")
+        return { directory: name, status: result.status };
+      return { directory: name, status: "unavailable" as const };
+    } catch {
+      return { directory: name, status: "unavailable" as const };
+    } finally { if (timer !== undefined) clearTimeout(timer); }
+  }));
+  c.header("cache-control", "private, no-store");
+  return c.json({
+    status: "pending" as const,
+    scope: "current_rows_only" as const,
+    complete: false as const,
+    reasons: ["unfenced_concurrent_and_legacy_writes", "snapshots_at_different_times"],
+    observations,
+  });
+});
+
 maintenance.post("/vaults/:id/replacement", async (c) => {
   const { operationId } = z
     .object({ operationId: Operation })

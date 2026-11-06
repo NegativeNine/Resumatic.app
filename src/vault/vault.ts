@@ -1,5 +1,6 @@
 import type { InterviewAnswer } from "../shared/interview";
 import { reviewViewStream } from "./review-stream";
+import { exportJsonStream } from "./export-stream";
 import {
   refinementCacheKey,
   cacheRefinement,
@@ -2609,7 +2610,7 @@ export class Vault extends DurableObject<Env> {
       const run = this.runs.get(runId);
       if (!run || run.kind !== "tailor" || run.targetId !== resumeId) return;
     }
-    this.markResumeFailed(resumeId, error);
+    this.markResumeFailed(resumeId, error, runId);
   }
 
   private get mcpGrants(): McpGrantStore {
@@ -3252,6 +3253,16 @@ export class Vault extends DurableObject<Env> {
 
   async exportAll(who: Who): Promise<VaultExport> {
     return this.exportSnapshot(who);
+  }
+
+  /** Capture the same export in one turn, then stream it as an RPC response. */
+  async exportJson(who: Who): Promise<Response> {
+    const data = this.ctx.storage.transactionSync(() => this.exportSnapshot(who));
+    return new Response(exportJsonStream(data), { headers: {
+      "content-type": "application/json",
+      "content-disposition": `attachment; filename="resumatic-export-${data.exportedAt.slice(0, 10)}.json"`,
+      "cache-control": "private, no-store",
+    } });
   }
 
   /** Capture the rows and original-object keys in one synchronous object turn. */
@@ -4656,12 +4667,18 @@ export class Vault extends DurableObject<Env> {
         console.error("upload cleanup pending", { code: "upload_cleanup_pending" });
       }
     }
-    for (const run of this.runs.listPending()) {
+    // One stalled Workflow RPC must not keep every other cancellation and
+    // reconciliation from making progress. Each lane rechecks the lifecycle
+    // before taking another run; unresolved RPCs and their dispatch fences
+    // remain unresolved, and the alarm remains armed before any I/O.
+    const pendingRuns = this.runs.listPending();
+    let pendingIndex = 0;
+    const processPendingRun = async (run: RunRecord): Promise<void> => {
       if (!canContinue()) return;
       if (run.kind === "embed") {
         if (Date.now() - run.createdAt > 600_000)
           this.runs.fail(run.id, "embedding_interrupted");
-        continue;
+        return;
       }
       const binding =
         run.kind === "tailor"
@@ -4671,7 +4688,7 @@ export class Vault extends DurableObject<Env> {
             : run.kind === "reembed"
               ? this.env.REEMBED
               : this.env.DOCUMENTS;
-      if (!binding) continue;
+      if (!binding) return;
       try {
         const instance = await binding.get(run.id);
         if (!canContinue()) return;
@@ -4688,6 +4705,7 @@ export class Vault extends DurableObject<Env> {
             this.markResumeFailed(
               run.targetId,
               "Generation stopped. Try again.",
+              run.id,
             );
           else if (run.kind === "reembed") await this.failReembed(run.id);
           else if (run.kind !== "distill")
@@ -4713,7 +4731,7 @@ export class Vault extends DurableObject<Env> {
         // The platform's explicit not-found result is the only safe reason to create again.
         if (isMissingWorkflowInstance(error, run.id) && run.state === "starting") {
           // The run may have been cancelled while get()/status() was pending.
-          if (this.runs.get(run.id)?.state !== "starting") continue;
+          if (this.runs.get(run.id)?.state !== "starting") return;
           if (this.hasUnsettledDispatch(run.id)) {
             this.runs.noteUncertain(run.id, "dispatch_uncertain");
             await this.redispatchUncertain(run.id);
@@ -4734,7 +4752,18 @@ export class Vault extends DurableObject<Env> {
         else if (!this.dispatchUncertain(run.id))
           this.runs.noteUncertain(run.id, "status_uncertain");
       }
-    }
+    };
+    const lanes = Array.from({ length: Math.min(4, pendingRuns.length) }, async () => {
+      while (canContinue()) {
+        const run = pendingRuns[pendingIndex++];
+        if (!run) return;
+        await processPendingRun(run);
+      }
+    });
+    // Wait for every lane before returning or throwing, so a failed lane
+    // cannot leave unobserved, still-running operations behind.
+    const results = await Promise.allSettled(lanes);
+    for (const result of results) if (result.status === "rejected") throw result.reason;
     if (this.closing || this.gone || !this.initialised || this.meta("state") !== "open") return;
     const expiry = this.sql
       .exec<{ at: number | null }>(
@@ -4961,16 +4990,16 @@ export class Vault extends DurableObject<Env> {
     });
   }
 
-  private markResumeFailed(resumeId: string, error: string): void {
+  private markResumeFailed(resumeId: string, error: string, expectedRunId: string | null): void {
     this.ctx.storage.transactionSync(() => {
       const row = this.sql
         .exec<ResumeRow>(`SELECT * FROM resumes WHERE id = ?`, resumeId)
         .toArray()[0];
-      if (!row || row.state !== "running") return;
+      if (!row || row.state !== "running" || row.run_id !== expectedRunId) return;
       const run = row.run_id ? this.runs.get(row.run_id) : null;
       // fail() leaves cancellation and terminal states alone, so the resume
       // must not be changed to failed when the ledger did not transition.
-      if (run && !["starting", "running"].includes(run.state)) return;
+      if (run && (run.kind !== "tailor" || run.targetId !== resumeId || !["starting", "running"].includes(run.state))) return;
       if (run) this.runs.fail(run.id, "generation_failed");
       this.sql.exec(
         `UPDATE resumes SET state = 'failed', error = ? WHERE id = ?`,
@@ -4997,14 +5026,16 @@ export class Vault extends DurableObject<Env> {
       .toArray();
     for (const row of stale) {
       if (this.hasUnsettledDispatch(row.run_id)) continue;
-      if (
-        (await runStopped(this.env.TAILOR, row.run_id)) &&
-        !this.hasUnsettledDispatch(row.run_id)
-      )
+      const stopped = await runStopped(this.env.TAILOR, row.run_id);
+      this.requireOpen();
+      if (stopped) {
+        if (this.hasUnsettledDispatch(row.run_id)) continue;
         this.markResumeFailed(
           row.id,
           "Tailoring stopped unexpectedly. Try again.",
+          row.run_id,
         );
+      }
     }
   }
 

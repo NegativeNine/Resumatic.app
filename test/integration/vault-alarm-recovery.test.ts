@@ -3,6 +3,61 @@ import { env } from "cloudflare:workers";
 import { expect, it, vi } from "vitest";
 import { vault } from "../../src/shared/stubs";
 
+it("reconciles another cancellation while one Workflow status is stalled", async () => {
+  const id = env.VAULT.newUniqueId().toString();
+  const stub = vault(env, id);
+  const who = { userId: "vault-alarm-independent-runs", gen: 1 };
+  await stub.init(who.userId);
+  await runInDurableObject(stub, async (instance, state) => {
+    const local = (instance as unknown as { env: Env }).env;
+    const original = local.DISTILL;
+    let enter!: () => void, release!: () => void, observeSecond!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const secondObserved = new Promise<void>((resolve) => { observeSecond = resolve; });
+    let stalledId = "";
+    local.DISTILL = {
+      async create() { return {}; },
+      async get(runId: string) {
+        return { async status() {
+          if (runId === stalledId) { enter(); await held; return { status: "running" }; }
+          observeSecond();
+          return { status: "terminated" };
+        } };
+      },
+    } as unknown as Workflow;
+    let alarm: Promise<void> | undefined;
+    try {
+      const first = await instance.addSource(who, { filename: "first.pdf", r2Key: `vaults/${id}/sources/first` });
+      const second = await instance.addSource(who, { filename: "second.pdf", r2Key: `vaults/${id}/sources/second` });
+      stalledId = first.sourceId;
+      state.storage.sql.exec(`UPDATE runs SET created_at=1 WHERE id=?`, first.sourceId);
+      state.storage.sql.exec(`UPDATE runs SET created_at=2 WHERE id=?`, second.sourceId);
+      await instance.cancelRun(who, second.sourceId);
+      await state.storage.deleteAlarm();
+      alarm = instance.alarm();
+      await entered;
+      // The first lookup remains held, but another lane can reconcile the
+      // independently cancelled run and release its associated state.
+      await Promise.race([
+        secondObserved,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("second run did not make progress")), 2_000)),
+      ]);
+      await vi.waitFor(() => {
+        expect(state.storage.sql.exec<{ state: string }>(`SELECT state FROM runs WHERE id=?`, second.sourceId).one().state).toBe("cancelled");
+      });
+      expect(state.storage.sql.exec<{ state: string }>(`SELECT state FROM runs WHERE id=?`, first.sourceId).one().state).toBe("starting");
+      expect(await state.storage.getAlarm()).toEqual(expect.any(Number));
+      release();
+      await alarm;
+    } finally {
+      release();
+      await alarm?.catch(() => {});
+      local.DISTILL = original;
+    }
+  });
+}, 30_000);
+
 it("rearms before cleanup and keeps processing when an upload delete fails", async () => {
   const id = env.VAULT.newUniqueId().toString();
   const stub = vault(env, id);

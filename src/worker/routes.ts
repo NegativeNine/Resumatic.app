@@ -906,11 +906,12 @@ api.get("/resumes/:id/preview", async (c) => {
 });
 
 api.get("/export", async (c) => {
-  const data = await myVault(c).exportAll(c.get("who"));
-  return new Response(JSON.stringify(data, null, 2), {
+  const response = unwrapResult(await durableReadResult(() => myVault(c), (v) => v.exportJson(c.get("who"))));
+  if (!response.body) throw new AppError("unavailable", "the export is unavailable");
+  return new Response(guardedStream(response.body, () => myVault(c).checkSession(c.get("who"))), {
     headers: {
       "content-type": "application/json",
-      "content-disposition": `attachment; filename="resumatic-export-${data.exportedAt.slice(0, 10)}.json"`,
+      "content-disposition": response.headers.get("content-disposition") ?? "attachment; filename=\"resumatic-export.json\"",
       "cache-control": "private, no-store",
     },
   });

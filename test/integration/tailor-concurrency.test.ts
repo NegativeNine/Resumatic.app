@@ -4,6 +4,86 @@ import { describe, expect, it } from "vitest";
 import { vault } from "../../src/shared/stubs";
 
 describe("tailoring and document concurrency", () => {
+  it.each(["terminated", "running"])("does not mutate a resume when a held %s status returns after vault closure", async (status) => {
+    const stub = vault(env, env.VAULT.newUniqueId().toString());
+    const who = { userId: "stale-resume-after-close", gen: 1 };
+    await stub.init(who.userId);
+    await runInDurableObject(stub, async (instance, state) => {
+      const local = (instance as unknown as { env: Env }).env;
+      const previous = local.TAILOR;
+      let entered!: () => void, release!: () => void;
+      const started = new Promise<void>((resolve) => { entered = resolve; });
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      local.TAILOR = {
+        async create() { return {}; },
+        async get() { return { async status() { entered(); await held; return { status }; } }; },
+      } as unknown as Workflow;
+      let pending: Promise<void> | undefined;
+      try {
+        const { applicationId } = await instance.addApplication(who, "A detailed description for an engineering position.");
+        const { resumeId, runId } = await instance.tailor(who, applicationId);
+        state.storage.sql.exec(`UPDATE resumes SET created_at=1 WHERE id=?`, resumeId);
+        const internal = instance as unknown as { reconcileStaleRuns(): Promise<void> };
+        pending = internal.reconcileStaleRuns();
+        await started;
+        await instance.close();
+        release();
+        await expect(pending).rejects.toThrow();
+        expect(state.storage.sql.exec<{ state: string }>(`SELECT state FROM resumes WHERE id=?`, resumeId).one().state).toBe("running");
+        expect(state.storage.sql.exec<{ state: string }>(`SELECT state FROM runs WHERE id=?`, runId).one().state).toBe("starting");
+      } finally {
+        release();
+        await pending?.catch(() => {});
+        local.TAILOR = previous;
+      }
+    });
+  }, 30_000);
+
+  it.each(["alarm", "stale reconciliation"] as const)("does not fail a replacement run when an old %s status returns", async (path) => {
+    const stub = vault(env, env.VAULT.newUniqueId().toString());
+    const who = { userId: `stale-resume-${path}`, gen: 1 };
+    await stub.init(who.userId);
+    await runInDurableObject(stub, async (instance, state) => {
+      const local = (instance as unknown as { env: Env }).env;
+      const previous = local.TAILOR;
+      let entered!: () => void, release!: () => void;
+      const started = new Promise<void>((resolve) => { entered = resolve; });
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      local.TAILOR = {
+        async create() { return {}; },
+        async get() { return { async status() { entered(); await held; return { status: "terminated" }; } }; },
+      } as unknown as Workflow;
+      let pending: Promise<void> | undefined;
+      try {
+        const { applicationId } = await instance.addApplication(who, "A detailed description for an engineering position.");
+        const { resumeId, runId } = await instance.tailor(who, applicationId);
+        state.storage.sql.exec(`UPDATE resumes SET created_at=1 WHERE id=?`, resumeId);
+        const internal = instance as unknown as { reconcileStaleRuns(): Promise<void> };
+        pending = path === "alarm" ? instance.alarm() : internal.reconcileStaleRuns();
+        await started;
+        // Simulate a legacy/import recovery changing the referenced run while
+        // the old Workflow status is in flight. The reservation now belongs
+        // to the replacement; a stale response must not fail or refund it.
+        const replacement = crypto.randomUUID();
+        state.storage.transactionSync(() => {
+          state.storage.sql.exec(`INSERT INTO runs(id,kind,target_id,request_key,input_digest,state,steps,next_step,bucket_key,credit_state,error_code,created_at,updated_at)
+            SELECT ?,kind,target_id,?,input_digest,'starting',steps,next_step,bucket_key,'reserved',NULL,created_at,updated_at FROM runs WHERE id=?`, replacement, `recovered:${replacement}`, runId);
+          state.storage.sql.exec(`UPDATE runs SET state='failed',credit_state='released' WHERE id=?`, runId);
+          state.storage.sql.exec(`UPDATE resumes SET run_id=? WHERE id=?`, replacement, resumeId);
+        });
+        release();
+        await pending;
+        expect(state.storage.sql.exec<{ state: string; run_id: string }>(`SELECT state,run_id FROM resumes WHERE id=?`, resumeId).one()).toEqual({ state: "running", run_id: replacement });
+        expect(state.storage.sql.exec<{ state: string; credit_state: string }>(`SELECT state,credit_state FROM runs WHERE id=?`, replacement).one()).toEqual({ state: "starting", credit_state: "reserved" });
+        expect((await instance.me(who)).quota.reserved).toBe(1);
+      } finally {
+        release();
+        await pending?.catch(() => {});
+        local.TAILOR = previous;
+      }
+    });
+  }, 30_000);
+
   it("waits for gap questions to finish before starting a resume", async () => {
     const stub = vault(env, env.VAULT.newUniqueId().toString());
     const who = { userId: "question-concurrency-owner", gen: 1 };

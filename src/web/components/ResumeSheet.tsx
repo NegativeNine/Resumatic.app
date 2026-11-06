@@ -31,11 +31,15 @@ export function ResumeSheet({
   body,
   reload,
   readOnly = false,
+  onLineEditingChange,
+  editingOutdated = false,
 }: {
   resume: ResumeView;
   body: ResumeBody;
   reload: Reload;
   readOnly?: boolean;
+  onLineEditingChange?: (id: string, active: boolean) => void;
+  editingOutdated?: boolean;
 }) {
   const lineIds = useMemo(
     () => [
@@ -90,6 +94,8 @@ export function ResumeSheet({
       expectedVersion={resume.version}
       readOnly={readOnly}
       canRemove={!needsEvidence}
+      onEditingChange={onLineEditingChange}
+      editingOutdated={editingOutdated}
     />
   );
 

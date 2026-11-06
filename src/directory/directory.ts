@@ -694,6 +694,38 @@ export class Directory extends DurableObject<Env> {
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invite_delete_authorizations`).one().n;
     return count;
   }
+
+  /**
+   * A bounded, read-only observation for an Access-protected diagnostic.
+   * It is not a deletion fence: other requests and older code may create an
+   * account before or after this object's snapshot.
+   */
+  async inviteUserInventory(email: string): Promise<
+    | { status: "observed"; active: number; deleting: number }
+    | { status: "invalid_rows" | "row_limit" }
+  > {
+    if (typeof email !== "string" || !email.trim() || email.length > 320)
+      throw new AppError("invalid", "invalid inventory request");
+    const normalized = email.trim().toLowerCase();
+    let scanned = 0, active = 0, deleting = 0;
+    for (const row of this.sql.exec<{ user_id: SqlStorageValue; email: SqlStorageValue; state: SqlStorageValue }>(
+      `SELECT user_id,email,state FROM users ORDER BY rowid LIMIT 10001`,
+    )) {
+      if (++scanned > 10_000) return { status: "row_limit" };
+      if (typeof row.user_id !== "string" || !row.user_id ||
+          typeof row.email !== "string" || !row.email.trim() || row.email.length > 320 ||
+          (row.state !== "active" && row.state !== "deleting"))
+        return { status: "invalid_rows" };
+      // SQLite lower() does not implement the JavaScript normalization used
+      // at sign-in, including for legacy Unicode rows.
+      if (row.email.trim().toLowerCase() === normalized) {
+        if (row.state === "active") active++;
+        else deleting++;
+      }
+    }
+    return { status: "observed", active, deleting };
+  }
+
   async forgetIdentityHome(
     provider: string,
     subject: string,

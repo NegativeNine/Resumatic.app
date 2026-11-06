@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { ResumeView } from "../../shared/api";
 import { api } from "../api";
 import { ResumeSheet } from "../components/ResumeSheet";
@@ -75,10 +75,31 @@ function ReadyResume({
 }) {
   const versions = useResource(() => api.resumeVersions(resume.id));
   const [version, setVersion] = useState<number | undefined>();
+  // A newer version can arrive while a line editor is open. Retain the
+  // rendered version until every editor closes so the user's draft survives.
+  const [editing, setEditing] = useState<{ snapshot: ResumeView; ids: Set<string> } | null>(null);
+  const latestResume = useRef(resume);
+  latestResume.current = resume;
+  const editingChanged = useCallback((id: string, active: boolean) => {
+    const openedVersion = latestResume.current;
+    setEditing((previous) => {
+      if (active) {
+        const ids = new Set(previous?.ids ?? []);
+        ids.add(id);
+        return { snapshot: previous?.snapshot ?? openedVersion, ids };
+      }
+      if (!previous) return null;
+      const ids = new Set(previous.ids);
+      ids.delete(id);
+      return ids.size ? { ...previous, ids } : null;
+    });
+  }, []);
   const id = useId();
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     await Promise.all([reload(), versions.reload()]);
-  };
+  }, [reload, versions.reload]);
+  const displayed = editing?.snapshot ?? resume;
+  const editingOutdated = !!editing && editing.snapshot.version !== resume.version;
   return (
     <>
       <div className="version-picker">
@@ -86,6 +107,7 @@ function ReadyResume({
         <select
           id={id}
           value={version ?? "latest"}
+          disabled={!!editing}
           onChange={(event) =>
             setVersion(
               event.target.value === "latest"
@@ -113,13 +135,17 @@ function ReadyResume({
       {versions.error && (
         <ErrorNote message={versions.error} onRetry={versions.reload} />
       )}
+      {editing && <p className="hint">Finish or cancel your line edits to change saved versions.</p>}
+      {editingOutdated && <p className="notice" role="status">A newer resume version is available. Your draft is still here; copy it, then cancel the edit to view the latest version.</p>}
       {version === undefined ? (
         <>
           <ResumeSheet
-            key={resume.version}
-            resume={resume}
-            body={resume.body!}
+            key={displayed.version}
+            resume={displayed}
+            body={displayed.body!}
             reload={refresh}
+            onLineEditingChange={editingChanged}
+            editingOutdated={editingOutdated}
           />
           <ApplicationDocuments
             applicationId={resume.applicationId}

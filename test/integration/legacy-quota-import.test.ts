@@ -24,8 +24,9 @@ async function fixture({ existingBucket = false, legacyUsage = 2, legacyRows = 1
   return { stub, who, month };
 }
 
-function markFailed(instance: unknown, id: string) {
-  (instance as { markResumeFailed(id: string, error: string): void }).markResumeFailed(id, "failed");
+function markFailed(instance: unknown, state: DurableObjectState, id: string) {
+  const runId = state.storage.sql.exec<{ run_id: string | null }>(`SELECT run_id FROM resumes WHERE id=?`, id).one().run_id;
+  (instance as { markResumeFailed(id: string, error: string, expectedRunId: string | null): void }).markResumeFailed(id, "failed", runId);
 }
 
 describe("legacy quota import", () => {
@@ -48,13 +49,19 @@ describe("legacy quota import", () => {
     await runInDurableObject(stub, (instance, state) => {
       const sql = state.storage.sql;
       expect(sql.exec(`SELECT value FROM meta WHERE key = 'legacy_quota_import:legacy-0'`).one().value).toBe(`free:${month}`);
+      // An older lookup must not fail or refund a replacement legacy run.
+      (instance as unknown as { markResumeFailed(id: string, error: string, expectedRunId: string | null): void })
+        .markResumeFailed("legacy-0", "failed", "stale-run");
+      expect(sql.exec(`SELECT state FROM resumes WHERE id = 'legacy-0'`).one().state).toBe("running");
+      expect(sql.exec(`SELECT value FROM meta WHERE key = 'legacy_quota_import:legacy-0'`).one().value).toBe(`free:${month}`);
+      expect(sql.exec(`SELECT used FROM quota_buckets WHERE bucket_key = ?`, `free:${month}`).one().used).toBe(2);
       sql.exec(`CREATE TRIGGER fail_refund BEFORE UPDATE OF used ON quota_buckets BEGIN SELECT RAISE(ABORT, 'refund failed'); END`);
-      expect(() => markFailed(instance, "legacy-0")).toThrow("refund failed");
+      expect(() => markFailed(instance, state, "legacy-0")).toThrow("refund failed");
       expect(sql.exec(`SELECT state FROM resumes WHERE id = 'legacy-0'`).one().state).toBe("running");
       expect(sql.exec(`SELECT value FROM meta WHERE key = 'quota_used'`).one().value).toBe("2");
       sql.exec(`DROP TRIGGER fail_refund`);
-      markFailed(instance, "legacy-0");
-      markFailed(instance, "legacy-0");
+      markFailed(instance, state, "legacy-0");
+      markFailed(instance, state, "legacy-0");
       expect(sql.exec(`SELECT value FROM meta WHERE key = 'quota_used'`).one().value).toBe("1");
       expect(sql.exec(`SELECT * FROM meta WHERE key = 'legacy_quota_import:legacy-0'`).toArray()).toEqual([]);
     });
@@ -67,7 +74,7 @@ describe("legacy quota import", () => {
       const before = (await stub.me(who)).quota.used;
       await runInDurableObject(stub, (instance, state) => {
         expect(state.storage.sql.exec(`SELECT * FROM meta WHERE key GLOB 'legacy_quota_import:*'`).toArray()).toEqual([]);
-        markFailed(instance, "legacy-0");
+        markFailed(instance, state, "legacy-0");
       });
       expect((await stub.me(who)).quota.used).toBe(before);
     }
@@ -81,7 +88,7 @@ describe("legacy quota import", () => {
     expect((await stub.me(who)).quota.used).toBe(2);
     await runInDurableObject(stub, (instance, state) => {
       expect(state.storage.sql.exec(`SELECT * FROM meta WHERE key GLOB 'legacy_quota_import:*'`).toArray()).toEqual([]);
-      markFailed(instance, "legacy-0");
+      markFailed(instance, state, "legacy-0");
     });
     expect((await stub.me(who)).quota.used).toBe(2);
   });
@@ -93,7 +100,7 @@ describe("legacy quota import", () => {
       const sql = state.storage.sql;
       sql.exec(`INSERT INTO runs (id, kind, target_id, request_key, input_digest, state, steps, credit_state, created_at, updated_at) VALUES ('new-run', 'tailor', 'new-resume', 'key', 'digest', 'running', '[]', 'none', 1, 1)`);
       sql.exec(`INSERT INTO resumes (id, application_id, state, quota_month, run_id, created_at) VALUES ('new-resume', 'job', 'running', ?, 'new-run', 1)`, month);
-      markFailed(instance, "new-resume");
+      markFailed(instance, state, "new-resume");
       expect(sql.exec(`SELECT value FROM meta WHERE key = 'quota_used'`).one().value).toBe("2");
     });
     expect((await stub.me(who)).quota.used).toBe(2);
@@ -108,7 +115,7 @@ describe("legacy quota import", () => {
       const sql = state.storage.sql;
       sql.exec(`UPDATE meta SET value = '2099-01' WHERE key = 'quota_month'`);
       sql.exec(`UPDATE meta SET value = '4' WHERE key = 'quota_used'`);
-      markFailed(instance, "legacy-0");
+      markFailed(instance, state, "legacy-0");
       expect(sql.exec(`SELECT used FROM quota_buckets WHERE bucket_key = ?`, `free:${month}`).one().used).toBe(1);
       expect(sql.exec(`SELECT value FROM meta WHERE key = 'quota_used'`).one().value).toBe("4");
     });

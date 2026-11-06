@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import {
   MAX_LINE_CHARS,
   type FactView,
@@ -26,6 +26,8 @@ interface Props {
   expectedVersion?: number;
   readOnly?: boolean;
   canRemove?: boolean;
+  onEditingChange?: (id: string, active: boolean) => void;
+  editingOutdated?: boolean;
 }
 
 /** One resume line, with its status and, on request, the facts and quotes it cites. */
@@ -42,6 +44,8 @@ export function LineItem({
   expectedVersion,
   readOnly = false,
   canRemove = false,
+  onEditingChange,
+  editingOutdated = false,
 }: Props) {
   const [editing, setEditing] = useState(false);
   const removal = useAction();
@@ -51,10 +55,11 @@ export function LineItem({
     facts[factId] ? [{ id: factId, ...facts[factId] }] : [],
   );
 
-  function closeEditor() {
+  const closeEditor = useCallback(() => {
     setEditing(false);
+    onEditingChange?.(line.id, false);
     ref.current?.focus();
-  }
+  }, [line.id, onEditingChange]);
 
   return (
     <li className="line" ref={ref} tabIndex={-1}>
@@ -70,6 +75,7 @@ export function LineItem({
           reload={reload}
           onClose={closeEditor}
           expectedVersion={expectedVersion}
+          editingOutdated={editingOutdated}
         />
       ) : (
         <p className="line-text" id={`${id}-text`}>
@@ -97,7 +103,7 @@ export function LineItem({
             type="button"
             className="link-button"
             aria-describedby={`${id}-text`}
-            onClick={() => setEditing(true)}
+            onClick={() => { onEditingChange?.(line.id, true); setEditing(true); }}
           >
             {legacyReview === "pending" ? "Review line" : "Edit line"}
           </button>
@@ -153,6 +159,7 @@ function LineEditor({
   reload,
   onClose,
   expectedVersion,
+  editingOutdated,
 }: {
   resumeId: string;
   applicationId: string;
@@ -163,6 +170,7 @@ function LineEditor({
   reload: Reload;
   onClose: () => void;
   expectedVersion?: number;
+  editingOutdated: boolean;
 }) {
   const [text, setText] = useState(line.text);
   const { run, pending, error, setError } = useAction();
@@ -294,7 +302,7 @@ function LineEditor({
           type="submit"
           className="primary small"
           disabled={
-            pending || !!documentId || (!hasEvidence && selectedFacts.size === 0) ||
+            pending || !!documentId || editingOutdated || (!hasEvidence && selectedFacts.size === 0) ||
             !trimmed ||
             trimmed.length > MAX_LINE_CHARS ||
             (hasEvidence && trimmed === line.text)
