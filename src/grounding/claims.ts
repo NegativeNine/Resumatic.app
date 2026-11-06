@@ -11,6 +11,10 @@ export interface NumberToken {
   raw: string;
   /** A number in an explicit date context, not an achievement count. */
   date: boolean;
+  /** Date position where recognizable; first/second retain ambiguous numeric order. */
+  datePart: "year" | "month" | "day" | "first" | "second" | null;
+  /** Canonical recognized date, so parts from separate dates cannot be combined. */
+  dateKey: string | null;
 }
 
 const NUMBER_WORDS: Record<string, number> = {
@@ -69,14 +73,69 @@ function isDateYear(text: string, index: number, digits: string): boolean {
     /^[-/]\d{1,2}(?:[-/]\d{1,2})?\b/.test(after);
 }
 
+type DatePart = NonNullable<NumberToken["datePart"]>;
+type DateComponent = { start: number; end: number; part: DatePart; key: string };
+
+/** Recognize common numeric and written dates without guessing an ambiguous locale. */
+function dateComponents(text: string): { components: DateComponent[]; numericRanges: [number, number][] } {
+  const components: DateComponent[] = [];
+  const numericRanges: [number, number][] = [];
+  const pad = (value: string) => value.padStart(2, "0");
+  const mark = (start: number, value: string, part: DatePart, key: string) => components.push({ start, end: start + value.length, part, key });
+  for (const match of text.matchAll(/\b((?:19|20)\d{2})([-/.])(0?[1-9]|1[0-2])(?:\2(0?[1-9]|[12]\d|3[01]))?\b/g)) {
+    const start = match.index;
+    const month = start + match[1]!.length + 1;
+    const key = `iso:${match[1]}:${pad(match[3]!)}${match[4] ? `:${pad(match[4])}` : ""}`;
+    mark(start, match[1]!, "year", key);
+    mark(month, match[3]!, "month", key);
+    if (match[4]) mark(month + match[3]!.length + 1, match[4], "day", key);
+    numericRanges.push([start, start + match[0].length]);
+  }
+  // Retain the two positions rather than guessing whether the user wrote
+  // month/day or day/month. The year remains comparable to a standalone year.
+  for (const match of text.matchAll(/\b(0?[1-9]|[12]\d|3[01])([-/\.])(0?[1-9]|[12]\d|3[01])\2((?:19|20)\d{2})\b/g)) {
+    const start = match.index;
+    const second = start + match[1]!.length + 1;
+    const key = `ambiguous:${match[4]}:${pad(match[1]!)}:${pad(match[3]!)}`;
+    mark(start, match[1]!, "first", key);
+    mark(second, match[3]!, "second", key);
+    mark(second + match[3]!.length + 1, match[4]!, "year", key);
+    numericRanges.push([start, start + match[0].length]);
+  }
+  const month = "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
+  const monthNumber = (name: string) => pad(String(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(name.slice(0, 3).toLowerCase()) + 1));
+  for (const match of text.matchAll(new RegExp(`\\b(${month})\\.?\\s+(\\d{1,2})(?:,\\s*|\\s+)((?:19|20)\\d{2})\\b`, "gi"))) {
+    const day = match.index + match[0].indexOf(match[2]!);
+    const year = match.index + match[0].lastIndexOf(match[3]!);
+    const key = `iso:${match[3]}:${monthNumber(match[1]!)}:${pad(match[2]!)}`;
+    mark(day, match[2]!, "day", key);
+    mark(year, match[3]!, "year", key);
+  }
+  for (const match of text.matchAll(new RegExp(`\\b(\\d{1,2})\\s+(${month})\\.?\\s+((?:19|20)\\d{2})\\b`, "gi"))) {
+    const key = `iso:${match[3]}:${monthNumber(match[2]!)}:${pad(match[1]!)}`;
+    mark(match.index, match[1]!, "day", key);
+    mark(match.index + match[0].lastIndexOf(match[3]!), match[3]!, "year", key);
+  }
+  for (const match of text.matchAll(new RegExp(`\\b(${month})\\.?\\s+((?:19|20)\\d{2})\\b`, "gi"))) {
+    const year = match.index + match[0].lastIndexOf(match[2]!);
+    if (components.some((item) => item.start === year)) continue;
+    mark(year, match[2]!, "year", `iso:${match[2]}:${monthNumber(match[1]!)}`);
+  }
+  return { components, numericRanges };
+}
+
 /** Every number in the text, with scale words applied and percentages flagged. */
 export function numbersIn(text: string): NumberToken[] {
   const out: NumberToken[] = [];
   // Mark every component of an explicit ISO-style date, including its month
   // and day. Otherwise those values can be reused as unrelated counts.
-  const numericDates = [...text.matchAll(/\b(?:19|20)\d{2}[-/.](?:0?[1-9]|1[0-2])(?:[-/.](?:0?[1-9]|[12]\d|3[01]))?\b/g)]
-    .map((match) => [match.index, match.index + match[0].length] as const);
-  for (const match of text.matchAll(NUMBER)) {
+  const dates = dateComponents(text);
+  // In a dotted date a period separates components; the number scanner
+  // otherwise interprets the year and month as a decimal. Preserve offsets.
+  const scan = text.split("");
+  for (const [start, end] of dates.numericRanges)
+    for (let i = start; i < end; i++) if (scan[i] === ".") scan[i] = "/";
+  for (const match of scan.join("").matchAll(NUMBER)) {
     const digits = (match[4] ?? "").replace(/,/g, "");
     const unit = (match[5] ?? "").toLowerCase().replace(/\s+/g, " ");
     let value = Number(digits);
@@ -85,17 +144,18 @@ export function numbersIn(text: string): NumberToken[] {
     if (!Number.isFinite(value) || (value === 0 && /[1-9]/.test(digits.split(/e/i)[0]!))) value = Infinity;
     const prefix = text.slice(0, match.index);
     // A spaced hyphen between two years is a date range, not a negative year.
+    const digitIndex = match.index + match[0].indexOf(match[4]!);
+    const component = dates.components.find((item) => digitIndex >= item.start && digitIndex < item.end);
     const yearRange = match[1] === "-" && !match[2] && !match[3] && /\b(?:19|20)\d{2}\s*$/.test(prefix) && /^(?:19|20)\d{2}$/.test(digits);
-    if (!yearRange && ([match[1], match[3]].some((sign) => sign === "-" || sign === "−") || /\b(?:minus|negative)\s+$/i.test(prefix))) value = -value;
+    if (!component && !yearRange && ([match[1], match[3]].some((sign) => sign === "-" || sign === "−") || /\b(?:minus|negative)\s+$/i.test(prefix))) value = -value;
     const percent = unit === "%" || unit === "percent" || unit === "per cent";
     if (!percent && unit) value *= SCALES[unit] ?? 1;
     const prefixCurrency = currencyOf(match[2]);
     const suffixCurrency = currencyOf(match[6]);
     // Conflicting units cannot be treated as any supported quantity.
     const currency = prefixCurrency && suffixCurrency && prefixCurrency !== suffixCurrency ? "conflicting" : prefixCurrency ?? suffixCurrency;
-    const digitIndex = match.index + match[0].indexOf(match[4]!);
-    const date = numericDates.some(([start, end]) => digitIndex >= start && digitIndex < end) || isDateYear(text, digitIndex, digits);
-    out.push({ value, percent, multiplier: isMultiplier(unit), currency, raw: match[0].trim(), date });
+    const datePart = component?.part ?? (isDateYear(text, digitIndex, digits) ? "year" : null);
+    out.push({ value, percent, multiplier: isMultiplier(unit), currency, raw: text.slice(match.index, match.index + match[0].length).trim(), date: datePart !== null, datePart, dateKey: component?.key ?? null });
   }
   for (const match of text.matchAll(WORD_NUMBER)) {
     const magnitude = NUMBER_WORDS[match[1]!.toLowerCase()];
@@ -106,7 +166,7 @@ export function numbersIn(text: string): NumberToken[] {
     const prefixCurrency = currencyOf(prefix);
     const suffixCurrency = currencyOf(match[3]);
     const currency = prefixCurrency && suffixCurrency && prefixCurrency !== suffixCurrency ? "conflicting" : prefixCurrency ?? suffixCurrency;
-    out.push({ value, percent: unit === "%" || unit === "percent" || unit === "per cent", multiplier: isMultiplier(unit), currency, raw: match[0].trim(), date: false });
+    out.push({ value, percent: unit === "%" || unit === "percent" || unit === "per cent", multiplier: isMultiplier(unit), currency, raw: match[0].trim(), date: false, datePart: null, dateKey: null });
   }
   return out;
 }
@@ -115,7 +175,8 @@ function sameNumber(a: NumberToken, b: NumberToken): boolean {
   if (!Number.isFinite(a.value) || !Number.isFinite(b.value)) return false;
   if ((Number.isInteger(a.value) && !Number.isSafeInteger(a.value)) ||
       (Number.isInteger(b.value) && !Number.isSafeInteger(b.value))) return false;
-  return a.currency !== "conflicting" && b.currency !== "conflicting" && a.percent === b.percent && a.multiplier === b.multiplier && a.currency === b.currency && a.date === b.date && Math.abs(a.value - b.value) <= 2 * Number.EPSILON * Math.max(1, Math.abs(a.value), Math.abs(b.value));
+  const dateSupported = a.dateKey === null || b.dateKey === a.dateKey || (b.dateKey !== null && b.dateKey.startsWith(`${a.dateKey}:`));
+  return a.currency !== "conflicting" && b.currency !== "conflicting" && a.percent === b.percent && a.multiplier === b.multiplier && a.currency === b.currency && a.date === b.date && a.datePart === b.datePart && dateSupported && Math.abs(a.value - b.value) <= 2 * Number.EPSILON * Math.max(1, Math.abs(a.value), Math.abs(b.value));
 }
 
 /** Numbers in the claim that no evidence number matches. */

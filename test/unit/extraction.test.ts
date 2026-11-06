@@ -772,7 +772,8 @@ describe("model usage and spending guard", () => {
       input_tokens: 1000,
       output_tokens: 1000,
     });
-    expect(budget.observe(usage).costUsd).toBeCloseTo(0.03);
+    const attemptId = budget.reserve(usage.model, "input", 1000);
+    expect(budget.observe({ ...usage, attemptId }).costUsd).toBeCloseTo(0.03);
   });
   it("reports and reserves every schema retry", async () => {
     const usage: Usage[] = [];

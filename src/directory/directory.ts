@@ -95,6 +95,11 @@ export class Directory extends DurableObject<Env> {
   async signIn(p: SignInInput): Promise<{ userId: string; vaultId: string }> {
     const email = p.email.trim().toLowerCase();
     let row = this.findAccount(p.provider, p.subject);
+    // Routing and this RPC are separate operations. If erasure removed the
+    // observed account in between, retry routing instead of recreating it on
+    // a potentially stale shard alongside a new account elsewhere.
+    if (p.expectedUserId !== undefined && (!row || row.user_id !== p.expectedUserId))
+      throw new AppError("conflict", "the account changed; retry sign-in");
     if (!row) {
       // Test sign-ins exist only on staging, behind TEST_SIGNIN_KEY, so the end-to-end check needs no invite.
       if (

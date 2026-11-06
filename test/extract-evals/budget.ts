@@ -23,11 +23,13 @@ export class EvalBudget {
     string,
     { model: string; reservedMicros: number }
   >();
+  private readonly seenAttempts = new Set<string>();
   private frozen = false;
   constructor(private readonly config: EvalBudgetConfig) {
     if (
       !Number.isFinite(config.usd) ||
       config.usd <= 0 ||
+      !Number.isSafeInteger(Math.floor(config.usd * 1_000_000)) ||
       !Number.isSafeInteger(config.maxCalls) ||
       config.maxCalls < 1
     )
@@ -67,6 +69,8 @@ export class EvalBudget {
     attemptId = crypto.randomUUID(),
   ): string {
     if (this.frozen) throw new Error("live_eval_campaign_frozen");
+    if (!/^[A-Za-z0-9_-]{1,100}$/.test(attemptId)) throw new Error("live_eval_attempt_invalid");
+    if (this.seenAttempts.has(attemptId)) throw new Error("live_eval_attempt_duplicate");
     const price = this.prices[model];
     if (!price) throw new Error("live_eval_model_price_required");
     if (
@@ -88,20 +92,25 @@ export class EvalBudget {
     const cost =
       ((inputBound * price[0] + maxOutputTokens * price[1]) * passes) /
       1_000_000;
+    const micros = Math.max(1, Math.ceil(cost * 1_000_000));
+    const reservedMicros = Math.round(this.reservedUsd * 1_000_000);
+    const budgetMicros = Math.floor(this.config.usd * 1_000_000);
     if (
       !Number.isFinite(cost) ||
       cost <= 0 ||
+      !Number.isSafeInteger(micros) ||
+      !Number.isSafeInteger(reservedMicros) ||
       this.calls + attemptWeight > this.config.maxCalls ||
-      this.reservedUsd + cost > this.config.usd
+      micros > budgetMicros - reservedMicros
     )
       throw new Error("live_eval_budget_exhausted");
     if (this.config.ledger) {
       const result = reservePilotLedger(
         this.config.ledger.file,
         this.config.ledger.suite,
-        Math.round(this.config.usd * 1_000_000),
+        budgetMicros,
         this.config.maxCalls,
-        Math.max(1, Math.ceil(cost * 1_000_000)),
+        micros,
         attemptWeight,
         attemptId,
       );
@@ -109,12 +118,13 @@ export class EvalBudget {
       this.reservedUsd = result.reservedUsd;
     } else {
       this.calls += attemptWeight;
-      this.reservedUsd += cost;
+      this.reservedUsd = (reservedMicros + micros) / 1_000_000;
     }
     this.attempts.set(attemptId, {
       model,
-      reservedMicros: Math.max(1, Math.ceil(cost * 1_000_000)),
+      reservedMicros: micros,
     });
+    this.seenAttempts.add(attemptId);
     return attemptId;
   }
   observe(usage: Usage): Usage {
@@ -130,8 +140,10 @@ export class EvalBudget {
     if (usage.attemptId) {
       const attempt = this.attempts.get(usage.attemptId);
       if (!attempt || attempt.model !== usage.model) {
-        if (this.config.ledger) freezePilotLedger(this.config.ledger.file);
         this.frozen = true;
+        if (this.config.ledger) {
+          try { freezePilotLedger(this.config.ledger.file); } catch { /* unavailable ledger stays unresolved */ }
+        }
         throw new Error("live_eval_ledger_unavailable");
       }
       // Apply the same integer, non-negative token validation used by the
@@ -139,21 +151,30 @@ export class EvalBudget {
       // negative input count offset by positive output) can settle locally
       // as a valid undercount even though the shared ledger froze it.
       const actualMicros = this.actualMicros(usage);
-      if (this.config.ledger)
-        settlePilotAttempt(
-          this.config.ledger.file,
-          this.config.ledger.suite,
-          usage.attemptId,
-          actualMicros,
-        );
+      if (this.config.ledger) {
+        try {
+          settlePilotAttempt(
+            this.config.ledger.file,
+            this.config.ledger.suite,
+            usage.attemptId,
+            actualMicros,
+          );
+        } catch (error) {
+          this.frozen = true;
+          try { freezePilotLedger(this.config.ledger.file); } catch { /* unavailable ledger stays unresolved */ }
+          throw error;
+        }
+      }
       this.attempts.delete(usage.attemptId);
       if (actualMicros === null || actualMicros > attempt.reservedMicros) {
         this.frozen = true;
         throw new Error("live_eval_campaign_frozen");
       }
-    } else if (this.config.ledger) {
-      freezePilotLedger(this.config.ledger.file);
+    } else {
       this.frozen = true;
+      if (this.config.ledger) {
+        try { freezePilotLedger(this.config.ledger.file); } catch { /* unavailable ledger stays unresolved */ }
+      }
       throw new Error("live_eval_ledger_unavailable");
     }
     if (costUsd === null) this.unpricedCalls += 1;
@@ -163,15 +184,21 @@ export class EvalBudget {
   failAttempt(attemptId: string): void {
     if (!this.attempts.has(attemptId))
       throw new Error("live_eval_ledger_unavailable");
-    if (this.config.ledger)
-      settlePilotAttempt(
-        this.config.ledger.file,
-        this.config.ledger.suite,
-        attemptId,
-        null,
-      );
-    this.attempts.delete(attemptId);
     this.frozen = true;
+    if (this.config.ledger) {
+      try {
+        settlePilotAttempt(
+          this.config.ledger.file,
+          this.config.ledger.suite,
+          attemptId,
+          null,
+        );
+      } catch (error) {
+        try { freezePilotLedger(this.config.ledger.file); } catch { /* unavailable ledger stays unresolved */ }
+        throw error;
+      }
+    }
+    this.attempts.delete(attemptId);
   }
 }
 

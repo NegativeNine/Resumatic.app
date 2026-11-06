@@ -165,7 +165,14 @@ export function restModels(
       try { budget.failAttempt(usage.attemptId); } finally { await pilot.freeze().catch(() => {}); }
       throw error;
     }
-    const observed = budget.observe(usage);
+    let observed;
+    try { observed = budget.observe(usage); }
+    catch (error) {
+      // The shared reservation may already be settled; an unresolved local
+      // ledger must still stop all subsequent supervised attempts.
+      await pilot.freeze().catch(() => {});
+      throw error;
+    }
     await opts.onUsage?.(observed);
   };
   return {

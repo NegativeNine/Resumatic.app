@@ -24,6 +24,8 @@ export interface SignInInput {
   homeShard?: number;
   /** The global Directory has already authorized this new account's invite. */
   inviteAuthorized?: boolean;
+  /** Internal: a routed existing identity must still belong to this user. */
+  expectedUserId?: string;
 }
 
 export interface VaultRow {

@@ -61,9 +61,10 @@ describe("Directory shard routing", () => {
       ...input,
       homeShard: 9,
       inviteAuthorized: true,
+      expectedUserId: "untrusted-user",
     });
     expect(result.directory).toBe(f.get("global"));
-    expect(result.input).toEqual(input);
+    expect(result.input).toEqual({ ...input, expectedUserId: f.identities.get("global")!.userId });
     expect(f.get("global").requireInvite).not.toHaveBeenCalled();
     expect(f.get("global").claimIdentityHome).not.toHaveBeenCalled();
   });
@@ -78,6 +79,7 @@ describe("Directory shard routing", () => {
     const result = await directoryForSignIn(f.env, input);
     expect(result.directory).toBe(f.get(`directory-${shard}`));
     expect(result.input.homeShard).toBe(shard);
+    expect(result.input.expectedUserId).toBe(f.identities.get(`directory-${shard}`)!.userId);
     expect(f.get("global").requireInvite).not.toHaveBeenCalled();
   });
 

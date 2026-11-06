@@ -36,13 +36,15 @@ export async function directoryForSignIn(
     hint: supplied.hint,
   };
   const global = directory(env) as DirectoryStub;
-  if (await global.existingIdentity(input.provider, input.subject))
-    return { directory: global, input };
+  const existingGlobal = await global.existingIdentity(input.provider, input.subject);
+  if (existingGlobal)
+    return { directory: global, input: { ...input, expectedUserId: existingGlobal.userId } };
   const shard = await identityShard(input.provider, input.subject);
   const sharded = directoryByName(env, `directory-${shard}`) as DirectoryStub;
   // Check this even when shard creation is disabled; existing users must remain reachable.
-  if (await sharded.existingIdentity(input.provider, input.subject))
-    return { directory: sharded, input: { ...input, homeShard: shard } };
+  const existingSharded = await sharded.existingIdentity(input.provider, input.subject);
+  if (existingSharded)
+    return { directory: sharded, input: { ...input, homeShard: shard, expectedUserId: existingSharded.userId } };
   if (input.provider !== "test") await global.requireInvite(input.email);
   const configuration = env.DIRECTORY_SHARDS;
   if (configuration && !["0", "1", "16"].includes(configuration))

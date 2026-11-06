@@ -92,6 +92,22 @@ describe("numbers", () => {
     expect(unsupportedNumbers("Managed 1 employee", "Started 2021/03/01")).toEqual(["1"]);
   });
 
+  it("keeps numeric and written date components separate from counts and from each other", () => {
+    for (const date of ["03/01/2021", "03-01-2021", "03.01.2021", "March 3, 2021", "3 March 2021"]) {
+      expect(unsupportedNumbers("Managed 3 employees", `Started ${date}`)).toEqual(["3"]);
+      expect(unsupportedNumbers("Managed 2021 employees", `Started ${date}`)).toEqual(["2021"]);
+    }
+    expect(unsupportedNumbers("Started 2021/01/03", "Started 2021/03/01")).toEqual(["2021", "01", "03"]);
+    expect(unsupportedNumbers("Started 2021/03/01", "Started 2021-03-01")).toEqual([]);
+    expect(unsupportedNumbers("Started 2021.03.01", "Started 2021/03/01")).toEqual([]);
+    expect(unsupportedNumbers("Started 03/01/2021", "Started 01/03/2021")).toEqual(["03", "01", "2021"]);
+    expect(unsupportedNumbers("Started in 2021", "Started March 3, 2021")).toEqual([]);
+    expect(unsupportedNumbers("Started 2021/04/02", "Started 2021/03/01 and finished 2022/04/02")).toEqual(["2021", "04", "02"]);
+    expect(unsupportedNumbers("Started March 2021", "Started April 2021")).toEqual(["2021"]);
+    expect(unsupportedNumbers("Started March 2021", "Started 2021/03/01")).toEqual([]);
+    expect(unsupportedNumbers("Started March 3, 2021", "Started 2021/03/03")).toEqual([]);
+  });
+
   it("detects leading-dot decimals and scientific notation without dropping extreme values", () => {
     expect(unsupportedNumbers("Reduced cost by .5%", "reduced cost")).toEqual([".5%"]);
     expect(unsupportedNumbers("Reduced cost by .5%", "reduced cost by 0.5%")).toEqual([]);

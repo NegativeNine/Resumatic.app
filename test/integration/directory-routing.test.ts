@@ -2,6 +2,7 @@ import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { directoryForSignIn } from "../../src/directory/routing";
+import type { Directory } from "../../src/directory/directory";
 import {
   allDirectories,
   directory,
@@ -102,4 +103,37 @@ describe("Directory placement in Durable Objects", () => {
     );
     expect(claims).toEqual([]);
   });
+
+  it.each([["16", "1"], ["1", "16"]])(
+    "does not recreate a deleted account on a stale %s-shard route after placement changes to %s",
+    async (oldPlacement, newPlacement) => {
+      const p = input();
+      await directory(env).addInvite(p.email);
+      const initial = await directoryForSignIn(configured(oldPlacement), p);
+      const old = await initial.directory.signIn(initial.input);
+      // This routing result can be held by an in-flight sign-in while the
+      // account is erased and an independently routed sign-in creates another.
+      const stale = await directoryForSignIn(configured(oldPlacement), p);
+      expect(stale.input.expectedUserId).toBe(old.userId);
+      const home = directoryForUser(env, old.userId);
+      await home.deleteAccount(old.userId, old.vaultId);
+      await runDurableObjectAlarm(home);
+      await eventually(
+        async () => (await home.existingIdentity(p.provider, p.subject)) === null,
+        "old identity erasure",
+      );
+      await directory(env).addInvite(p.email);
+      const fresh = await directoryForSignIn(configured(newPlacement), p);
+      const replacement = await fresh.directory.signIn(fresh.input);
+      expect(replacement.userId).not.toBe(old.userId);
+      await runInDurableObject(stale.directory, async (instance) => {
+        await expect((instance as Directory).signIn(stale.input)).rejects.toThrow("account changed");
+      });
+      const locations = await Promise.all(
+        [...allDirectories(env)].map((d) => d.existingIdentity(p.provider, p.subject)),
+      );
+      expect(locations.filter(Boolean)).toEqual([replacement]);
+    },
+    30_000,
+  );
 });
