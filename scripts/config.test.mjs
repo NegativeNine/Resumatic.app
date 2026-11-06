@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseJsonc, httpsOrigin, readConfig } from "./lib/config.mjs";
 import { livePrerequisites, validate } from "./validate-config.mjs";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -99,8 +99,10 @@ test("unknown-end behavior changes evaluation hash and production activation sta
   const dir = await mkdtemp(join(tmpdir(), "role-date-config-"));
   try {
     const root = fileURLToPath(new URL("../", import.meta.url));
-    await symlink(join(root, "src"), join(dir, "src"), "dir");
-    await symlink(join(root, "test"), join(dir, "test"), "dir");
+    for (const name of ["src", "test", "scripts"]) await cp(join(root, name), join(dir, name), { recursive: true });
+    await copyFile(join(root, "package.json"), join(dir, "package.json"));
+    await copyFile(join(root, "package-lock.json"), join(dir, "package-lock.json"));
+    await copyFile(join(root, "vitest.config.ts"), join(dir, "vitest.config.ts"));
     const configPath = join(dir, "wrangler.jsonc");
     const config = { name: "example", vars: {}, env: { staging: { vars: {} } } };
     await writeFile(configPath, JSON.stringify(config));
@@ -112,6 +114,48 @@ test("unknown-end behavior changes evaluation hash and production activation sta
     assert.equal(enabled.behavior.roleUnknownEnd, true);
     assert.notEqual(disabled.hash, enabled.hash);
     assert.ok((await validate({ environment: "production", purpose: "deploy", configPath, env: {} })).missing.includes("ROLE_UNKNOWN_END_ROLLOUT_UNVERIFIED"));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("extraction promotion fingerprint changes when evaluated dependency versions change", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "extract-config-dependencies-"));
+  try {
+    const root = fileURLToPath(new URL("../", import.meta.url));
+    for (const name of ["src", "test", "scripts"]) await cp(join(root, name), join(dir, name), { recursive: true });
+    for (const name of ["wrangler.jsonc", "package.json", "package-lock.json", "vitest.config.ts"])
+      await copyFile(join(root, name), join(dir, name));
+    const fingerprint = () => extractionConfiguration(["llm:default"], "staging", { root: dir, priceOverrides: {} }).hash;
+    const initial = fingerprint();
+    // These bundled synthetic documents are not the private holdout; private
+    // dataset bytes have their own manifest and tamper checks.
+    await writeFile(join(dir, "test", "extract-evals", "fixtures", "synthetic-01.pdf"), "changed synthetic fixture");
+    assert.equal(fingerprint(), initial);
+    const manifest = JSON.parse(await readFile(join(dir, "package.json"), "utf8"));
+    manifest.dependencies.zod = "0.0.0-test";
+    await writeFile(join(dir, "package.json"), JSON.stringify(manifest));
+    const changedManifest = fingerprint();
+    assert.notEqual(changedManifest, initial);
+    await copyFile(join(root, "package.json"), join(dir, "package.json"));
+    assert.equal(fingerprint(), initial);
+    const lock = JSON.parse(await readFile(join(dir, "package-lock.json"), "utf8"));
+    lock.packages["node_modules/zod"].version = "0.0.0-test";
+    await writeFile(join(dir, "package-lock.json"), JSON.stringify(lock));
+    assert.notEqual(fingerprint(), initial);
+    await copyFile(join(root, "package-lock.json"), join(dir, "package-lock.json"));
+    assert.equal(fingerprint(), initial);
+    const newModule = join(dir, "scripts", "new-evaluation-module.mjs");
+    await writeFile(newModule, "export const changed = true;\n");
+    assert.notEqual(fingerprint(), initial);
+    await rm(newModule);
+    assert.equal(fingerprint(), initial);
+    // Links inside a code tree cannot silently redirect the evidence to an
+    // untracked file; reject them even when their target looks harmless.
+    await symlink(join(dir, "package.json"), newModule);
+    assert.throws(fingerprint, /extract_eval_source_invalid/);
+    await rm(newModule);
+    await rm(join(dir, "src"), { recursive: true });
+    await symlink(join(root, "src"), join(dir, "src"), "dir");
+    assert.throws(fingerprint, /extract_eval_source_invalid/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
