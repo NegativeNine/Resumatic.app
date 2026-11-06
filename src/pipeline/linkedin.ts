@@ -1,4 +1,4 @@
-import { strFromU8, unzipSync } from "fflate";
+import { strFromU8, unzipSync, UnzipInflate } from "fflate";
 import { AppError } from "../shared/errors";
 
 const SUPPORTED = new Set([
@@ -11,6 +11,122 @@ const MAX_EXPANDED = 20 * 1024 * 1024;
 const MAX_CSV_COLUMNS = 256;
 const MAX_CSV_CELLS = 100_000;
 const MAX_CSV_ROWS = 10_000;
+const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
+  let crc = index;
+  for (let i = 0; i < 8; i++) crc = crc & 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
+  return crc >>> 0;
+});
+
+/** Reject ambiguous ZIP32 directory pointers before inspecting any members. */
+function checkDirectory(bytes: Uint8Array): { crc: number; data: number }[] {
+  const bad = (): never => { throw new AppError("invalid", "the ZIP export could not be read"); };
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const bounds = (pos: number, length: number): void => {
+    if (!Number.isSafeInteger(pos) || !Number.isSafeInteger(length) || pos < 0 || length < 0 ||
+        pos > bytes.length || length > bytes.length - pos) bad();
+  };
+  const u16 = (pos: number): number => { bounds(pos, 2); return view.getUint16(pos, true); };
+  const u32 = (pos: number): number => { bounds(pos, 4); return view.getUint32(pos, true); };
+  let end = -1;
+  for (let pos = bytes.length - 22; pos >= Math.max(0, bytes.length - 65557); pos--) {
+    if (u32(pos) === 0x06054b50 && pos + 22 + u16(pos + 20) === bytes.length) {
+      end = pos;
+      break;
+    }
+  }
+  if (end < 0 || u16(end + 4) !== 0 || u16(end + 6) !== 0) bad();
+  const count = u16(end + 10), size = u32(end + 12), start = u32(end + 16);
+  // The uploaded archive is bounded to 10 MiB. ZIP64 and multi-disk layouts
+  // need separate validation rather than trusting truncated 32-bit pointers.
+  if (count === 0xffff || size === 0xffffffff || start === 0xffffffff ||
+      count !== u16(end + 8) || start + size !== end) bad();
+  if (count > 200) throw new AppError("too_large", "the archive has too many entries");
+  const records: { crc: number; data: number }[] = [];
+  let at = start;
+  for (let i = 0; i < count; i++) {
+    bounds(at, 46);
+    if (u32(at) !== 0x02014b50) bad();
+    const flags = u16(at + 8), method = u16(at + 10);
+    const checksum = u32(at + 16);
+    const compressed = u32(at + 20), original = u32(at + 24);
+    const nameLength = u16(at + 28), extraLength = u16(at + 30), commentLength = u16(at + 32);
+    const disk = u16(at + 34), local = u32(at + 42);
+    bounds(at + 46, nameLength + extraLength + commentLength);
+    if (disk !== 0 || local === 0xffffffff || compressed === 0xffffffff || original === 0xffffffff) bad();
+    bounds(local, 30);
+    if (u32(local) !== 0x04034b50 || u16(local + 6) !== flags || u16(local + 8) !== method ||
+        u16(local + 26) !== nameLength || (flags & 1) !== 0) bad();
+    const localExtra = u16(local + 28);
+    bounds(local + 30, nameLength + localExtra);
+    for (let j = 0; j < nameLength; j++)
+      if (bytes[local + 30 + j] !== bytes[at + 46 + j]) bad();
+    if (!(flags & 8) && (u32(local + 14) !== checksum || u32(local + 18) !== compressed || u32(local + 22) !== original)) bad();
+    const data = local + 30 + nameLength + localExtra;
+    if (data > start || compressed > start - data) bad();
+    if (flags & 8) {
+      const descriptor = data + compressed;
+      const matches = (pos: number): boolean => pos >= 0 && pos + 12 <= start &&
+        u32(pos) === checksum && u32(pos + 4) === compressed && u32(pos + 8) === original;
+      const unsigned = matches(descriptor);
+      const signed = descriptor + 4 <= start && u32(descriptor) === 0x08074b50 && matches(descriptor + 4);
+      if (unsigned === signed) bad();
+    }
+    records.push({ crc: checksum, data });
+    at += 46 + nameLength + extraLength + commentLength;
+  }
+  if (at !== end) bad();
+  return records;
+}
+
+/**
+ * unzipSync allocates output using the ZIP directory's untrusted size; a
+ * deflate stream that exceeds it is silently truncated. Only use unzipSync to
+ * inspect the directory, then decode the selected local members once through
+ * a streaming inflater. Small compressed chunks bound transient allocations;
+ * abort as soon as actual output exceeds the declared or permitted size.
+ * It also checks the decoded member's CRC, which detects corruption but is
+ * not an authenticity check against an adversarially rewritten archive.
+ */
+function readCareerMembers(
+  bytes: Uint8Array,
+  selected: Map<string, { size: number; compressed: number; method: number; crc: number; data: number }>,
+): Record<string, Uint8Array> {
+  const files: Record<string, Uint8Array> = {};
+  let expanded = 0;
+  for (const [name, expected] of selected) {
+    let offset = 0, crc = 0xffffffff, finished = false;
+    const chunks: Uint8Array[] = [];
+    const ondata = (error: Error | null, chunk: Uint8Array | null, final: boolean): void => {
+      if (error) throw error;
+      if (!chunk || finished || chunk.length > expected.size - offset || chunk.length > MAX_EXPANDED - expanded)
+        throw new AppError("invalid", "the ZIP export could not be read");
+      chunks.push(chunk);
+      for (const byte of chunk) crc = CRC_TABLE[(crc ^ byte) & 0xff]! ^ (crc >>> 8);
+      offset += chunk.length;
+      expanded += chunk.length;
+      if (final) {
+        if (offset !== expected.size || ((crc ^ 0xffffffff) >>> 0) !== expected.crc)
+          throw new AppError("invalid", "the ZIP export could not be read");
+        finished = true;
+      }
+    };
+    if (expected.method === 0) {
+      // Stored entries have no inflater or transient output allocation.
+      ondata(null, bytes.subarray(expected.data, expected.data + expected.compressed), true);
+    } else if (expected.method === 8 && expected.compressed > 0) {
+      const inflater = new UnzipInflate();
+      inflater.ondata = ondata;
+      for (let pos = 0; pos < expected.compressed; pos += 1024)
+        inflater.push(bytes.subarray(expected.data + pos, expected.data + Math.min(pos + 1024, expected.compressed)), pos + 1024 >= expected.compressed);
+    } else throw new AppError("invalid", "the ZIP export could not be read");
+    if (!finished) throw new AppError("invalid", "the ZIP export could not be read");
+    const result = new Uint8Array(offset);
+    let at = 0;
+    for (const part of chunks) { result.set(part, at); at += part.length; }
+    files[name] = result;
+  }
+  return files;
+}
 
 /** Parse RFC4180 cells without interpreting formulas or markup. */
 export function parseCsv(text: string): string[][] {
@@ -97,9 +213,11 @@ export function linkedInDocument(
   let expanded = 0;
   let entries = 0;
   const names = new Set<string>();
+  const selected = new Map<string, { size: number; compressed: number; method: number; crc: number; data: number }>();
   let files: Record<string, Uint8Array>;
   try {
-    files = unzipSync(bytes, {
+    const records = checkDirectory(bytes);
+    unzipSync(bytes, {
       filter(entry) {
         if (++entries > 200)
           throw new AppError("too_large", "the archive has too many entries");
@@ -119,9 +237,11 @@ export function linkedInDocument(
             "the archive contains duplicate career files",
           );
         names.add(name);
-        return true;
+        selected.set(entry.name, { size: entry.originalSize, compressed: entry.size, method: entry.compression, crc: records[entries - 1]!.crc, data: records[entries - 1]!.data });
+        return false; // Inspection only: never inflate using the untrusted directory size.
       },
     });
+    files = readCareerMembers(bytes, selected);
   } catch (error) {
     if (error instanceof AppError) throw error;
     throw new AppError("invalid", "the ZIP export could not be read");
