@@ -40,7 +40,7 @@ const SCALES: Record<string, number> = {
   billion: 1e9,
 };
 
-const NUMBER = /(?<![\w.])(?:([+\-−])\s*)?(?:([$€£]|USD\b|EUR\b|GBP\b)\s*)?([+\-−])?(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(?:\s?(%|percent\b|per cent\b|x\b|×|times\b|-?fold\b|k\b|thousand\b|mm\b|m\b|million\b|bn\b|b\b|billion\b))?(?:\s?(dollars?|euros?|pounds?\s+sterling|USD|EUR|GBP)\b)?(?![\w])/gi;
+const NUMBER = /(?<![\w.])(?:([+\-−])\s*)?(?:([$€£]|USD\b|EUR\b|GBP\b)\s*)?([+\-−])?((?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?|\.\d+)(?:e[+\-]?\d+)?)(?:\s?(%|percent\b|per cent\b|x\b|×|times\b|-?fold\b|k\b|thousand\b|mm\b|m\b|million\b|bn\b|b\b|billion\b))?(?:\s?(dollars?|euros?|pounds?\s+sterling|USD|EUR|GBP)\b)?(?![\w])/gi;
 const WORD_NUMBER = /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozen|twenty|hundred)(?=\b|fold\b)(?:\s*(%|percent\b|per cent\b|x\b|×|times\b|-?fold\b))?(?:\s*(dollars?|euros?|pounds?\s+sterling|USD|EUR|GBP)\b)?/gi;
 
 function currencyOf(unit: string | undefined): NumberToken["currency"] {
@@ -63,7 +63,9 @@ export function numbersIn(text: string): NumberToken[] {
     const digits = (match[4] ?? "").replace(/,/g, "");
     const unit = (match[5] ?? "").toLowerCase().replace(/\s+/g, " ");
     let value = Number(digits);
-    if (!Number.isFinite(value)) continue;
+    // Keep an unrepresentable number as a token that cannot match; dropping
+    // it would allow an unsupported quantity to evade the numeric check.
+    if (!Number.isFinite(value) || (value === 0 && /[1-9]/.test(digits.split(/e/i)[0]!))) value = Infinity;
     const prefix = text.slice(0, match.index);
     // A spaced hyphen between two years is a date range, not a negative year.
     const yearRange = match[1] === "-" && !match[2] && !match[3] && /\b(?:19|20)\d{2}\s*$/.test(prefix) && /^(?:19|20)\d{2}$/.test(digits);
@@ -91,6 +93,7 @@ export function numbersIn(text: string): NumberToken[] {
 }
 
 function sameNumber(a: NumberToken, b: NumberToken): boolean {
+  if (!Number.isFinite(a.value) || !Number.isFinite(b.value)) return false;
   if ((Number.isInteger(a.value) && !Number.isSafeInteger(a.value)) ||
       (Number.isInteger(b.value) && !Number.isSafeInteger(b.value))) return false;
   return a.currency !== "conflicting" && b.currency !== "conflicting" && a.percent === b.percent && a.multiplier === b.multiplier && a.currency === b.currency && Math.abs(a.value - b.value) <= 2 * Number.EPSILON * Math.max(1, Math.abs(a.value), Math.abs(b.value));

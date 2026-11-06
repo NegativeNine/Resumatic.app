@@ -80,6 +80,15 @@ describe("numbers", () => {
     expect(unsupportedNumbers("Changed by $5", "changed by negative $5")).toEqual(["$5"]);
     expect(unsupportedNumbers("Changed by -$5", "changed by negative $five")).toEqual([]);
   });
+
+  it("detects leading-dot decimals and scientific notation without dropping extreme values", () => {
+    expect(unsupportedNumbers("Reduced cost by .5%", "reduced cost")).toEqual([".5%"]);
+    expect(unsupportedNumbers("Reduced cost by .5%", "reduced cost by 0.5%")).toEqual([]);
+    expect(unsupportedNumbers("Processed 1e6 requests", "processed requests")).toEqual(["1e6"]);
+    expect(unsupportedNumbers("Processed 1e6 requests", "processed 1,000,000 requests")).toEqual([]);
+    expect(unsupportedNumbers("Saved $1e309", "saved $1e309")).toEqual(["$1e309"]);
+    expect(unsupportedNumbers("Improved by 1e-400%", "improved by 0%")).toEqual(["1e-400%"]);
+  });
 });
 
 describe("names", () => {
@@ -128,6 +137,8 @@ describe("scope", () => {
   it("rejects a multiplier or currency invented from an unrelated count", () => {
     expect(checkClaim("Improved throughput 5x", [{ text: "Processed 5 invoices" }]).ok).toBe(false);
     expect(checkClaim("Raised $5", [{ text: "Processed 5 invoices" }]).ok).toBe(false);
+    expect(checkClaim("Reduced cost by .5%", [{ text: "Reduced cost" }]).ok).toBe(false);
+    expect(checkClaim("Processed 1e6 requests", [{ text: "Processed requests" }]).ok).toBe(false);
   });
 });
 
@@ -150,6 +161,11 @@ describe("checkLine", () => {
 
   it("passes a grounded line", () => {
     expect(checkLine({ roleId: "r1", text: "Built the billing API", factIds: ["a"] }, facts, selected).ok).toBe(true);
+  });
+
+  it("rejects a cited line that adds a leading-dot decimal or scientific quantity", () => {
+    expect(checkLine({ roleId: "r1", text: "Built the billing API and reduced cost by .5%", factIds: ["a"] }, facts, selected).ok).toBe(false);
+    expect(checkLine({ roleId: "r1", text: "Built the billing API serving 1e6 requests", factIds: ["a"] }, facts, selected).ok).toBe(false);
   });
 
   it("needs citations, from the selection, of the line's own role", () => {

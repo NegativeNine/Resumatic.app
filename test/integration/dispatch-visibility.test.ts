@@ -76,10 +76,16 @@ describe("uncertain workflow starts", () => {
       } as unknown as Workflow;
       try {
         const { sourceId } = await instance.addSource(who, { filename: "resume.pdf", r2Key: `vaults/${id}/sources/file` });
+        expect((await instance.listSources(who))[0]?.retryRunId).toBeUndefined();
         await instance.cancelSource(who, sourceId);
         await instance.alarm();
         expect(await instance.runInfo(who, sourceId)).toMatchObject({ state: "cancelled" });
-        const retry = await instance.retryRun(who, sourceId, crypto.randomUUID());
+        expect((await instance.listSources(who))[0]).toMatchObject({ state: "failed", retryRunId: sourceId });
+        const key = crypto.randomUUID();
+        await expect(instance.retryRun({ userId: "someone-else", gen: 1 }, sourceId, key)).rejects.toThrow();
+        const retry = await instance.retryRun(who, sourceId, key);
+        expect(await instance.retryRun(who, sourceId, key)).toEqual(retry);
+        expect((await instance.listSources(who))[0]?.retryRunId).toBeUndefined();
         expect(retry.runId).not.toBe(sourceId);
         await instance.cancelSource(who, sourceId);
         expect(await instance.runInfo(who, retry.runId)).toMatchObject({ state: "cancel_requested" });

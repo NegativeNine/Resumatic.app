@@ -130,6 +130,8 @@ export const api = {
 
   uploadSource,
   sources: () => request<{ sources: SourceView[] }>("GET", "/api/sources"),
+  retrySourceRun: (runId: string) =>
+    generate<{ runId: string; targetId: string }>(`/api/runs/${encodeURIComponent(runId)}/retry`),
   sourceText: (sourceId: string) =>
     request<{ markdown: string; revisionId: string }>(
       "GET",

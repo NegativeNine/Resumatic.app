@@ -716,6 +716,9 @@ export class Vault extends DurableObject<Env> {
         id: r.id,
         filename: r.filename,
         state: r.state as SourceState,
+        retryRunId: r.state === "failed" && r.run_id &&
+          ["failed", "cancelled"].includes(this.runs.get(r.run_id)?.state ?? "")
+          ? r.run_id : undefined,
         dispatchUncertain: r.state === "queued" && this.dispatchUncertain(r.run_id),
         cancellationPending: r.state === "queued" && this.cancellationPending(r.run_id),
         error: r.error,

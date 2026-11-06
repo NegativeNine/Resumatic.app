@@ -106,6 +106,8 @@ export interface Me {
 }
 
 export interface SourceView {
+  /** Stopped reading run that can be retried without uploading the file again. */
+  retryRunId?: string;
   /** The upload was saved, but starting its reading workflow is unconfirmed. */
   dispatchUncertain?: boolean;
   /** Cancellation was requested but has not yet been confirmed. */

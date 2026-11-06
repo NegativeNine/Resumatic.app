@@ -102,10 +102,13 @@ function SourceRow({
         <CancelReading sourceId={source.id} reload={reload} />
       )}
       {source.state === "failed" && (
-        <p className="source-error">
-          {source.error ?? "We couldn't read this file."} Try uploading it
-          again, or save it in the other format (PDF or .docx) and upload that.
-        </p>
+        <div>
+          <p className="source-error">
+            {source.error ?? "We couldn't read this file."} You can also save it
+            in the other format (PDF or .docx) and upload that.
+          </p>
+          {source.retryRunId && <RetryReading runId={source.retryRunId} reload={reload} />}
+        </div>
       )}
       {source.state === "ready" &&
         Boolean(source.conversionWarnings?.length) && (
@@ -128,6 +131,21 @@ function SourceRow({
           <ScanRecovery sourceId={source.id} reload={reload} />
         )}
     </li>
+  );
+}
+
+function RetryReading({ runId, reload }: { runId: string; reload: Reload }) {
+  const { run, pending, error } = useAction();
+  return (
+    <div>
+      <button type="button" className="small" disabled={pending} onClick={() => void run(async () => {
+        await api.retrySourceRun(runId);
+        await reload();
+      })}>
+        {pending ? "Retrying…" : "Retry reading"}
+      </button>
+      <ActionError message={error} />
+    </div>
   );
 }
 
