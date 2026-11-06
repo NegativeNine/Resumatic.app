@@ -83,6 +83,7 @@ describe("Directory placement in Durable Objects", () => {
     await directory(env).addInvite(p.email);
     const target = await directoryForSignIn(configured("16"), p);
     const account = await target.directory.signIn(target.input);
+    await directory(env).bindIdentityHome(p.provider, p.subject, account.userId);
     const home = directoryForUser(env, account.userId);
     await home.deleteAccount(account.userId, account.vaultId);
     await runDurableObjectAlarm(home);
@@ -111,6 +112,7 @@ describe("Directory placement in Durable Objects", () => {
       await directory(env).addInvite(p.email);
       const initial = await directoryForSignIn(configured(oldPlacement), p);
       const old = await initial.directory.signIn(initial.input);
+      await directory(env).bindIdentityHome(p.provider, p.subject, old.userId);
       // This routing result can be held by an in-flight sign-in while the
       // account is erased and an independently routed sign-in creates another.
       const stale = await directoryForSignIn(configured(oldPlacement), p);
@@ -125,6 +127,7 @@ describe("Directory placement in Durable Objects", () => {
       await directory(env).addInvite(p.email);
       const fresh = await directoryForSignIn(configured(newPlacement), p);
       const replacement = await fresh.directory.signIn(fresh.input);
+      await directory(env).bindIdentityHome(p.provider, p.subject, replacement.userId);
       expect(replacement.userId).not.toBe(old.userId);
       await runInDurableObject(stale.directory, async (instance) => {
         await expect((instance as Directory).signIn(stale.input)).rejects.toThrow("account changed");
@@ -136,4 +139,40 @@ describe("Directory placement in Durable Objects", () => {
     },
     30_000,
   );
+
+  it("does not let a delayed deletion or bind overwrite a newer placement on the same shard", async () => {
+    const p = input();
+    const global = directory(env);
+    const shard = 3;
+    const oldUser = `s${shard}:old`;
+    const newUser = `s${shard}:new`;
+    await global.claimIdentityHome(p.provider, p.subject, shard);
+    await global.bindIdentityHome(p.provider, p.subject, oldUser);
+    await global.forgetIdentityHome(p.provider, p.subject, shard, oldUser);
+    await global.claimIdentityHome(p.provider, p.subject, shard);
+    // An unbound new claim cannot safely be identified as the deleted user.
+    await runInDurableObject(global, async (instance) => {
+      await expect((instance as Directory).forgetIdentityHome(p.provider, p.subject, shard, oldUser)).rejects.toThrow("placement requires review");
+    });
+    await global.bindIdentityHome(p.provider, p.subject, newUser);
+    await global.forgetIdentityHome(p.provider, p.subject, shard, oldUser);
+    await runInDurableObject(global, async (instance) => {
+      await expect((instance as Directory).bindIdentityHome(p.provider, p.subject, oldUser)).rejects.toThrow("placement changed");
+      await expect((instance as Directory).forgetIdentityHome(p.provider, p.subject, shard + 1, newUser)).rejects.toThrow("placement requires review");
+    });
+    const rows = await runInDurableObject(global, (_instance, state) => state.storage.sql
+      .exec<{ shard: number; user_id: string }>(`SELECT shard,user_id FROM identity_homes WHERE provider=? AND subject=?`, p.provider, p.subject).toArray());
+    expect(rows).toEqual([{ shard, user_id: newUser }]);
+    // Calls in flight from an older Worker cannot perform an unqualified delete.
+    await runInDurableObject(global, async (instance) => {
+      await expect(((instance as Directory).forgetIdentityHome as unknown as (...args: unknown[]) => Promise<void>).call(instance, p.provider, p.subject, shard)).rejects.toThrow("placement requires review");
+    });
+  });
+
+  it("preserves sign-in for existing accounts with no placement claim", async () => {
+    const p = input();
+    const global = directory(env);
+    await expect(global.bindIdentityHome(p.provider, p.subject, crypto.randomUUID())).resolves.toBeUndefined();
+    await expect(global.bindIdentityHome(p.provider, p.subject, "s3:existing")).resolves.toBeUndefined();
+  });
 });

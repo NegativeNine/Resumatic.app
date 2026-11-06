@@ -77,9 +77,10 @@ type DatePart = NonNullable<NumberToken["datePart"]>;
 type DateComponent = { start: number; end: number; part: DatePart; key: string };
 
 /** Recognize common numeric and written dates without guessing an ambiguous locale. */
-function dateComponents(text: string): { components: DateComponent[]; numericRanges: [number, number][] } {
+function dateComponents(text: string): { components: DateComponent[]; numericRanges: [number, number][]; ordinalRanges: [number, number][] } {
   const components: DateComponent[] = [];
   const numericRanges: [number, number][] = [];
+  const ordinalRanges: [number, number][] = [];
   const pad = (value: string) => value.padStart(2, "0");
   const mark = (start: number, value: string, part: DatePart, key: string) => components.push({ start, end: start + value.length, part, key });
   for (const match of text.matchAll(/\b((?:19|20)\d{2})([-/.])(0?[1-9]|1[0-2])(?:\2(0?[1-9]|[12]\d|3[01]))?\b/g)) {
@@ -104,24 +105,26 @@ function dateComponents(text: string): { components: DateComponent[]; numericRan
   }
   const month = "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
   const monthNumber = (name: string) => pad(String(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(name.slice(0, 3).toLowerCase()) + 1));
-  for (const match of text.matchAll(new RegExp(`\\b(${month})\\.?\\s+(\\d{1,2})(?:,\\s*|\\s+)((?:19|20)\\d{2})\\b`, "gi"))) {
+  for (const match of text.matchAll(new RegExp(`\\b(${month})\\.?\\s+(\\d{1,2})(st|nd|rd|th)?(?:,\\s*|\\s+)((?:19|20)\\d{2})\\b`, "gi"))) {
     const day = match.index + match[0].indexOf(match[2]!);
-    const year = match.index + match[0].lastIndexOf(match[3]!);
-    const key = `iso:${match[3]}:${monthNumber(match[1]!)}:${pad(match[2]!)}`;
+    const year = match.index + match[0].lastIndexOf(match[4]!);
+    const key = `iso:${match[4]}:${monthNumber(match[1]!)}:${pad(match[2]!)}`;
     mark(day, match[2]!, "day", key);
-    mark(year, match[3]!, "year", key);
+    mark(year, match[4]!, "year", key);
+    if (match[3]) ordinalRanges.push([day + match[2]!.length, day + match[2]!.length + match[3].length]);
   }
-  for (const match of text.matchAll(new RegExp(`\\b(\\d{1,2})\\s+(${month})\\.?\\s+((?:19|20)\\d{2})\\b`, "gi"))) {
-    const key = `iso:${match[3]}:${monthNumber(match[2]!)}:${pad(match[1]!)}`;
+  for (const match of text.matchAll(new RegExp(`\\b(\\d{1,2})(st|nd|rd|th)?\\s+(${month})\\.?\\s+((?:19|20)\\d{2})\\b`, "gi"))) {
+    const key = `iso:${match[4]}:${monthNumber(match[3]!)}:${pad(match[1]!)}`;
     mark(match.index, match[1]!, "day", key);
-    mark(match.index + match[0].lastIndexOf(match[3]!), match[3]!, "year", key);
+    mark(match.index + match[0].lastIndexOf(match[4]!), match[4]!, "year", key);
+    if (match[2]) ordinalRanges.push([match.index + match[1]!.length, match.index + match[1]!.length + match[2].length]);
   }
   for (const match of text.matchAll(new RegExp(`\\b(${month})\\.?\\s+((?:19|20)\\d{2})\\b`, "gi"))) {
     const year = match.index + match[0].lastIndexOf(match[2]!);
     if (components.some((item) => item.start === year)) continue;
     mark(year, match[2]!, "year", `iso:${match[2]}:${monthNumber(match[1]!)}`);
   }
-  return { components, numericRanges };
+  return { components, numericRanges, ordinalRanges };
 }
 
 /** Every number in the text, with scale words applied and percentages flagged. */
@@ -135,6 +138,9 @@ export function numbersIn(text: string): NumberToken[] {
   const scan = text.split("");
   for (const [start, end] of dates.numericRanges)
     for (let i = start; i < end; i++) if (scan[i] === ".") scan[i] = "/";
+  // Do not let an ordinal suffix hide a written day from the number scanner.
+  for (const [start, end] of dates.ordinalRanges)
+    for (let i = start; i < end; i++) scan[i] = " ";
   for (const match of scan.join("").matchAll(NUMBER)) {
     const digits = (match[4] ?? "").replace(/,/g, "");
     const unit = (match[5] ?? "").toLowerCase().replace(/\s+/g, " ");

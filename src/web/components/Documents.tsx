@@ -271,7 +271,7 @@ function DocumentCard({ doc, reload, retry, retryDisabled }: {
 function DocumentContent({ doc }: { doc: DocumentView }) {
   const result = doc.result!;
   if (doc.kind === "questions")
-    return <GapQuestions documentId={doc.id} questions={result.questions} />;
+    return <GapQuestions documentId={doc.id} questions={result.questions} answeredQuestionIds={doc.answeredQuestionIds ?? []} />;
   const groups = [...new Set(result.units.map((unit) => unit.group))].sort(
     (a, b) => a - b,
   );
@@ -420,9 +420,11 @@ function DocumentDownload({ doc }: { doc: DocumentView }) {
 function GapQuestions({
   documentId,
   questions,
+  answeredQuestionIds,
 }: {
   documentId: string;
   questions: NonNullable<DocumentView["result"]>["questions"];
+  answeredQuestionIds: string[];
 }) {
   const roles = useResource(api.roles);
   if (!questions.length)
@@ -446,6 +448,7 @@ function GapQuestions({
           documentId={documentId}
           questionId={question.id}
           question={question.question}
+          previouslyAnswered={answeredQuestionIds.includes(question.id)}
           roles={roles.data?.roles ?? []}
         />
       ))}
@@ -457,11 +460,13 @@ function GapAnswer({
   documentId,
   questionId,
   question,
+  previouslyAnswered,
   roles,
 }: {
   documentId: string;
   questionId: string;
   question: string;
+  previouslyAnswered: boolean;
   roles: RoleView[];
 }) {
   const [answer, setAnswer] = useState("");
@@ -483,6 +488,7 @@ function GapAnswer({
         });
       }}
     >
+      {previouslyAnswered && <p className="hint">You previously saved an answer to this question. You can add another below.</p>}
       <Field id={`${id}-answer`} label={question}>
         <textarea
           id={`${id}-answer`}

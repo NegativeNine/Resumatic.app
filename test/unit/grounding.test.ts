@@ -108,6 +108,18 @@ describe("numbers", () => {
     expect(unsupportedNumbers("Started March 3, 2021", "Started 2021/03/03")).toEqual([]);
   });
 
+  it("recognizes ordinal days in written dates rather than treating the year as a count", () => {
+    for (const date of ["March 3rd, 2021", "3rd March 2021", "Mar. 1st 2021", "2nd April 2020"]) {
+      const year = date.endsWith("2020") ? "2020" : "2021";
+      expect(unsupportedNumbers(`Managed ${year} employees`, `Started ${date}`)).toEqual([year]);
+    }
+    expect(unsupportedNumbers("Managed 3 employees", "Started March 3rd, 2021")).toEqual(["3"]);
+    expect(unsupportedNumbers("Started March 4th, 2021", "Started March 3rd, 2021")).toEqual(["4", "2021"]);
+    expect(unsupportedNumbers("Started March 3rd, 2021", "Started March 3, 2021")).toEqual([]);
+    expect(unsupportedNumbers("Started 3rd March 2021", "Started 2021/03/03")).toEqual([]);
+    expect(checkClaim("Managed 2021 employees", [{ text: "Managed employee support on March 3rd, 2021" }]).ok).toBe(false);
+  });
+
   it("detects leading-dot decimals and scientific notation without dropping extreme values", () => {
     expect(unsupportedNumbers("Reduced cost by .5%", "reduced cost")).toEqual([".5%"]);
     expect(unsupportedNumbers("Reduced cost by .5%", "reduced cost by 0.5%")).toEqual([]);

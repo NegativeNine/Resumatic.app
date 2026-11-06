@@ -27,6 +27,7 @@ describe("interview answer provenance", () => {
       id: string;
       question: string;
     };
+    expect(doc.answeredQuestionIds).toEqual([]);
     const path = `/api/documents/${documentId}/questions/${question.id}/answer`;
     const requestKey = crypto.randomUUID();
     const post = (answer: string) =>
@@ -53,6 +54,9 @@ describe("interview answer provenance", () => {
     ).json()) as { factId: string };
     expect(replay.factId).toBe(factId);
     expect((await post("I founded the company.")).status).toBe(409);
+    expect((await user.json(`/api/documents/${documentId}`)).answeredQuestionIds).toEqual([question.id]);
+    const documents = (await user.json(`/api/applications/${applicationId}/documents`)).documents;
+    expect(documents.find((item: { id: string }) => item.id === documentId).answeredQuestionIds).toEqual([question.id]);
     const facts = (await user.json("/api/facts")).facts;
     expect(facts).toHaveLength(1);
     expect(facts[0]).toMatchObject({
@@ -94,6 +98,7 @@ describe("interview answer provenance", () => {
       "I evaluated Go deployments for an internal service.",
     );
     const other = await signIn();
+    expect((await other.fetch(`/api/documents/${documentId}`)).status).toBe(404);
     expect(
       (await other.send("POST", path, { roleId: null, answer: "I tried it." }))
         .status,

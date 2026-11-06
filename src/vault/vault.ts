@@ -2638,6 +2638,12 @@ export class Vault extends DurableObject<Env> {
       error: row.error,
       result: data?.result ?? null,
       facts: data?.facts ?? {},
+      ...(row.kind === "questions" ? {
+        answeredQuestionIds: this.sql.exec<{ question_id: string }>(
+          `SELECT DISTINCT question_id FROM interview_answers WHERE document_id = ? ORDER BY question_id`,
+          id,
+        ).toArray().map((answer) => answer.question_id),
+      } : {}),
     };
   }
 

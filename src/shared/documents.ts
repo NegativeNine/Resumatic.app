@@ -45,4 +45,6 @@ export interface DocumentView {
     body?: ResumeBody;
   } | null;
   facts: Record<string, { text: string; quote: string | null }>;
+  /** Questions for which the owner has previously saved an answer. */
+  answeredQuestionIds?: string[];
 }

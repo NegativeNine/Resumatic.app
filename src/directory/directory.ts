@@ -262,11 +262,22 @@ export class Directory extends DurableObject<Env> {
     subject: string,
     userId: string,
   ): Promise<void> {
+    const home = this.sql.exec<{ shard: number | null; user_id: string | null }>(
+      `SELECT shard,user_id FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
+    ).toArray()[0];
+    const shard = /^s(\d+):/.exec(userId);
+    // Existing accounts may predate a placement row. Preserve their ability
+    // to sign in, without treating a missing claim as proof of quiescence.
+    if (!home) return;
+    if ((shard ? Number(shard[1]) : null) !== home.shard ||
+        (home.user_id !== null && home.user_id !== userId))
+      throw new AppError("conflict", "account placement changed; retry sign-in");
     this.sql.exec(
-      `UPDATE identity_homes SET user_id=? WHERE provider=? AND subject=?`,
+      `UPDATE identity_homes SET user_id=? WHERE provider=? AND subject=? AND (user_id IS NULL OR user_id=?)`,
       userId,
       provider,
       subject,
+      userId,
     );
   }
   async deletionProbe(userId: string, vaultId: string): Promise<number> {
@@ -306,12 +317,32 @@ export class Directory extends DurableObject<Env> {
     provider: string,
     subject: string,
     shard: number | null,
+    userId: string,
   ): Promise<void> {
+    // An older delayed RPC must not erase a newer account's claim, even when
+    // it was placed on the same shard. Do not clear an unbound claim: it may
+    // already belong to an in-flight replacement sign-in.
+    if (typeof userId !== "string" || !userId)
+      throw new AppError("unavailable", "account placement requires review");
+    const home = this.sql.exec<{ shard: number | null; user_id: string | null }>(
+      `SELECT shard,user_id FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
+    ).toArray()[0];
+    if (!home) return;
+    if (home.user_id === null)
+      throw new AppError("unavailable", "account placement requires review");
+    if (home.shard !== shard) {
+      // A claim for a different user is not ours to remove. If it still
+      // references this user, don't falsely report erasure as complete.
+      if (home.user_id === userId)
+        throw new AppError("unavailable", "account placement requires review");
+      return;
+    }
     this.sql.exec(
-      `DELETE FROM identity_homes WHERE provider=? AND subject=? AND shard IS ?`,
+      `DELETE FROM identity_homes WHERE provider=? AND subject=? AND shard IS ? AND user_id=?`,
       provider,
       subject,
       shard,
+      userId,
     );
   }
   async hasVault(vaultId: string): Promise<boolean> {
@@ -626,6 +657,7 @@ export class Directory extends DurableObject<Env> {
               identity.provider,
               identity.subject,
               Number(shard[1]),
+              v.user_id,
             );
         }
         await directory(this.env).removeInvite(v.email);
