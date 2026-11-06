@@ -128,6 +128,10 @@ export const subscriptionIsOpen = (
 ): boolean => !["canceled", "incomplete_expired"].includes(subscription.status);
 export interface BillingCheckoutSession {
   id: string;
+  /** The Stripe customer attached to this session; null means association is unresolved. */
+  customerId: string | null;
+  mode: "subscription" | "payment" | "setup" | null;
+  paymentStatus: "paid" | "unpaid" | "no_payment_required" | null;
   status: "open" | "complete" | "expired";
   expiresAt: number;
   url: string | null;
@@ -413,6 +417,9 @@ export function stripeClient(
         status: z.enum(["open", "complete", "expired"]),
         expires_at: Period,
         url: z.url().nullable().optional(),
+        customer: z.union([Id, z.object({ id: Id })]).nullable().optional(),
+        mode: z.enum(["subscription", "payment", "setup"]).nullable().optional(),
+        payment_status: z.enum(["paid", "unpaid", "no_payment_required"]).nullable().optional(),
         metadata: z.record(z.string(), z.string()).default({}),
         subscription: z
           .union([Id, z.object({ id: Id })])
@@ -434,6 +441,11 @@ export function stripeClient(
     }
     return {
       id: parsed.data.id,
+      customerId: typeof parsed.data.customer === "string"
+        ? parsed.data.customer
+        : (parsed.data.customer?.id ?? null),
+      mode: parsed.data.mode ?? null,
+      paymentStatus: parsed.data.payment_status ?? null,
       status: parsed.data.status,
       expiresAt: parsed.data.expires_at * 1000,
       url: parsed.data.url ?? null,
@@ -556,61 +568,102 @@ export async function cleanupBillingCustomer(
   if (!cfg)
     throw new AppError("unavailable", "billing cleanup is not configured");
   const stripe = stripeClient(cfg, fetcher);
-  // Listing can lag a successful create. Check IDs recorded from create
-  // responses directly and handle subscriptions even if absent from a list.
-  for (const id of new Set(knownSessionIds)) {
-    let session = await stripe.checkoutSession(id);
-    if (session.id !== id) throw new AppError("unavailable", "checkout identity requires review");
+  const verifiedComplete = new Map<string, string>();
+  let unresolvedPayment = false;
+  const requireSession = (session: BillingCheckoutSession, id = session.id) => {
+    if (session.id !== id || session.customerId !== customerId || !session.mode)
+      throw new AppError("unavailable", "checkout customer association requires review");
+  };
+  const completeIdentity = (session: BillingCheckoutSession): string =>
+    JSON.stringify([session.mode, session.subscriptionId, session.paymentStatus]);
+  const requireSubscription = (subscription: BillingSubscription, id = subscription.id) => {
+    const owner = typeof subscription.customer === "string" ? subscription.customer : subscription.customer.id;
+    if (subscription.id !== id || owner !== customerId)
+      throw new AppError("unavailable", "checkout subscription association requires review");
+  };
+  const cancelSubscription = async (id: string, initial?: BillingSubscription) => {
+    const subscription = initial ?? await stripe.subscription(id);
+    requireSubscription(subscription, id);
+    if (subscriptionIsOpen(subscription)) {
+      try {
+        await stripe.cancelSubscription(id);
+      } catch (error) {
+        const current = await stripe.subscription(id);
+        requireSubscription(current, id);
+        if (subscriptionIsOpen(current)) throw error;
+      }
+    }
+    const after = await stripe.subscription(id);
+    requireSubscription(after, id);
+    if (subscriptionIsOpen(after))
+      throw new AppError("unavailable", "checkout subscription cleanup remains pending");
+  };
+  const cleanSession = async (initial: BillingCheckoutSession, known = false) => {
+    let session = initial;
+    const id = session.id;
+    requireSession(session, id);
+    if (known && session.mode !== "subscription")
+      throw new AppError("unavailable", "checkout mode requires review");
+    const mode = session.mode;
     if (session.status === "open") {
       try {
         await stripe.expireCheckout(id, `delete:${customerId}:${id}`);
       } catch (error) {
-        if ((await stripe.checkoutSession(id)).status === "open") throw error;
+        const current = await stripe.checkoutSession(id);
+        requireSession(current, id);
+        if (current.status === "open") throw error;
       }
       session = await stripe.checkoutSession(id);
+      requireSession(session, id);
+      if (session.mode !== mode)
+        throw new AppError("unavailable", "checkout mode requires review");
     }
-    if (session.id !== id) throw new AppError("unavailable", "checkout identity requires review");
-    if (session.status === "open") throw new AppError("unavailable", "checkout cleanup remains pending");
+    if (session.status === "open")
+      throw new AppError("unavailable", "checkout cleanup remains pending");
     if (session.status === "complete") {
-      if (!session.subscriptionId) throw new AppError("unavailable", "completed checkout subscription is unresolved");
-      const sub = await stripe.subscription(session.subscriptionId);
-      const owner = typeof sub.customer === "string" ? sub.customer : sub.customer.id;
-      if (sub.id !== session.subscriptionId || owner !== customerId)
-        throw new AppError("unavailable", "checkout subscription association requires review");
-      if (subscriptionIsOpen(sub)) await stripe.cancelSubscription(sub.id);
-      const after = await stripe.subscription(sub.id);
-      const afterOwner = typeof after.customer === "string" ? after.customer : after.customer.id;
-      if (after.id !== sub.id || afterOwner !== customerId || subscriptionIsOpen(after))
-        throw new AppError("unavailable", "checkout subscription cleanup remains pending");
+      if (session.mode === "subscription") {
+        if (!session.subscriptionId) {
+          unresolvedPayment = true;
+          return;
+        }
+        await cancelSubscription(session.subscriptionId);
+      } else if (session.subscriptionId) {
+        throw new AppError("unavailable", "checkout mode requires review");
+      }
+      // Completion does not mean an asynchronous payment has finished. Do
+      // not claim billing cleanup complete while it may still settle.
+      if (session.mode !== "setup" && session.paymentStatus !== "paid" && session.paymentStatus !== "no_payment_required")
+      {
+        unresolvedPayment = true;
+        return;
+      }
+      verifiedComplete.set(id, completeIdentity(session));
     }
+  };
+  // Listing can lag a successful create. Check IDs recorded from create
+  // responses directly and handle subscriptions even if absent from a list.
+  for (const id of new Set(knownSessionIds)) {
+    const session = await stripe.checkoutSession(id);
+    requireSession(session, id);
+    await cleanSession(session, true);
   }
-  // Expire links first so a still-open checkout cannot create a new subscription during cancellation.
-  for (const session of await stripe.checkoutSessions(customerId)) {
-    if (session.status !== "open") continue;
-    try {
-      await stripe.expireCheckout(
-        session.id,
-        `delete:${customerId}:${session.id}`,
-      );
-    } catch (error) {
-      if ((await stripe.checkoutSession(session.id)).status === "open")
-        throw error;
-    }
-  }
+  // A checkout can complete while expiry is in flight. Reconcile its direct
+  // subscription even when Stripe's customer subscription listing lags.
+  for (const session of await stripe.checkoutSessions(customerId))
+    await cleanSession(session);
   for (const subscription of await stripe.subscriptions(customerId)) {
-    if (!subscriptionIsOpen(subscription)) continue;
-    try {
-      await stripe.cancelSubscription(subscription.id);
-    } catch (error) {
-      if (subscriptionIsOpen(await stripe.subscription(subscription.id)))
-        throw error;
-    }
+    requireSubscription(subscription);
+    if (subscriptionIsOpen(subscription))
+      await cancelSubscription(subscription.id, subscription);
   }
-  if (
-    (await stripe.checkoutSessions(customerId)).some(
-      (session) => session.status === "open",
-    ) ||
-    (await stripe.subscriptions(customerId)).some(subscriptionIsOpen)
-  )
+  // A newly visible completed session must be reconciled on a later retry;
+  // merely observing it as non-open does not establish its subscription is closed.
+  const finalSessions = await stripe.checkoutSessions(customerId);
+  for (const session of finalSessions) requireSession(session);
+  const finalSubscriptions = await stripe.subscriptions(customerId);
+  for (const subscription of finalSubscriptions) requireSubscription(subscription);
+  if (unresolvedPayment || finalSessions.some((session) => session.status === "open" ||
+      (session.status === "complete" && verifiedComplete.get(session.id) !== completeIdentity(session))) ||
+      finalSubscriptions.some(subscriptionIsOpen))
     throw new AppError("unavailable", "billing cleanup remains pending");
 }

@@ -9,6 +9,7 @@ import {
   directoryForUser,
 } from "../../src/shared/stubs";
 import type { SignInInput } from "../../src/shared/types";
+import { startSession } from "../../src/worker/routes";
 import { eventually } from "./support";
 
 async function input(): Promise<SignInInput> {
@@ -178,10 +179,69 @@ describe("Directory placement in Durable Objects", () => {
     });
   });
 
-  it("preserves sign-in for existing accounts with no placement claim", async () => {
+  it("preserves legacy global accounts but rejects missing sharded homes", async () => {
     const p = await input();
     const global = directory(env);
     await expect(global.bindIdentityHome(p.provider, p.subject, crypto.randomUUID(), p.authEpoch)).resolves.toBeUndefined();
-    await expect(global.bindIdentityHome(p.provider, p.subject, "s3:existing", p.authEpoch)).resolves.toBeUndefined();
+    await runInDurableObject(global, async (instance) => {
+      const uuid = crypto.randomUUID();
+      for (const userId of [`s3:${uuid}`, `s03:${uuid}`, `S3:${uuid}`])
+        await expect((instance as Directory).bindIdentityHome(p.provider, p.subject, userId, p.authEpoch)).rejects.toThrow("sharded account placement requires review");
+      for (const userId of [`s16:${uuid}`, `s-1:${uuid}`, "s3:existing"])
+        await expect((instance as Directory).bindIdentityHome(p.provider, p.subject, userId, p.authEpoch)).rejects.toThrow("invalid account home shard");
+    });
+  });
+
+  it("issues sessions for a legacy global account with no home row", async () => {
+    const p = await input();
+    const global = directory(env);
+    await global.addInvite(p.email);
+    const account = await global.signIn(p);
+    const homes = await runInDurableObject(global, (_instance, state) => state.storage.sql
+      .exec(`SELECT shard FROM identity_homes WHERE provider=? AND subject=?`, p.provider, p.subject).toArray());
+    expect(homes).toEqual([]);
+    expect(account.userId).not.toContain(":");
+    expect(await startSession(configured("16"), p)).toContain("__Host-session=");
+  });
+
+  it("does not issue a new session to a sharded identity after its home was released", async () => {
+    const p = await input();
+    const global = directory(env);
+    await global.addInvite(p.email);
+    const target = await directoryForSignIn(configured("16"), p);
+    const account = await target.directory.signIn(target.input);
+    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch);
+    const shard = Number(account.userId.match(/^s(\d+):/)![1]);
+    expect(await startSession(configured("16"), p)).toContain("__Host-session=");
+    const repeated = await Promise.all([startSession(configured("16"), p), startSession(configured("16"), p)]);
+    expect(repeated.every((cookie) => cookie.includes("__Host-session="))).toBe(true);
+    // Model a released coordinator home while the shard still contains its
+    // identity; a new authorization must not silently revive the orphan.
+    await global.forgetGoogleShardHomeV3(p.subject, shard, account.userId);
+    const fresh = { ...p, authEpoch: await global.googleAuthEpoch() };
+    await expect(startSession(configured("16"), fresh)).rejects.toThrow("sharded account placement requires review");
+    expect(await directoryForUser(env, account.userId).existingIdentity(p.provider, p.subject)).toEqual(account);
+    const homes = await runInDurableObject(global, (_instance, state) => state.storage.sql
+      .exec(`SELECT shard FROM identity_homes WHERE provider=? AND subject=?`, p.provider, p.subject).toArray());
+    expect(homes).toEqual([]);
+    // A new, unbound claim cannot prove ownership of the surviving row.
+    await global.claimIdentityHome(p.provider, p.subject, shard, p.email, undefined, fresh.authEpoch);
+    await expect(startSession(configured("16"), fresh)).rejects.toThrow("sharded account placement requires review");
+    const unbound = await runInDurableObject(global, (_instance, state) => state.storage.sql
+      .exec<{ user_id: string | null }>(`SELECT user_id FROM identity_homes WHERE provider=? AND subject=?`, p.provider, p.subject).one());
+    expect(unbound.user_id).toBeNull();
+  });
+
+  it("allows overlapping first sign-ins to establish one new sharded account", async () => {
+    const p = await input();
+    const global = directory(env);
+    await global.addInvite(p.email);
+    const results = await Promise.allSettled([startSession(configured("16"), p), startSession(configured("16"), p)]);
+    expect(results.some((result) => result.status === "fulfilled" && result.value.includes("__Host-session="))).toBe(true);
+    for (const result of results) if (result.status === "rejected")
+      expect(String(result.reason)).toContain("sharded account placement requires review");
+    expect(await startSession(configured("16"), p)).toContain("__Host-session=");
+    const locations = await Promise.all([...allDirectories(env)].map((d) => d.existingIdentity(p.provider, p.subject)));
+    expect(locations.filter(Boolean)).toHaveLength(1);
   });
 });

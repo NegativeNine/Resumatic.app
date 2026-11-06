@@ -84,6 +84,15 @@ export class CheckoutCoordinator {
   private stripeKey(intent: Intent): string {
     return `checkout:${this.userId}:${intent.key}`;
   }
+  private requireSession(session: BillingCheckoutSession, customer: string, id = session.id, subscription = true): void {
+    if (session.id !== id || session.customerId !== customer || !session.mode || (subscription && session.mode !== "subscription"))
+      throw new AppError("unavailable", "checkout customer association requires review");
+  }
+  private requireIntentSession(session: BillingCheckoutSession, customer: string, intent: Intent, id: string): void {
+    this.requireSession(session, customer, id);
+    if (session.checkoutKey !== this.stripeKey(intent))
+      throw new AppError("unavailable", "checkout identity requires review");
+  }
   private async createCheckout(customer: string, intent: Intent) {
     // Persist before the request, with no await after the final owner check.
     // A failed or interrupted request may still create a session, so only a
@@ -123,10 +132,12 @@ export class CheckoutCoordinator {
     if (intent.sessionId) {
       const session = await this.stripe.checkoutSession(intent.sessionId);
       this.current(intent);
+      this.requireIntentSession(session, customer, intent, intent.sessionId);
       return session;
     }
     const sessions = await this.stripe.checkoutSessions(customer);
     this.current(intent);
+    for (const session of sessions) this.requireSession(session, customer, session.id, false);
     const matching = sessions.filter(
       (session) => session.checkoutKey === this.stripeKey(intent),
     );
@@ -136,6 +147,7 @@ export class CheckoutCoordinator {
         "checkout state requires operator review",
       );
     if (matching[0]) {
+      this.requireSession(matching[0], customer);
       intent.sessionId = matching[0].id;
       intent.expiresAt = matching[0].expiresAt;
       this.write(intent);
@@ -235,6 +247,7 @@ export class CheckoutCoordinator {
       this.write(intent);
       session = await this.stripe.checkoutSession(recovered.id);
       this.current(intent);
+      this.requireIntentSession(session, customer, intent, recovered.id);
     }
     if (session.status === "complete") {
       this.current(intent);
@@ -251,12 +264,16 @@ export class CheckoutCoordinator {
           `cancel:${this.userId}:${intent.key}`,
         );
       } catch (error) {
-        if ((await this.stripe.checkoutSession(session.id)).status === "open")
+        const current = await this.stripe.checkoutSession(session.id);
+        this.current(intent);
+        this.requireIntentSession(current, customer, intent, session.id);
+        if (current.status === "open")
           throw error;
       }
       this.current(intent);
       const after = await this.stripe.checkoutSession(session.id);
       this.current(intent);
+      this.requireIntentSession(after, customer, intent, session.id);
       if (after.status !== "expired") {
         this.write({ ...intent, canceling: false });
         throw new AppError(

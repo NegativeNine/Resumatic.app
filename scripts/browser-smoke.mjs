@@ -28,6 +28,20 @@ if (!browser?.startsWith("/")) {
   const standin = async (req, res, next) => {
     const path = new URL(req.url, "http://localhost").pathname;
     if (path === "/auth/login" && req.method === "GET") { state.signedIn = true; res.writeHead(302, { location: "/" }); res.end(); return; }
+    if (path === "/share/session" && req.method === "POST") {
+      const body = JSON.parse((await read(req)).toString("utf8"));
+      if (body.token === "synthetic-invalid") return send(res, 410, { error: "gone" });
+      if (body.token !== "synthetic-share") return send(res, 400, { error: "invalid" });
+      state.shareSessions = (state.shareSessions ?? 0) + 1;
+      return state.shareSessions === 1 ? send(res, 503, { error: "unavailable" }) : send(res, 204);
+    }
+    if (path === "/share/snapshot" && req.method === "GET") {
+      state.shareReads = (state.shareReads ?? 0) + 1;
+      return state.shareReads === 1 ? send(res, 503, { error: "unavailable" }) : send(res, 200, {
+        grantId: "synthetic-share", expiresAt: Date.now() + 60_000,
+        snapshot: { schemaVersion: 1, createdAt: Date.now(), facts: [], resumes: [] },
+      });
+    }
     if (!path.startsWith("/api/")) return next();
     if (path === "/api/me") return state.signedIn ? send(res, 200, me) : send(res, 401, { error: "unauthenticated", message: "sign in" });
     if (!state.signedIn) return send(res, 401, { error: "unauthenticated" });
@@ -421,7 +435,22 @@ if (!browser?.startsWith("/")) {
     if (!await evalPage(`!!document.querySelector('a[href="/api/export"]') && [...document.querySelectorAll('a[href="#/sources"]')].some(x => x.textContent.includes('Sources & facts'))`)) throw new Error("EXPORT_DOWNLOAD_LINKS_MISSING");
     stage = "resource_reload";
     if (!await evalPage(`import('/test/support/resource-browser.tsx').then(m => m.checkResourceReload())`)) throw new Error("RESOURCE_RELOAD_DID_NOT_SETTLE");
-    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, factLevelReview: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, jobRetryKey: true, profileSubmissionLock: true, applicationTracking: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, checkedLineRemoval: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true, stableResourceReload: true } }));
+    stage = "share_retry";
+    await call("Page.navigate", { url: `${origin}/share#synthetic-share` });
+    await wait(`document.body?.innerText.includes("Couldn't open this share")`);
+    if (await evalPage(`location.hash !== ''`) || state.shareSessions !== 1) throw new Error("SHARE_TOKEN_OR_FIRST_ATTEMPT");
+    await clickText("button", "Try again");
+    for (let i = 0; i < 100 && !state.shareReads; i++) await delay(100);
+    await wait(`document.body?.innerText.includes("Couldn't open this share")`);
+    if (state.shareSessions !== 2 || state.shareReads !== 1) throw new Error("SHARE_EXCHANGE_RETRY");
+    await clickText("button", "Try again");
+    await wait(`document.body?.innerText.includes('Shared career snapshot')`);
+    if (state.shareSessions !== 2 || state.shareReads !== 2 || await evalPage(`location.hash !== ''`)) throw new Error("SHARE_SNAPSHOT_RETRY");
+    stage = "share_expired";
+    await call("Page.navigate", { url: `${origin}/share?invalid=1#synthetic-invalid` });
+    await wait(`document.body?.innerText.includes('Share unavailable')`);
+    if (await evalPage(`location.hash !== '' || !![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Try again')`)) throw new Error("EXPIRED_SHARE_NOT_TERMINAL");
+    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, factLevelReview: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, jobRetryKey: true, profileSubmissionLock: true, applicationTracking: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, checkedLineRemoval: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true, stableResourceReload: true, shareRetry: true, expiredShare: true } }));
   } catch {
     console.log(JSON.stringify({ status: "failed", reason: "BROWSER_SMOKE_FAILED", stage, promotionEligible: false })); process.exitCode = 1;
   } finally {

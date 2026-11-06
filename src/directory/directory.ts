@@ -2,7 +2,7 @@ import { revokeOAuthUserGrants } from "../worker/mcp";
 import { BillingStore } from "./billing";
 import { cleanupBillingCustomer, type BillingEvent } from "../worker/billing";
 import { directory, directoryByName } from "../shared/stubs";
-import { requireMaintenanceFence, shardedUserId } from "../shared/operations";
+import { directoryNameForUser, requireMaintenanceFence, shardedUserId } from "../shared/operations";
 import { DurableObject } from "cloudflare:workers";
 import { AppError, logErrorCode } from "../shared/errors";
 import { requireFreshAuth } from "../shared/auth-expiry";
@@ -448,20 +448,32 @@ export class Directory extends DurableObject<Env> {
     userId: string,
     authEpoch?: number,
     authExpiryMs?: number,
+    requireBound = false,
   ): Promise<void> {
     // The Worker may have sent this RPC while the OAuth state was fresh, but
     // it can be delayed in transit. Never mutate the home on an expired state.
     if (authExpiryMs !== undefined) requireFreshAuth(authExpiryMs);
+    if (typeof requireBound !== "boolean") throw new AppError("invalid", "invalid account placement check");
     return this.googleWrite(provider, authEpoch, () => {
       const home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null; placement_state: string }>(
         `SELECT shard,user_id,generation,placement_state FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
       ).toArray()[0];
       const shard = /^s(\d+):/i.exec(userId);
-      // Existing accounts may predate a placement row. Preserve their ability
-      // to sign in, without treating a missing claim as proof of quiescence.
-      if (!home) return;
+      // A global account can predate placement tracking. A sharded account,
+      // however, must have its coordinator claim before a session is issued:
+      // an absent home can also mean that the shard has an orphan identity
+      // after deletion or an interrupted rollout. Do not recreate it here.
+      if (!home) {
+        if (directoryNameForUser(userId) !== "global")
+          throw new AppError("unavailable", "sharded account placement requires review");
+        return;
+      }
       if (home.generation && home.user_id === null)
         throw new AppError("unavailable", "registered placement must be settled before binding");
+      // A previously observed shard identity may be a survivor from an older
+      // placement. An unbound claim cannot prove that it belongs to that user.
+      if (requireBound && home.user_id === null)
+        throw new AppError("unavailable", "sharded account placement requires review");
       if (home.placement_state !== "open" || (shard ? Number(shard[1]) : null) !== home.shard ||
           (home.user_id !== null && home.user_id !== userId))
         throw new AppError("conflict", "account placement changed; retry sign-in");

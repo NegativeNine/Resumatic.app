@@ -307,7 +307,11 @@ export async function startSession(env: Env, input: SignInInput): Promise<string
   }
   const { userId, vaultId } = account;
   if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
-  await directory(env).bindIdentityHome(input.provider, input.subject, userId, input.authEpoch, input.authExpiryMs);
+  // Existing shard rows may be survivors of a released placement. Only a
+  // matching bound home permits a new session; fresh account creation still
+  // binds its initial claim. Older Workers need a verified deployment drain.
+  const requireBound = target.input.homeShard !== undefined && target.input.expectedUserId !== undefined;
+  await directory(env).bindIdentityHome(input.provider, input.subject, userId, input.authEpoch, input.authExpiryMs, requireBound);
   if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
   const { gen, epoch } = await vault(env, vaultId).openSession(userId);
   const cookie = sessionCookie(

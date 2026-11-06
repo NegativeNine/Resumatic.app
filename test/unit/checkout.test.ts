@@ -25,6 +25,9 @@ function fixture() {
         const id = `cs_test_${sessions.size + 1}`;
         session = {
           id,
+          customerId: "cus_test",
+          mode: "subscription",
+          paymentStatus: "unpaid",
           status: "open",
           expiresAt: state.now + 86_400_000,
           url: `https://checkout.stripe.com/${id}`,
@@ -98,6 +101,31 @@ function fixture() {
 }
 
 describe("durable checkout intent", () => {
+  it("does not return or expire a session attached to another customer", async () => {
+    const f = fixture();
+    await f.coordinator.open("pro");
+    const session = [...f.sessions.values()][0]!;
+    session.customerId = "cus_other";
+    await expect(f.coordinator.open("pro")).rejects.toThrow("association requires review");
+    await expect(f.coordinator.cancel()).rejects.toThrow("association requires review");
+    expect(f.stripe.expireCheckout).not.toHaveBeenCalled();
+    expect(session.status).toBe("open");
+    const intent = JSON.parse(f.state.intent!);
+    intent.canceling = false;
+    intent.sessionId = null; // Recovering a lost create response uses the listing.
+    f.state.intent = JSON.stringify(intent);
+    await expect(f.coordinator.open("pro")).rejects.toThrow("association requires review");
+    expect(f.checkout).toHaveBeenCalledTimes(1);
+  });
+  it("does not expire a different session belonging to the same customer", async () => {
+    const f = fixture();
+    await f.coordinator.open("pro");
+    const session = [...f.sessions.values()][0]!;
+    session.checkoutKey = "checkout:another-intent";
+    await expect(f.coordinator.cancel()).rejects.toThrow("checkout identity requires review");
+    expect(f.stripe.expireCheckout).not.toHaveBeenCalled();
+    expect(session.status).toBe("open");
+  });
   it("shares one server-generated Stripe key across concurrent and repeated requests", async () => {
     const f = fixture();
     const [a, b] = await Promise.all([

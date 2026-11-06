@@ -184,7 +184,7 @@ describe("billing identifiers during account deletion", () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const path = new URL(typeof input === "string" ? input : input.toString()).pathname;
       if (path === "/v1/checkout/sessions/cs_test_late/expire") { open = false; return Response.json({}); }
-      if (path === "/v1/checkout/sessions/cs_test_late") { directChecks++; return Response.json({ id: "cs_test_late", status: open ? "open" : "expired", expires_at: 2_000_000_000, url: null }); }
+      if (path === "/v1/checkout/sessions/cs_test_late") { directChecks++; return Response.json({ id: "cs_test_late", customer: "cus_test", mode: "subscription", status: open ? "open" : "expired", expires_at: 2_000_000_000, url: null }); }
       if (path === "/v1/checkout/sessions" || path === "/v1/subscriptions") return Response.json({ data: [], has_more: false });
       throw new Error(`unexpected Stripe path: ${path}`);
     });

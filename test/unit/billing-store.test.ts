@@ -653,6 +653,136 @@ describe("durable billing reconciliation", () => {
 });
 
 describe("billing account cleanup", () => {
+  it("cancels a list-discovered checkout that completes during expiry even when subscription listing lags", async () => {
+    let active = true;
+    let completed = false;
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      const session = () => ({ id: "cs_test_race", customer: "cus_123", mode: "subscription", payment_status: completed ? "paid" : "unpaid", status: completed ? "complete" : "open", expires_at: end, url: null, subscription: completed ? "sub_new" : null });
+      if (url.pathname === "/v1/checkout/sessions") return Response.json({ data: [session()], has_more: false });
+      if (url.pathname === "/v1/checkout/sessions/cs_test_race/expire") { completed = true; return new Response("already completed", { status: 400 }); }
+      if (url.pathname === "/v1/checkout/sessions/cs_test_race") return Response.json(session());
+      if (url.pathname === "/v1/subscriptions") return Response.json({ data: [], has_more: false });
+      if (url.pathname === "/v1/subscriptions/sub_new") {
+        if (init?.method === "DELETE") { active = false; return Response.json({}); }
+        return Response.json(subscription("sub_new", active ? "active" : "canceled"));
+      }
+      throw new Error(`unexpected ${init?.method} ${url.pathname}`);
+    });
+    await cleanupBillingCustomer(billingEnv, "cus_123", fetcher);
+    expect(completed).toBe(true);
+    expect(active).toBe(false);
+  });
+  it("leaves a newly listed completed session pending until its subscription is checked", async () => {
+    let active = true, lists = 0;
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/v1/checkout/sessions") return Response.json({ data: ++lists === 1 ? [] : [{ id: "cs_test_new", customer: "cus_123", mode: "subscription", payment_status: "paid", status: "complete", expires_at: end, url: null, subscription: "sub_new" }], has_more: false });
+      if (url.pathname === "/v1/subscriptions") return Response.json({ data: [], has_more: false });
+      if (url.pathname === "/v1/subscriptions/sub_new") {
+        if (init?.method === "DELETE") { active = false; return Response.json({}); }
+        return Response.json(subscription("sub_new", active ? "active" : "canceled"));
+      }
+      throw new Error(`unexpected ${init?.method} ${url.pathname}`);
+    });
+    await expect(cleanupBillingCustomer(billingEnv, "cus_123", fetcher)).rejects.toThrow("cleanup remains pending");
+    expect(active).toBe(true);
+    await cleanupBillingCustomer(billingEnv, "cus_123", fetcher);
+    expect(active).toBe(false);
+  });
+  it.each(["cus_other", null])("never expires a known checkout with an unverified customer %s", async (customer) => {
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ id: "cs_test_other", customer, mode: "subscription", status: "open", expires_at: end, url: null }));
+    await expect(cleanupBillingCustomer(billingEnv, "cus_123", fetcher, ["cs_test_other"])).rejects.toThrow("association requires review");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("never cancels a subscription from another customer returned by a listing", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/v1/checkout/sessions") return Response.json({ data: [], has_more: false });
+      if (url.pathname === "/v1/subscriptions") return Response.json({ data: [{ ...subscription("sub_new", "active"), customer: "cus_other" }], has_more: false });
+      throw new Error(`unexpected ${url.pathname}`);
+    });
+    await expect(cleanupBillingCustomer(billingEnv, "cus_123", fetcher)).rejects.toThrow("association requires review");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+  it("checks a completed checkout on a later list page", async () => {
+    let active = true;
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/v1/checkout/sessions") {
+        if (!url.searchParams.has("starting_after")) return Response.json({ data: [{ id: "cs_test_first", customer: "cus_123", mode: "subscription", status: "expired", expires_at: end, url: null }], has_more: true });
+        expect(url.searchParams.get("starting_after")).toBe("cs_test_first");
+        return Response.json({ data: [{ id: "cs_test_second", customer: "cus_123", mode: "subscription", payment_status: "paid", status: "complete", expires_at: end, url: null, subscription: "sub_new" }], has_more: false });
+      }
+      if (url.pathname === "/v1/subscriptions") return Response.json({ data: [], has_more: false });
+      if (url.pathname === "/v1/subscriptions/sub_new") {
+        if (init?.method === "DELETE") { active = false; return Response.json({}); }
+        return Response.json(subscription("sub_new", active ? "active" : "canceled"));
+      }
+      throw new Error(`unexpected ${init?.method} ${url.pathname}`);
+    });
+    await cleanupBillingCustomer(billingEnv, "cus_123", fetcher);
+    expect(active).toBe(false);
+  });
+  it("handles completed non-subscription sessions while rejecting missing mode or subscription", async () => {
+    let mode: string | undefined = "payment";
+    let subscriptionId: string | null = null;
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/v1/checkout/sessions") return Response.json({ data: [{ id: "cs_test_other", customer: "cus_123", mode, payment_status: "paid", status: "complete", expires_at: end, url: null, subscription: subscriptionId }], has_more: false });
+      if (url.pathname === "/v1/subscriptions") return Response.json({ data: [], has_more: false });
+      throw new Error(`unexpected ${url.pathname}`);
+    });
+    await cleanupBillingCustomer(billingEnv, "cus_123", fetcher);
+    mode = "setup";
+    await cleanupBillingCustomer(billingEnv, "cus_123", fetcher);
+    mode = undefined;
+    await expect(cleanupBillingCustomer(billingEnv, "cus_123", fetcher)).rejects.toThrow("requires review");
+    mode = "subscription";
+    await expect(cleanupBillingCustomer(billingEnv, "cus_123", fetcher)).rejects.toThrow("cleanup remains pending");
+    mode = "payment";
+    subscriptionId = "sub_new";
+    await expect(cleanupBillingCustomer(billingEnv, "cus_123", fetcher)).rejects.toThrow("mode requires review");
+  });
+  it.each(["payment", "subscription"] as const)("keeps a completed %s checkout pending while its payment is unresolved", async (mode) => {
+    let active = true;
+    let paymentStatus: string | undefined = "unpaid";
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/v1/checkout/sessions") return Response.json({ data: [{ id: "cs_test_processing", customer: "cus_123", mode, payment_status: paymentStatus, status: "complete", expires_at: end, url: null, subscription: mode === "subscription" ? "sub_new" : null }], has_more: false });
+      if (url.pathname === "/v1/subscriptions") return Response.json({ data: [], has_more: false });
+      if (url.pathname === "/v1/subscriptions/sub_new") {
+        if (init?.method === "DELETE") { active = false; return Response.json({}); }
+        return Response.json(subscription("sub_new", active ? "active" : "canceled"));
+      }
+      throw new Error(`unexpected ${init?.method} ${url.pathname}`);
+    });
+    await expect(cleanupBillingCustomer(billingEnv, "cus_123", fetcher)).rejects.toThrow("cleanup remains pending");
+    if (mode === "subscription") expect(active).toBe(false);
+    paymentStatus = undefined;
+    await expect(cleanupBillingCustomer(billingEnv, "cus_123", fetcher)).rejects.toThrow("cleanup remains pending");
+    paymentStatus = "paid";
+    await cleanupBillingCustomer(billingEnv, "cus_123", fetcher);
+  });
+  it.each(["unpaid", "missing-subscription"] as const)("still cancels other subscriptions when a checkout has %s", async (problem) => {
+    let extraActive = true, firstActive = true;
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/v1/checkout/sessions") return Response.json({ data: [{ id: "cs_test_pending", customer: "cus_123", mode: "subscription", payment_status: problem === "unpaid" ? "unpaid" : "paid", status: "complete", expires_at: end, url: null, subscription: problem === "unpaid" ? "sub_new" : null }], has_more: false });
+      if (url.pathname === "/v1/subscriptions") return Response.json({ data: [subscription("sub_extra", extraActive ? "active" : "canceled")], has_more: false });
+      if (url.pathname === "/v1/subscriptions/sub_new") {
+        if (init?.method === "DELETE") { firstActive = false; return Response.json({}); }
+        return Response.json(subscription("sub_new", firstActive ? "active" : "canceled"));
+      }
+      if (url.pathname === "/v1/subscriptions/sub_extra") {
+        if (init?.method === "DELETE") { extraActive = false; return Response.json({}); }
+        return Response.json(subscription("sub_extra", extraActive ? "active" : "canceled"));
+      }
+      throw new Error(`unexpected ${init?.method} ${url.pathname}`);
+    });
+    await expect(cleanupBillingCustomer(billingEnv, "cus_123", fetcher)).rejects.toThrow("cleanup remains pending");
+    expect(extraActive).toBe(false);
+  });
   it("expires a known checkout by ID even when the list has not exposed it", async () => {
     let open = true;
     const fetcher = vi.fn<typeof fetch>(async (input, init) => {
@@ -662,7 +792,7 @@ describe("billing account cleanup", () => {
         return Response.json({});
       }
       if (url.pathname === "/v1/checkout/sessions/cs_test_late")
-        return Response.json({ id: "cs_test_late", status: open ? "open" : "expired", expires_at: end, url: null });
+        return Response.json({ id: "cs_test_late", customer: "cus_123", mode: "subscription", status: open ? "open" : "expired", expires_at: end, url: null });
       if (["/v1/checkout/sessions", "/v1/subscriptions"].includes(url.pathname))
         return Response.json({ data: [], has_more: false });
       throw new Error(`unexpected ${init?.method} ${url.pathname}`);
@@ -676,7 +806,7 @@ describe("billing account cleanup", () => {
     const fetcher = vi.fn<typeof fetch>(async (input, init) => {
       const url = new URL(String(input));
       if (url.pathname === "/v1/checkout/sessions/cs_test_paid")
-        return Response.json({ id: "cs_test_paid", status: "complete", expires_at: end, url: null, subscription: "sub_new" });
+        return Response.json({ id: "cs_test_paid", customer: "cus_123", mode: "subscription", payment_status: "paid", status: "complete", expires_at: end, url: null, subscription: "sub_new" });
       if (url.pathname === "/v1/subscriptions/sub_new") {
         if (init?.method === "DELETE") { active = false; return Response.json({}); }
         return Response.json(subscription("sub_new", active ? "active" : "canceled"));
@@ -700,6 +830,8 @@ describe("billing account cleanup", () => {
           data: [
             {
               id: "cs_test_123",
+              customer: "cus_123",
+              mode: "subscription",
               status: open ? "open" : "expired",
               expires_at: end,
               url: null,
@@ -711,6 +843,8 @@ describe("billing account cleanup", () => {
         open = false;
         return Response.json({});
       }
+      if (url.pathname === "/v1/checkout/sessions/cs_test_123")
+        return Response.json({ id: "cs_test_123", customer: "cus_123", mode: "subscription", status: open ? "open" : "expired", expires_at: end, url: null });
       if (url.pathname === "/v1/subscriptions")
         return Response.json({
           data: [subscription("sub_new", active ? "active" : "canceled")],
@@ -724,6 +858,8 @@ describe("billing account cleanup", () => {
         active = false;
         return Response.json({});
       }
+      if (url.pathname === "/v1/subscriptions/sub_new")
+        return Response.json(subscription("sub_new", active ? "active" : "canceled"));
       throw new Error("unexpected test request");
     });
     await cleanupBillingCustomer(

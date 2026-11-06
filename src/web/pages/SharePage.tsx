@@ -12,28 +12,45 @@ if (typeof window !== "undefined" && window.location.pathname === "/share") {
     window.location.pathname,
   );
 }
+class ShareUnavailable extends Error {}
+
+function checkResponse(response: Response): void {
+  if (response.ok) return;
+  // A temporary failure should be retryable without exposing the bearer in
+  // the URL again. Invalid or expired links get the unavailable message.
+  if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429)
+    throw new ShareUnavailable();
+  throw new Error("Share temporarily unavailable");
+}
+
 let exchange: Promise<void> | null = null;
 function exchangeLink(): Promise<void> {
   if (exchange) return exchange;
   if (!initialToken) return Promise.resolve();
-  if (!exchange) {
-    const token = initialToken;
-    initialToken = null;
-    exchange = fetch("/share/session", {
+  const token = initialToken;
+  exchange = (async () => {
+    const response = await fetch("/share/session", {
       method: "POST",
       credentials: "same-origin",
+      cache: "no-store",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ token }),
-    }).then((r) => {
-      if (!r.ok) throw new Error("Share unavailable");
     });
-  }
+    try {
+      checkResponse(response);
+    } catch (error) {
+      if (error instanceof ShareUnavailable) initialToken = null;
+      throw error;
+    }
+    initialToken = null;
+  })().finally(() => { exchange = null; });
   return exchange;
 }
 
 export function SharePage() {
   const [view, setView] = useState<SharedView | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<"unavailable" | "temporary" | null>(null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -43,24 +60,32 @@ export function SharePage() {
           credentials: "same-origin",
           cache: "no-store",
         });
-        if (!response.ok) throw new Error("Share unavailable");
+        checkResponse(response);
         const data = (await response.json()) as SharedView;
         if (active) setView(data);
-      } catch {
-        if (active) setFailed(true);
+      } catch (error) {
+        if (active) setFailed(error instanceof ShareUnavailable ? "unavailable" : "temporary");
       }
     })();
     return () => {
       active = false;
     };
-  }, []);
-  if (failed)
+  }, [attempt]);
+  if (failed === "unavailable")
     return (
       <main className="page">
         <h1>Share unavailable</h1>
-        <p>
-          This link has expired or been revoked. Ask the owner for a new link.
-        </p>
+        <p>This link may have expired or been revoked. Ask the owner for a new link.</p>
+      </main>
+    );
+  if (failed === "temporary")
+    return (
+      <main className="page">
+        <h1>Couldn't open this share</h1>
+        <p>Check your connection and try again.</p>
+        <button type="button" onClick={() => { setFailed(null); setAttempt((value) => value + 1); }}>
+          Try again
+        </button>
       </main>
     );
   if (!view)
