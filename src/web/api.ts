@@ -40,6 +40,17 @@ export class ApiError extends Error {
   }
 }
 
+/** A fetch-level failure; TypeError inheritance preserves the existing connection message. */
+export class ApiNetworkError extends TypeError {}
+
+function fetchError(error: unknown): unknown {
+  return error instanceof TypeError ||
+    (typeof DOMException !== "undefined" && error instanceof DOMException &&
+      (error.name === "AbortError" || error.name === "TimeoutError"))
+    ? new ApiNetworkError(error.message)
+    : error;
+}
+
 async function request<T>(
   method: string,
   path: string,
@@ -61,7 +72,12 @@ async function request<T>(
     (init.headers as Record<string, string>)["content-type"] =
       "application/json";
   }
-  const res = await fetch(path, init);
+  let res: Response;
+  try {
+    res = await fetch(path, init);
+  } catch (error) {
+    throw fetchError(error);
+  }
   if (!res.ok) {
     let payload: Partial<ApiErrorBody> = {};
     try {
@@ -77,9 +93,14 @@ async function request<T>(
   }
   if (res.status === 204) return undefined as T;
   const type = res.headers.get("content-type") ?? "";
-  return (
-    type.includes("application/json") ? await res.json() : undefined
-  ) as T;
+  if (!type.includes("application/json")) return undefined as T;
+  try {
+    return await res.json() as T;
+  } catch (error) {
+    // A response body can fail after fetch has already returned its headers.
+    // Invalid JSON is a SyntaxError and is not treated as a network failure.
+    throw fetchError(error);
+  }
 }
 
 // An uncertain network response reuses the same key if the person retries the same action.

@@ -305,7 +305,7 @@ describe("Directory initialization fence", () => {
         await ready;
         local.VAULT = original;
         const targetId = ctx.storage.sql.exec<{target_id: string}>(`SELECT target_id FROM vault_replacements WHERE operation_id=?`, operation).one().target_id;
-        await instance.deleteAccount(userId, vaultId);
+        await expect(instance.deleteAccount(userId, vaultId)).rejects.toThrow(/retired vault ownership requires review/);
         await instance.alarm();
         expect(await instance.hasVault(targetId)).toBe(true);
         release();
@@ -328,6 +328,7 @@ describe("Directory initialization fence", () => {
     const target = env.VAULT.newUniqueId().toString();
     const retired = env.VAULT.newUniqueId().toString();
     await runInDurableObject(d, (_instance, ctx) => {
+      ctx.storage.sql.exec(`ALTER TABLE retired_vaults DROP COLUMN generation`);
       for (const trigger of ["billing_account_insert_token", "billing_account_update_token", "billing_account_delete_token"])
         ctx.storage.sql.exec(`DROP TRIGGER ${trigger}`);
       ctx.storage.sql.exec(`DROP TABLE billing_state_clock`);

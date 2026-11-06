@@ -45,6 +45,17 @@ type VaultDbRow = {
   updated_at: number;
 };
 
+type RetiredVaultDbRow = {
+  vault_id: string;
+  user_id: string;
+  state: string;
+  swept_at: number | null;
+  generation: string | null;
+};
+
+const validSweepTime = (value: number | null): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+
 /**
  * Control plane. One object, reached by name, that maps sign-in identities to users and
  * users to vault IDs. It creates each vault near its user, keeps the IDs so it can list
@@ -860,6 +871,8 @@ export class Directory extends DurableObject<Env> {
     )
       throw new AppError("conflict", "replacement does not match");
     if (operation.state === "complete") return;
+    if (operation.state !== "preparing")
+      throw new AppError("conflict", "replacement is no longer preparing");
     this.requireInitializationSettled(targetId);
     await revokeOAuthUserGrants(this.env, operation.user_id);
     this.requireInitializationSettled(targetId);
@@ -868,10 +881,17 @@ export class Directory extends DurableObject<Env> {
     ).activateImport(operationId, operation.user_id);
     await this.ctx.storage.transaction(async () => {
       this.requireInitializationSettled(targetId);
+      // Activation yields. Deletion may have retired the target while that
+      // call was in flight; never publish a cancelled or retired target.
+      if (!this.sql.exec(
+        `SELECT operation_id FROM vault_replacements WHERE operation_id=? AND source_id=? AND target_id=? AND user_id=? AND state='preparing'`,
+        operationId, sourceId, targetId, operation.user_id,
+      ).toArray().length || this.sql.exec(`SELECT vault_id FROM retired_vaults WHERE vault_id=?`, targetId).toArray().length)
+        throw new AppError("conflict", "replacement is no longer preparing");
       const source = this.sql
         .exec(
-          `SELECT vault_id FROM vaults WHERE vault_id=? AND state='active'`,
-          sourceId,
+          `SELECT v.vault_id FROM vaults v JOIN users u ON u.user_id=v.user_id WHERE v.vault_id=? AND v.user_id=? AND v.state='active' AND u.state='active'`,
+          sourceId, operation.user_id,
         )
         .toArray()[0];
       if (!source)
@@ -922,7 +942,8 @@ export class Directory extends DurableObject<Env> {
         userId,
       ).toArray();
       const targets = this.sql.exec<{ vault_id: string }>(
-        `SELECT target_id AS vault_id FROM vault_replacements WHERE user_id=? AND state='preparing'`,
+        `SELECT target_id AS vault_id FROM vault_replacements WHERE user_id=? AND
+         (state='preparing' OR (state='cancelled' AND EXISTS (SELECT 1 FROM retired_vaults WHERE vault_id=target_id)))`,
         userId,
       ).toArray();
       this.sql.exec(
@@ -933,6 +954,7 @@ export class Directory extends DurableObject<Env> {
         `INSERT OR IGNORE INTO retired_vaults (vault_id,user_id) SELECT target_id,user_id FROM vault_replacements WHERE user_id=? AND state='preparing'`,
         userId,
       );
+      this.sql.exec(`UPDATE vault_replacements SET state='cancelled' WHERE user_id=? AND state='preparing'`, userId);
       this.sql.exec(
         `UPDATE vaults SET state = 'deleting', updated_at = ? WHERE user_id = ? AND state IN ('creating', 'active')`,
         now,
@@ -941,15 +963,16 @@ export class Directory extends DurableObject<Env> {
       const existing = await this.ctx.storage.getAlarm();
       if (existing === null || existing > now + RETRY_MS)
         await this.ctx.storage.setAlarm(now + RETRY_MS);
-      return [...new Set([...active, ...targets].map((v) => v.vault_id))];
+      return { active: [...new Set(active.map((v) => v.vault_id))], targets: [...new Set(targets.map((v) => v.vault_id))] };
     });
     // A preparing replacement may still be copying files. Revoke its Vault
     // as well as the active one immediately, rather than waiting for the
     // retirement alarm. The alarm remains responsible for retry and cleanup.
     // Attempt every Vault even if another one is unavailable.
-    const results = await Promise.allSettled(toQuiesce.map(async (id) =>
-      this.env.VAULT.get(this.env.VAULT.idFromString(id)).quiesce(),
-    ));
+    const results = await Promise.allSettled([
+      ...toQuiesce.active.map(async (id) => this.env.VAULT.get(this.env.VAULT.idFromString(id)).quiesce()),
+      ...toQuiesce.targets.map(async (id) => this.env.VAULT.get(this.env.VAULT.idFromString(id)).quiesceForRetirement(userId)),
+    ]);
     const failed = results.find((result) => result.status === "rejected");
     if (failed?.status === "rejected") throw failed.reason;
   }
@@ -1067,73 +1090,171 @@ export class Directory extends DurableObject<Env> {
         code: "billing_unavailable",
       });
     });
+    // Snapshot each lane before starting external work: a vault may only run
+    // its final sweep here if it was already swept at the start of this alarm.
     const deleting = this.vaultsIn("deleting");
-    // One stalled account should not prevent the other accounts in this
-    // bounded batch from starting their own independent deletion work.
-    for (let offset = 0; offset < deleting.length; offset += 4) {
-      await Promise.all(deleting.slice(offset, offset + 4).map(async (v) => {
-        try {
-          await this.erase(v.vault_id);
-        } catch (e) {
-          console.error("deletion step failed", {
-            vaultId: v.vault_id,
-            code: logErrorCode(e),
-          });
-        }
-      }));
-    }
-    for (const retired of this.sql
-      .exec<{ vault_id: string; state: string; swept_at: number | null }>(
+    const sweptBefore = this.vaultsIn("swept");
+    const retiredBefore = this.sql
+      .exec<RetiredVaultDbRow>(
         `SELECT * FROM retired_vaults`,
       )
-      .toArray()) {
-      try {
-        if (retired.state === "deleting") {
-          const stub = this.env.VAULT.get(
-            this.env.VAULT.idFromString(retired.vault_id),
-          );
-          // Revocation can proceed even while an old init acknowledgement is
-          // unresolved. Destruction must still wait for that durable fence.
-          await stub.quiesce();
-          try {
-            await stopKnownVaultRuns(this.env, await stub.knownRunsForDeletion());
-          } catch (error) {
-            console.error("preliminary retired workflow cleanup pending", { code: logErrorCode(error) });
-          }
-          this.requireInitializationSettled(retired.vault_id);
-          const runs = await stub.close();
-          await stopVaultRuns(this.env, runs);
-          await deletePrefix(this.env.FILES, vaultPrefix(retired.vault_id));
-          await stub.destroy();
-          this.sql.exec(
-            `UPDATE retired_vaults SET state='swept',swept_at=? WHERE vault_id=?`,
-            Date.now(),
-            retired.vault_id,
-          );
-        } else if ((retired.swept_at ?? 0) <= Date.now() - this.sweepDelay()) {
-          await deletePrefix(this.env.FILES, vaultPrefix(retired.vault_id));
-          this.sql.exec(
-            `DELETE FROM retired_vaults WHERE vault_id=?`,
-            retired.vault_id,
-          );
-        }
-      } catch {
-        console.error("retirement pending", { vaultId: retired.vault_id });
+      .toArray();
+    // A retirement can yield many times. Give legacy rows an incarnation
+    // before the first such yield so stale completions cannot change a row
+    // deleted and recreated with the same ID and owner.
+    for (const row of retiredBefore) {
+      if (row.generation === null) {
+        const generation = crypto.randomUUID();
+        this.sql.exec(`UPDATE retired_vaults SET generation=? WHERE vault_id=? AND generation IS NULL`, generation, row.vault_id);
+        row.generation = generation;
       }
     }
+    // One stalled account should not prevent the other accounts in this
+    // bounded batch from starting their own independent deletion work.
+    const deletion = (async () => {
+      for (let offset = 0; offset < deleting.length; offset += 4) {
+        await Promise.all(deleting.slice(offset, offset + 4).map(async (v) => {
+          try {
+            await this.erase(v.vault_id);
+          } catch (e) {
+            console.error("deletion step failed", {
+              vaultId: v.vault_id,
+              code: logErrorCode(e),
+            });
+          }
+        }));
+      }
+    })();
+    const retirement = (async () => {
+      for (const retired of retiredBefore) {
+        try {
+          await this.retireVault(retired);
+        } catch {
+          console.error("retirement pending", { vaultId: retired.vault_id });
+        }
+      }
+    })();
+    // Existing swept accounts can complete independently of a stalled active
+    // deletion or retirement. Neither lane may settle another lane's fence.
+    const finalization = (async () => {
+      const attempted = await this.finalizeSwept(sweptBefore);
+      // A previously swept account may have been waiting for its own retired
+      // Vault. Retry only that original snapshot once retirement finishes,
+      // without waiting for unrelated deleting Vaults to finish.
+      await retirement;
+      const afterRetirement = await this.finalizeSwept(sweptBefore.filter((v) => !attempted.has(v.vault_id)));
+      for (const id of afterRetirement) attempted.add(id);
+      return attempted;
+    })();
+    const outcomes = await Promise.allSettled([billing, deletion, retirement, finalization]);
+    const failure = outcomes.find((outcome) => outcome.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
+    const attempted = (outcomes[3] as PromiseFulfilledResult<Set<string>>).value;
+    // Preserve the zero-delay case: once every lane has finished, newly swept
+    // vaults and accounts previously blocked by a retirement can finalize.
+    await this.finalizeSwept(this.vaultsIn("swept").filter((v) => !attempted.has(v.vault_id)));
+    await this.scheduleNext();
+  }
+
+  private requireRetiredCurrent(row: RetiredVaultDbRow): void {
+    if (this.env.VAULT.idFromString(row.vault_id).toString() !== row.vault_id ||
+        !row.generation || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(row.generation) ||
+        !this.sql.exec(`SELECT vault_id FROM retired_vaults WHERE vault_id=? AND user_id=? AND state=? AND generation=? AND swept_at IS ?`,
+          row.vault_id, row.user_id, row.state, row.generation, row.swept_at).toArray().length ||
+        this.sql.exec(`SELECT vault_id FROM vaults WHERE vault_id=?`, row.vault_id).toArray().length)
+      throw new AppError("unavailable", "retired vault identity requires review");
+  }
+
+  private requireRetiredUnchanged(row: RetiredVaultDbRow): void {
+    this.requireRetiredCurrent(row);
+    if (this.sql.exec(`SELECT operation_id FROM vault_replacements WHERE target_id=? AND state='preparing'`, row.vault_id).toArray().length)
+      throw new AppError("unavailable", "retired vault identity requires review");
+  }
+
+  private async retireVault(row: RetiredVaultDbRow): Promise<void> {
+    // Before this protocol, account deletion could register a target as
+    // retired while leaving its replacement marked preparing. Cancel only
+    // the owning deleting account's operation; ambiguous references stay
+    // pending and may not authorize an R2 sweep.
+    this.requireRetiredCurrent(row);
+    this.sql.exec(`UPDATE vault_replacements SET state='cancelled' WHERE target_id=? AND user_id=? AND state='preparing' AND EXISTS (SELECT 1 FROM users WHERE user_id=? AND state='deleting')`,
+      row.vault_id, row.user_id, row.user_id);
+    this.requireRetiredUnchanged(row);
+    if (row.state !== "deleting" && row.state !== "awaiting_final_sweep")
+      throw new AppError("unavailable", "retired vault requires review");
+    if (row.state === "awaiting_final_sweep") {
+      if (!validSweepTime(row.swept_at)) throw new AppError("unavailable", "retired vault sweep time requires review");
+      if (row.swept_at > Date.now() - this.sweepDelay()) return;
+    }
+    const stub = this.env.VAULT.get(this.env.VAULT.idFromString(row.vault_id));
+    await stub.quiesceForRetirement(row.user_id);
+    this.requireRetiredUnchanged(row);
+    try {
+      await stopKnownVaultRuns(this.env, await stub.knownRunsForRetirement(row.user_id));
+    } catch (error) {
+      console.error("preliminary retired workflow cleanup pending", { code: logErrorCode(error) });
+    }
+    this.requireRetiredUnchanged(row);
+    this.requireInitializationSettled(row.vault_id);
+    const runs = await stub.closeForRetirement(row.user_id);
+    this.requireRetiredUnchanged(row);
+    await stopVaultRuns(this.env, runs);
+    this.requireRetiredUnchanged(row);
+    // Recheck the persisted Vault owner immediately before the R2 operation.
+    await stub.quiesceForRetirement(row.user_id);
+    this.requireRetiredUnchanged(row);
+    await deletePrefix(this.env.FILES, vaultPrefix(row.vault_id));
+    this.requireRetiredUnchanged(row);
+    if (row.state === "deleting") {
+      const sweptAt = Date.now();
+      this.sql.exec(`UPDATE retired_vaults SET state='awaiting_final_sweep',swept_at=? WHERE vault_id=? AND user_id=? AND state='deleting' AND generation=?`,
+        sweptAt, row.vault_id, row.user_id, row.generation);
+      // With a zero delay the second sweep may happen in this same alarm,
+      // but only after the first one has completed and its phase is durable.
+      if (this.sweepDelay() === 0)
+        await this.retireVault({ ...row, state: "awaiting_final_sweep", swept_at: sweptAt });
+      return;
+    }
+    await stub.destroyForRetirement(row.user_id);
+    this.requireRetiredUnchanged(row);
+    this.sql.exec(`DELETE FROM retired_vaults WHERE vault_id=? AND user_id=? AND state='awaiting_final_sweep' AND generation=?`,
+      row.vault_id, row.user_id, row.generation);
+  }
+
+  private requireFinalizationUnchanged(vaultId: string, userId: string, sweptAt: number | null): void {
+    if (!validSweepTime(sweptAt) || this.env.VAULT.idFromString(vaultId).toString() !== vaultId || !this.sql.exec(
+      `SELECT vault_id FROM vaults WHERE vault_id=? AND user_id=? AND state='swept' AND swept_at=?`,
+      vaultId, userId, sweptAt,
+    ).toArray().length || this.sql.exec(
+      `SELECT vault_id FROM retired_vaults WHERE user_id=? OR vault_id=?`,
+      userId, vaultId,
+    ).toArray().length)
+      throw new AppError("unavailable", "account deletion changed; retry cleanup");
+  }
+
+  private async finalizeSwept(vaults: VaultDbRow[]): Promise<Set<string>> {
+    const attempted = new Set<string>();
     const due = Date.now() - this.sweepDelay();
-    for (const v of this.vaultsIn("swept")) {
+    for (const v of vaults) {
+      if (!validSweepTime(v.swept_at)) {
+        attempted.add(v.vault_id);
+        console.error("final sweep pending", { vaultId: v.vault_id, code: "invalid_sweep_time" });
+        continue;
+      }
       if (
-        (v.swept_at ?? 0) > due ||
+        v.swept_at > due ||
         this.sql
           .exec(
-            `SELECT vault_id FROM retired_vaults WHERE user_id=?`,
+            `SELECT vault_id FROM retired_vaults WHERE user_id=? OR vault_id=?`,
             v.user_id,
+            v.vault_id,
           )
           .toArray().length
       )
         continue;
+      attempted.add(v.vault_id);
       try {
+        this.requireFinalizationUnchanged(v.vault_id, v.user_id, v.swept_at);
         let finalizations = this.sql.exec<{ provider: string; subject: string; generation: string }>(
           `SELECT provider,subject,generation FROM placement_finalizations WHERE user_id=?`, v.user_id,
         ).toArray();
@@ -1146,6 +1267,9 @@ export class Directory extends DurableObject<Env> {
           throw new AppError("unavailable", "checkout customer requires operator review");
         await revokeOAuthUserGrants(this.env, v.user_id);
         await deletePrefix(this.env.FILES, vaultPrefix(v.vault_id));
+        // A newly discovered retirement must stop before initiating any
+        // identity-home release. An in-flight release cannot be recalled.
+        this.requireFinalizationUnchanged(v.vault_id, v.user_id, v.swept_at);
         if (fenced) {
           // Remove the target identity before releasing its global claim. The
           // durable outbox keeps the user's deletion retryable across a crash.
@@ -1160,8 +1284,10 @@ export class Directory extends DurableObject<Env> {
           });
           finalizations = fenced;
         }
-        for (const identity of finalizations)
+        for (const identity of finalizations) {
+          this.requireFinalizationUnchanged(v.vault_id, v.user_id, v.swept_at);
           await directory(this.env).releasePlacementHome(identity.provider, identity.subject, identity.generation, v.user_id);
+        }
         // Release only after the other external cleanup has succeeded. This
         // narrows, but does not eliminate, the cross-object interval before
         // the local identity is deleted below.
@@ -1170,12 +1296,19 @@ export class Directory extends DurableObject<Env> {
             .exec<{ provider: string; subject: string }>(
               `SELECT provider,subject FROM identities WHERE user_id=?`, v.user_id,
             ).toArray())
-            if (identity.provider === "google")
+            if (identity.provider === "google") {
+              this.requireFinalizationUnchanged(v.vault_id, v.user_id, v.swept_at);
               await this.releaseGoogleShardHome(v.user_id, identity.subject, Number(shard[1]));
-            else
+            } else {
+              this.requireFinalizationUnchanged(v.vault_id, v.user_id, v.swept_at);
               await directory(this.env).forgetIdentityHome(identity.provider, identity.subject, Number(shard[1]), v.user_id);
+            }
         }
         this.ctx.storage.transactionSync(() => {
+          // External cleanup yields. A newly observed retired vault or a
+          // changed account must prevent this stale finalization snapshot
+          // from removing the Directory rows.
+          this.requireFinalizationUnchanged(v.vault_id, v.user_id, v.swept_at);
           // A newly observed Google identity must also have an acknowledged
           // release; never let a stale scan authorize its deletion.
           if (this.isShard && this.sql.exec(`SELECT i.subject FROM identities i WHERE i.user_id=? AND i.provider='google' AND NOT EXISTS (SELECT 1 FROM shard_deletion_releases r WHERE r.user_id=i.user_id AND r.provider=i.provider AND r.subject=i.subject AND r.state='acknowledged' AND r.fence_epoch > 0)`, v.user_id).toArray().length)
@@ -1218,12 +1351,12 @@ export class Directory extends DurableObject<Env> {
         });
       }
     }
-    await billing;
-    await this.scheduleNext();
+    return attempted;
   }
 
   private async erase(vaultId: string): Promise<void> {
     const id = this.env.VAULT.idFromString(vaultId);
+    if (id.toString() !== vaultId) throw new AppError("unavailable", "vault identity requires review");
     await this.env.VAULT.get(id).quiesce();
     // Do not let an unrelated unresolved dispatch indefinitely postpone
     // cancellation of already-known billing or removal of visible objects.
@@ -1321,10 +1454,14 @@ export class Directory extends DurableObject<Env> {
     if (billingAt !== null) candidates.push(Math.max(now + RETRY_MS, billingAt));
     if (this.vaultsIn("deleting").length > 0)
       candidates.push(now + RETRY_MS);
-    const swept = this.vaultsIn("swept").map(
-      (v) => (v.swept_at ?? 0) + this.sweepDelay(),
+    const swept = this.vaultsIn("swept").map((v) =>
+      validSweepTime(v.swept_at) && Number.isSafeInteger(v.swept_at + this.sweepDelay())
+        ? v.swept_at + this.sweepDelay() : now + RETRY_MS,
     );
-    candidates.push(...swept);
+    // An overdue final sweep that failed or is blocked by retirement must
+    // back off. Scheduling its past due time would immediately fire alarms
+    // in a loop and can starve unrelated work.
+    candidates.push(...swept.map((due) => due <= now ? now + RETRY_MS : due));
     if (candidates.length > 0) return this.scheduleAt(Math.min(...candidates));
   }
 

@@ -321,7 +321,8 @@ export class Vault extends DurableObject<Env> {
   // ---------------------------------------------------------------- lifecycle (Directory)
 
   async init(userId: string): Promise<void> {
-    if (this.gone) throw new AppError("gone", "this vault was destroyed");
+    if (this.gone || this.destroying || this.closing || (this.initialised && this.meta("state") === "closing"))
+      throw new AppError("gone", "this vault is closing or was destroyed");
     if (!this.initialised) {
       createSchema(this.sql, (fn) => this.ctx.storage.transactionSync(fn));
       this.initialised = true;
@@ -351,6 +352,34 @@ export class Vault extends DurableObject<Env> {
     this.closing = true;
     this.setMeta("state", "closing");
     for (const ws of this.ctx.getWebSockets()) ws.close(1008, "Account closed");
+  }
+
+  /** A retired-vault record may not close or erase another account's Vault. */
+  private requireRetirementOwner(userId: string): void {
+    if (typeof userId !== "string" || !userId || this.gone || !this.initialised || this.meta("user_id") !== userId)
+      throw new AppError("unavailable", "retired vault ownership requires review");
+  }
+
+  quiesceForRetirement(userId: string): void {
+    this.requireRetirementOwner(userId);
+    this.quiesce();
+  }
+
+  knownRunsForRetirement(userId: string): ReturnType<Vault["knownRunsForDeletion"]> {
+    this.requireRetirementOwner(userId);
+    return this.knownRunsForDeletion();
+  }
+
+  closeForRetirement(userId: string): ReturnType<Vault["close"]> {
+    this.requireRetirementOwner(userId);
+    return this.close();
+  }
+
+  destroyForRetirement(userId: string): ReturnType<Vault["destroy"]> {
+    this.requireRetirementOwner(userId);
+    if (this.destroying || this.meta("state") !== "closing")
+      throw new AppError("conflict", "retired vault must be closed before destruction");
+    return this.destroy();
   }
 
   /** Refuses new work and lists the runs to stop. Safe to repeat, and safe on an empty vault. */

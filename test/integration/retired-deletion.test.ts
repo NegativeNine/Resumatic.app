@@ -83,8 +83,13 @@ describe("retired vault deletion", () => {
     // Simulate a future deployment migrating the unsupported run before retrying.
     await runInDurableObject(vault, (_instance, ctx) => ctx.storage.sql.exec(`DELETE FROM runs WHERE id=?`, runId));
     await runInDurableObject(directory, async (instance, ctx) => {
-      await instance.alarm();
-      expect(ctx.storage.sql.exec<{ state: string }>(`SELECT state FROM retired_vaults WHERE vault_id=?`, vid).one().state).toBe("swept");
+      const local = (instance as unknown as { env: Env }).env;
+      const previous = local.SWEEP_DELAY_MS;
+      local.SWEEP_DELAY_MS = "3600000";
+      try {
+        await instance.alarm();
+        expect(ctx.storage.sql.exec<{ state: string }>(`SELECT state FROM retired_vaults WHERE vault_id=?`, vid).one().state).toBe("awaiting_final_sweep");
+      } finally { local.SWEEP_DELAY_MS = previous; }
     });
     expect(await env.FILES.get(key)).toBeNull();
   });

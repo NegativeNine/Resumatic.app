@@ -124,7 +124,7 @@ it("keeps source access closed and retries when target quiescence fails", async 
     local.VAULT = {
       idFromString: (id: string) => original.idFromString(id),
       get: (id: DurableObjectId) => id.toString() === targetVaultId
-        ? { quiesce: async () => { throw new Error("synthetic target outage"); } }
+        ? { quiesceForRetirement: async () => { throw new Error("synthetic target outage"); } }
         : original.get(id),
     } as unknown as typeof original;
     try {

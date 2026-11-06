@@ -19,6 +19,7 @@ import {
   finishPilotSuite,
 } from "../test/extract-evals/budget-ledger.mjs";
 import { sharedPilotFromEnv, SHARED_PILOT_IDENTITY_VERIFIED } from "../test/evals/shared-pilot.mjs";
+import { gatewayPrivacyObserved } from "./lib/gateway-privacy.mjs";
 
 const PROJECT = fileURLToPath(new URL("../", import.meta.url));
 const TAILORING_CASE = "scope and numbers";
@@ -190,6 +191,17 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
   // namespace. Refuse before contacting it or creating the local marker.
   if (!(dependencies.sharedIdentityVerified ?? SHARED_PILOT_IDENTITY_VERIFIED))
     fail("PILOT_SHARED_IDENTITY_UNVERIFIED");
+  // The per-request log headers do not suppress Logpush or OTEL exports.
+  // Observe explicit gateway settings before creating the one-shot campaign.
+  // This is a point-in-time prerequisite, not proof of a complete log audit.
+  let privacy = false;
+  try {
+    privacy = await (dependencies.gatewayPrivacyObserved ?? gatewayPrivacyObserved)({
+      accountId: env.CF_ACCOUNT_ID, gatewayId: env.AI_GATEWAY_ID,
+      token: env.CF_GATEWAY_READ_TOKEN,
+    });
+  } catch { /* Do not expose provider errors or token material. */ }
+  if (privacy !== true) fail("PILOT_GATEWAY_PRIVACY_UNVERIFIED");
   let shared;
   try {
     shared = await (dependencies.sharedPilot ?? sharedPilotFromEnv(env)).status();
@@ -241,6 +253,9 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
     EVAL_BUDGET_LEDGER: ledger.file,
     PILOT_REQUIRE_EVIDENCE: "0",
   };
+  // The management token is only needed for the read-only preflight and must
+  // not be passed to evaluation subprocesses that call inference APIs.
+  delete base.CF_GATEWAY_READ_TOKEN;
   delete base.EXTRACT_DATASET_DIR;
   if (!options.synthetic) base.EXTRACT_DATASET_DIR = data.root;
   const invoke = (suite, allocation, file, pattern, selectedNames) => {

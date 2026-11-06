@@ -104,6 +104,7 @@ const input = {
 const env = {
   CF_ACCOUNT_ID: "account",
   CF_AI_TOKEN: "secret",
+  CF_GATEWAY_READ_TOKEN: "gateway-read-secret",
   AI_GATEWAY_ID: "gateway",
   STAGING_URL: "https://staging.example.com",
   PILOT_BUDGET_KEY: "local-test-only-pilot-key-0123456789",
@@ -146,6 +147,7 @@ function deps(dir, spawn) {
     knownPrices: prices,
     sharedPilot: { status: async () => ({ initialized: true, frozen: false, maxMicros: 10_000_000, maxCalls: 50, reservedMicros: 0, reservedCalls: 0, pending: 0, unknown: 0, overrun: 0 }) },
     sharedIdentityVerified: true,
+    gatewayPrivacyObserved: async () => true,
     spawn,
   };
 }
@@ -212,6 +214,7 @@ test("one-shot campaign passes only explicit pilot files and fixed partitions", 
           c.opts.env.RECORD_MODE === "0",
       ),
     );
+    assert.ok(calls.every((c) => !("CF_GATEWAY_READ_TOKEN" in c.opts.env)));
     await assert.rejects(
       () => runFirstStagingEvals({ ...input, env }, deps(dir, spawn)),
       /live_eval_campaign_already_started/,
@@ -309,6 +312,16 @@ test("preflight failures make no subprocess calls or campaign marker", () =>
     );
     assert.equal(count, 0);
     assert.ok(createPilotLedger(dir, 10_000_000, 50).file);
+  }));
+
+test("unverified gateway exports stop the pilot before a campaign marker or child process", () =>
+  temporary(async (dir) => {
+    let started = false;
+    const dependencies = { ...deps(dir, () => { started = true; }), gatewayPrivacyObserved: async () => false };
+    await assert.rejects(() => runFirstStagingEvals({ ...input, env }, dependencies), /PILOT_GATEWAY_PRIVACY_UNVERIFIED/);
+    assert.equal(started, false);
+    const { readdir } = await import("node:fs/promises");
+    assert.deepEqual(await readdir(dir), []);
   }));
 
 test("preflight rejects zero input prices for every required model before creating the ledger", () =>

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { VAULT_CHANGED } from "./live";
 import { describeError, type ErrorWords } from "./errors";
+import { isTransientReadError } from "./polling";
 import { sessionEndNote, useSession } from "./session";
 
 export const POLL_MS = 2000;
+const MAX_POLL_RETRY_MS = 30000;
 
 export type Reload = () => Promise<unknown>;
 
@@ -28,7 +30,7 @@ export function useResource<T>(
     data: undefined, error: null, sequence: 0,
   });
   const latest = useRef({ load, pollWhile, endSession });
-  const requests = useRef({ seq: 0, timer: 0 });
+  const requests = useRef({ seq: 0, timer: 0, polling: false, failures: 0 });
   const renderWaiters = useRef<{ sequence: number; resolve: (value: T | undefined) => void }[]>([]);
 
   useEffect(() => {
@@ -53,6 +55,8 @@ export function useResource<T>(
     try {
       const next = await latest.current.load();
       if (seq !== r.seq) return undefined;
+      r.polling = !!latest.current.pollWhile?.(next);
+      r.failures = 0;
       // Even an identical result must commit once: callers await this before
       // closing an editor or restoring focus. Register before scheduling the
       // update so a fast commit cannot overtake the waiter.
@@ -60,14 +64,25 @@ export function useResource<T>(
         renderWaiters.current.push({ sequence: seq, resolve });
       });
       setView({ data: next, error: null, sequence: seq });
-      if (latest.current.pollWhile?.(next))
+      if (r.polling)
         r.timer = window.setTimeout(fetchLatest, POLL_MS);
       return await committed;
     } catch (e) {
       if (seq !== r.seq) return undefined;
       const note = sessionEndNote(e);
-      if (note) latest.current.endSession(note);
-      else setView((previous) => ({ ...previous, error: describeError(e) }));
+      if (note) {
+        r.polling = false;
+        latest.current.endSession(note);
+      } else {
+        setView((previous) => ({ ...previous, error: describeError(e) }));
+        // A transient read error must not strand a known running workflow
+        // when the live socket is unavailable. Back off while preserving the
+        // last good data; a successful terminal read stops polling normally.
+        if (r.polling && isTransientReadError(e)) {
+          r.failures = Math.min(r.failures + 1, 5);
+          r.timer = window.setTimeout(fetchLatest, Math.min(MAX_POLL_RETRY_MS, POLL_MS * 2 ** (r.failures - 1)));
+        } else r.polling = false;
+      }
       return undefined;
     }
   }, []);

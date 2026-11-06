@@ -145,6 +145,7 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
   ],
   BILLING_EVENT_INCARNATION_MIGRATIONS,
   BILLING_ACCOUNT_STATE_MIGRATIONS,
+  [`ALTER TABLE retired_vaults ADD COLUMN generation TEXT`],
 ];
 
 export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T, global = false, shard = false): void {

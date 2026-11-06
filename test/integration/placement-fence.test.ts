@@ -363,7 +363,7 @@ describe("experimental synthetic placement fencing", () => {
     await runInDurableObject(home, (_instance, state) => {
       const sql = state.storage.sql;
       state.storage.transactionSync(() => {
-        sql.exec(`UPDATE vaults SET state='swept',swept_at=0 WHERE vault_id=?`, account.vaultId);
+        sql.exec(`UPDATE vaults SET state='swept',swept_at=1 WHERE vault_id=?`, account.vaultId);
         sql.exec(`INSERT INTO placement_finalizations(user_id,vault_id,provider,subject,generation) VALUES (?,?,?,?,?)`, account.userId, account.vaultId, p.provider, p.subject, generation);
         sql.exec(`DELETE FROM placement_identities WHERE provider=? AND subject=?`, p.provider, p.subject);
         sql.exec(`DELETE FROM identities WHERE user_id=?`, account.userId);
