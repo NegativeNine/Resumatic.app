@@ -309,6 +309,68 @@ describe("strategy verification", () => {
       [],
     );
   });
+  it.each([
+    ["Acme — Engineer (2019 – 2022)", "2019", null],
+    ["Acme — Engineer (2019)", "2019", null],
+    ["Acme — Presentations Engineer (2019 – 2022)", "2019", null],
+    ["Acme — Engineer (2019 – 2022, 2023 – Present)", "2019", null],
+    ["Acme — Engineer (2019 – Present)", "2019", "2019"],
+    ["Acme — Engineer (Mar 2019 – Present)", "2019-03", "2019-03"],
+    ["Company: Acme\nTitle: Engineer\nStarted On: 2019\nFinished On: Present", "2019", "2019"],
+    ["Acme — Engineer", null, null],
+  ])("only infers an ongoing role from explicit current dates: %s", (quote, startDate, expectedStart) => {
+    const raw: RawExtraction = {
+      roles: [{ key: "r", kind: "job", org: "Acme", title: "Engineer", startDate, endDate: null, quote }],
+      facts: [],
+    };
+    expect(verifyExtraction(quote, raw).extraction.roles[0]?.startDate).toBe(expectedStart);
+  });
+  it("reads the whole source header when a role quote omits the end of the line", () => {
+    const markdown = "Acme — Engineer (2019 – Present until role ended in 2021)";
+    const quote = "Acme — Engineer (2019 – Present";
+    const raw: RawExtraction = {
+      roles: [{ key: "r", kind: "job", org: "Acme", title: "Engineer", startDate: "2019", endDate: null, quote }],
+      facts: [],
+    };
+    expect(verifyExtraction(markdown, raw).extraction.roles[0]).toMatchObject({
+      quote: markdown,
+      span: [0, markdown.length],
+      startDate: null,
+      endDate: null,
+    });
+  });
+  it.each([
+    ["Acme — Engineer (2019 – 2021)", "2021", "2019"],
+    ["Acme — Engineer (Mar 2021 – Dec 2021)", "2021-12", "2021-03"],
+    ["Acme — Engineer (2019–2021); Globex (2022–2023)", "2019", "2023"],
+  ])("does not retain reversed role dates: %s", (quote, startDate, endDate) => {
+    const raw: RawExtraction = {
+      roles: [{ key: "r", kind: "job", org: "Acme", title: "Engineer", startDate, endDate, quote }],
+      facts: [],
+    };
+    expect(verifyExtraction(quote, raw).extraction.roles[0]).toMatchObject({ startDate: null, endDate: null });
+  });
+  it("retains a supported single date range", () => {
+    const quote = "Acme — Engineer (2019 – 2021)";
+    const raw: RawExtraction = {
+      roles: [{ key: "r", kind: "job", org: "Acme", title: "Engineer", startDate: "2019", endDate: "2021", quote }],
+      facts: [],
+    };
+    expect(verifyExtraction(quote, raw).extraction.roles[0]).toMatchObject({ startDate: "2019", endDate: "2021" });
+  });
+  it.each([
+    ["Acme — Engineer (2019 – 2021)", "2019", null],
+    ["Acme — Engineer (2019 – 2021)", "2021", "2021"],
+    ["Acme — Engineer (2021)", "2021", null],
+    ["Acme — Engineer (2019 – 2021); Globex (2022 – 2023)", "2021", null],
+    ["Company: Acme\nTitle: Engineer\nFinished On: 2021", "2021", "2021"],
+  ])("checks that an end-only date is an explicit end: %s", (quote, endDate, expectedEnd) => {
+    const raw: RawExtraction = {
+      roles: [{ key: "r", kind: "job", org: "Acme", title: "Engineer", startDate: null, endDate, quote }],
+      facts: [],
+    };
+    expect(verifyExtraction(quote, raw).extraction.roles[0]?.endDate).toBe(expectedEnd);
+  });
 });
 
 describe("Clairic boundaries", () => {

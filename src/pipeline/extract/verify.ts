@@ -74,6 +74,70 @@ function supportsDate(quote: string, date: string | null): boolean {
   return writtenDates.some((written) => sourceDate(written) === date);
 }
 
+/** A missing end renders as "Present", so it must be stated as the end of this role. */
+function supportsCurrent(quote: string, startDate: string): boolean {
+  // More than one distinct year in the header may identify an ended role or
+  // another role; do not infer that this start belongs to the current range.
+  const years = new Set(quote.match(/\b(?:19|20)\d{2}\b/g) ?? []);
+  if ([...years].some((year) => year !== startDate.slice(0, 4))) return false;
+  const ranges = quote.matchAll(
+    /\b((?:[A-Za-zÀ-ž]{3,12}\.?\s+)?(?:19|20)\d{2}(?:[-/.](?:0?[1-9]|1[0-2]))?)\s*(?:[-–—]|to|bis|hasta)\s*(?:present|current|now|heute|actualidad)\b/gi,
+  );
+  for (const range of ranges) {
+    const date = sourceDate(range[1]!);
+    if (date === startDate || (startDate.length === 4 && date?.startsWith(startDate)))
+      return true;
+  }
+  // Structured exports put these fields on separate labeled lines. Match
+  // the labeled start to the proposed start rather than any year in the quote.
+  const labeledStart = quote.match(
+    /(?:^|\n)[ \t]*(?:started on|start date)[ \t]*:[ \t]*([^\r\n]+)/i,
+  );
+  const parsedStart = sourceDate(labeledStart?.[1] ?? null);
+  return Boolean(
+    (parsedStart === startDate ||
+      (startDate.length === 4 && parsedStart?.startsWith(startDate))) &&
+      /(?:^|\n)[ \t]*(?:finished on|end date)[ \t]*:[ \t]*(?:present|current|now|heute|actualidad)[ \t]*(?:\r?\n|$)/i.test(quote),
+  );
+}
+
+function reversedDates(start: string | null, end: string | null): boolean {
+  if (!start || !end) return false;
+  if (start.slice(0, 4) !== end.slice(0, 4)) return start.slice(0, 4) > end.slice(0, 4);
+  return start.length === 7 && end.length === 7 && start > end;
+}
+
+function dateMatches(source: string | null, expected: string): boolean {
+  const parsed = sourceDate(source);
+  return parsed === expected || Boolean(expected.length === 4 && parsed?.startsWith(expected));
+}
+
+function writtenRanges(quote: string): RegExpMatchArray[] {
+  return [...quote.matchAll(
+    /\b((?:[A-Za-zÀ-ž]{3,12}\.?\s+)?(?:19|20)\d{2}(?:[-/.](?:0?[1-9]|1[0-2]))?)\s*(?:[-–—]|to|bis|hasta)\s*((?:[A-Za-zÀ-ž]{3,12}\.?\s+)?(?:19|20)\d{2}(?:[-/.](?:0?[1-9]|1[0-2]))?)\b/gi,
+  )];
+}
+
+/** Both endpoints must belong to one range, not two unrelated years. */
+function supportsRange(quote: string, start: string, end: string): boolean {
+  const ranges = writtenRanges(quote);
+  if (ranges.length > 0)
+    return ranges.length === 1 && dateMatches(ranges[0]![1]!, start) && dateMatches(ranges[0]![2]!, end);
+  // Parser-generated LinkedIn rows use labeled fields rather than a range.
+  const labeledStart = quote.match(/(?:^|\n)[ \t]*(?:started on|start date)[ \t]*:[ \t]*([^\r\n]+)/i);
+  const labeledEnd = quote.match(/(?:^|\n)[ \t]*(?:finished on|end date)[ \t]*:[ \t]*([^\r\n]+)/i);
+  return Boolean(labeledStart && labeledEnd && dateMatches(labeledStart[1]!, start) && dateMatches(labeledEnd[1]!, end));
+}
+
+/** With no start date, a year can be printed as an end only when its role is explicit. */
+function supportsEndOnly(quote: string, end: string): boolean {
+  const ranges = writtenRanges(quote);
+  if (ranges.length > 0)
+    return ranges.length === 1 && dateMatches(ranges[0]![2]!, end);
+  const labeledEnds = [...quote.matchAll(/(?:^|\n)[ \t]*(?:finished on|end date)[ \t]*:[ \t]*([^\r\n]+)/gi)];
+  return labeledEnds.length === 1 && dateMatches(labeledEnds[0]![1]!, end);
+}
+
 const SKILL_QUALIFIER =
   /\b(?:no|not|never|without|lack(?:s|ed|ing)?|unfamiliar|inexperienced|learning|beginner|novice|limited)\b/i;
 
@@ -147,31 +211,49 @@ export function verifyExtraction(
       drop("role", "duplicate_key");
       continue;
     }
-    const span = evidence(markdown, role);
-    if (!span) {
+    const matchedSpan = evidence(markdown, role);
+    if (!matchedSpan) {
       drop("role", role.span ? "invalid_span" : "invalid_quote");
       continue;
     }
+    const matchedQuote = markdown.slice(...matchedSpan);
+    // Include the whole line: a model may quote only a current-looking prefix
+    // while the rest of that same header says the role ended.
+    const span = lineContext(markdown, matchedSpan);
     const quote = markdown.slice(...span);
+    if (quote.length > 800) {
+      drop("role", "invalid_quote");
+      continue;
+    }
     if (isInstruction(quote)) {
       drop("role", "instruction");
       continue;
     }
-    const normalizedQuote = normalizeForQuote(quote);
+    const normalizedQuote = normalizeForQuote(matchedQuote);
     const unsupported =
       !normalizedQuote.includes(normalizeForQuote(role.org)) ||
       (role.title !== null &&
         !normalizedQuote.includes(normalizeForQuote(role.title))) ||
-      !supportsDate(quote, role.startDate) ||
-      !supportsDate(quote, role.endDate);
+      !supportsDate(matchedQuote, role.startDate) ||
+      !supportsDate(matchedQuote, role.endDate);
     if (unsupported) {
       drop("role", "unsupported_role");
       continue;
     }
+    const invalidRange = reversedDates(role.startDate, role.endDate) ||
+      Boolean(role.startDate && role.endDate && !supportsRange(quote, role.startDate, role.endDate)) ||
+      Boolean(!role.startDate && role.endDate && !supportsEndOnly(quote, role.endDate));
     result.extraction.roles.push({
       ...role,
       org: role.org.trim(),
       title: role.title?.trim() || null,
+      // A start without an end is rendered as ongoing. Do not turn an omitted
+      // or missed end date into a claim of current employment.
+      startDate:
+        invalidRange || (role.startDate && !role.endDate && !supportsCurrent(quote, role.startDate))
+          ? null
+          : role.startDate,
+      endDate: invalidRange ? null : role.endDate,
       quote,
       span,
     });

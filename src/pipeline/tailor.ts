@@ -362,7 +362,7 @@ export function composeBody(
 }
 
 function byRecency(a: RoleRecord, b: RoleRecord): number {
-  const end = (r: RoleRecord) => r.endDate ?? "9999";
+  const end = (r: RoleRecord) => r.endDate ?? (r.startDate ? "9999" : "");
   return (
     end(b).localeCompare(end(a)) ||
     (b.startDate ?? "").localeCompare(a.startDate ?? "")

@@ -39,7 +39,8 @@
 // deleted) or "unavailable" (sign-in is not configured or Google could not be reached).
 //
 // Times (createdAt) are milliseconds since the epoch. Role dates are "YYYY-MM" or "YYYY" as the
-// source gave them; a null endDate means the role is current.
+// source gave them; a null endDate with a startDate means the role is current,
+// while two null dates mean that the dates are unknown.
 
 export type RoleKind = "job" | "education" | "project" | "volunteer";
 export type FactKind = "accomplishment" | "skill" | "credential";
@@ -126,6 +127,7 @@ export interface RoleView {
   org: string;
   title: string | null;
   startDate: string | null;
+  /** Null with a start date means ongoing; both dates null means dates are unknown. */
   endDate: string | null;
   state: ReviewState;
   quote: string | null;
