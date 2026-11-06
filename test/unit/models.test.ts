@@ -38,6 +38,7 @@ describe("chatComplete", () => {
       ),
     ).toEqual({ answer: 42 });
     const [req] = requests;
+    expect(req!.init.redirect).toBe("error");
     expect(req!.url).toBe(
       "https://api.cloudflare.com/client/v4/accounts/acct/ai/v1/chat/completions",
     );
@@ -112,6 +113,13 @@ describe("chatComplete", () => {
     ).catch((e) => e);
     expect(error).toBeInstanceOf(Error);
     expect(errorCode(error)).toBeNull();
+  });
+
+  it("does not follow or replay redirected model requests", async () => {
+    const { fetcher, requests } = replies(new Response(null, { status: 307, headers: { location: "https://other.example/model" } }));
+    await expect(chatComplete(cfg, [], Schema, fetcher)).rejects.toThrow(/HTTP 307/);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.init.redirect).toBe("error");
   });
 });
 

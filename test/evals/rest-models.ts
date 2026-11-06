@@ -86,6 +86,7 @@ async function workersAi<T>(
         `https://api.cloudflare.com/client/v4/accounts/${creds.accountId}/ai/run/${model}`,
         {
           method: "POST",
+          redirect: "error",
           headers: {
             authorization: `Bearer ${creds.token}`,
             "content-type": "application/json",

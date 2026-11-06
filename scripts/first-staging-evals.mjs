@@ -20,7 +20,7 @@ import {
 } from "../test/extract-evals/budget-ledger.mjs";
 
 const PROJECT = fileURLToPath(new URL("../", import.meta.url));
-const CASES = "scope and numbers|instructions hidden";
+const TAILORING_CASE = "scope and numbers";
 const validStrategy = (s) =>
   s === "clairic" ||
   s === "llm:default" ||
@@ -48,6 +48,17 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
   )
     fail("PILOT_AUTHORIZATION_INVALID");
   if (!validStrategy(options.strategy)) fail("PILOT_STRATEGY_INVALID");
+  // One extractor call and one judge call reserve six upstream attempts each.
+  // Clairic's outline and one role use nine field passes instead of one chat
+  // call; the judge add-on adds another chat call. Extra fields or schema
+  // retries may still exhaust the allocation, which is reported incomplete.
+  const judged = options.strategy.startsWith("judge:");
+  const baseStrategy = options.strategy.replace(/^judge:/, "");
+  const extractionCalls = (baseStrategy === "clairic" ? 15 : 12) + (judged ? 6 : 0);
+  // A useful tailoring pass needs four chat calls (24 reserved attempts) and
+  // two embeddings, before reranking or repairs. Never start an impossible run.
+  if (options.maxCalls < extractionCalls + 26)
+    fail("PILOT_CALL_BUDGET_TOO_SMALL");
   if (!env.CF_ACCOUNT_ID || !env.CF_AI_TOKEN || !env.AI_GATEWAY_ID)
     fail("PILOT_CREDENTIALS_REQUIRED");
   const { config } = await (dependencies.readConfig ?? readConfig)("staging");
@@ -81,9 +92,9 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
   const selectedCases = cases
     .filter((c) => c.split === "dev" && c.meta?.origin === "synthetic")
     .sort((a, b) => a.id.localeCompare(b.id))
-    .slice(0, 2);
+    .slice(0, 1);
   if (
-    selectedCases.length !== 2 ||
+    selectedCases.length !== 1 ||
     selectedCases.some(
       (c) =>
         !(
@@ -119,7 +130,6 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
     dependencies.knownPrices ??
     (await import("../src/ai/usage.ts")).MODEL_PRICES;
   const prices = { ...known, ...overrides };
-  const baseStrategy = options.strategy.replace(/^judge:/, "");
   const explicit =
     baseStrategy === "clairic"
       ? "@cf/cloudflare/clairic"
@@ -182,6 +192,7 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
     ledgerRoot,
     budgetMicros,
     options.maxCalls,
+    extractionCalls,
   );
   const child = dependencies.spawn ?? spawnSync;
   // Never let inherited environment options enable recording, seeded evals, a different
@@ -244,7 +255,7 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
       const passed = assertions.filter((row) => row.status === "passed");
       return (
         report.numFailedTests === 0 &&
-        passed.length === 2 &&
+        passed.length === selectedNames.length &&
         selectedNames.every((name) =>
           passed.some(
             (row) =>
@@ -271,8 +282,8 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
       "tailoring",
       ledger.tailoring,
       "test/evals/no-fabrication.eval.ts",
-      CASES,
-      ["scope and numbers", "instructions hidden"],
+      TAILORING_CASE,
+      [TAILORING_CASE],
     );
   const tailoringSafe =
     safe && finishPilotSuite(ledger.file, "tailoring", tailoring);
@@ -281,8 +292,8 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
       extraction && tailoring && tailoringSafe ? "completed" : "incomplete",
     promotionEligible: false,
     profile: "exploratory-pilot",
-    extractionCases: 2,
-    tailoringCases: 2,
+    extractionCases: 1,
+    tailoringCases: 1,
     budgetUsd: options.budgetUsd,
     maxCalls: options.maxCalls,
     allocations: { extraction: ledger.extraction, tailoring: ledger.tailoring },

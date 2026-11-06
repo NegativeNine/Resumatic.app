@@ -2,6 +2,7 @@ export function createPilotLedger(
   directory: string,
   budgetMicros: number,
   maxCalls: number,
+  extractionCallLimit?: number,
 ): {
   file: string;
   extraction: { micros: number; calls: number };

@@ -39,18 +39,20 @@ function integer(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
 /** The fixed filename is a one-shot authorization marker. An existing marker is never reset. */
-export function createPilotLedger(directory, budgetMicros, maxCalls) {
+export function createPilotLedger(directory, budgetMicros, maxCalls, extractionCallLimit = Math.floor(maxCalls / 2)) {
   if (
     !integer(budgetMicros) ||
     budgetMicros < 2 ||
     !integer(maxCalls) ||
-    maxCalls < 2
+    maxCalls < 2 ||
+    !integer(extractionCallLimit) ||
+    extractionCallLimit >= maxCalls
   )
     throw new Error("live_eval_budget_invalid");
   const root = privateRoot(directory);
   const file = validatePath(join(root, NAME), false);
   const extractionMicros = Math.floor(budgetMicros / 2),
-    extractionCalls = Math.floor(maxCalls / 2);
+    extractionCalls = extractionCallLimit;
   try {
     // Exclusive creation means concurrent launches or a later restart cannot reset this campaign.
     const fd = openSync(

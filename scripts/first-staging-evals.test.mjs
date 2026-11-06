@@ -153,8 +153,8 @@ test("one-shot campaign passes only explicit pilot files and fixed partitions", 
       calls.push({ exe, args, opts });
       const names =
         opts.env.EVAL_BUDGET_LEDGER_SUITE === "extraction"
-          ? [cases[0].id, cases[1].id]
-          : ["scope and numbers", "instructions hidden"];
+          ? [cases[0].id]
+          : ["scope and numbers"];
       const output = args
         .find((a) => a.startsWith("--outputFile="))
         .slice("--outputFile=".length);
@@ -180,6 +180,8 @@ test("one-shot campaign passes only explicit pilot files and fixed partitions", 
     );
     assert.equal(result.promotionEligible, false);
     assert.equal(result.status, "completed");
+    assert.equal(result.extractionCases, 1);
+    assert.equal(result.tailoringCases, 1);
     assert.equal(calls.length, 2);
     assert.deepEqual(
       calls.map((c) => [
@@ -188,8 +190,8 @@ test("one-shot campaign passes only explicit pilot files and fixed partitions", 
         c.opts.env.EVAL_MAX_CALLS,
       ]),
       [
-        ["extraction", "5", "25"],
-        ["tailoring", "5", "25"],
+        ["extraction", "5", "12"],
+        ["tailoring", "5", "38"],
       ],
     );
     assert.ok(calls[0].args.includes("test/extract-evals/run.eval.ts"));
@@ -229,6 +231,10 @@ test("preflight failures make no subprocess calls or campaign marker", () =>
     await assert.rejects(
       () => runFirstStagingEvals({ ...input, maxCalls: 51, env }, d),
       /PILOT_AUTHORIZATION_INVALID/,
+    );
+    await assert.rejects(
+      () => runFirstStagingEvals({ ...input, maxCalls: 37, env }, d),
+      /PILOT_CALL_BUDGET_TOO_SMALL/,
     );
     await assert.rejects(
       () =>
@@ -282,6 +288,34 @@ test("preflight failures make no subprocess calls or campaign marker", () =>
     );
     assert.equal(count, 0);
     assert.ok(createPilotLedger(dir, 10_000_000, 50).file);
+  }));
+
+test("strategy-specific allocations preserve enough tailoring attempts", async () => {
+  for (const [strategy, extractionCalls] of [
+    ["llm:default", 12], ["clairic", 15], ["judge:llm:default", 18], ["judge:clairic", 21],
+  ]) {
+    await temporary(async (dir) => {
+      const allocations = [];
+      const spawn = (_exe, args, opts) => {
+        const suite = opts.env.EVAL_BUDGET_LEDGER_SUITE;
+        allocations.push([suite, Number(opts.env.EVAL_MAX_CALLS)]);
+        const output = args.find((a) => a.startsWith("--outputFile=")).slice("--outputFile=".length);
+        writeFileSync(output, JSON.stringify({ numFailedTests: 0, testResults: [{ assertionResults: [{ status: "passed", fullName: suite === "extraction" ? cases[0].id : "scope and numbers" }] }] }));
+        return { status: 0 };
+      };
+      const dependencies = { ...deps(dir, spawn), knownPrices: { ...prices, "@cf/cloudflare/clairic": [0.1, 0] } };
+      const result = await runFirstStagingEvals({ ...input, strategy, env }, dependencies);
+      assert.equal(result.status, "completed");
+      assert.deepEqual(allocations, [["extraction", extractionCalls], ["tailoring", 50 - extractionCalls]]);
+    });
+  }
+});
+
+test("invalid call partitions fail before creating a ledger", () =>
+  temporary(async (dir) => {
+    assert.throws(() => createPilotLedger(dir, 10_000_000, 50, 0), /live_eval_budget_invalid/);
+    assert.throws(() => createPilotLedger(dir, 10_000_000, 50, 50), /live_eval_budget_invalid/);
+    assert.ok(createPilotLedger(dir, 10_000_000, 50, 12).file);
   }));
 
 test("every restart and concurrent worker shares durable reservations and separate caps", () =>
@@ -352,8 +386,8 @@ test("synthetic mode clears inherited private dataset and rejects ambiguous mode
       calls.push(opts.env);
       const names =
         opts.env.EVAL_BUDGET_LEDGER_SUITE === "extraction"
-          ? ["synthetic-01", "synthetic-02"]
-          : ["scope and numbers", "instructions hidden"];
+          ? ["synthetic-01"]
+          : ["scope and numbers"];
       const output = args
         .find((a) => a.startsWith("--outputFile="))
         .slice("--outputFile=".length);
@@ -435,6 +469,30 @@ test("weighted reservations count possible hidden gateway attempts", () =>
       reservePilotLedger(l.file, "tailoring", 5_000_000, 25, 100, 6),
       { calls: 6, reservedUsd: 0.0001 },
     );
+  }));
+
+test("one realistic nonempty pipeline per suite fits the authorized shared cap", () =>
+  temporary(async (dir) => {
+    const ledger = createPilotLedger(dir, 10_000_000, 50, 12);
+    const result = spawnSync(process.execPath, [
+      "node_modules/vitest/vitest.mjs", "run", "--project", "unit",
+      "test/unit/pilot-budget-scenario.test.ts", "--maxWorkers=1", "--no-file-parallelism",
+    ], {
+      env: { ...process.env, TEST_PILOT_BUDGET_SCENARIO: "1", EVAL_BUDGET_LEDGER: ledger.file },
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const db = new DatabaseSync(ledger.file, { readOnly: true });
+    try {
+      const rows = db.prepare("SELECT suite,max_calls,used_calls,max_micros,used_micros FROM budgets ORDER BY suite").all();
+      assert.equal(rows.length, 2);
+      assert.deepEqual(rows.map((r) => [r.suite, r.max_calls]), [["extraction", 12], ["tailoring", 38]]);
+      assert.ok(rows.every((r) => r.used_calls > 0 && r.used_calls <= r.max_calls && r.used_micros <= r.max_micros));
+      assert.ok(rows.reduce((sum, r) => sum + r.used_calls, 0) <= 50);
+      assert.equal(db.prepare("SELECT COUNT(*) AS n FROM attempts WHERE state != 'settled'").get().n, 0);
+    } finally {
+      db.close();
+    }
   }));
 
 test("actual isolated Vitest workers share the same durable ledger", () =>

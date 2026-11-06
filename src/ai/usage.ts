@@ -55,7 +55,7 @@ export const MODEL_PRICES: Readonly<Record<string, readonly [number, number]>> =
     "@cf/meta/llama-3.3-70b-instruct-fp8-fast": [0.293, 2.253],
     "@cf/cloudflare/clairic": [0.1, 0],
     "@cf/baai/bge-m3": [0.012, 0],
-    "@cf/baai/bge-reranker-base": [0.003, 0],
+    "@cf/baai/bge-reranker-base": [0.00311, 0], // Cloudflare model page, reviewed 2026-11-06
     "@cf/meta/llama-3.2-11b-vision-instruct": [0.0485, 0.676],
   };
 

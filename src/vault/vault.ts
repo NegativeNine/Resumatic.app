@@ -3229,6 +3229,7 @@ export class Vault extends DurableObject<Env> {
     if ((this.env.RESTORE_FENCE_IDS ?? "").split(",").map((v) => v.trim()).includes(this.vaultId)) return;
     if (this.hasUnsettledDispatch(run.id)) return;
     this.sql.exec(`INSERT INTO workflow_dispatches (run_id) VALUES (?)`, run.id);
+    let createIssued = false;
     try {
       // Arrange recovery before outbound I/O: eviction while create is pending
       // must not leave a starting run without an alarm.
@@ -3240,6 +3241,7 @@ export class Vault extends DurableObject<Env> {
         this.sql.exec(`DELETE FROM workflow_dispatches WHERE run_id = ?`, run.id);
         return;
       }
+      createIssued = true;
       await this.createWorkflow(current);
       // A successful acknowledgement rules out this particular create arriving
       // after deletion's inventory. Errors remain uncertain and fail closed.
@@ -3249,8 +3251,49 @@ export class Vault extends DurableObject<Env> {
         run.id,
       );
     } catch {
-      this.runs.noteUncertain(run.id, "dispatch_uncertain");
+      if (createIssued) this.runs.noteUncertain(run.id, "dispatch_uncertain");
+      else this.failBeforeDispatch(run.id);
     }
+  }
+
+  /** Alarm setup failed before create was issued; a concurrent retry stays fenced. */
+  private failBeforeDispatch(id: string): void {
+    this.ctx.storage.transactionSync(() => {
+      const run = this.runs.get(id);
+      const sticky = this.sql.exec(
+        `SELECT run_id FROM workflow_redispatches WHERE run_id = ?`, id,
+      ).toArray().length > 0;
+      if (sticky) {
+        if (run) this.runs.noteUncertain(id, "dispatch_uncertain");
+        return;
+      }
+      // A missing or non-starting ledger may reflect another execution or a
+      // damaged inventory. This invocation sent no request, but cannot settle
+      // a potentially independent one; preserve a durable fence.
+      if (!run || !["starting", "cancel_requested"].includes(run.state)) {
+        this.sql.exec(
+          `INSERT OR IGNORE INTO workflow_redispatches (run_id, attempts, next_at) VALUES (?, 0, 0)`, id,
+        );
+        if (run) this.runs.noteUncertain(id, "dispatch_uncertain");
+        return;
+      }
+      this.sql.exec(`DELETE FROM workflow_dispatches WHERE run_id = ?`, id);
+      if (run.state === "cancel_requested") {
+        this.finishCancelledRun(run);
+        return;
+      }
+      if (run.state !== "starting") return;
+      this.runs.fail(id, "dispatch_not_started");
+      const message = "Could not start this request. Please try again.";
+      if (run.kind === "distill")
+        this.sql.exec(`UPDATE sources SET state='failed', error=? WHERE id=? AND run_id=? AND state='queued'`, message, run.targetId, id);
+      else if (run.kind === "tailor")
+        this.sql.exec(`UPDATE resumes SET state='failed', error=? WHERE id=? AND run_id=? AND state='running'`, message, run.targetId, id);
+      else if (["refine", "letter", "prep", "questions"].includes(run.kind))
+        this.sql.exec(`UPDATE documents SET state='failed', error=? WHERE id=? AND state='running'`, message, run.targetId);
+      else if (run.kind === "reembed") this.reembeddings.cancel(id);
+    });
+    this.broadcast("run", id);
   }
 
   private async createWorkflow(run: RunRecord): Promise<void> {
@@ -3419,7 +3462,18 @@ export class Vault extends DurableObject<Env> {
           if (this.hasUnsettledDispatch(run.id)) {
             this.runs.noteUncertain(run.id, "dispatch_uncertain");
             await this.redispatchUncertain(run.id);
-          } else await this.dispatchRun(run);
+          } else if (this.redispatchableRun(run.id)) {
+            // A prior acknowledged create may not yet be visible. A missing
+            // instance is not proof that another create is a first attempt.
+            // Install both fences before retrying so neither this nor a late
+            // older acknowledgement can release deletion or maintenance.
+            this.ctx.storage.transactionSync(() => {
+              this.sql.exec(`INSERT OR IGNORE INTO workflow_dispatches (run_id) VALUES (?)`, run.id);
+              this.sql.exec(`INSERT OR IGNORE INTO workflow_redispatches (run_id, attempts, next_at) VALUES (?, 0, 0)`, run.id);
+            });
+            this.runs.noteUncertain(run.id, "dispatch_uncertain");
+            await this.redispatchUncertain(run.id);
+          }
         } else if (isMissingWorkflow(error) && run.state === "cancel_requested" && !this.hasUnsettledDispatch(run.id))
           this.finishCancelledRun(run);
         else if (!this.dispatchUncertain(run.id))
@@ -3449,21 +3503,21 @@ export class Vault extends DurableObject<Env> {
 
   private finishCancelledRun(run: RunRecord): void {
     this.ctx.storage.transactionSync(() => {
-      this.runs.cancel(run.id);
-      if (run.kind === "reembed") {
-        this.reembeddings.cancel(run.id);
+      // The alarm may have awaited a status response while another alarm
+      // finalized cancellation and started a newer attempt for the target.
+      const current = this.runs.get(run.id);
+      if (!current || current.state !== "cancel_requested" || current.kind !== run.kind || current.targetId !== run.targetId) return;
+      this.runs.cancel(current.id);
+      if (current.kind === "reembed") {
+        this.reembeddings.cancel(current.id);
         return;
       }
-      const table =
-        run.kind === "distill"
-          ? "sources"
-          : run.kind === "tailor"
-            ? "resumes"
-            : "documents";
-      this.sql.exec(
-        `UPDATE ${table} SET state = 'failed', error = 'Cancelled.' WHERE id = ? AND state IN ('queued','running')`,
-        run.targetId,
-      );
+      if (current.kind === "distill")
+        this.sql.exec(`UPDATE sources SET state='failed', error='Cancelled.' WHERE id=? AND run_id=? AND state='queued'`, current.targetId, current.id);
+      else if (current.kind === "tailor")
+        this.sql.exec(`UPDATE resumes SET state='failed', error='Cancelled.' WHERE id=? AND run_id=? AND state='running'`, current.targetId, current.id);
+      else
+        this.sql.exec(`UPDATE documents SET state='failed', error='Cancelled.' WHERE id=? AND state='running'`, current.targetId);
     });
   }
 

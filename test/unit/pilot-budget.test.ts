@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { EvalBudget } from "../extract-evals/budget";
+import { reportUsage } from "../../src/ai/usage";
 
 describe("pilot cost reservations", () => {
+  it("prices the reranker at the reviewed rate", () => {
+    expect(reportUsage("rerank", "@cf/baai/bge-reranker-base", { input_tokens: 1_000_000 }).costUsd).toBeCloseTo(0.00311, 10);
+  });
   it("reserves the full serialized UTF-8 payload with fourfold and fixed overhead", () => {
     const budget = new EvalBudget({
       usd: 1,
@@ -80,6 +84,23 @@ it("reserves six upstream calls for a gateway request before dispatch", async ()
       model.complete("write", [], z.object({ ok: z.boolean() })),
     ).rejects.toThrow("live_eval_budget_exhausted");
     expect(fetcher).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("does not follow a Workers AI redirect or issue another request", async () => {
+  const { vi } = await import("vitest");
+  const { restModels } = await import("../evals/rest-models");
+  const budget = new EvalBudget({ usd: 1, maxCalls: 10 });
+  const fetcher = vi.fn(async (_url: string, _init: RequestInit) => new Response(null, { status: 307, headers: { location: "https://other.example/model" } }));
+  vi.stubGlobal("fetch", fetcher);
+  try {
+    const model = restModels({ accountId: "example", token: "unused", gatewayId: "test" }, {}, { budget });
+    await expect(model.embed(["test"])).rejects.toThrow(/HTTP 307/);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0]![1]!.redirect).toBe("error");
+    expect(budget.calls).toBe(1);
   } finally {
     vi.unstubAllGlobals();
   }

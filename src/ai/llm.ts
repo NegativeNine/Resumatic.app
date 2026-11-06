@@ -131,6 +131,7 @@ async function callOnce(
         `https://api.cloudflare.com/client/v4/accounts/${cfg.accountId}/ai/v1/chat/completions`,
         {
           method: "POST",
+          redirect: "error",
           headers: {
             authorization: `Bearer ${cfg.token}`,
             "content-type": "application/json",
