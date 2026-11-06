@@ -40,6 +40,35 @@ describe("numbers", () => {
     expect(unsupportedNumbers("Managed 5 to 10 people", "Managed 5 to 11 people")).not.toEqual([]);
     expect(unsupportedNumbers("Managed 5 to 10 people", "Managed approximately 5 to 10 people")).not.toEqual([]);
     expect(unsupportedNumbers("Managed 5 to 10 people", "Managed 5 to 10 percent")).not.toEqual([]);
+    // A fold range is a multiplier, not a range of people. The unit must not
+    // be left outside a shorter, otherwise valid range token.
+    for (const wording of ["5 to 10-fold", "5–10fold", "5 to 10 fold", "five to ten-fold"]) {
+      expect(unsupportedNumbers("Managed 5 to 10 people", `Increased ${wording}`)).not.toEqual([]);
+      expect(unsupportedNumbers(`Increased ${wording}`, `Increased ${wording}`)).toEqual([]);
+    }
+    for (const wording of ["5 to 10-percent", "5–10-percent", "five to ten-per cent"]) {
+      expect(unsupportedNumbers("Managed 5 to 10 people", `Increased ${wording}`)).not.toEqual([]);
+      expect(unsupportedNumbers(`Increased ${wording}`, `Increased ${wording}`)).toEqual([]);
+    }
+    for (const wording of ["5 to 10€", "5€ to 10€", "5 to 10-pct", "5 to 10 percentage points", "5 to 10 basis points"]) {
+      expect(unsupportedNumbers("Managed 5 to 10 people", `Measured ${wording}`)).not.toEqual([]);
+      expect(unsupportedNumbers(`Measured ${wording}`, `Measured ${wording}`)).toEqual([]);
+    }
+    for (const wording of ["5% to 10 dollars", "$5 to $10%", "5 USD to 10€", "5% to 10-fold", "$5 to $10-fold", "5 to 10-folded", "5 to 10-percentile", "1e999 to 2", "1e-999 to 2"]) {
+      expect(unsupportedNumbers("Managed 5 to 10 people", `Measured ${wording}`)).not.toEqual([]);
+      expect(unsupportedNumbers(`Measured ${wording}`, `Measured ${wording}`)).not.toEqual([]);
+    }
+    for (const wording of ["1,000.5 to 2,000.5", "1,000.5–2,000.5", "1e-3 to 2e-3", "1e-3–2e-3", "1e+3 to 2e+3", "(-5) to (-10)", "($5) to ($10)", "5th to 10th", "fifth to tenth"]) {
+      expect(unsupportedNumbers(`Measured ${wording}`, `Measured ${wording}`)).toEqual([]);
+      for (const component of ["1", "2", "5", "10", "1000", "1000.5", "5th", "10th"])
+        expect(unsupportedNumbers(`Measured ${component}`, `Measured ${wording}`)).not.toEqual([]);
+    }
+    for (const wording of ["1,00 to 2", "1,,000 to 2", "5th to 10", "5 to 10th"]) {
+      expect(unsupportedNumbers(`Measured ${wording}`, `Measured ${wording}`)).not.toEqual([]);
+      expect(unsupportedNumbers("Measured 1", `Measured ${wording}`)).not.toEqual([]);
+    }
+    expect(unsupportedNumbers("Measured 1000.5", "Measured 1,000.5")).toEqual([]);
+    expect(unsupportedNumbers("Measured 1000", "Measured 1,000.5")).not.toEqual([]);
     for (const modifier of ["not", "never", "no", "without", "except", "excluding"]) {
       expect(unsupportedNumbers("Managed 5 to 10 million people", `Managed ${modifier} 5 to 10 million people`)).not.toEqual([]);
       expect(unsupportedNumbers(`Managed ${modifier} 5 to 10 million people`, "Managed 5 to 10 million people")).not.toEqual([]);

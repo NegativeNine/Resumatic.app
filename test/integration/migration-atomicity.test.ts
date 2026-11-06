@@ -40,6 +40,8 @@ function priorVersion(fragment: string): number {
 }
 
 function removeV3Migration(sql: SqlStorage): void {
+  sql.exec(`DROP TABLE shard_rollout_barrier`);
+  sql.exec(`DELETE FROM meta WHERE key='shard_rollout_epoch'`);
   for (const trigger of ["guard_shard_google_insert_v3", "guard_shard_google_delete_v3", "guard_global_google_release_v3"]) sql.exec(`DROP TRIGGER ${trigger}`);
   for (const table of ["shard_auth_marker", "shard_google_delete_v3_marker", "global_google_release_v3_marker"]) sql.exec(`DROP TABLE ${table}`);
   sql.exec(`ALTER TABLE shard_deletion_releases DROP COLUMN fence_epoch`);
@@ -63,12 +65,34 @@ function removeGlobalAuthMigration(sql: SqlStorage): void {
 }
 
 describe("atomic schema migrations", () => {
+  it("rolls back the rollout barrier and epoch together, then retries once", async () => {
+    const stub = env.DIRECTORY.getByName(`rollout-migration-${crypto.randomUUID()}`);
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec(`DROP TABLE shard_rollout_barrier`);
+      sql.exec(`INSERT INTO meta(key,value) VALUES ('global_auth_epoch','9') ON CONFLICT(key) DO UPDATE SET value='9'`);
+      const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((q) => q.includes("CREATE TABLE shard_rollout_barrier")));
+      expect(previous).toBeGreaterThan(0);
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrateDirectory(failAtVersion(sql, previous + 1), tx, true)).toThrow(/synthetic version-write interruption/);
+      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='global_auth_epoch'`).one().value).toBe("9");
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name='shard_rollout_barrier'`).toArray()).toHaveLength(0);
+      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(previous));
+      migrateDirectory(sql, tx, true);
+      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='global_auth_epoch'`).one().value).toBe("10");
+      expect(sql.exec<{ epoch: number }>(`SELECT epoch FROM shard_rollout_barrier WHERE slot=1`).one().epoch).toBe(10);
+      migrateDirectory(sql, tx, true);
+      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='global_auth_epoch'`).one().value).toBe("10");
+    });
+  });
   it.each(["global", "shard"] as const)("installs the %s V3 guard atomically and preserves old acknowledgements", async (mode) => {
     const stub = env.DIRECTORY.getByName(`v3-migration-${crypto.randomUUID()}`);
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
       sql.exec(`INSERT INTO shard_deletion_releases(user_id,provider,subject,state) VALUES ('u','google','s','acknowledged')`);
       removeV3Migration(sql);
+      if (mode === "global") sql.exec(`INSERT OR IGNORE INTO meta(key,value) VALUES ('global_auth_epoch','0')`);
       const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((q) => q.includes("ADD COLUMN fence_epoch")));
       sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
       const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);

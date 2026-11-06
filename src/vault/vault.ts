@@ -2280,31 +2280,21 @@ export class Vault extends DurableObject<Env> {
       expiresAt?: number;
     },
   ) {
-    this.requireOwner(who);
-    const facts = (await this.listFacts(who, "confirmed")).filter((f) =>
-      selection.factIds.includes(f.id),
-    );
-    if (facts.length !== selection.factIds.length)
-      throw new AppError("invalid", "select confirmed facts from your vault");
-    const roles = await this.listRoles(who);
-    const resumes = selection.resumes.map(({ id, version }) => ({
-      id,
-      ...this.resumeVersion(this.resumeRow(id), version),
-    }));
+    // Capture the selected facts, roles and resume versions together with the
+    // grant. A role can change independently of its facts, so checking only
+    // fact revisions after awaiting separate reads is not sufficient.
     const grant = this.ctx.storage.transactionSync(() => {
-      for (const fact of facts) {
-        const row = this.sql
-          .exec<{ revision: number; state: string }>(
-            `SELECT revision,state FROM facts WHERE id = ?`,
-            fact.id,
-          )
-          .one();
-        if (row.revision !== fact.revision || row.state !== "confirmed")
-          throw new AppError(
-            "conflict",
-            "a selected fact changed; refresh and try again",
-          );
-      }
+      this.requireOwner(who);
+      const facts = this.readFacts("confirmed").filter((f) =>
+        selection.factIds.includes(f.id),
+      );
+      if (facts.length !== selection.factIds.length)
+        throw new AppError("invalid", "select confirmed facts from your vault");
+      const roles = this.readRoles();
+      const resumes = selection.resumes.map(({ id, version }) => ({
+        id,
+        ...this.resumeVersion(this.resumeRow(id), version),
+      }));
       return this.shares.create(
         who,
         { facts, roles, resumes },

@@ -96,7 +96,7 @@ function ordinalValue(text: string): number {
     : ORDINAL_TENS[parts[0]!]! + ORDINAL_UNITS[parts[1]!]!;
 }
 
-const NUMBER = /(?<![\w.])(?:([+\-−])\s*)?(?:([$€£]|USD\b|EUR\b|GBP\b)\s*)?([+\-−])?((?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?|\.\d+)(?:e[+\-]?\d+)?)(?:\s?(%|-?percent\b|-?per cent\b|x\b|×|times\b|-?fold\b|k\b|thousand\b|mm\b|m\b|million\b|bn\b|b\b|billion\b))?(?:\s?(dollars?|euros?|pounds?\s+sterling|USD|EUR|GBP)\b)?(?![\w])/gi;
+const NUMBER = /(?<![\w.])(?:([+\-−])\s*)?(?:([$€£]|USD\b|EUR\b|GBP\b)\s*)?([+\-−])?((?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)(?:e[+\-]?\d+)?)(?:\s?(%|-?percent\b|-?per cent\b|x\b|×|times\b|-?fold\b|k\b|thousand\b|mm\b|m\b|million\b|bn\b|b\b|billion\b))?(?:\s?(dollars?|euros?|pounds?\s+sterling|USD|EUR|GBP)\b)?(?![\w])/gi;
 const WORD_NUMBER = /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|dozen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)(?=\b|fold\b)(?:\s*(%|percent\b|per cent\b|x\b|×|times\b|-?fold\b))?(?:\s*(dollars?|euros?|pounds?\s+sterling|USD|EUR|GBP)\b)?/gi;
 const COMPOUND_CARDINAL = /\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[^\S\r\n\u2028\u2029]|[-‐-―−])+(one|two|three|four|five|six|seven|eight|nine)(?=\b|fold\b)(?:[^\S\r\n\u2028\u2029]*(%|percent\b|per cent\b|x\b|×|times\b|-?fold\b|hundred\b|thousand\b|million\b|billion\b))?(?:[^\S\r\n\u2028\u2029]*(dollars?|euros?|pounds?[^\S\r\n\u2028\u2029]+sterling|USD|EUR|GBP)\b)?/gi;
 

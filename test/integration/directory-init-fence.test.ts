@@ -328,6 +328,8 @@ describe("Directory initialization fence", () => {
     const target = env.VAULT.newUniqueId().toString();
     const retired = env.VAULT.newUniqueId().toString();
     await runInDurableObject(d, (_instance, ctx) => {
+      ctx.storage.sql.exec(`DROP TABLE shard_rollout_barrier`);
+      ctx.storage.sql.exec(`DELETE FROM meta WHERE key='shard_rollout_epoch'`);
       for (const trigger of ["guard_shard_google_insert_v3", "guard_shard_google_delete_v3", "guard_global_google_release_v3"]) ctx.storage.sql.exec(`DROP TRIGGER ${trigger}`);
       for (const table of ["shard_auth_marker", "shard_google_delete_v3_marker", "global_google_release_v3_marker"]) ctx.storage.sql.exec(`DROP TABLE ${table}`);
       ctx.storage.sql.exec(`ALTER TABLE shard_deletion_releases DROP COLUMN fence_epoch`);

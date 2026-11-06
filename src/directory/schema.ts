@@ -123,6 +123,11 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
        AND NOT EXISTS(SELECT 1 FROM global_google_release_v3_marker WHERE provider=OLD.provider AND subject=OLD.subject AND user_id=OLD.user_id)
      BEGIN SELECT RAISE(ABORT, 'shard_auth_floor_required'); END`,
   ],
+  [
+    // The global object records a rollout barrier without retaining identity
+    // data. Every shard installs it before accepting a request after upgrade.
+    `CREATE TABLE shard_rollout_barrier (slot INTEGER PRIMARY KEY CHECK(slot=1), epoch INTEGER NOT NULL)`,
+  ],
 ];
 
 export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T, global = false, shard = false): void {
@@ -154,6 +159,15 @@ export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) 
       }
       if (next === 12 && global)
         sql.exec(`INSERT INTO meta(key,value) VALUES ('global_shard_release_v3_guard','1')`);
+      if (next === 13 && global) {
+        const raw = sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='global_auth_epoch'`).one().value;
+        const previous = Number(raw);
+        if (!/^(?:0|[1-9]\d*)$/.test(raw) || !Number.isSafeInteger(previous) || previous >= Number.MAX_SAFE_INTEGER)
+          throw new Error("sign-in coordinator requires review");
+        const barrier = previous + 1;
+        sql.exec(`UPDATE meta SET value=? WHERE key='global_auth_epoch'`, String(barrier));
+        sql.exec(`INSERT INTO shard_rollout_barrier(slot,epoch) VALUES (1,?)`, barrier);
+      }
       sql.exec(
         `INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
         String(next),

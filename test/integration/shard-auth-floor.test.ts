@@ -1,9 +1,9 @@
-import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { expect, it, vi } from "vitest";
 import { Directory } from "../../src/directory/directory";
 import { directoryForSignIn } from "../../src/directory/routing";
-import { allDirectories, directory, directoryForUser } from "../../src/shared/stubs";
+import { allDirectories, directory, directoryByName, directoryForUser } from "../../src/shared/stubs";
 import type { SignInInput } from "../../src/shared/types";
 import { eventually } from "./support";
 
@@ -19,6 +19,84 @@ async function account() {
   await global.bindIdentityHome("google", input.subject, current.userId, input.authEpoch);
   return { global, input, held, current, home: directoryForUser(env, current.userId) };
 }
+
+it("rejects a pre-migration create after a previously erased shard wakes", async () => {
+  const f = await account();
+  await f.home.deleteAccount(f.current.userId, f.current.vaultId);
+  await runDurableObjectAlarm(f.home);
+  await eventually(async () => !(await f.home.existingIdentity("google", f.input.subject)), "identity erasure");
+  expect(await f.global.googleAuthEpoch()).toBeGreaterThan(f.input.authEpoch!);
+  const barrier = await f.global.googleShardRolloutEpoch();
+  const beforeRollout = { ...f.held.input, authEpoch: barrier - 1 };
+  // Recreate the persisted V12 state of an already-erased legacy shard: its
+  // V3 floor has no memory of an older deletion, and V13 has not run yet.
+  await runInDurableObject(f.home, (_instance, state) => {
+    state.storage.sql.exec(`UPDATE meta SET value='0' WHERE key='shard_auth_floor'`);
+    state.storage.sql.exec(`DELETE FROM meta WHERE key='shard_rollout_epoch'`);
+    state.storage.sql.exec(`DROP TABLE shard_rollout_barrier`);
+    state.storage.sql.exec(`UPDATE meta SET value='12' WHERE key='schema_version'`);
+  });
+  await evictDurableObject(f.home);
+  await runInDurableObject(f.home, async (instance) => {
+    await expect(instance.signIn(beforeRollout)).rejects.toThrow("sign-in is stale");
+  });
+  expect((await Promise.all([...allDirectories(env)].map((d) => d.existingIdentity("google", f.input.subject)))).filter(Boolean)).toHaveLength(0);
+}, 30_000);
+
+it("preserves a higher existing floor when installing the rollout barrier", async () => {
+  const shard = directoryByName(env, "directory-0");
+  const barrier = await directory(env).googleShardRolloutEpoch();
+  let oldFloor = "0";
+  await runInDurableObject(shard, (_instance, state) => {
+    oldFloor = state.storage.sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='shard_auth_floor'`).one().value;
+    state.storage.sql.exec(`UPDATE meta SET value=? WHERE key='shard_auth_floor'`, String(barrier + 10));
+    state.storage.sql.exec(`DELETE FROM meta WHERE key='shard_rollout_epoch'`);
+  });
+  try {
+    await evictDurableObject(shard);
+    await runInDurableObject(shard, (_instance, state) => {
+      expect(state.storage.sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='shard_auth_floor'`).one().value).toBe(String(barrier + 10));
+      expect(state.storage.sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='shard_rollout_epoch'`).one().value).toBe(String(barrier));
+    });
+  } finally {
+    await runInDurableObject(shard, (_instance, state) => state.storage.sql.exec(`UPDATE meta SET value=? WHERE key='shard_auth_floor'`, oldFloor));
+  }
+});
+
+it("lets global synthetic recovery call a cold shard that reads the rollout barrier", async () => {
+  const global = directory(env);
+  const shard = directoryByName(env, "directory-1");
+  await runInDurableObject(shard, (_instance, state) => {
+    state.storage.sql.exec(`DELETE FROM meta WHERE key='shard_rollout_epoch'`);
+  });
+  await evictDurableObject(shard);
+  const subject = `placement-${crypto.randomUUID()}@placement.invalid`;
+  const epoch = await global.placementEpoch();
+  await global.reservePlacementAttempt("test", subject, 1, epoch);
+  // The coordinator awaits the shard's seal RPC; the shard constructor in
+  // turn reads the coordinator. Both calls must complete under input gates.
+  expect(await global.reconcileSyntheticPlacement("test", subject)).toEqual({ remaining: 0 });
+  const barrier = await global.googleShardRolloutEpoch();
+  await runInDurableObject(shard, (_instance, state) => {
+    expect(Number(state.storage.sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='shard_rollout_epoch'`).one().value)).toBe(barrier);
+  });
+}, 30_000);
+
+it("fails closed when the global rollout barrier is unavailable", async () => {
+  const shard = directoryByName(env, "directory-2");
+  await runInDurableObject(shard, async (instance, state) => {
+    state.storage.sql.exec(`DELETE FROM meta WHERE key='shard_rollout_epoch'`);
+    const bootstrap = instance as unknown as { installShardRolloutBarrier(): Promise<void> };
+    const lookup = vi.spyOn(Directory.prototype, "googleShardRolloutEpoch").mockRejectedValue(new Error("coordinator offline"));
+    try {
+      await expect(bootstrap.installShardRolloutBarrier()).rejects.toThrow();
+      expect(lookup).toHaveBeenCalled();
+      expect(state.storage.sql.exec(`SELECT value FROM meta WHERE key='shard_rollout_epoch'`).toArray()).toHaveLength(0);
+    } finally { lookup.mockRestore(); }
+    await bootstrap.installShardRolloutBarrier();
+    expect(state.storage.sql.exec(`SELECT value FROM meta WHERE key='shard_rollout_epoch'`).toArray()).toHaveLength(1);
+  });
+}, 30_000);
 
 it("rejects a previously dispatched shard create after deletion and a new global placement", async () => {
   const f = await account();

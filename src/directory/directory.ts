@@ -67,6 +67,7 @@ export class Directory extends DurableObject<Env> {
         throw new AppError("unavailable", "sign-in coordinator requires review");
       if (this.isGlobal && !this.sql.exec(`SELECT key FROM meta WHERE key='global_shard_release_v3_guard' AND value='1'`).toArray().length)
         throw new AppError("unavailable", "account deletion requires review");
+      if (this.isShard) await this.installShardRolloutBarrier();
     });
   }
 
@@ -85,6 +86,15 @@ export class Directory extends DurableObject<Env> {
     return this.readGoogleAuthEpoch();
   }
 
+  /** A persistent global rollout boundary, never supplied by the caller. */
+  async googleShardRolloutEpoch(): Promise<number> {
+    if (!this.isGlobal) throw new AppError("invalid", "sign-in coordinator is invalid");
+    const row = this.sql.exec<{ epoch: number }>(`SELECT epoch FROM shard_rollout_barrier WHERE slot=1`).toArray()[0];
+    if (!row || !Number.isSafeInteger(row.epoch) || row.epoch <= 0 || row.epoch > this.readGoogleAuthEpoch())
+      throw new AppError("unavailable", "sign-in coordinator requires review");
+    return row.epoch;
+  }
+
   private readGoogleAuthEpoch(): number {
     const text = this.sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='global_auth_epoch'`).toArray()[0]?.value;
     const epoch = Number(text);
@@ -99,6 +109,26 @@ export class Directory extends DurableObject<Env> {
     if (typeof text !== "string" || !/^(?:0|[1-9]\d*)$/.test(text) || !Number.isSafeInteger(floor))
       throw new AppError("unavailable", "sign-in coordinator requires review");
     return floor;
+  }
+
+  private async installShardRolloutBarrier(): Promise<void> {
+    const installed = this.sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='shard_rollout_epoch'`).toArray()[0]?.value;
+    if (installed !== undefined) {
+      if (!/^[1-9]\d*$/.test(installed) || !Number.isSafeInteger(Number(installed)) || this.readShardAuthFloor() < Number(installed))
+        throw new AppError("unavailable", "sign-in coordinator requires review");
+      return;
+    }
+    // An older deletion may have finished without advancing the epoch, so a
+    // fresh floor of zero is not safe. Input gating keeps the shard closed
+    // until the coordinator's migration barrier is durably installed.
+    const barrier = await directory(this.env).googleShardRolloutEpoch();
+    if (!Number.isSafeInteger(barrier) || barrier <= 0)
+      throw new AppError("unavailable", "sign-in coordinator requires review");
+    this.ctx.storage.transactionSync(() => {
+      const floor = Math.max(this.readShardAuthFloor(), barrier);
+      this.sql.exec(`UPDATE meta SET value=? WHERE key='shard_auth_floor'`, String(floor));
+      this.sql.exec(`INSERT INTO meta(key,value) VALUES ('shard_rollout_epoch',?)`, String(barrier));
+    });
   }
 
   /** The check and authorized writes share one non-interleaving SQL transaction. */
