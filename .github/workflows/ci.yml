@@ -65,6 +65,8 @@ jobs:
         run: node scripts/check-evaluation-secrets.mjs
       - run: npm run build:staging
       - run: npx wrangler deploy
+      - name: Require shared accounting for paid CI work
+        run: node scripts/ci-paid-budget-guard.mjs
       - name: Deployed lifecycle
         run: npm run e2e:staging
       - uses: actions/upload-artifact@v6

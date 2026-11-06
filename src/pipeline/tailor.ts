@@ -15,6 +15,7 @@ import {
   checkLine,
   fallbackFact,
 } from "../grounding/verdict";
+import { isInstruction } from "./extract/verify";
 import type { ResumeBody, ResumeLine, ResumeSection } from "../shared/api";
 import type {
   Analysis,
@@ -204,6 +205,10 @@ export async function verifyDraft(
 
   // Round 1: deterministic checks, then the judge on what survives.
   const passing = draft.lines.filter((line) => {
+    if (isInstruction(line.text)) {
+      failed.push({ line, reason: "contains an instruction" });
+      return false;
+    }
     const result = checkLine(line, byId, selected);
     if (!result.ok) failed.push({ line, reason: result.problems.join("; ") });
     return result.ok;
@@ -238,7 +243,7 @@ export async function verifyDraft(
       }
     }
     const candidate = text ? { ...line, text } : null;
-    if (candidate && checkLine(candidate, byId, selected).ok)
+    if (candidate && !isInstruction(candidate.text) && checkLine(candidate, byId, selected).ok)
       repaired.push(candidate);
     else stillFailing.push(line);
   }
@@ -254,7 +259,11 @@ export async function verifyDraft(
   const replaced: DraftLine[] = [];
   let dropped = 0;
   for (const line of stillFailing) {
-    const fact = fallbackFact(line, byId, selected);
+    const safeCitations = line.factIds.filter((id) => {
+      const fact = byId.get(id);
+      return fact && !isInstruction(fact.text);
+    });
+    const fact = fallbackFact({ ...line, factIds: safeCitations }, byId, selected);
     if (fact)
       replaced.push({
         ...line,

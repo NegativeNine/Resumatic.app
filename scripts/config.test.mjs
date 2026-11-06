@@ -306,6 +306,7 @@ test("release gates require passing evidence for the exact candidate commit", as
           GITHUB_SHA: commit,
           RELEASE_EVIDENCE_JSON: JSON.stringify(input),
           DELETION_INVENTORY_COMPLETE: "true",
+          MANUAL_RESUME_EDIT_GROUNDING_AVAILABLE: "true",
         },
         encoding: "utf8",
       },
@@ -322,7 +323,7 @@ test("release gates require passing evidence for the exact candidate commit", as
     assert.equal(run(evidence).status, 2);
     assert.deepEqual(
       JSON.parse(await readFile(join(directory, "release-report.json"), "utf8")).missing,
-      ["DELETION_INVENTORY_AUDIT_UNAVAILABLE"],
+      ["DELETION_INVENTORY_AUDIT_UNAVAILABLE", "MANUAL_RESUME_EDIT_GROUNDING_UNAVAILABLE"],
     );
     for (const field of ["testModePassed", "livePaymentPassed", "liveCancellationPassed"]) {
       for (const value of [false, undefined, "true"]) {

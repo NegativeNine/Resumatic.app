@@ -367,11 +367,11 @@ describe("private extraction evaluation evidence", () => {
     Object.assign(evidence.betaOperations, { quietDays: 14 });
     const check = spawnSync(process.execPath, [resolve("scripts/check-release.mjs")], { cwd: root, env: { ...process.env, GITHUB_SHA: commit, RELEASE_EVIDENCE_JSON: JSON.stringify(evidence) }, encoding: "utf8" });
     expect(check.status, check.stderr || check.stdout).toBe(2);
-    // Extraction evidence is accepted; deletion alone blocks release until
-    // the audit can independently establish complete Workflow inventory.
+    // Extraction evidence is accepted; release remains blocked on deletion
+    // inventory and verified manual-edit remediation.
     expect(JSON.parse(check.stdout)).toMatchObject({
       status: "pending",
-      missing: ["DELETION_INVENTORY_AUDIT_UNAVAILABLE"],
+      missing: ["DELETION_INVENTORY_AUDIT_UNAVAILABLE", "MANUAL_RESUME_EDIT_GROUNDING_UNAVAILABLE"],
     });
   });
   it("keeps missing audits, missing adjudication, and unpriced usage pending", () => {

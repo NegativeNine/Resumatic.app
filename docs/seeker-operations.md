@@ -63,6 +63,10 @@ The shared model adapter has an **opt-in**, locally tested Responses path for `o
 
 Model calls require explicit positive `EVAL_BUDGET_USD` and integer `EVAL_MAX_CALLS`. The Node model adapter reserves a conservative known-price bound before each HTTP attempt, including schema retries. Unknown prices require `EVAL_MODEL_PRICES` with input/output USD per million tokens. `CF_ACCOUNT_ID`, `CF_AI_TOKEN` and `AI_GATEWAY_ID` are also required. Missing configuration produces `pending` and no live calls.
 
+The live CI evaluation and staging E2E jobs are deliberately blocked before their model calls: their budgets are independent, reset between runs, and do not enforce one combined authorization. A deployed staging Worker therefore does not imply a passing E2E. Re-enable paid CI only after both paths and repeated jobs use a durable shared budget that covers every billed model attempt. For the first authorized synthetic extraction and tailoring pilot, `scripts/first-staging-evals.mjs` uses one persistent ledger on the current host across those two suites; it does not cover the staging E2E or runs from other hosts. Do not run the direct commands below, the E2E, or a second host against the same authorization without independently accounting for all prior reservations and remaining provider-side budget.
+
+Production release checking is also blocked in code while manual resume edits can be printed without verified citations, including historical versions and coach-share snapshots. An operator evidence flag cannot clear this implementation blocker. The release gate can be changed only alongside verified edit handling and remediation of existing versions and shares; see the release status for the affected paths.
+
 ```sh
 node scripts/validate-config.mjs --purpose eval --report eval-preflight.json
 npm run evals
