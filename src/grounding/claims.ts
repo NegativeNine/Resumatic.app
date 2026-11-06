@@ -572,6 +572,51 @@ function contradictedActions(claim: string, evidence: Evidence[]): string[] {
   ])];
 }
 
+/**
+ * A positive occurrence of a verb elsewhere should not cancel a denial of a
+ * different object. Restrict the denial to an immediately negated action
+ * with a single unqualified object; longer and qualified phrases still need
+ * the judge. Positive occurrences may have further qualifiers, since they
+ * can still support the unqualified object.
+ */
+function objectActionPolarity(text: string): { positive: Set<string>; negative: Set<string> } {
+  const positive = new Set<string>(), negative = new Set<string>();
+  const tokens = text.toLowerCase().replaceAll("’", "'").match(/[a-z]+(?:['-][a-z]+)*|[.!?;:,\n]|[^\s]/g) ?? [];
+  const boundaries = new Set([".", "!", "?", ";", ":", ",", "\n", "but", "however", "yet"]);
+  const negations = new Set(["not", "never", "no", "without", "neither", "didn't", "doesn't", "don't", "hasn't", "haven't", "hadn't", "wasn't", "weren't", "isn't", "aren't", "cannot", "can't", "couldn't", "wouldn't"]);
+  for (let i = 0; i < tokens.length; i++) {
+    const action = VERB_CANONICAL.get(tokens[i]!);
+    if (!action) continue;
+    let objectIndex = i + 1;
+    if (["a", "an", "the"].includes(tokens[objectIndex] ?? "")) objectIndex++;
+    const object = tokens[objectIndex] ?? "";
+    if (!/^[a-z]+(?:-[a-z]+)*$/.test(object) || VERB_CANONICAL.has(object)) continue;
+    const prior: string[] = [];
+    for (let j = i - 1; j >= 0 && prior.length < 5 && !boundaries.has(tokens[j]!); j--) prior.unshift(tokens[j]!);
+    const negatives = prior.filter((word, index) => negations.has(word) &&
+      !(word === "not" && ["only", "just", "merely", "simply"].includes(prior[index + 1] ?? "")));
+    const isNegated = negatives.length > 0;
+    const key = `${action}:${object}`;
+    if (isNegated) {
+      // Never infer a blanket denial from a qualified or coordinated object.
+      if (negatives.length === 1 && negations.has(tokens[i - 1] ?? "") &&
+          (objectIndex + 1 === tokens.length || boundaries.has(tokens[objectIndex + 1]!))) negative.add(key);
+    } else positive.add(key);
+  }
+  return { positive, negative };
+}
+
+function contradictedActionObjects(claim: string, evidence: Evidence[]): string[] {
+  const asserted = objectActionPolarity(claim).positive;
+  const supported = new Set<string>(), denied = new Set<string>();
+  for (const item of evidence) for (const text of [item.text, item.quote ?? ""]) {
+    const polarity = objectActionPolarity(text);
+    for (const key of polarity.positive) supported.add(key);
+    for (const key of polarity.negative) denied.add(key);
+  }
+  return [...asserted].filter((key) => denied.has(key) && !supported.has(key));
+}
+
 /** The highest scope the text asserts, 0 if it has no scope verb. "Helped lead" counts as contributed. */
 export function scopeRank(text: string): number {
   const tokens = text.toLowerCase().match(/[a-z]+(?:-[a-z]+)*/g) ?? [];
@@ -613,6 +658,8 @@ export function checkClaim(claim: string, evidence: Evidence[], options: { detec
   if (names.length) problems.push(`names not in the evidence: ${names.join(", ")}`);
   const denied = contradictedActions(claim, evidence);
   if (denied.length) problems.push(`actions contradicted by the evidence: ${denied.join(", ")}`);
+  const deniedObjects = contradictedActionObjects(claim, evidence);
+  if (deniedObjects.length) problems.push(`actions contradicted by the evidence: ${deniedObjects.join(", ")}`);
   if (options.detectDirection !== false) {
     const reversed = contradictedDirections(claim, evidence.flatMap((item) => [item.text, item.quote ?? ""]));
     if (reversed.length) problems.push(`outcome direction contradicted by the evidence: ${reversed.join(", ")}`);

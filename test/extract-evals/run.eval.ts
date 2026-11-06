@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import type { Usage } from "../../src/ai/usage";
 import { extractorById } from "../../src/pipeline/extract";
@@ -137,9 +137,10 @@ afterAll(() => {
       }) => row,
     ),
   };
-  writeFileSync("extract-report.json", JSON.stringify(report, null, 2));
+  const reportDir = process.env.EXTRACT_REPORT_DIR || ".";
+  writeFileSync(join(reportDir, "extract-report.json"), JSON.stringify(report, null, 2));
   writeFileSync(
-    "extract-report.md",
+    join(reportDir, "extract-report.md"),
     `# Extraction evaluation\n\nMode: ${report.mode}. Promotion is pending real-format fixtures and human audit.\n\n${records.length} case runs. Configuration: ${configurationHash}.\n`,
   );
 });

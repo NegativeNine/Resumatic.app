@@ -446,6 +446,29 @@ describe("scope", () => {
     expect(checkClaim("Led the migration", [{ text: "My colleague never led the migration" }]).ok).toBe(false);
   });
 
+  it("does not let a positive action on a different object cancel an explicit denial", () => {
+    const evidence = [{ text: "Did not deploy Kubernetes; deployed Docker", level: "implemented" as const }];
+    expect(checkClaim("Deployed Kubernetes", evidence).problems).toContain("actions contradicted by the evidence: deploy:kubernetes");
+    expect(checkClaim("Deployed Docker", evidence).ok).toBe(true);
+    expect(checkClaim("Did not deploy Kubernetes", evidence).ok).toBe(true);
+  });
+
+  it("does not infer a blanket object denial from a qualified denial or override positive evidence", () => {
+    const qualified = [{ text: "Did not deploy Kubernetes in production; deployed Docker", level: "implemented" as const }];
+    expect(checkClaim("Deployed Kubernetes", qualified).problems).not.toContain("actions contradicted by the evidence: deploy:kubernetes");
+    const both = [{ text: "Did not deploy Kubernetes; deployed Kubernetes in staging", level: "implemented" as const }];
+    expect(checkClaim("Deployed Kubernetes", both).problems).not.toContain("actions contradicted by the evidence: deploy:kubernetes");
+    const notOnly = [{ text: "Not only deployed Kubernetes; deployed Docker", level: "implemented" as const }];
+    expect(checkClaim("Deployed Kubernetes", notOnly).ok).toBe(true);
+  });
+
+  it("treats a colleague's denial conservatively and preserves an explicit user assertion", () => {
+    const colleague = [{ text: "My colleague never deployed Kubernetes; I deployed Docker", level: "implemented" as const }];
+    expect(checkClaim("Deployed Kubernetes", colleague).ok).toBe(false);
+    const user = [{ text: "My colleague never deployed Kubernetes; I deployed Docker and deployed Kubernetes", level: "implemented" as const }];
+    expect(checkClaim("Deployed Kubernetes", user).ok).toBe(true);
+  });
+
   it.each([
     ["Increased latency by 50%", "Reduced latency by 50%"],
     ["Reduced customer retention by 20%", "Increased customer retention by 20%"],

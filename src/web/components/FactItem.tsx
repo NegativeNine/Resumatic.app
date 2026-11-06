@@ -7,7 +7,8 @@ import {
   type Level,
   type RoleView,
 } from "../../shared/api";
-import { api } from "../api";
+import { api, ApiError } from "../api";
+import { factWriteObserved } from "../fact-save";
 import { FACT_KIND_LABEL, LEVEL_LABEL } from "../format";
 import { useAction, type Reload } from "../hooks";
 import { roleLabel, sourceLabel } from "../vault";
@@ -183,26 +184,42 @@ function FactEditor(props: {
   onClose: () => void;
 }) {
   const { fact, roles, reload, onClose } = props;
+  // Keep the editor's base values fixed even when a background refresh arrives.
+  const [original] = useState(fact);
   const [text, setText] = useState(fact.text);
   const [roleId, setRoleId] = useState(fact.roleId ?? "");
   const [level, setLevel] = useState<Level | "">(fact.level ?? "");
   const [levelTouched, setLevelTouched] = useState(false);
-  const [baseRevision] = useState(fact.revision ?? 1);
+  const [baseRevision] = useState(original.revision ?? 1);
   const { run, pending, error } = useAction();
   const id = useId();
   const trimmed = text.trim();
   const choices = roles.filter(
-    (r) => r.state !== "rejected" || r.id === fact.roleId,
+    (r) => r.state !== "rejected" || r.id === original.roleId,
   );
   const patch: FactPatch = { expectedRevision: baseRevision };
-  if (trimmed !== fact.text) patch.text = trimmed;
-  if ((roleId || null) !== fact.roleId) patch.roleId = roleId || null;
+  if (trimmed !== original.text) patch.text = trimmed;
+  if ((roleId || null) !== original.roleId) patch.roleId = roleId || null;
   if (levelTouched) patch.level = level || null;
   const changed = patch.text !== undefined || patch.roleId !== undefined || patch.level !== undefined;
 
   async function save() {
     const ok = await run(async () => {
-      await api.editFact(fact.id, patch);
+      try {
+        await api.editFact(original.id, patch);
+      } catch (error) {
+        // A response can be lost after the write. Confirm a fresh snapshot at
+        // exactly the next revision before treating an error as success.
+        if (error instanceof ApiError && (error.status === 401 || error.status === 410)) throw error;
+        let current: FactView | undefined;
+        try {
+          current = (await api.reviewView()).facts.find((item) => item.id === original.id);
+        } catch (readError) {
+          if (readError instanceof ApiError && (readError.status === 401 || readError.status === 410)) throw readError;
+          throw error;
+        }
+        if (!factWriteObserved(current, original, patch)) throw error;
+      }
       await reload();
     });
     if (ok) onClose();
@@ -253,7 +270,7 @@ function FactEditor(props: {
         <option value="">Not specified</option>
         {LEVELS.map((value) => <option key={value} value={value}>{LEVEL_LABEL[value]}</option>)}
       </select>
-      {trimmed !== fact.text && level && (
+      {trimmed !== original.text && level && (
         <label>
           <input type="checkbox" checked={levelTouched} disabled={pending} onChange={(e) => setLevelTouched(e.target.checked)} />{" "}
           Use this level for the updated wording

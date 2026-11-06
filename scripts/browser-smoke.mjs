@@ -101,9 +101,13 @@ if (!browser?.startsWith("/")) {
     }
     if (path === "/api/facts/fact-1" && req.method === "PATCH") {
       const body = JSON.parse((await read(req)).toString("utf8"));
-      if (body.expectedRevision !== fact.revision || body.level !== "led") return send(res, 400, { error: "invalid" });
+      state.factEditAttempts = (state.factEditAttempts ?? 0) + 1;
+      if (body.expectedRevision !== fact.revision) return send(res, 409, { error: "conflict" });
+      if (body.level !== "led") return send(res, 400, { error: "invalid" });
       fact.level = body.level; fact.levelNeedsReview = false; delete fact.previousLevel; fact.revision++;
-      return send(res, 204);
+      // Simulate a committed write whose response and first reconciliation read are lost.
+      state.sourcePollFailures = 1;
+      return send(res, 503, { error: "unavailable" });
     }
     if (path === "/api/sources" && req.method === "POST") {
       await read(req); const key = req.headers["idempotency-key"]; if (typeof key !== "string" || !key) return send(res, 400, { error: "invalid" });
@@ -335,8 +339,11 @@ if (!browser?.startsWith("/")) {
     stage = "fact_level_review"; await wait(`document.body?.innerText.includes('needs your confirmation before it is used')`); await clickText('.fact button', 'Edit');
     await wait(`!!document.querySelector('.fact select[id$="-level"]')`);
     await evalPage(`(() => { const e = document.querySelector('.fact select[id$="-level"]'); e.value = 'led'; e.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await clickText('.fact button', 'Save fact');
+    await wait(`!!document.querySelector('.fact [role="alert"]')`);
+    if (!await evalPage(`document.querySelector('.fact select[id$="-level"]')?.value === 'led'`)) throw new Error('FACT_EDIT_DRAFT_LOST');
     await clickText('.fact button', 'Save fact'); await wait(`!document.querySelector('.fact select[id$="-level"]')`);
-    if (fact.level !== 'led' || fact.levelNeedsReview) throw new Error('FACT_LEVEL_NOT_REAFFIRMED');
+    if (fact.level !== 'led' || fact.levelNeedsReview || state.factEditAttempts !== 2) throw new Error('FACT_LEVEL_NOT_REAFFIRMED');
     stage = "review_fact"; await wait(`!![...document.querySelectorAll('.fact button')].find(x => x.textContent.trim() === 'Confirm' && !x.disabled)`); await clickText(".fact button", "Confirm"); await wait(`document.body?.innerText.includes('nothing is waiting for review')`);
     await wait(`document.body?.innerText.includes('Ready · review complete')`);
     stage = "manual_fact_retry";
@@ -577,7 +584,7 @@ if (!browser?.startsWith("/")) {
     await call("Page.navigate", { url: `${origin}/share?invalid=1#synthetic-invalid` });
     await wait(`document.body?.innerText.includes('Share unavailable')`);
     if (await evalPage(`location.hash !== '' || !![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Try again')`)) throw new Error("EXPIRED_SHARE_NOT_TERMINAL");
-    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, sourceRoleOnly: true, sourceEmpty: true, pollRecovery: true, pollNonTransient: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, factLevelReview: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, jobRetryKey: true, profileSubmissionLock: true, profileConcurrentEdit: true, profileLostResponse: true, applicationTracking: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, legacySkillRemoval: true, checkedSkillRemoval: true, checkedLineRemoval: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true, stableResourceReload: true, shareRetry: true, expiredShare: true } }));
+    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, sourceRoleOnly: true, sourceEmpty: true, pollRecovery: true, pollNonTransient: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, factLevelReview: true, factEditLostResponse: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, jobRetryKey: true, profileSubmissionLock: true, profileConcurrentEdit: true, profileLostResponse: true, applicationTracking: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, legacySkillRemoval: true, checkedSkillRemoval: true, checkedLineRemoval: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true, stableResourceReload: true, shareRetry: true, expiredShare: true } }));
   } catch {
     console.log(JSON.stringify({ status: "failed", reason: "BROWSER_SMOKE_FAILED", stage, promotionEligible: false })); process.exitCode = 1;
   } finally {

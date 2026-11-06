@@ -181,6 +181,29 @@ describe("verifyDraft", () => {
     ]);
   });
 
+  it("falls back when a denied object is paired with a different positive action object", async () => {
+    const denied = record("denied", "r1", "Did not deploy Kubernetes; deployed Docker");
+    const base = fakeModels();
+    let judged = 0;
+    const models: Models = {
+      ...base,
+      complete: async (route, messages, schema) => {
+        if (route === "repair") return schema.parse({ text: "Deployed Kubernetes" });
+        if (route === "judge") {
+          judged++;
+          return schema.parse({ verdicts: [{ id: "l1", verdict: "supported", reason: "" }] });
+        }
+        return base.complete(route, messages, schema);
+      },
+    };
+    const result = await verifyDraft(models, { lines: [line("l1", "r1", "Deployed Kubernetes", [denied.id])] },
+      { factIds: [denied.id], skillIds: [], gaps: [] }, [denied]);
+    expect(judged).toBe(0);
+    expect(result.lines.map(({ text, status }) => ({ text, status }))).toEqual([
+      { text: denied.text, status: "replaced" },
+    ]);
+  });
+
   it("keeps, repairs, replaces and drops, in draft order, and never prints a sentence twice", async () => {
     const draft: Draft = {
       lines: [
