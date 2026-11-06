@@ -8,14 +8,14 @@ import { directory, directoryForUser } from "../../src/shared/stubs";
 import type { SignInInput } from "../../src/shared/types";
 import { eventually } from "./support";
 
-function input(): SignInInput {
+async function input(): Promise<SignInInput> {
   const id = crypto.randomUUID();
-  return { provider: "google", subject: `invite-${id}`, email: `invite-${id}@example.test`, hint: "enam" };
+  return { provider: "google", subject: `invite-${id}`, email: `invite-${id}@example.test`, hint: "enam", authEpoch: await directory(env).googleAuthEpoch() };
 }
 
 describe("sharded account invitation claims", () => {
   it("rechecks a prior invitation decision atomically when claiming a home after deletion", async () => {
-    const p = input();
+    const p = await input();
     const global = directory(env);
     const shard = await identityShard(p.provider, p.subject);
     await global.addInvite(p.email);
@@ -23,7 +23,7 @@ describe("sharded account invitation claims", () => {
     await global.requireInvite(p.email);
     const initial = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
     const account = await initial.directory.signIn(initial.input);
-    await global.bindIdentityHome(p.provider, p.subject, account.userId);
+    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch);
     const home = directoryForUser(env, account.userId);
     await home.deleteAccount(account.userId, account.vaultId);
     await runDurableObjectAlarm(home);
@@ -47,12 +47,12 @@ describe("sharded account invitation claims", () => {
   }, 30_000);
 
   it("keeps existing shard accounts accessible after invitation removal", async () => {
-    const p = input();
+    const p = await input();
     const global = directory(env);
     await global.addInvite(p.email);
     const initial = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
     const account = await initial.directory.signIn(initial.input);
-    await global.bindIdentityHome(p.provider, p.subject, account.userId);
+    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch);
     await global.removeInvite(p.email);
     const returning = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "1" }, p);
     expect(await returning.directory.signIn(returning.input)).toEqual(account);
@@ -60,13 +60,13 @@ describe("sharded account invitation claims", () => {
 
   it("preserves open registration and test sign-ins without an email argument", async () => {
     const global = directory(env);
-    const p = input();
+    const p = await input();
     await runInDurableObject(global, async (instance) => {
       const local = (instance as unknown as { env: Env }).env;
       const previous = local.INVITE_ONLY;
       try {
         local.INVITE_ONLY = "false";
-        expect(await (instance as Directory).claimIdentityHome(p.provider, p.subject, 0)).toBe(0);
+        expect(await (instance as Directory).claimIdentityHome(p.provider, p.subject, 0, p.email, undefined, p.authEpoch)).toBe(0);
       } finally {
         local.INVITE_ONLY = previous;
       }

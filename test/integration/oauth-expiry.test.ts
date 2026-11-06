@@ -28,7 +28,7 @@ describe("OAuth expiry across Directory calls", () => {
     const p = identity();
     await directory(env).addInvite(p.email);
     const expiry = Date.now() + 60_000;
-    const target = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, { ...p, authExpiryMs: expiry });
+    const target = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, { ...p, authExpiryMs: expiry, authEpoch: await directory(env).googleAuthEpoch() });
     expect(target.input.authExpiryMs).toBe(expiry);
     expect((await target.directory.signIn(target.input)).userId).toMatch(/^s(?:[0-9]|1[0-5]):/);
   });

@@ -11,13 +11,13 @@ import { eventually } from "../integration/support";
 // It uses ephemeral local Durable Objects and never contacts a model provider.
 it("does not create two accounts when an old placement resumes after deletion", async () => {
   const nonce = crypto.randomUUID();
-  const input: SignInInput = { provider: "google", subject: `subject-${nonce}`, email: `example-${nonce}@example.test`, hint: "enam" };
+  const input: SignInInput = { provider: "google", subject: `subject-${nonce}`, email: `example-${nonce}@example.test`, hint: "enam", authEpoch: await directory(env).googleAuthEpoch() };
   const configured = (shards: string): Env => ({ ...env, DIRECTORY_SHARDS: shards });
   await directory(env).addInvite(input.email);
   const held = await directoryForSignIn(configured("16"), input);
   const initial = await directoryForSignIn(configured("16"), input);
   const old = await initial.directory.signIn(initial.input);
-  await directory(env).bindIdentityHome(input.provider, input.subject, old.userId);
+  await directory(env).bindIdentityHome(input.provider, input.subject, old.userId, input.authEpoch);
   const home = directoryForUser(env, old.userId);
   await home.deleteAccount(old.userId, old.vaultId);
   await runDurableObjectAlarm(home);
@@ -25,7 +25,7 @@ it("does not create two accounts when an old placement resumes after deletion", 
   await directory(env).addInvite(input.email);
   const fresh = await directoryForSignIn(configured("1"), input);
   const replacement = await fresh.directory.signIn(fresh.input);
-  await directory(env).bindIdentityHome(input.provider, input.subject, replacement.userId);
+  await directory(env).bindIdentityHome(input.provider, input.subject, replacement.userId, input.authEpoch);
   await held.directory.signIn(held.input);
   const locations = await Promise.all([...allDirectories(env)].map((d) => d.existingIdentity(input.provider, input.subject)));
   expect(locations.filter(Boolean), "a stale creation left two accounts for the same identity").toHaveLength(1);

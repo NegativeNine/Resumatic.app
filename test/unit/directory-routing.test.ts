@@ -93,6 +93,8 @@ describe("Directory shard routing", () => {
       input.subject,
       shard,
       input.email,
+      undefined,
+      undefined,
     );
     expect(result.directory).toBe(f.get(`directory-${shard}`));
     expect(result.input).toEqual({

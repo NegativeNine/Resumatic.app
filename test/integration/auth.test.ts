@@ -46,7 +46,7 @@ describe("test sign-in (staging only)", () => {
 describe("invites", () => {
   it("are required for real sign-ups while sign-up is invite-only", async () => {
     const email = uniqueEmail("Stranger");
-    const google = { provider: "google" as const, subject: `g-${email}`, email, hint: "enam" as const };
+    const google = { provider: "google" as const, subject: `g-${email}`, email, hint: "enam" as const, authEpoch: await directory(env).googleAuthEpoch() };
     const refused = await directory(env)
       .signIn(google)
       .then(
@@ -211,6 +211,25 @@ describe("Google sign-in", () => {
     expect(base64url(await sha256(google.seen.verifier!))).toBe(location.searchParams.get("code_challenge"));
     expect(google.seen.redirectUri).toBe("https://resumatic.test/auth/callback");
     expect((await call("/api/me", { cookie: session! })).status).toBe(200);
+  });
+
+  it("does not establish a session if another account was deleted after OAuth start", async () => {
+    const email = uniqueEmail("google-stale");
+    await directory(env).addInvite(email);
+    const google = await stubGoogle((nonce) => ({
+      iss: "https://accounts.google.com", aud: env.OIDC_CLIENT_ID,
+      sub: `google-${email}`, email, email_verified: true, nonce,
+      exp: nowSeconds() + 600,
+    }));
+    const otherEmail = uniqueEmail("other-account");
+    const other = await directory(env).signIn({ provider: "test", subject: otherEmail, email: otherEmail, hint: "enam" });
+    const { location, cookie } = await startLogin();
+    google.pending.nonce = location.searchParams.get("nonce")!;
+    await directory(env).deleteAccount(other.userId, other.vaultId);
+    const res = await call(`/auth/callback?code=good-code&state=${location.searchParams.get("state")}`, { cookie });
+    expect(res.headers.get("location")).toBe("/?error=conflict");
+    expect(cookieFrom(res, "__Host-session")).toBeNull();
+    expect(await directory(env).existingIdentity("google", `google-${email}`)).toBeNull();
   });
 
   it("rejects a callback whose state does not match the cookie", async () => {

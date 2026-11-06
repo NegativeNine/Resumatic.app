@@ -57,9 +57,38 @@ export class Directory extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    void ctx.blockConcurrencyWhile(async () =>
-      migrateDirectory(this.ctx.storage.sql, (fn) => this.ctx.storage.transactionSync(fn)),
-    );
+    void ctx.blockConcurrencyWhile(async () => {
+      migrateDirectory(this.ctx.storage.sql, (fn) => this.ctx.storage.transactionSync(fn), this.isGlobal);
+      if (this.isGlobal && !this.sql.exec(`SELECT key FROM meta WHERE key='global_auth_guard' AND value='1'`).toArray().length)
+        throw new AppError("unavailable", "sign-in coordinator requires review");
+    });
+  }
+
+  private get isGlobal(): boolean {
+    return this.ctx.id.equals(this.env.DIRECTORY.idFromName("global"));
+  }
+
+  async googleAuthEpoch(): Promise<number> {
+    if (!this.isGlobal) throw new AppError("invalid", "sign-in coordinator is invalid");
+    const text = this.sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='global_auth_epoch'`).toArray()[0]?.value;
+    const epoch = Number(text);
+    if (typeof text !== "string" || !/^(?:0|[1-9]\d*)$/.test(text) || !Number.isSafeInteger(epoch))
+      throw new AppError("unavailable", "sign-in coordinator requires review");
+    return epoch;
+  }
+
+  /** The check and authorized writes share one non-interleaving SQL transaction. */
+  private globalGoogleWrite<T>(provider: string, epoch: number | undefined, action: () => T): T {
+    return this.ctx.storage.transactionSync(() => {
+      if (this.isGlobal && provider === "google") {
+        const text = this.sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='global_auth_epoch'`).one().value;
+        if (!Number.isSafeInteger(epoch) || epoch! < 0 || !/^(?:0|[1-9]\d*)$/.test(text) || Number(text) !== epoch)
+          throw new AppError("conflict", "sign-in is stale; try again");
+        this.sql.exec(`INSERT INTO global_auth_marker(slot,epoch) VALUES (1,?)`, epoch!);
+        try { return action(); } finally { this.sql.exec(`DELETE FROM global_auth_marker WHERE slot=1`); }
+      }
+      return action();
+    });
   }
 
   private get sql(): SqlStorage {
@@ -100,6 +129,9 @@ export class Directory extends DurableObject<Env> {
    */
   async signIn(p: SignInInput): Promise<{ userId: string; vaultId: string }> {
     if (p.authExpiryMs !== undefined) requireFreshAuth(p.authExpiryMs);
+    // Existing identities also need the original authorization epoch: a
+    // stale callback must not attach to a replacement account after erasure.
+    if (this.isGlobal && p.provider === "google") this.globalGoogleWrite(p.provider, p.authEpoch, () => {});
     const email = p.email.trim().toLowerCase();
     let row = this.findAccount(p.provider, p.subject);
     const attempt = p.placementAttempt;
@@ -142,7 +174,7 @@ export class Directory extends DurableObject<Env> {
           ? crypto.randomUUID()
           : shardedUserId(p.homeShard);
       const now = Date.now();
-      this.ctx.storage.transactionSync(() => {
+      this.globalGoogleWrite(p.provider, p.authEpoch, () => {
         this.sql.exec(
           `INSERT INTO users (user_id, email, state, created_at) VALUES (?, ?, 'active', ?)`,
           userId,
@@ -273,6 +305,7 @@ export class Directory extends DurableObject<Env> {
     preferredShard: number | null,
     email?: string,
     authExpiryMs?: number,
+    authEpoch?: number,
   ): Promise<number | null> {
     if (authExpiryMs !== undefined) requireFreshAuth(authExpiryMs);
     if (
@@ -291,19 +324,21 @@ export class Directory extends DurableObject<Env> {
       if (!this.isInvited(email.trim().toLowerCase()))
         throw new AppError("forbidden", "this email has not been invited to the beta yet");
     }
-    this.sql.exec(
-      `INSERT OR IGNORE INTO identity_homes (provider,subject,shard) VALUES (?,?,?)`,
-      provider,
-      subject,
-      preferredShard,
-    );
-    return this.sql
-      .exec<{ shard: number | null }>(
-        `SELECT shard FROM identity_homes WHERE provider=? AND subject=?`,
+    return this.globalGoogleWrite(provider, authEpoch, () => {
+      this.sql.exec(
+        `INSERT OR IGNORE INTO identity_homes (provider,subject,shard) VALUES (?,?,?)`,
         provider,
         subject,
-      )
-      .one().shard;
+        preferredShard,
+      );
+      return this.sql
+        .exec<{ shard: number | null }>(
+          `SELECT shard FROM identity_homes WHERE provider=? AND subject=?`,
+          provider,
+          subject,
+        )
+        .one().shard;
+    });
   }
   async placementEpoch(): Promise<number> {
     return this.placement.epoch();
@@ -351,26 +386,29 @@ export class Directory extends DurableObject<Env> {
     provider: string,
     subject: string,
     userId: string,
+    authEpoch?: number,
   ): Promise<void> {
-    const home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null; placement_state: string }>(
-      `SELECT shard,user_id,generation,placement_state FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
-    ).toArray()[0];
-    const shard = /^s(\d+):/.exec(userId);
-    // Existing accounts may predate a placement row. Preserve their ability
-    // to sign in, without treating a missing claim as proof of quiescence.
-    if (!home) return;
-    if (home.generation && home.user_id === null)
-      throw new AppError("unavailable", "registered placement must be settled before binding");
-    if (home.placement_state !== "open" || (shard ? Number(shard[1]) : null) !== home.shard ||
-        (home.user_id !== null && home.user_id !== userId))
-      throw new AppError("conflict", "account placement changed; retry sign-in");
-    this.sql.exec(
-      `UPDATE identity_homes SET user_id=? WHERE provider=? AND subject=? AND (user_id IS NULL OR user_id=?)`,
-      userId,
-      provider,
-      subject,
-      userId,
-    );
+    return this.globalGoogleWrite(provider, authEpoch, () => {
+      const home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null; placement_state: string }>(
+        `SELECT shard,user_id,generation,placement_state FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
+      ).toArray()[0];
+      const shard = /^s(\d+):/.exec(userId);
+      // Existing accounts may predate a placement row. Preserve their ability
+      // to sign in, without treating a missing claim as proof of quiescence.
+      if (!home) return;
+      if (home.generation && home.user_id === null)
+        throw new AppError("unavailable", "registered placement must be settled before binding");
+      if (home.placement_state !== "open" || (shard ? Number(shard[1]) : null) !== home.shard ||
+          (home.user_id !== null && home.user_id !== userId))
+        throw new AppError("conflict", "account placement changed; retry sign-in");
+      this.sql.exec(
+        `UPDATE identity_homes SET user_id=? WHERE provider=? AND subject=? AND (user_id IS NULL OR user_id=?)`,
+        userId,
+        provider,
+        subject,
+        userId,
+      );
+    });
   }
   async deletionProbe(userId: string, vaultId: string): Promise<number> {
     let count = 0;

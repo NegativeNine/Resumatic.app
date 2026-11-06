@@ -21,6 +21,7 @@ type DirectoryStub = ReturnType<typeof directory> & {
     preferredShard: number | null,
     email: string,
     authExpiryMs?: number,
+    authEpoch?: number,
   ): Promise<number | null>;
   placementEpoch(): Promise<number>;
   reservePlacementAttempt(provider: string, subject: string, preferred: number | null, expectedEpoch: number): Promise<PlacementAttempt>;
@@ -60,6 +61,7 @@ export async function directoryForSignIn(
     email: supplied.email,
     hint: supplied.hint,
     ...(supplied.authExpiryMs === undefined ? {} : { authExpiryMs: supplied.authExpiryMs }),
+    ...(supplied.authEpoch === undefined ? {} : { authEpoch: supplied.authEpoch }),
   };
   if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
   const global = directory(env) as DirectoryStub;
@@ -93,9 +95,9 @@ export async function directoryForSignIn(
     ? await global.reservePlacementAttempt(input.provider, input.subject, configuration === "16" ? shard : null, epoch!)
     : undefined;
   const preferred = configuration === "16" ? shard : null;
-  const home = attempt?.shard ?? (attempt ? null : input.authExpiryMs === undefined
-    ? await global.claimIdentityHome(input.provider, input.subject, preferred, input.email)
-    : await global.claimIdentityHome(input.provider, input.subject, preferred, input.email, input.authExpiryMs));
+  const home = attempt?.shard ?? (attempt ? null : await global.claimIdentityHome(
+    input.provider, input.subject, preferred, input.email, input.authExpiryMs, input.authEpoch,
+  ));
   if (home !== null && (!Number.isInteger(home) || home < 0 || home >= 16))
     throw new AppError(
       "unavailable",

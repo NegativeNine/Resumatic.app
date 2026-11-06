@@ -188,11 +188,9 @@ Embedding rebuilds stage vectors per Vault while serving the previous generation
 
 The production deployment workflow rejects sharded placement in the checked-in configuration and rejects a `DIRECTORY_SHARDS` Worker secret, whose value it cannot inspect. Remove any such production secret and use the checked-in configuration before deploying. This guard does not prevent out-of-band deployments or resolve pending requests and existing sharded users.
 
-The shard restriction also does **not** make global account deletion safe for public registration. A local direct-RPC diagnostic routes a synthetic Google identity to the global Directory with `DIRECTORY_SHARDS=1` and `INVITE_ONLY=false`, holds one sign-in, deletes the account created by another, and resumes the still-valid held call. It currently recreates the deleted account and fails the final invariant. It does not exercise Google's authentication service, browser cookies, or deployed Workers. Ordinary CI excludes it:
+The global Directory now checks a deletion epoch captured before issuing Google OAuth state. Deletion and Google identity removal advance the epoch; the migration installs SQLite guards atomically to reject legacy global creation, home-claim and binding writes once active. `test/integration/global-auth-fence.test.ts` exercises the previously failing global public-registration interleaving with a synthetic identity. It does not test Google, browser cookies, or deployed mixed-version traffic. This does not fence already-dispatched sharded creates, nor requests served by old code before the global object migrates. Establish a provider-verified deployment and in-flight writer drain before relying on the fence.
 
-```sh
-RESUMATIC_PLACEMENT_DIAGNOSTIC=1 npx vitest run --project integration test/diagnostics/global-open-signin.diagnostic.ts
-```
+The epoch is global: any global account deletion can invalidate unrelated pending Google sign-ins, and the user must restart sign-in. A deletion between a sharded account creation and home binding can leave an active shard account and an unbound global identity-home claim. A fresh sign-in recovers the same account, but abandoned claims have no proven safe automatic cleanup; account deletion and retention acceptance remain pending.
 
 Production deployment preflight requires the reviewed configuration to set `INVITE_ONLY` to the exact string `"true"` and rejects an opaque Worker secret of that name. This reduces exposure to the demonstrated public-registration path, but invitation changes, already-dispatched calls, mixed Worker versions and other deletion races still need resolution. Invite-only mode is not proof of safe deletion, and out-of-band deployments can bypass preflight.
 

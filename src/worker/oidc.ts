@@ -24,6 +24,7 @@ interface PendingLogin {
   nonce: string;
   verifier: string;
   exp: number;
+  authEpoch: number;
   returnTo?: string;
 }
 
@@ -42,13 +43,17 @@ export async function beginLogin(
   env: Env,
   origin: string,
   returnTo?: string,
+  authEpoch?: number,
 ): Promise<{ location: string; cookie: string }> {
   requireConfig(env);
+  if (!Number.isSafeInteger(authEpoch) || authEpoch! < 0)
+    throw new AppError("unavailable", "sign-in coordinator is unavailable");
   const pending: PendingLogin = {
     state: randomToken(),
     nonce: randomToken(),
     verifier: randomToken(48),
     exp: Date.now() + OIDC_TTL_MS,
+    authEpoch: authEpoch!,
     returnTo: safeReturnTo(returnTo),
   };
   const params = new URLSearchParams({
@@ -83,12 +88,14 @@ export async function finishLogin(
   query: URLSearchParams,
   cookieValue: string | undefined,
   fetcher: typeof fetch = fetch,
-): Promise<{ subject: string; email: string; authExpiryMs: number; returnTo?: string }> {
+): Promise<{ subject: string; email: string; authExpiryMs: number; authEpoch: number; returnTo?: string }> {
   requireConfig(env);
   const pending = await verifyToken<PendingLogin>(env.SESSION_KEY, cookieValue);
   if (!pending)
     throw new AppError("unauthenticated", "sign-in took too long; try again");
   requireFreshAuth(pending.exp);
+  if (!Number.isSafeInteger(pending.authEpoch) || pending.authEpoch < 0)
+    throw new AppError("unauthenticated", "sign-in service changed; try again");
   if (query.get("error"))
     throw new AppError("unauthenticated", "sign-in was cancelled");
   const code = query.get("code");
@@ -155,6 +162,7 @@ export async function finishLogin(
     subject: claims.sub,
     email: claims.email,
     authExpiryMs: pending.exp,
+    authEpoch: pending.authEpoch,
     ...(safeReturnTo(pending.returnTo)
       ? { returnTo: safeReturnTo(pending.returnTo) }
       : {}),

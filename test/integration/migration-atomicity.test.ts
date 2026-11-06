@@ -39,11 +39,35 @@ function priorVersion(fragment: string): number {
   return index;
 }
 
+function removeGlobalAuthMigration(sql: SqlStorage): void {
+  for (const trigger of ["global_auth_delete_epoch", "global_auth_identity_insert", "global_auth_identity_delete", "global_auth_home_insert", "global_auth_home_bind"]) sql.exec(`DROP TRIGGER ${trigger}`);
+  sql.exec(`DROP TABLE global_auth_marker`);
+}
+
 describe("atomic schema migrations", () => {
+  it("atomically installs the global authentication guard with its schema version", async () => {
+    const stub = env.DIRECTORY.getByName(`auth-migration-${crypto.randomUUID()}`);
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      removeGlobalAuthMigration(sql);
+      const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((sql) => sql.includes("CREATE TABLE global_auth_marker")));
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrateDirectory(failAtVersion(sql, previous + 1), tx, true)).toThrow(/synthetic version-write interruption/);
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name='global_auth_marker'`).toArray()).toHaveLength(0);
+      expect(sql.exec(`SELECT key FROM meta WHERE key IN ('global_auth_guard','global_auth_epoch')`).toArray()).toHaveLength(0);
+      migrateDirectory(sql, tx, true);
+      expect(sql.exec(`SELECT key FROM meta WHERE key IN ('global_auth_guard','global_auth_epoch')`).toArray()).toHaveLength(2);
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name='global_auth_marker'`).toArray()).toHaveLength(1);
+    });
+  });
+
+
   it("rolls back the Directory column and version together, then retries", async () => {
     const stub = env.DIRECTORY.getByName(`migration-${crypto.randomUUID()}`);
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
+      removeGlobalAuthMigration(sql);
       for (const table of ["placement_attempts", "placement_receipts", "placement_identities", "placement_finalizations", "placement_releases"]) sql.exec(`DROP TABLE ${table}`);
       sql.exec(`ALTER TABLE identity_homes DROP COLUMN generation`);
       sql.exec(`ALTER TABLE identity_homes DROP COLUMN placement_state`);
@@ -67,6 +91,7 @@ describe("atomic schema migrations", () => {
     const stub = env.DIRECTORY.getByName(`placement-migration-${crypto.randomUUID()}`);
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
+      removeGlobalAuthMigration(sql);
       sql.exec(`INSERT INTO identity_homes(provider,subject,shard,user_id) VALUES ('test','legacy',NULL,'legacy-user')`);
       for (const table of ["placement_attempts", "placement_receipts", "placement_identities", "placement_finalizations", "placement_releases"]) sql.exec(`DROP TABLE ${table}`);
       sql.exec(`ALTER TABLE identity_homes DROP COLUMN generation`);

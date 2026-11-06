@@ -140,10 +140,13 @@ app.get("/api/health", (c) => c.json({ ok: true }));
 // ------------------------------------------------------------------ auth
 
 app.get("/auth/login", async (c) => {
+  // The authorization is not issued until the global coordinator snapshot is read.
+  const authEpoch = await directory(c.env).googleAuthEpoch();
   const { location, cookie } = await beginLogin(
     c.env,
     new URL(c.req.url).origin,
     c.req.query("returnTo"),
+    authEpoch,
   );
   c.header("set-cookie", cookie);
   return c.redirect(location, 302);
@@ -153,7 +156,7 @@ app.get("/auth/callback", async (c) => {
   const url = new URL(c.req.url);
   c.header("set-cookie", clearOidcCookie(), { append: true });
   try {
-    const { subject, email, authExpiryMs, returnTo } = await finishLogin(
+    const { subject, email, authExpiryMs, authEpoch, returnTo } = await finishLogin(
       c.env,
       url.origin,
       url.searchParams,
@@ -164,6 +167,7 @@ app.get("/auth/callback", async (c) => {
       subject,
       email,
       authExpiryMs,
+      authEpoch,
       hint: hintFor(cfOf(c)),
     });
     c.header("set-cookie", cookie, { append: true });
@@ -294,7 +298,7 @@ export async function startSession(env: Env, input: SignInInput): Promise<string
   }
   const { userId, vaultId } = account;
   if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
-  await directory(env).bindIdentityHome(input.provider, input.subject, userId);
+  await directory(env).bindIdentityHome(input.provider, input.subject, userId, input.authEpoch);
   if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
   const { gen, epoch } = await vault(env, vaultId).openSession(userId);
   const cookie = sessionCookie(

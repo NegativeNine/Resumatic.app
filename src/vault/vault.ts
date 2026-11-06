@@ -1612,21 +1612,28 @@ export class Vault extends DurableObject<Env> {
       .toArray()[0];
     if (!app) throw new AppError("not_found", "no such application");
     const key = `tailor:${requestKey}`;
-    const previous = this.runs.findRequest(key);
-    if (previous) {
+    const replay = () => {
+      const previous = this.runs.findRequest(key);
+      if (!previous) return null;
       if (previous.inputDigest !== applicationId)
         throw new AppError(
           "conflict",
           "request key was used for another application",
         );
       return { resumeId: previous.targetId, runId: previous.id };
-    }
+    };
+    const previous = replay();
+    if (previous) return previous;
     await this.reconcileStaleRuns();
     this.requireOwner(who);
+    // A second request with the same key may have started the run while
+    // reconciliation was waiting on a Workflow status call.
+    const concurrent = replay();
+    if (concurrent) return concurrent;
     if (
       this.runs
         .listPending()
-        .some((r) => ["tailor", "refine", "letter", "prep"].includes(r.kind))
+        .some((r) => ["tailor", "refine", "letter", "prep", "questions"].includes(r.kind))
     ) {
       throw new AppError(
         "conflict",
@@ -4253,12 +4260,28 @@ export class Vault extends DurableObject<Env> {
     for (const row of stale) {
       if (this.hasUnsettledDispatch(row.run_id)) continue;
       if (await runStopped(this.env.DISTILL, row.run_id)) {
+        this.requireOpen();
         if (this.hasUnsettledDispatch(row.run_id)) continue;
-        this.sql.exec(
-          `UPDATE sources SET state = 'failed', error = ? WHERE id = ? AND state = 'queued'`,
-          "Reading this file stopped unexpectedly.",
-          row.id,
-        );
+        this.ctx.storage.transactionSync(() => {
+          // The source may have been retried while status() was in flight.
+          // Fence both the ledger transition and row update to the exact
+          // observed attempt. IS handles legacy rows whose run ID is null.
+          const current = this.sql.exec<{ run_id: string | null }>(
+            `SELECT run_id FROM sources WHERE id = ? AND state = 'queued' AND run_id IS ?`,
+            row.id,
+            row.run_id,
+          ).toArray()[0];
+          if (!current) return;
+          const run = row.run_id ? this.runs.get(row.run_id) : null;
+          if (run && (run.kind !== "distill" || run.targetId !== row.id || !["starting", "running"].includes(run.state))) return;
+          if (run) this.runs.fail(run.id, "execution_failed");
+          this.sql.exec(
+            `UPDATE sources SET state = 'failed', error = ? WHERE id = ? AND state = 'queued' AND run_id IS ?`,
+            "Reading this file stopped unexpectedly.",
+            row.id,
+            row.run_id,
+          );
+        });
       }
     }
   }

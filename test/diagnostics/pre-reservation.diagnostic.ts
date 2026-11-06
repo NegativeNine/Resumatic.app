@@ -20,7 +20,7 @@ it("does not recreate a deleted synthetic account when a pre-deletion epoch read
   const first = await directoryForSignIn(bindings, input);
   const account = await first.directory.signIn(first.input);
   await settleRoutedPlacement(bindings, first.directory, first.input);
-  await directory(env).bindIdentityHome(input.provider, input.subject, account.userId);
+  await directory(env).bindIdentityHome(input.provider, input.subject, account.userId, input.authEpoch);
   const home = directoryForUser(env, account.userId);
   await home.deleteAccount(account.userId, account.vaultId);
   await runDurableObjectAlarm(home);
@@ -34,7 +34,7 @@ it("does not recreate a deleted synthetic account when a pre-deletion epoch read
 
 it("does not create an account using an invite check completed before deletion revoked it", async () => {
   const nonce = crypto.randomUUID();
-  const input: SignInInput = { provider: "google", subject: `stale-invite-${nonce}`, email: `stale-invite-${nonce}@example.test`, hint: "enam" };
+  const input: SignInInput = { provider: "google", subject: `stale-invite-${nonce}`, email: `stale-invite-${nonce}@example.test`, hint: "enam", authEpoch: await directory(env).googleAuthEpoch() };
   const global = directory(env);
   await global.addInvite(input.email);
   // A's claim was already dispatched to the sharded target, but that target
@@ -42,7 +42,7 @@ it("does not create an account using an invite check completed before deletion r
   const held = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, input);
   const first = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, input);
   const account = await first.directory.signIn(first.input);
-  await global.bindIdentityHome(input.provider, input.subject, account.userId);
+  await global.bindIdentityHome(input.provider, input.subject, account.userId, input.authEpoch);
   const home = directoryForUser(env, account.userId);
   await home.deleteAccount(account.userId, account.vaultId);
   await runDurableObjectAlarm(home);

@@ -44,9 +44,47 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
   ],
   [`ALTER TABLE vaults ADD COLUMN stripe_checkout_sessions TEXT NOT NULL DEFAULT '[]'`],
   [...PLACEMENT_FENCE_MIGRATIONS],
+  [
+    `CREATE TABLE global_auth_marker (slot INTEGER PRIMARY KEY CHECK(slot=1), epoch INTEGER NOT NULL)`,
+    `CREATE TRIGGER global_auth_delete_epoch AFTER UPDATE OF state ON users
+     WHEN OLD.state <> 'deleting' AND NEW.state = 'deleting'
+       AND EXISTS(SELECT 1 FROM meta WHERE key='global_auth_guard' AND value='1')
+     BEGIN
+       SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM meta WHERE key='global_auth_epoch'
+         AND value = CAST(CAST(value AS INTEGER) AS TEXT)
+         AND CAST(value AS INTEGER) BETWEEN 0 AND 9007199254740990)
+         THEN RAISE(ABORT, 'global_auth_epoch_invalid') END;
+       UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='global_auth_epoch';
+     END`,
+    `CREATE TRIGGER global_auth_identity_insert BEFORE INSERT ON identities
+     WHEN NEW.provider='google'
+       AND EXISTS(SELECT 1 FROM meta WHERE key='global_auth_guard' AND value='1')
+       AND NOT EXISTS(SELECT 1 FROM global_auth_marker WHERE slot=1 AND epoch = CAST((SELECT value FROM meta WHERE key='global_auth_epoch') AS INTEGER))
+     BEGIN SELECT RAISE(ABORT, 'global_auth_required'); END`,
+    `CREATE TRIGGER global_auth_identity_delete BEFORE DELETE ON identities
+     WHEN OLD.provider='google'
+       AND EXISTS(SELECT 1 FROM meta WHERE key='global_auth_guard' AND value='1')
+     BEGIN
+       SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM meta WHERE key='global_auth_epoch'
+         AND value = CAST(CAST(value AS INTEGER) AS TEXT)
+         AND CAST(value AS INTEGER) BETWEEN 0 AND 9007199254740990)
+         THEN RAISE(ABORT, 'global_auth_epoch_invalid') END;
+       UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='global_auth_epoch';
+     END`,
+    `CREATE TRIGGER global_auth_home_insert BEFORE INSERT ON identity_homes
+     WHEN NEW.provider='google'
+       AND EXISTS(SELECT 1 FROM meta WHERE key='global_auth_guard' AND value='1')
+       AND NOT EXISTS(SELECT 1 FROM global_auth_marker WHERE slot=1 AND epoch = CAST((SELECT value FROM meta WHERE key='global_auth_epoch') AS INTEGER))
+     BEGIN SELECT RAISE(ABORT, 'global_auth_required'); END`,
+    `CREATE TRIGGER global_auth_home_bind BEFORE UPDATE OF user_id ON identity_homes
+     WHEN NEW.provider='google'
+       AND EXISTS(SELECT 1 FROM meta WHERE key='global_auth_guard' AND value='1')
+       AND NOT EXISTS(SELECT 1 FROM global_auth_marker WHERE slot=1 AND epoch = CAST((SELECT value FROM meta WHERE key='global_auth_epoch') AS INTEGER))
+     BEGIN SELECT RAISE(ABORT, 'global_auth_required'); END`,
+  ],
 ];
 
-export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T): void {
+export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T, global = false): void {
   sql.exec(
     `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
   );
@@ -61,6 +99,12 @@ export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) 
     transaction(() => {
       for (const statement of DIRECTORY_MIGRATIONS[version] ?? [])
         sql.exec(statement);
+      // Install the global fence together with its triggers. A crash between
+      // migration and activation must not leave old writers unfenced.
+      if (global && next === 8) {
+        sql.exec(`INSERT INTO meta(key,value) VALUES ('global_auth_epoch','0')`);
+        sql.exec(`INSERT INTO meta(key,value) VALUES ('global_auth_guard','1')`);
+      }
       sql.exec(
         `INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
         String(next),

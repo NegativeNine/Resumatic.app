@@ -328,6 +328,8 @@ describe("Directory initialization fence", () => {
     const target = env.VAULT.newUniqueId().toString();
     const retired = env.VAULT.newUniqueId().toString();
     await runInDurableObject(d, (_instance, ctx) => {
+      for (const trigger of ["global_auth_delete_epoch", "global_auth_identity_insert", "global_auth_identity_delete", "global_auth_home_insert", "global_auth_home_bind"]) ctx.storage.sql.exec(`DROP TRIGGER ${trigger}`);
+      ctx.storage.sql.exec(`DROP TABLE global_auth_marker`);
       ctx.storage.sql.exec(`INSERT INTO vault_replacements (operation_id,source_id,target_id,user_id,state) VALUES (?,?,?,?, 'complete')`, crypto.randomUUID(), vaultId, target, userId);
       ctx.storage.sql.exec(`INSERT INTO retired_vaults (vault_id,user_id) VALUES (?,?)`, retired, userId);
       for (const table of ["placement_attempts", "placement_receipts", "placement_identities", "placement_finalizations", "placement_releases"]) ctx.storage.sql.exec(`DROP TABLE ${table}`);

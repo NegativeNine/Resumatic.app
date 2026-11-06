@@ -22,6 +22,8 @@ export interface SignInInput {
   hint: LocationHint;
   /** Internal: expiry authenticated by the OAuth state cookie, in milliseconds. */
   authExpiryMs?: number;
+  /** Directory epoch captured before the signed Google authorization was issued. */
+  authEpoch?: number;
   /** Internal placement metadata supplied only by the Directory routing helper. */
   homeShard?: number;
   /** The global Directory has already authorized this new account's invite. */
