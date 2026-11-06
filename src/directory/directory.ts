@@ -1,7 +1,7 @@
 import { revokeOAuthUserGrants } from "../worker/mcp";
 import { BillingStore } from "./billing";
 import { cleanupBillingCustomer, type BillingEvent } from "../worker/billing";
-import { directory } from "../shared/stubs";
+import { directory, directoryByName } from "../shared/stubs";
 import { requireMaintenanceFence, shardedUserId } from "../shared/operations";
 import { DurableObject } from "cloudflare:workers";
 import { AppError } from "../shared/errors";
@@ -9,6 +9,7 @@ import { isMissingWorkflowInstance } from "../shared/workflow-errors";
 import { deletePrefix, vaultPrefix } from "../shared/r2";
 import type { SignInInput, VaultRow } from "../shared/types";
 import { migrateDirectory } from "./schema";
+import { PlacementFence, syntheticPlacementIdentity, type PlacementAttempt } from "./placement-fence";
 
 /** How soon a failed deletion is retried. */
 const RETRY_MS = 60_000;
@@ -64,6 +65,10 @@ export class Directory extends DurableObject<Env> {
     return this.ctx.storage.sql;
   }
 
+  private get placement(): PlacementFence {
+    return new PlacementFence(this.sql, (fn) => this.ctx.storage.transactionSync(fn));
+  }
+
   private get billing(): BillingStore {
     return new BillingStore(this.sql, this.env, {
       transaction: (fn) => this.ctx.storage.transactionSync(fn),
@@ -95,12 +100,24 @@ export class Directory extends DurableObject<Env> {
   async signIn(p: SignInInput): Promise<{ userId: string; vaultId: string }> {
     const email = p.email.trim().toLowerCase();
     let row = this.findAccount(p.provider, p.subject);
+    const attempt = p.placementAttempt;
+    if (attempt && (!syntheticPlacementIdentity(p.provider, p.subject) || email !== p.subject.toLowerCase()))
+      throw new AppError("unavailable", "placement fencing is restricted to synthetic identities");
+    if (attempt && attempt.shard !== (p.homeShard ?? null))
+      throw new AppError("invalid", "placement target changed");
+    const receipt = attempt ? this.placement.receipt(attempt.id) : null;
+    if (receipt && (!row || receipt.state !== "accepted" || receipt.generation !== attempt?.generation || receipt.user_id !== row.user_id))
+      throw new AppError("conflict", "placement attempt was closed");
     // Routing and this RPC are separate operations. If erasure removed the
     // observed account in between, retry routing instead of recreating it on
     // a potentially stale shard alongside a new account elsewhere.
     if (p.expectedUserId !== undefined && (!row || row.user_id !== p.expectedUserId))
       throw new AppError("conflict", "the account changed; retry sign-in");
     if (!row) {
+      // The disposable test namespace remains fenced even after opt-out, so
+      // a delayed unregistered call cannot recreate an experimental account.
+      if (syntheticPlacementIdentity(p.provider, p.subject) && !attempt)
+        throw new AppError("unavailable", "account creation requires a registered placement attempt");
       // Test sign-ins exist only on staging, behind TEST_SIGNIN_KEY, so the end-to-end check needs no invite.
       if (
         p.provider !== "test" &&
@@ -132,6 +149,10 @@ export class Directory extends DurableObject<Env> {
           p.subject,
           userId,
         );
+        if (attempt) {
+          this.sql.exec(`INSERT INTO placement_identities(provider,subject,generation,user_id) VALUES (?,?,?,?)`, p.provider, p.subject, attempt.generation, userId);
+          this.placement.accept(attempt, userId);
+        }
         this.sql.exec(
           `INSERT INTO vaults (vault_id, user_id, hint, state, updated_at) VALUES (?, ?, ?, 'creating', ?)`,
           vaultId,
@@ -144,6 +165,14 @@ export class Directory extends DurableObject<Env> {
     }
     if (row.user_state !== "active")
       throw new AppError("forbidden", "this account is being deleted");
+    if (attempt && !receipt) {
+      this.ctx.storage.transactionSync(() => {
+        const identity = this.sql.exec<{ generation: string; user_id: string }>(`SELECT generation,user_id FROM placement_identities WHERE provider=? AND subject=?`, p.provider, p.subject).toArray()[0];
+        if (!identity || identity.generation !== attempt.generation || identity.user_id !== row!.user_id)
+          throw new AppError("unavailable", "legacy account placement requires review");
+        this.placement.accept(attempt, row!.user_id);
+      });
+    }
     if (row.vault_state === "creating") {
       // Only the first get() of an object honours a location hint, so the vault is placed near the user now.
       await this.initializeVault(row.vault_id, row.user_id, row.hint);
@@ -257,19 +286,60 @@ export class Directory extends DurableObject<Env> {
       )
       .one().shard;
   }
+  async reservePlacementAttempt(provider: string, subject: string, preferred: number | null): Promise<PlacementAttempt> {
+    return this.placement.reserve(provider, subject, preferred);
+  }
+  async sealPlacementAttempt(attempt: PlacementAttempt): Promise<{ userId: string | null }> {
+    return this.placement.seal(attempt);
+  }
+  async settlePlacementAttempt(provider: string, subject: string, attempt: PlacementAttempt, userId: string | null): Promise<void> {
+    this.placement.settle(provider, subject, attempt, userId);
+  }
+  async closePlacementHome(provider: string, subject: string, generation: string, userId: string): Promise<PlacementAttempt[]> {
+    return this.placement.close(provider, subject, generation, userId);
+  }
+  async releasePlacementHome(provider: string, subject: string, generation: string, userId: string): Promise<void> {
+    this.placement.release(provider, subject, generation, userId);
+  }
+  /** Reconcile registered synthetic dispatches without assuming an absent RPC never arrives. */
+  async reconcileSyntheticPlacement(provider: string, subject: string): Promise<{ remaining: number }> {
+    const attempts = this.placement.pending(provider, subject);
+    for (const attempt of attempts) {
+      const target = attempt.shard === null ? directory(this.env) : directoryByName(this.env, `directory-${attempt.shard}`);
+      const sealed = await target.sealPlacementAttempt(attempt);
+      this.placement.settle(provider, subject, attempt, sealed.userId);
+    }
+    return { remaining: this.placement.pending(provider, subject).length };
+  }
+  async inspectSyntheticPlacement(provider: string, subject: string): Promise<ReturnType<PlacementFence["inspect"]>> {
+    return this.placement.inspect(provider, subject);
+  }
+  /** Seal every registered attempt before releasing an unbound synthetic claim. */
+  async cleanupSyntheticOrphan(provider: string, subject: string, generation: string): Promise<{ status: "released" | "account-present" }> {
+    const started = this.placement.beginOrphanCleanup(provider, subject, generation);
+    if (started.released) return { status: "released" };
+    for (const attempt of started.attempts) {
+      const target = attempt.shard === null ? directory(this.env) : directoryByName(this.env, `directory-${attempt.shard}`);
+      const sealed = await target.sealPlacementAttempt(attempt);
+      this.placement.settle(provider, subject, attempt, sealed.userId);
+    }
+    return { status: this.placement.finishOrphanCleanup(provider, subject, generation) };
+  }
   async bindIdentityHome(
     provider: string,
     subject: string,
     userId: string,
   ): Promise<void> {
-    const home = this.sql.exec<{ shard: number | null; user_id: string | null }>(
-      `SELECT shard,user_id FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
+    const home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null; placement_state: string }>(
+      `SELECT shard,user_id,generation,placement_state FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
     ).toArray()[0];
     const shard = /^s(\d+):/.exec(userId);
     // Existing accounts may predate a placement row. Preserve their ability
     // to sign in, without treating a missing claim as proof of quiescence.
     if (!home) return;
-    if ((shard ? Number(shard[1]) : null) !== home.shard ||
+    if (home.generation && home.user_id === null)
+      throw new AppError("unavailable", "registered placement must be settled before binding");
+    if (home.placement_state !== "open" || (shard ? Number(shard[1]) : null) !== home.shard ||
         (home.user_id !== null && home.user_id !== userId))
       throw new AppError("conflict", "account placement changed; retry sign-in");
     this.sql.exec(
@@ -290,6 +360,9 @@ export class Directory extends DurableObject<Env> {
       "vault_replacements",
       "retired_vaults",
       "identity_homes",
+      "placement_finalizations",
+      "placement_receipts",
+      "placement_identities",
     ]) {
       count += this.sql
         .exec<{ n: number }>(
@@ -324,10 +397,11 @@ export class Directory extends DurableObject<Env> {
     // already belong to an in-flight replacement sign-in.
     if (typeof userId !== "string" || !userId)
       throw new AppError("unavailable", "account placement requires review");
-    const home = this.sql.exec<{ shard: number | null; user_id: string | null }>(
-      `SELECT shard,user_id FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
+    const home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null }>(
+      `SELECT shard,user_id,generation FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
     ).toArray()[0];
     if (!home) return;
+    if (home.generation) throw new AppError("unavailable", "fenced account placement requires finalization");
     if (home.user_id === null)
       throw new AppError("unavailable", "account placement requires review");
     if (home.shard !== shard) {
@@ -567,6 +641,31 @@ export class Directory extends DurableObject<Env> {
       .map((r) => ({ email: r.email, createdAt: r.created_at }));
   }
 
+  /** Close the global generation and permanently seal all its target dispatches. */
+  private async prepareFencedIdentityRemoval(userId: string): Promise<{ provider: string; subject: string; generation: string }[] | null> {
+    const identities = this.sql.exec<{ provider: string; subject: string; generation: string | null; placement_owner: string | null }>(
+      `SELECT i.provider,i.subject,p.generation,p.user_id AS placement_owner FROM identities i LEFT JOIN placement_identities p ON p.provider=i.provider AND p.subject=i.subject WHERE i.user_id=?`, userId,
+    ).toArray();
+    const fenced = identities.filter((identity) => identity.generation !== null);
+    const enabled = (this.env as Env & { PLACEMENT_FENCE_ENABLED?: string }).PLACEMENT_FENCE_ENABLED === "true" && identities.some((identity) => syntheticPlacementIdentity(identity.provider, identity.subject));
+    if (!fenced.length && !enabled) return null;
+    if (!identities.length || fenced.length !== identities.length)
+      throw new AppError("unavailable", "legacy account placement requires review");
+    if (fenced.some((identity) => identity.placement_owner !== userId))
+      throw new AppError("unavailable", "account placement requires review");
+    const global = directory(this.env);
+    for (const identity of fenced) {
+      const generation = identity.generation!;
+      const attempts = await global.closePlacementHome(identity.provider, identity.subject, generation, userId);
+      for (const attempt of attempts) {
+        const target = attempt.shard === null ? global : directoryByName(this.env, `directory-${attempt.shard}`);
+        const sealed = await target.sealPlacementAttempt(attempt);
+        await global.settlePlacementAttempt(identity.provider, identity.subject, attempt, sealed.userId);
+      }
+    }
+    return fenced.map((identity) => ({ ...identity, generation: identity.generation! }));
+  }
+
   /**
    * Erases deleting vaults: close the vault, stop its runs, delete its files, destroy it. After
    * SWEEP_DELAY_MS the files are swept once more, for any upload that raced the deletion, and then
@@ -645,8 +744,12 @@ export class Directory extends DurableObject<Env> {
       )
         continue;
       try {
+        let finalizations = this.sql.exec<{ provider: string; subject: string; generation: string }>(
+          `SELECT provider,subject,generation FROM placement_finalizations WHERE user_id=?`, v.user_id,
+        ).toArray();
+        const fenced = finalizations.length ? null : await this.prepareFencedIdentityRemoval(v.user_id);
         const shard = /^s(\d+):/.exec(v.user_id);
-        if (shard) {
+        if (shard && !fenced && !finalizations.length) {
           for (const identity of this.sql
             .exec<{ provider: string; subject: string }>(
               `SELECT provider,subject FROM identities WHERE user_id=?`,
@@ -667,6 +770,22 @@ export class Directory extends DurableObject<Env> {
           throw new AppError("unavailable", "checkout customer requires operator review");
         await revokeOAuthUserGrants(this.env, v.user_id);
         await deletePrefix(this.env.FILES, vaultPrefix(v.vault_id));
+        if (fenced) {
+          // Remove the target identity before releasing its global claim. The
+          // durable outbox keeps the user's deletion retryable across a crash.
+          this.ctx.storage.transactionSync(() => {
+            for (const identity of fenced) {
+              this.sql.exec(`INSERT INTO placement_finalizations(user_id,vault_id,provider,subject,generation) VALUES (?,?,?,?,?)`, v.user_id, v.vault_id, identity.provider, identity.subject, identity.generation);
+              this.sql.exec(`DELETE FROM placement_identities WHERE provider=? AND subject=? AND generation=?`, identity.provider, identity.subject, identity.generation);
+            }
+            this.sql.exec(`DELETE FROM identities WHERE user_id=?`, v.user_id);
+            // Keep opaque sealed tombstones forever so delayed dispatches cannot recreate the account.
+            this.sql.exec(`UPDATE placement_receipts SET user_id=NULL WHERE user_id=? AND state='sealed'`, v.user_id);
+          });
+          finalizations = fenced;
+        }
+        for (const identity of finalizations)
+          await directory(this.env).releasePlacementHome(identity.provider, identity.subject, identity.generation, v.user_id);
         this.ctx.storage.transactionSync(() => {
           this.billing.erase(v.user_id, v.stripe_customer ?? undefined);
           this.sql.exec(
@@ -680,6 +799,7 @@ export class Directory extends DurableObject<Env> {
           this.sql.exec(`DELETE FROM identities WHERE user_id = ?`, v.user_id);
           this.sql.exec(`DELETE FROM vaults WHERE vault_id = ?`, v.vault_id);
           this.sql.exec(`DELETE FROM users WHERE user_id = ?`, v.user_id);
+          this.sql.exec(`DELETE FROM placement_finalizations WHERE user_id=?`, v.user_id);
         });
       } catch (e) {
         console.error("final sweep failed", {

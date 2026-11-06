@@ -1,4 +1,5 @@
 import { BILLING_MIGRATIONS } from "./billing";
+import { PLACEMENT_FENCE_MIGRATIONS } from "./placement-fence";
 // Directory tables. Holds identities and the vault directory; never career data.
 
 export const DIRECTORY_MIGRATIONS: readonly string[][] = [
@@ -42,6 +43,7 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
     `CREATE TRIGGER guard_sticky_vault_initializations BEFORE DELETE ON vault_initializations WHEN OLD.sticky = 1 BEGIN SELECT RAISE(IGNORE); END`,
   ],
   [`ALTER TABLE vaults ADD COLUMN stripe_checkout_sessions TEXT NOT NULL DEFAULT '[]'`],
+  [...PLACEMENT_FENCE_MIGRATIONS],
 ];
 
 export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T): void {

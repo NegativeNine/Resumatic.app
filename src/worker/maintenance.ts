@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
-import { allDirectories, vault } from "../shared/stubs";
+import { allDirectories, directory, vault } from "../shared/stubs";
 import { operationalMetrics } from "./metrics";
 import { oauthUserGrantCount } from "./mcp";
 import { AppError } from "../shared/errors";
@@ -28,6 +28,35 @@ async function home(env: Env, id: string) {
   return found[0]!;
 }
 const id = (value: string) => VaultId.parse(value);
+function requireSyntheticPlacement(env: Env): void {
+  if (env.PLACEMENT_FENCE_ENABLED !== "true" || env.ALLOW_TEST_SIGNIN !== "true" || !env.PILOT_BUDGET)
+    throw new AppError("unavailable", "placement reconciliation requires staging configuration");
+}
+async function syntheticPlacementBody(request: Request, generationRequired = false): Promise<{ subject: string; generation?: string }> {
+  let raw: unknown;
+  try { raw = await request.json(); } catch { throw new AppError("invalid", "expected a JSON body"); }
+  const parsed = z.object({ subject: z.string().regex(/^placement-[0-9a-f-]{36}@placement\.invalid$/i), generation: z.uuid().optional() }).strict().safeParse(raw);
+  if (!parsed.success || generationRequired !== (parsed.data.generation !== undefined)) throw new AppError("invalid", "invalid synthetic placement subject");
+  return { ...parsed.data, subject: parsed.data.subject.toLowerCase() };
+}
+
+// Access-protected, synthetic-only recovery. It seals known attempts; it does
+// not establish that older Workers or unregistered dispatches are quiescent.
+maintenance.post("/placement/reconcile", bodyLimit({ maxSize: 2048 }), async (c) => {
+  requireSyntheticPlacement(c.env);
+  const { subject } = await syntheticPlacementBody(c.req.raw);
+  return c.json(await directory(c.env).reconcileSyntheticPlacement("test", subject));
+});
+maintenance.post("/placement/inspect", bodyLimit({ maxSize: 2048 }), async (c) => {
+  requireSyntheticPlacement(c.env);
+  const { subject } = await syntheticPlacementBody(c.req.raw);
+  return c.json(await directory(c.env).inspectSyntheticPlacement("test", subject));
+});
+maintenance.post("/placement/cleanup-orphan", bodyLimit({ maxSize: 2048 }), async (c) => {
+  requireSyntheticPlacement(c.env);
+  const { subject, generation } = await syntheticPlacementBody(c.req.raw, true);
+  return c.json(await directory(c.env).cleanupSyntheticOrphan("test", subject, generation!));
+});
 maintenance.post("/vaults/:id/replacement", async (c) => {
   const { operationId } = z
     .object({ operationId: Operation })

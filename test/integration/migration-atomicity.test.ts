@@ -44,17 +44,43 @@ describe("atomic schema migrations", () => {
     const stub = env.DIRECTORY.getByName(`migration-${crypto.randomUUID()}`);
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
+      for (const table of ["placement_attempts", "placement_receipts", "placement_identities", "placement_finalizations", "placement_releases"]) sql.exec(`DROP TABLE ${table}`);
+      sql.exec(`ALTER TABLE identity_homes DROP COLUMN generation`);
+      sql.exec(`ALTER TABLE identity_homes DROP COLUMN placement_state`);
       sql.exec(`DROP TRIGGER guard_sticky_vault_initializations`);
       sql.exec(`ALTER TABLE vault_initializations DROP COLUMN sticky`);
       sql.exec(`ALTER TABLE vaults DROP COLUMN stripe_checkout_sessions`);
-      sql.exec(`UPDATE meta SET value = ? WHERE key = 'schema_version'`, String(DIRECTORY_MIGRATIONS.length - 2));
+      const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((statement) => statement.includes("ALTER TABLE vault_initializations ADD COLUMN sticky")));
+      expect(previous).toBeGreaterThan(0);
+      sql.exec(`UPDATE meta SET value = ? WHERE key = 'schema_version'`, String(previous));
       const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
       expect(() => migrateDirectory(failAtTrigger(sql, "guard_sticky_vault_initializations"), tx)).toThrow(/synthetic migration interruption/);
-      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key = 'schema_version'`).one().value).toBe(String(DIRECTORY_MIGRATIONS.length - 2));
+      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key = 'schema_version'`).one().value).toBe(String(previous));
       expect(() => sql.exec(`SELECT sticky FROM vault_initializations`).toArray()).toThrow();
       migrateDirectory(sql, tx);
       expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key = 'schema_version'`).one().value).toBe(String(DIRECTORY_MIGRATIONS.length));
       expect(() => sql.exec(`SELECT sticky FROM vault_initializations`).toArray()).not.toThrow();
+    });
+  });
+
+  it("rolls back placement tables and version together while preserving existing homes", async () => {
+    const stub = env.DIRECTORY.getByName(`placement-migration-${crypto.randomUUID()}`);
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec(`INSERT INTO identity_homes(provider,subject,shard,user_id) VALUES ('test','legacy',NULL,'legacy-user')`);
+      for (const table of ["placement_attempts", "placement_receipts", "placement_identities", "placement_finalizations", "placement_releases"]) sql.exec(`DROP TABLE ${table}`);
+      sql.exec(`ALTER TABLE identity_homes DROP COLUMN generation`);
+      sql.exec(`ALTER TABLE identity_homes DROP COLUMN placement_state`);
+      const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((statement) => statement.includes("CREATE TABLE placement_attempts")));
+      expect(previous).toBeGreaterThan(0);
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrateDirectory(failAtVersion(sql, previous + 1), tx)).toThrow(/synthetic version-write interruption/);
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='placement_attempts'`).toArray()).toHaveLength(0);
+      expect(sql.exec<{ user_id: string }>(`SELECT user_id FROM identity_homes WHERE subject='legacy'`).one().user_id).toBe("legacy-user");
+      migrateDirectory(sql, tx);
+      expect(sql.exec<{ generation: string | null }>(`SELECT generation FROM identity_homes WHERE subject='legacy'`).one().generation).toBeNull();
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='placement_attempts'`).toArray()).toHaveLength(1);
     });
   });
 
@@ -121,6 +147,25 @@ describe("atomic schema migrations", () => {
       expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key = 'schema_version'`).one().value).toBe(String(SCHEMA_VERSION));
       expect(sql.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='r2_cache_dispatches'`).toArray()).toHaveLength(1);
       expect(sql.exec<{ name: string }>(`SELECT name FROM profile WHERE id=1`).one().name).toBe("preserved");
+    });
+  });
+
+  it("keeps legacy unresolved cache markers when adding correlation digests", async () => {
+    const stub = env.VAULT.get(env.VAULT.newUniqueId());
+    await stub.init("migration-owner");
+    const attemptId = crypto.randomUUID();
+    await stub.beginCacheWrite({ userId: "migration-owner", gen: 1 }, attemptId, "pdf");
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec(`ALTER TABLE r2_cache_dispatches DROP COLUMN key_digest`);
+      const previous = priorVersion("ALTER TABLE r2_cache_dispatches ADD COLUMN key_digest");
+      sql.exec(`UPDATE meta SET value = ? WHERE key = 'schema_version'`, String(previous));
+      migrate(sql, <T>(fn: () => T) => state.storage.transactionSync(fn));
+      expect(sql.exec<{ attempt_id: string; key_digest: string | null }>(`SELECT attempt_id,key_digest FROM r2_cache_dispatches`).one()).toEqual({ attempt_id: attemptId, key_digest: null });
+    });
+    expect(await stub.cacheWriteFences()).toMatchObject({ status: "available", total: 1, attempts: [{ id: attemptId, keyDigest: null }] });
+    await runInDurableObject(stub, async (instance) => {
+      await expect(instance.close()).rejects.toThrow("export cache write is unresolved");
     });
   });
 });

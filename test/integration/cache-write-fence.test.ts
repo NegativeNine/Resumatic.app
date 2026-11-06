@@ -3,6 +3,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { vault } from "../../src/shared/stubs";
 import { readSession } from "../../src/worker/session";
+import { sha256 } from "../../src/worker/crypto";
 import { putExportCache } from "../../src/worker/cache-write";
 import { maintenance } from "../../src/worker/maintenance";
 import { app } from "../../src/worker/routes";
@@ -107,6 +108,48 @@ it("settles an acknowledged attempt after sign-out without reopening the old ses
     await expect(instance.checkSession(who)).rejects.toThrow("signed out");
   });
   expect((await stub.openSession(who.userId)).gen).toBe(who.gen + 1);
+});
+
+it("rejects raw object names as correlation metadata before recording an attempt", async () => {
+  const { who, stub } = await account();
+  await runInDurableObject(stub, (instance) => {
+    expect(() => instance.beginCacheWrite(who, crypto.randomUUID(), "pdf", "private-resume-name.pdf")).toThrow("invalid cache write attempt");
+  });
+  expect(await stub.cacheWriteFences()).toMatchObject({ status: "available", total: 0 });
+});
+
+it("correlates unknown puts without treating overwritten metadata as proof", async () => {
+  const { who, vid, stub } = await account();
+  const key = `vaults/${vid}/exports/private-resume-name.pdf`;
+  const digest = Array.from(new Uint8Array(await sha256(key)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  // Simulate the provider accepting bytes while the Worker loses each reply.
+  const bucket = { put: async (name: string, value: Uint8Array, options: R2PutOptions) => {
+    await env.FILES.put(name, value, options);
+    throw new Error("acknowledgement lost");
+  } } as unknown as Pick<R2Bucket, "put">;
+  try {
+    for (const data of [new Uint8Array([1]), new Uint8Array([2])])
+      await expect(putExportCache(bucket, stub, who, key, data, "pdf", true)).rejects.toThrow("acknowledgement lost");
+    const result = await stub.cacheWriteFences();
+    expect(result.status).toBe("available");
+    if (result.status !== "available") throw new Error("missing diagnostic");
+    expect(result.total).toBe(2);
+    expect(result.attempts.every((item) => item.keyDigest === digest)).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("private-resume-name");
+    const current = await env.FILES.head(key);
+    expect(current).not.toBeNull();
+    const observed = current?.customMetadata?.resumatic_cache_attempt;
+    expect(result.attempts.filter((item) => item.id === observed)).toHaveLength(1);
+    // The second put overwrites metadata from the first. Neither marker may be
+    // cleared based on this object or a list result; either put may be delayed.
+    await stub.quiesce();
+    await runInDurableObject(stub, async (instance) => {
+      await expect(instance.close()).rejects.toThrow("export cache write is unresolved");
+    });
+    expect(await stub.cacheWriteFences()).toMatchObject({ status: "available", total: 2 });
+  } finally {
+    await env.FILES.delete(key);
+  }
 });
 
 it.each(["pdf", "docx"] as const)("fences the real %s route before an in-flight cache put", async (kind) => {

@@ -70,7 +70,7 @@ export default defineConfig({
             // Opt-in only: this asserts a known-unsatisfied release invariant
             // and is expected to exit nonzero until placement is fenced.
             ...(process.env.RESUMATIC_PLACEMENT_DIAGNOSTIC === "1"
-              ? ["test/diagnostics/placement.diagnostic.ts"]
+              ? ["test/diagnostics/*.diagnostic.ts"]
               : []),
           ],
           testTimeout: 30_000,

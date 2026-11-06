@@ -129,6 +129,10 @@ export const MIGRATIONS: readonly string[][] = [
     // cannot establish that a request will not arrive after deletion.
     `CREATE TABLE r2_cache_dispatches (attempt_id TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at INTEGER NOT NULL)`,
   ],
+  [
+    // Older unresolved markers remain valid but cannot be matched by key digest.
+    `ALTER TABLE r2_cache_dispatches ADD COLUMN key_digest TEXT`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

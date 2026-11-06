@@ -89,6 +89,8 @@ export async function validate({
       missing.push("ROLE_UNKNOWN_END_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.R2_CACHE_FENCE_ENABLED && config.vars.R2_CACHE_FENCE_ENABLED !== "false")
       missing.push("R2_CACHE_FENCE_ROLLOUT_UNVERIFIED");
+    if (environment === "production" && config.vars?.PLACEMENT_FENCE_ENABLED && config.vars.PLACEMENT_FENCE_ENABLED !== "false")
+      missing.push("PLACEMENT_FENCE_ROLLOUT_UNVERIFIED");
     if (
       config.vars?.ACCESS_TEAM_DOMAIN &&
       !httpsOrigin(config.vars.ACCESS_TEAM_DOMAIN)

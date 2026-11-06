@@ -88,6 +88,8 @@ const DEFAULT_TAILOR_LIMIT = 20;
 /** Uploads being read at once, and uploads kept per vault: each upload costs model calls. */
 const MAX_QUEUED_SOURCES = 3;
 const MAX_SOURCES = 50;
+/** Bound unresolved experimental cache writes without silently settling any. */
+const MAX_CACHE_WRITE_ATTEMPTS = 64;
 const REFINE_CACHE_TTL_MS = 30 * 86400000;
 // Same-ID recovery is bounded. A retry never resolves the original uncertainty.
 const REDISPATCH_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
@@ -406,12 +408,14 @@ export class Vault extends DurableObject<Env> {
   }
 
   /** Record a cache write before the Worker can send it to R2. */
-  beginCacheWrite(who: Who, attemptId: string, kind: "pdf" | "docx"): void {
+  beginCacheWrite(who: Who, attemptId: string, kind: "pdf" | "docx", keyDigest?: string): void {
     this.requireOwner(who);
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(attemptId) || !["pdf", "docx"].includes(kind))
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(attemptId) || !["pdf", "docx"].includes(kind) || (keyDigest !== undefined && !/^[0-9a-f]{64}$/.test(keyDigest)))
       throw new AppError("invalid", "invalid cache write attempt");
+    if (this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM r2_cache_dispatches`).one().n >= MAX_CACHE_WRITE_ATTEMPTS)
+      throw new AppError("unavailable", "too many export cache writes are unresolved");
     // No await between the open-state check and durable marker insertion.
-    this.sql.exec(`INSERT INTO r2_cache_dispatches (attempt_id,kind,created_at) VALUES (?,?,?)`, attemptId, kind, Date.now());
+    this.sql.exec(`INSERT INTO r2_cache_dispatches (attempt_id,kind,created_at,key_digest) VALUES (?,?,?,?)`, attemptId, kind, Date.now(), keyDigest ?? null);
   }
 
   /** A known R2 acknowledgement can settle its own opaque attempt after revocation. */
@@ -3524,12 +3528,12 @@ export class Vault extends DurableObject<Env> {
   }
 
   /** Metadata-only diagnostics, not proof that earlier writers are quiescent. */
-  cacheWriteFences(): { status: "available"; total: number; attempts: { id: string; kind: string; createdAt: number }[] } | { status: "unavailable" } {
+  cacheWriteFences(): { status: "available"; total: number; attempts: { id: string; kind: string; createdAt: number; keyDigest: string | null }[] } | { status: "unavailable" } {
     if (!this.initialised || this.gone || !hasSchema(this.sql)) return { status: "unavailable" };
     const total = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM r2_cache_dispatches`).one().n;
-    const attempts = this.sql.exec<{ attempt_id: string; kind: string; created_at: number }>(
-      `SELECT attempt_id,kind,created_at FROM r2_cache_dispatches ORDER BY created_at,attempt_id LIMIT 100`,
-    ).toArray().map((row) => ({ id: row.attempt_id, kind: row.kind, createdAt: row.created_at }));
+    const attempts = this.sql.exec<{ attempt_id: string; kind: string; created_at: number; key_digest: string | null }>(
+      `SELECT attempt_id,kind,created_at,key_digest FROM r2_cache_dispatches ORDER BY created_at,attempt_id LIMIT 100`,
+    ).toArray().map((row) => ({ id: row.attempt_id, kind: row.kind, createdAt: row.created_at, keyDigest: row.key_digest }));
     return { status: "available", total, attempts };
   }
 

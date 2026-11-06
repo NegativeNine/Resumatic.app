@@ -1,9 +1,10 @@
 import type { Who } from "../shared/types";
 import { AppError } from "../shared/errors";
+import { sha256 } from "./crypto";
 
 type CacheVault = {
   checkSession(who: Who): Promise<void>;
-  beginCacheWrite(who: Who, attemptId: string, kind: "pdf" | "docx"): Promise<void>;
+  beginCacheWrite(who: Who, attemptId: string, kind: "pdf" | "docx", keyDigest: string): Promise<void>;
   finishCacheWrite(userId: string, attemptId: string): Promise<void>;
 };
 
@@ -37,8 +38,11 @@ export async function putExportCache(
     return;
   }
   const attemptId = crypto.randomUUID();
-  await vault.beginCacheWrite(who, attemptId, kind);
-  await bucket.put(key, bytes, { httpMetadata: { contentType } });
+  const keyDigest = Array.from(new Uint8Array(await sha256(key)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  await vault.beginCacheWrite(who, attemptId, kind, keyDigest);
+  // R2 metadata is only a correlation hint: concurrent puts can replace it,
+  // and an unseen attempt can still arrive after any head or list result.
+  await bucket.put(key, bytes, { httpMetadata: { contentType }, customMetadata: { resumatic_cache_attempt: attemptId } });
   // The R2 acknowledgement was observed. An RPC failure here still leaves
   // the outcome unknown to the caller and must never trigger another put.
   await vault.finishCacheWrite(who.userId, attemptId);

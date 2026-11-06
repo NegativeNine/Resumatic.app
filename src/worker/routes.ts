@@ -45,7 +45,7 @@ import {
 import { AppError, errorCode, errorDetail, httpStatus } from "../shared/errors";
 import { hintFor, type CfLocation } from "../shared/location";
 import { docxKey, pdfKey, sourceKey } from "../shared/r2";
-import { directoryForSignIn } from "../directory/routing";
+import { directoryForSignIn, settleRoutedPlacement } from "../directory/routing";
 import { maintenance } from "./maintenance";
 import {
   directory,
@@ -282,7 +282,13 @@ async function startSession(env: Env, input: SignInInput): Promise<string> {
   if (!env.SESSION_KEY)
     throw new AppError("unavailable", "sessions are not configured");
   const target = await directoryForSignIn(env, input);
-  const { userId, vaultId } = await target.directory.signIn(target.input);
+  let account: { userId: string; vaultId: string };
+  try {
+    account = await target.directory.signIn(target.input);
+  } finally {
+    await settleRoutedPlacement(env, target.directory, target.input);
+  }
+  const { userId, vaultId } = account;
   await directory(env).bindIdentityHome(input.provider, input.subject, userId);
   const { gen, epoch } = await vault(env, vaultId).openSession(userId);
   return sessionCookie(

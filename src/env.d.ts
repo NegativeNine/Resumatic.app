@@ -38,6 +38,8 @@ interface ResumaticSecrets {
   RESTORE_FENCE_IDS?: string;
   /** Experimental; opt in only after reviewing unresolved-write recovery. */
   R2_CACHE_FENCE_ENABLED?: string;
+  /** Experimental; placement migration and legacy recovery remain unverified. */
+  PLACEMENT_FENCE_ENABLED?: string;
   RATE_LIMITS_ENABLED?: string;
   DIRECTORY_SHARDS?: string;
   RETENTION_REVIEW_ID?: string;

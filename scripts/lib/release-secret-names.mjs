@@ -8,5 +8,5 @@ export function validEvaluationSecretNames(secrets) {
   );
 }
 export function validProductionSecretNames(secrets) {
-  return validEvaluationSecretNames(secrets) && secrets.every((secret) => !["TEST_SIGNIN_KEY", "R2_CACHE_FENCE_ENABLED"].includes(secret.name));
+  return validEvaluationSecretNames(secrets) && secrets.every((secret) => !["TEST_SIGNIN_KEY", "R2_CACHE_FENCE_ENABLED", "PLACEMENT_FENCE_ENABLED"].includes(secret.name));
 }
