@@ -13,6 +13,17 @@ it.each([null, 3])("attributes events in the owning Directory and ignores delive
   await runInDurableObject(routed, async (instance, state) => {
     const local = (instance as unknown as { env: Record<string, unknown> }).env;
     const saved = { ...local };
+    // This test exercises attribution, not background reconciliation. A
+    // real immediate billing alarm can start while deleteAccount awaits its
+    // Vault RPC; deleteAlarm() cannot stop that already-running handler.
+    // Leave deletion's own transactional alarm untouched and suppress only
+    // the billing helper so the isolated worker has no unobserved alarm task.
+    const scheduleDescriptor = Object.getOwnPropertyDescriptor(instance, "scheduleAt");
+    let billingSchedules = 0;
+    Object.defineProperty(instance, "scheduleAt", {
+      configurable: true,
+      value: async () => { billingSchedules++; },
+    });
     Object.assign(local, {
       BILLING_ENABLED: "true",
       BILLING_PLANS_JSON: JSON.stringify({ free: { generationLimit: 3 }, paid: [{ id: "pro", priceId: "price_pro", generationLimit: 50 }] }),
@@ -22,6 +33,7 @@ it.each([null, 3])("attributes events in the owning Directory and ignores delive
     try {
       // No billing_accounts row exists yet; the Stripe metadata UID still binds the event.
       await instance.acceptBillingEvent(event("evt_before"), account.userId);
+      expect(billingSchedules).toBe(1);
       expect(state.storage.sql.exec<{ user_id: string }>("SELECT user_id FROM billing_events WHERE id='evt_before'").one().user_id).toBe(account.userId);
       await instance.deleteAccount(account.userId, account.vaultId);
       // The Worker resolved the UID before deletion but the Directory RPC arrived later.
@@ -29,12 +41,15 @@ it.each([null, 3])("attributes events in the owning Directory and ignores delive
       expect(state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM billing_events WHERE id='evt_late'").one().n).toBe(0);
       await expect(instance.acceptBillingEvent(event("evt_legacy"))).rejects.toThrow("attribution");
     } finally {
-      // The event and deletion schedule immediate background alarms. This test
-      // exercises attribution only, so cancel its pending alarm before its
-      // isolated worker is torn down.
-      await state.storage.deleteAlarm();
-      for (const key of Object.keys(local)) if (!(key in saved)) delete local[key];
-      Object.assign(local, saved);
+      try {
+        // deleteAccount schedules a later retry; cancel it before teardown.
+        await state.storage.deleteAlarm();
+      } finally {
+        if (scheduleDescriptor) Object.defineProperty(instance, "scheduleAt", scheduleDescriptor);
+        else Reflect.deleteProperty(instance, "scheduleAt");
+        for (const key of Object.keys(local)) if (!(key in saved)) delete local[key];
+        Object.assign(local, saved);
+      }
     }
   });
 }, 30_000);
