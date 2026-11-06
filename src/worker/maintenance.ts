@@ -125,6 +125,12 @@ maintenance.get("/vaults/:id/reembed/:run", async (c) =>
   ),
 );
 
+// Access-protected metadata only. An empty result does not establish that
+// legacy, upload, transfer or provider-side writes have quiesced.
+maintenance.get("/vaults/:id/cache-write-fences", async (c) =>
+  c.json(await vault(c.env, id(c.req.param("id"))).cacheWriteFences()),
+);
+
 maintenance.post("/deletion-audits/:id", async (c) => {
   const vid = id(c.req.param("id"));
   const body = z

@@ -203,6 +203,16 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
       !validCount(shared.reservedCalls) || shared.reservedCalls > shared.maxCalls ||
       shared.pending !== 0 || shared.unknown !== 0 || shared.overrun !== 0)
     fail("PILOT_SHARED_LEDGER_REQUIRED");
+  // The coordinator may contain settled reservations from earlier supervised
+  // work. Do not burn the one-shot local marker when its remaining call budget
+  // cannot cover even the known minimum for both suites. Two microdollars is
+  // only an absolute floor (one nonzero reservation in each suite), not a
+  // forecast that the actual model prices will fit. Concurrent consumers can
+  // still spend the remaining capacity after this read; reservations enforce
+  // the hard cap when each attempt begins.
+  if (shared.maxCalls - shared.reservedCalls < extractionCalls + 26 ||
+      shared.maxMicros - shared.reservedMicros < 2)
+    fail("PILOT_SHARED_BUDGET_TOO_SMALL");
 
   // One account-scoped marker, independent of which copy of a dataset is supplied.
   // On this host a restart, changed dataset path or concurrent launch cannot reset it.

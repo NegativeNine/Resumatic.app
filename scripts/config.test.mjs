@@ -18,8 +18,18 @@ test("production secrets cannot shadow the evaluated extractor or model configur
     if (name !== "TEST_SIGNIN_KEY") assert.equal(validEvaluationSecretNames([{ name }]), false);
   }
   assert.equal(validEvaluationSecretNames([{ name: "TEST_SIGNIN_KEY" }]), true);
+  assert.equal(validProductionSecretNames([{ name: "R2_CACHE_FENCE_ENABLED" }]), false);
   assert.equal(validProductionSecretNames({}), false);
   assert.equal(validProductionSecretNames([{}]), false);
+});
+
+test("experimental cache-write fencing cannot be enabled in production configuration", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "cache-fence-config-"));
+  try {
+    const path = join(dir, "wrangler.jsonc");
+    await writeFile(path, JSON.stringify({ name: "example", vars: { R2_CACHE_FENCE_ENABLED: "true" }, env: { staging: { vars: {} } } }));
+    assert.ok((await validate({ environment: "production", purpose: "deploy", configPath: path, env: {} })).missing.includes("R2_CACHE_FENCE_ROLLOUT_UNVERIFIED"));
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
 test("unknown-end behavior changes evaluation hash and production activation stays blocked", async () => {

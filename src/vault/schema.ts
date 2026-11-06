@@ -124,6 +124,11 @@ export const MIGRATIONS: readonly string[][] = [
     // introduced revisions with a default of 1, so revision=1 does not prove
     // that the wording was never changed. Keep original values for review.
   ],
+  [
+    // One marker per dispatched export-cache put. A missing acknowledgement
+    // cannot establish that a request will not arrive after deletion.
+    `CREATE TABLE r2_cache_dispatches (attempt_id TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at INTEGER NOT NULL)`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

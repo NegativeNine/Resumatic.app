@@ -333,6 +333,37 @@ test("preflight rejects zero input prices for every required model before creati
     assert.ok(createPilotLedger(dir, 10_000_000, 50).file);
   }));
 
+test("preflight checks remaining shared capacity before creating the one-shot marker", () =>
+  temporary(async (dir) => {
+    let subprocesses = 0;
+    let ledgers = 0;
+    const base = deps(dir, () => { subprocesses++; return { status: 0 }; });
+    const status = { initialized: true, frozen: false, maxMicros: 10_000_000, maxCalls: 50, reservedMicros: 0, reservedCalls: 0, pending: 0, unknown: 0, overrun: 0 };
+    const dependencies = (overrides) => ({
+      ...base,
+      sharedPilot: { status: async () => ({ ...status, ...overrides }) },
+      createLedger: () => { ledgers++; throw new Error("ledger reached"); },
+    });
+    await assert.rejects(
+      () => runFirstStagingEvals({ ...input, env }, dependencies({ reservedCalls: 13 })),
+      /PILOT_SHARED_BUDGET_TOO_SMALL/,
+    );
+    await assert.rejects(
+      () => runFirstStagingEvals({ ...input, env }, dependencies({ reservedCalls: 1, reservedMicros: 9_999_999 })),
+      /PILOT_SHARED_BUDGET_TOO_SMALL/,
+    );
+    assert.equal(ledgers, 0);
+    assert.equal(subprocesses, 0);
+    // The exact minimum of 38 weighted attempts reaches ledger creation;
+    // this is preflight evidence only, not a reservation of those attempts.
+    await assert.rejects(
+      () => runFirstStagingEvals({ ...input, env }, dependencies({ reservedCalls: 12, reservedMicros: 1 })),
+      /ledger reached/,
+    );
+    assert.equal(ledgers, 1);
+    assert.equal(subprocesses, 0);
+  }));
+
 test("strategy-specific allocations preserve enough tailoring attempts", async () => {
   for (const [strategy, extractionCalls] of [
     ["llm:default", 12], ["clairic", 15], ["judge:llm:default", 18], ["judge:clairic", 21],

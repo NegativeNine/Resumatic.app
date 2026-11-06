@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setModels } from "../../src/ai/models";
 import { checkLine } from "../../src/grounding/verdict";
-import { MIGRATIONS, migrate, SCHEMA_VERSION } from "../../src/vault/schema";
+import { MIGRATIONS, migrate } from "../../src/vault/schema";
 import { vault } from "../../src/shared/stubs";
 import type { FactRecord } from "../../src/shared/types";
 import { fakeModels, signIn, type User } from "./support";
@@ -61,8 +61,11 @@ describe("fact level provenance", () => {
     await stub.init(owner);
     await runInDurableObject(stub, async (instance, state) => {
       const sql = state.storage.sql;
+      sql.exec(`DROP TABLE r2_cache_dispatches`);
       sql.exec(`ALTER TABLE facts DROP COLUMN level_revision`);
-      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(SCHEMA_VERSION - 1));
+      const previous = MIGRATIONS.findIndex((migration) => migration.some((statement) => statement.includes("ALTER TABLE facts ADD COLUMN level_revision")));
+      expect(previous).toBeGreaterThan(0);
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
       sql.exec(`INSERT INTO facts (id,role_id,kind,text,level,origin,state,revision,updated_at) VALUES ('new-user',NULL,'accomplishment','Migration member','led','user','confirmed',1,1), ('edited-user',NULL,'accomplishment','Migration participant','led','user','confirmed',2,2)`);
       migrate(sql, <T>(fn: () => T) => state.storage.transactionSync(fn));
       expect(sql.exec<{ level: string; level_revision: number | null }>(`SELECT level, level_revision FROM facts WHERE id='edited-user'`).one()).toEqual({ level: "led", level_revision: null });

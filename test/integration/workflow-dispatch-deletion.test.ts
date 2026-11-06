@@ -2,7 +2,7 @@ import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "c
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { directory, vault } from "../../src/shared/stubs";
-import { SCHEMA_VERSION } from "../../src/vault/schema";
+import { MIGRATIONS } from "../../src/vault/schema";
 import { uniqueEmail } from "./support";
 
 describe("deletion and Workflow dispatch", () => {
@@ -98,10 +98,13 @@ describe("deletion and Workflow dispatch", () => {
         state.storage.sql.exec(`INSERT INTO resumes (id, application_id, state, run_id, created_at) VALUES (?, ?, 'ready', ?, 1)`, oldResume, appId, oldResume);
         state.storage.sql.exec(`DROP TABLE workflow_dispatches`);
         state.storage.sql.exec(`DROP TABLE workflow_redispatches`);
+        state.storage.sql.exec(`DROP TABLE r2_cache_dispatches`);
         state.storage.sql.exec(`DROP TRIGGER clear_unknown_end_start`);
         state.storage.sql.exec(`ALTER TABLE roles DROP COLUMN unknown_end_start_date`);
         state.storage.sql.exec(`ALTER TABLE facts DROP COLUMN level_revision`);
-        state.storage.sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(SCHEMA_VERSION - 4));
+        const previous = MIGRATIONS.findIndex((migration) => migration.some((statement) => statement.includes("CREATE TABLE workflow_dispatches")));
+        expect(previous).toBeGreaterThan(0);
+        state.storage.sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
         return [created.sourceId, oldSource, oldResume].sort();
       } finally {
         local.DISTILL = original;

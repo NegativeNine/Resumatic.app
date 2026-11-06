@@ -405,6 +405,26 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
   }
 
+  /** Record a cache write before the Worker can send it to R2. */
+  beginCacheWrite(who: Who, attemptId: string, kind: "pdf" | "docx"): void {
+    this.requireOwner(who);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(attemptId) || !["pdf", "docx"].includes(kind))
+      throw new AppError("invalid", "invalid cache write attempt");
+    // No await between the open-state check and durable marker insertion.
+    this.sql.exec(`INSERT INTO r2_cache_dispatches (attempt_id,kind,created_at) VALUES (?,?,?)`, attemptId, kind, Date.now());
+  }
+
+  /** A known R2 acknowledgement can settle its own opaque attempt after revocation. */
+  finishCacheWrite(userId: string, attemptId: string): void {
+    if (this.gone || !this.initialised || this.meta("user_id") !== userId)
+      throw new AppError("forbidden", "not this user's vault");
+    // This internal capability is never returned by an HTTP route. Completion
+    // intentionally survives sign-out and closure, but may clear only its ID.
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(attemptId))
+      throw new AppError("invalid", "invalid cache write attempt");
+    this.sql.exec(`DELETE FROM r2_cache_dispatches WHERE attempt_id = ?`, attemptId);
+  }
+
   /** Authenticate and close access atomically, before the cross-object deletion call. */
   async beginAccountDeletion(who: Who): Promise<void> {
     await this.ctx.storage.transaction(async () => {
@@ -3503,6 +3523,16 @@ export class Vault extends DurableObject<Env> {
     return this.runs.list();
   }
 
+  /** Metadata-only diagnostics, not proof that earlier writers are quiescent. */
+  cacheWriteFences(): { status: "available"; total: number; attempts: { id: string; kind: string; createdAt: number }[] } | { status: "unavailable" } {
+    if (!this.initialised || this.gone || !hasSchema(this.sql)) return { status: "unavailable" };
+    const total = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM r2_cache_dispatches`).one().n;
+    const attempts = this.sql.exec<{ attempt_id: string; kind: string; created_at: number }>(
+      `SELECT attempt_id,kind,created_at FROM r2_cache_dispatches ORDER BY created_at,attempt_id LIMIT 100`,
+    ).toArray().map((row) => ({ id: row.attempt_id, kind: row.kind, createdAt: row.created_at }));
+    return { status: "available", total, attempts };
+  }
+
   async retryRun(
     who: Who,
     id: string,
@@ -3773,6 +3803,8 @@ export class Vault extends DurableObject<Env> {
   }
 
   private requireNoUnsettledDispatches(): void {
+    if (this.sql.exec(`SELECT attempt_id FROM r2_cache_dispatches LIMIT 1`).toArray().length)
+      throw new AppError("unavailable", "export cache write is unresolved; operator review is required");
     if (this.sql.exec(`SELECT run_id FROM workflow_dispatches UNION ALL SELECT run_id FROM workflow_redispatches LIMIT 1`).toArray().length)
       throw new AppError("unavailable", "workflow creation is unresolved; retry after it is settled");
     const customerDispatches = Number(this.meta("billing_customer_dispatches") ?? "0");

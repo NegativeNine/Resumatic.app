@@ -36,6 +36,8 @@ interface ResumaticSecrets {
   ALERT_HTTP_5XX_RATE?: string;
   ALERT_MIN_ATTEMPTS?: string;
   RESTORE_FENCE_IDS?: string;
+  /** Experimental; opt in only after reviewing unresolved-write recovery. */
+  R2_CACHE_FENCE_ENABLED?: string;
   RATE_LIMITS_ENABLED?: string;
   DIRECTORY_SHARDS?: string;
   RETENTION_REVIEW_ID?: string;
