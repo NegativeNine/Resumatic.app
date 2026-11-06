@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { EvalBudget } from "../extract-evals/budget";
 import { reportUsage } from "../../src/ai/usage";
 
+const testPilot = {
+  async reserve() {}, async settle() {}, async freeze() {},
+};
+
 describe("pilot cost reservations", () => {
   it("prices the reranker at the reviewed rate", () => {
     expect(reportUsage("rerank", "@cf/baai/bge-reranker-base", { input_tokens: 1_000_000 }).costUsd).toBeCloseTo(0.00311, 10);
@@ -24,6 +28,15 @@ describe("pilot cost reservations", () => {
       (bytes * 4 + 4096 + 200) / 1_000_000,
       10,
     );
+  });
+  it("does not settle shared usage against a missing or different model reservation", () => {
+    const budget = new EvalBudget({ usd: 1, maxCalls: 2, prices: { "fake/a": [1, 1], "fake/b": [1, 1] } });
+    const attemptId = budget.reserve("fake/a", "input", 1);
+    const usage = { attemptId, route: "write", model: "fake/a", inputTokens: 1, outputTokens: 1, costUsd: null };
+    expect(budget.actualMicros(usage)).toBe(2);
+    expect(budget.actualMicros({ ...usage, model: "fake/b" })).toBeNull();
+    expect(budget.actualMicros({ ...usage, attemptId: "not-reserved" })).toBeNull();
+    expect(budget.actualMicros({ ...usage, attemptId: undefined })).toBeNull();
   });
   it("refuses unbounded output pricing and invalid pass counts before any attempt", () => {
     const budget = new EvalBudget({
@@ -58,7 +71,7 @@ describe("pilot cost reservations", () => {
       const models = restModels(
         { accountId: "example", token: "unused", gatewayId: "test" },
         { MODEL_WRITE: modelId },
-        { budget },
+        { budget, pilot: testPilot },
       );
       await expect(models.complete("write", [], z.object({ ok: z.boolean() })))
         .rejects.toThrow("live_eval_cost_bound_invalid");
@@ -102,7 +115,7 @@ it("reserves six upstream calls for a gateway request before dispatch", async ()
     const model = restModels(
       { accountId: "example", token: "unused", gatewayId: "test" },
       { MODEL_WRITE: "@cf/openai/gpt-oss-20b" },
-      { budget },
+      { budget, pilot: testPilot },
     );
     await model.complete("write", [], z.object({ ok: z.boolean() }));
     expect(budget.calls).toBe(6);
@@ -122,7 +135,7 @@ it("does not follow a Workers AI redirect or issue another request", async () =>
   const fetcher = vi.fn(async (_url: string, _init: RequestInit) => new Response(null, { status: 307, headers: { location: "https://other.example/model" } }));
   vi.stubGlobal("fetch", fetcher);
   try {
-    const model = restModels({ accountId: "example", token: "unused", gatewayId: "test" }, {}, { budget });
+    const model = restModels({ accountId: "example", token: "unused", gatewayId: "test" }, {}, { budget, pilot: testPilot });
     await expect(model.embed(["test"])).rejects.toThrow(/HTTP 307/);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher.mock.calls[0]![1]!.redirect).toBe("error");
@@ -153,7 +166,7 @@ it.each(["overrun", "unknown", "failed"])(
       const model = restModels(
         { accountId: "example", token: "unused", gatewayId: "test" },
         { MODEL_WRITE: "@cf/openai/gpt-oss-20b" },
-        { budget },
+        { budget, pilot: testPilot },
       );
       await expect(
         model.complete("write", [], z.object({ ok: z.boolean() })),

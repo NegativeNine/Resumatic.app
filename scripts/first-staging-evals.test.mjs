@@ -105,6 +105,8 @@ const env = {
   CF_ACCOUNT_ID: "account",
   CF_AI_TOKEN: "secret",
   AI_GATEWAY_ID: "gateway",
+  STAGING_URL: "https://staging.example.com",
+  PILOT_BUDGET_KEY: "local-test-only-pilot-key-0123456789",
   EVAL_PRICE_REVIEW_DATE: new Date().toISOString().slice(0, 10),
   EVAL_BILLING_GUARD_REVIEW_DATE: new Date().toISOString().slice(0, 10),
   EVAL_BILLING_GUARD_SCOPE: "all-model-paths",
@@ -142,6 +144,8 @@ function deps(dir, spawn) {
     readConfig: async () => ({ config: { vars } }),
     loadDataset: () => ({ root: dir, cases }),
     knownPrices: prices,
+    sharedPilot: { status: async () => ({ initialized: true, frozen: false, maxMicros: 10_000_000, maxCalls: 50, reservedMicros: 0, reservedCalls: 0, pending: 0, unknown: 0, overrun: 0 }) },
+    sharedIdentityVerified: true,
     spawn,
   };
 }
@@ -287,6 +291,21 @@ test("preflight failures make no subprocess calls or campaign marker", () =>
           d,
         ),
       /PILOT_PRICES_INVALID/,
+    );
+    for (const status of [
+      { initialized: false },
+      { initialized: true, frozen: true, maxMicros: 10_000_000, maxCalls: 50, reservedMicros: 0, reservedCalls: 0, pending: 0, unknown: 0, overrun: 0 },
+      { initialized: true, frozen: false, maxMicros: 10_000_000, maxCalls: 50, reservedMicros: 1, reservedCalls: 1, pending: 1, unknown: 0, overrun: 0 },
+      { initialized: true, frozen: false, maxMicros: 10_000_001, maxCalls: 50, reservedMicros: 0, reservedCalls: 0, pending: 0, unknown: 0, overrun: 0 },
+    ]) {
+      await assert.rejects(
+        () => runFirstStagingEvals({ ...input, env }, { ...d, sharedPilot: { status: async () => status } }),
+        /PILOT_SHARED_LEDGER_REQUIRED/,
+      );
+    }
+    await assert.rejects(
+      () => runFirstStagingEvals({ ...input, env }, { ...d, sharedIdentityVerified: false }),
+      /PILOT_SHARED_IDENTITY_UNVERIFIED/,
     );
     assert.equal(count, 0);
     assert.ok(createPilotLedger(dir, 10_000_000, 50).file);

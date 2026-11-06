@@ -8,6 +8,7 @@ import {
 } from "../../src/ai/fields";
 import { reportUsage, type UsageObserver } from "../../src/ai/usage";
 import { EvalBudget, evalBudgetFromEnv } from "../extract-evals/budget";
+import { sharedPilotFromEnv, type SharedPilot } from "./shared-pilot.mjs";
 
 // The real models, called over Cloudflare's REST API from Node, with the same model names the
 // Worker uses (read from wrangler.jsonc) and the same chat client.
@@ -67,13 +68,14 @@ async function workersAi<T>(
   model: string,
   body: unknown,
   budget: EvalBudget,
+  pilot: SharedPilot,
   onUsage: UsageObserver,
   route: string,
   passes = 1,
 ): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     // Clairic may make up to one internal extraction pass per requested field.
-    const attemptId = budget.reserve(
+    const attemptId = await reserveBoth(budget, pilot,
       model,
       JSON.stringify(body),
       0,
@@ -96,7 +98,7 @@ async function workersAi<T>(
         },
       );
     } catch (error) {
-      budget.failAttempt(attemptId);
+      await failBoth(budget, pilot, attemptId);
       throw error;
     }
     if (res.ok) {
@@ -104,7 +106,7 @@ async function workersAi<T>(
       try {
         result = ((await res.json()) as { result: T }).result;
       } catch (error) {
-        budget.failAttempt(attemptId);
+        await failBoth(budget, pilot, attemptId);
         throw error;
       }
       await onUsage({
@@ -113,17 +115,33 @@ async function workersAi<T>(
       });
       return result;
     }
-    budget.failAttempt(attemptId);
+    await failBoth(budget, pilot, attemptId);
     if (attempt >= 2 || res.status < 500)
       throw new Error(`model request failed with HTTP ${res.status}`);
     await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
   }
 }
 
+async function reserveBoth(budget: EvalBudget, pilot: SharedPilot, model: string, input: string,
+  output: number, passes: number, calls: number, id?: string): Promise<string> {
+  const attemptId = budget.reserve(model, input, output, passes, calls, id);
+  try { await pilot.reserve(attemptId, budget.reservation(attemptId), calls); }
+  catch (error) {
+    try { budget.failAttempt(attemptId); } finally { await pilot.freeze().catch(() => {}); }
+    throw error;
+  }
+  return attemptId;
+}
+
+async function failBoth(budget: EvalBudget, pilot: SharedPilot, id: string): Promise<void> {
+  try { await pilot.settle(id, null); } catch { await pilot.freeze().catch(() => {}); }
+  budget.failAttempt(id);
+}
+
 export function restModels(
   creds: EvalCredentials,
   vars: Record<string, string>,
-  opts: { onUsage?: UsageObserver; budget?: EvalBudget } = {},
+  opts: { onUsage?: UsageObserver; budget?: EvalBudget; pilot?: SharedPilot } = {},
 ): Models {
   const env = vars as unknown as Env;
   // A supervised pilot must never accidentally replace its durable ledger with
@@ -133,8 +151,20 @@ export function restModels(
     : undefined;
   if (sharedBudget && opts.budget && opts.budget !== sharedBudget)
     throw new Error("live_eval_ledger_required");
+  if (sharedBudget && opts.pilot)
+    throw new Error("shared_pilot_required");
   const budget = sharedBudget ?? opts.budget ?? evalBudgetFromEnv();
+  // Every direct live adapter uses the same durable coordinator as staging.
+  // Injection is used by hermetic tests; deployed eval runners use the
+  // authenticated staging URL and key and never create/reset the ledger.
+  const pilot = opts.pilot ?? sharedPilotFromEnv();
   const onUsage: UsageObserver = async (usage) => {
+    if (!usage.attemptId) throw new Error("shared_pilot_unavailable");
+    try { await pilot.settle(usage.attemptId, budget.actualMicros(usage)); }
+    catch (error) {
+      try { budget.failAttempt(usage.attemptId); } finally { await pilot.freeze().catch(() => {}); }
+      throw error;
+    }
     const observed = budget.observe(usage);
     await opts.onUsage?.(observed);
   };
@@ -149,12 +179,11 @@ export function restModels(
           temperature: ROUTE_TEMPERATURE[route],
           route,
           onUsage,
-          onAttemptError: ({ attemptId }) => budget.failAttempt(attemptId),
-          beforeAttempt: (model, input, maxOutputTokens, attemptId) =>
-            // Until verified live, cover the platform maximum of five retries.
-            {
-              budget.reserve(model, input, maxOutputTokens, 6, 6, attemptId);
-            },
+          onAttemptError: ({ attemptId }) => failBoth(budget, pilot, attemptId),
+          // Until verified live, cover the platform maximum of five retries.
+          beforeAttempt: async (model, input, maxOutputTokens, attemptId) => {
+            await reserveBoth(budget, pilot, model, input, maxOutputTokens, 6, 6, attemptId);
+          },
         },
         messages,
         schema,
@@ -167,6 +196,7 @@ export function restModels(
           CLAIRIC_MODEL,
           body,
           budget,
+          pilot,
           onUsage,
           "fields",
           Object.keys(fields).length,
@@ -183,6 +213,7 @@ export function restModels(
           model,
           { text: texts.slice(i, i + 50) },
           budget,
+          pilot,
           onUsage,
           "embed",
         );
@@ -214,6 +245,7 @@ export function restModels(
           contexts: texts.map((text) => ({ text })),
         },
         budget,
+        pilot,
         onUsage,
         "rerank",
       );

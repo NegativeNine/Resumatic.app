@@ -18,6 +18,7 @@ import {
   createPilotLedger,
   finishPilotSuite,
 } from "../test/extract-evals/budget-ledger.mjs";
+import { sharedPilotFromEnv, SHARED_PILOT_IDENTITY_VERIFIED } from "../test/evals/shared-pilot.mjs";
 
 const PROJECT = fileURLToPath(new URL("../", import.meta.url));
 const TAILORING_CASE = "scope and numbers";
@@ -181,6 +182,27 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
     Number(env.EVAL_BILLING_GUARD_USD) > options.budgetUsd
   )
     fail("PILOT_BILLING_GUARD_REQUIRED");
+
+  // An existing fixed staging coordinator accounts for all supervised paths.
+  // Never create or reset it here. Unknown or unresolved prior attempts must
+  // be reconciled before starting a new campaign.
+  // A configured URL is not yet bound to the Worker's Durable Object
+  // namespace. Refuse before contacting it or creating the local marker.
+  if (!(dependencies.sharedIdentityVerified ?? SHARED_PILOT_IDENTITY_VERIFIED))
+    fail("PILOT_SHARED_IDENTITY_UNVERIFIED");
+  let shared;
+  try {
+    shared = await (dependencies.sharedPilot ?? sharedPilotFromEnv(env)).status();
+  } catch { fail("PILOT_SHARED_LEDGER_REQUIRED"); }
+  const validCount = (value) => Number.isSafeInteger(value) && value >= 0;
+  if (!shared || shared.initialized !== true || shared.frozen !== false ||
+      !Number.isSafeInteger(shared.maxMicros) || shared.maxMicros <= 0 ||
+      shared.maxMicros > Math.floor(options.budgetUsd * 1_000_000) ||
+      !Number.isSafeInteger(shared.maxCalls) || shared.maxCalls <= 0 || shared.maxCalls > options.maxCalls ||
+      !validCount(shared.reservedMicros) || shared.reservedMicros > shared.maxMicros ||
+      !validCount(shared.reservedCalls) || shared.reservedCalls > shared.maxCalls ||
+      shared.pending !== 0 || shared.unknown !== 0 || shared.overrun !== 0)
+    fail("PILOT_SHARED_LEDGER_REQUIRED");
 
   // One account-scoped marker, independent of which copy of a dataset is supplied.
   // On this host a restart, changed dataset path or concurrent launch cannot reset it.

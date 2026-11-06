@@ -42,6 +42,22 @@ export class EvalBudget {
       )
         throw new Error("live_eval_price_invalid");
   }
+  /** Metadata only: use the already-reserved bound when coordinating a second ledger. */
+  reservation(attemptId: string): number {
+    const attempt = this.attempts.get(attemptId);
+    if (!attempt) throw new Error("live_eval_ledger_unavailable");
+    return attempt.reservedMicros;
+  }
+  /** Recompute against the reviewed price table before any response is exposed. */
+  actualMicros(usage: Usage): number | null {
+    const attempt = usage.attemptId ? this.attempts.get(usage.attemptId) : undefined;
+    if (!attempt || attempt.model !== usage.model) return null;
+    const price = this.prices[usage.model];
+    if (!price || !Number.isSafeInteger(usage.inputTokens) || (usage.inputTokens ?? -1) < 0 ||
+        (usage.outputTokens === null ? price[1] !== 0 : !Number.isSafeInteger(usage.outputTokens) || usage.outputTokens < 0)) return null;
+    const micros = Math.ceil((usage.inputTokens ?? 0) * price[0] + (usage.outputTokens ?? 0) * price[1]);
+    return Number.isSafeInteger(micros) && micros >= 0 ? micros : null;
+  }
   reserve(
     model: string,
     input: string,

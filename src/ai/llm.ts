@@ -21,7 +21,7 @@ export interface ChatConfig extends ModelObservers {
     input: string,
     maxOutputTokens: number,
     attemptId: string,
-  ) => void;
+  ) => void | Promise<void>;
   maxOutputTokens?: number;
 }
 
@@ -133,7 +133,7 @@ async function callOnce(
     {
       ...cfg,
       async onAttemptStart(attempt: ModelAttempt) {
-        cfg.beforeAttempt?.(
+        await cfg.beforeAttempt?.(
           cfg.model,
           bodyText,
           maxOutputTokens,

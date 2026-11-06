@@ -763,8 +763,9 @@ describe("model usage and spending guard", () => {
         onUsage: (u) => {
           usage.push(u);
         },
-        beforeAttempt: (model, input, tokens) =>
-          budget.reserve(model, input, tokens),
+        beforeAttempt: (model, input, tokens) => {
+          budget.reserve(model, input, tokens);
+        },
       },
       [],
       z.object({ ok: z.boolean() }),

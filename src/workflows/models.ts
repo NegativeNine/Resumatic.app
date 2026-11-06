@@ -2,6 +2,14 @@ import { models, type Models } from "../ai/models";
 import { MODEL_PRICES, type ModelAttempt } from "../ai/usage";
 import { AppError } from "../shared/errors";
 import { vault } from "../shared/stubs";
+import { stagingPilotBudget } from "../worker/pilot/access";
+import { sharedPilotSafetyReady } from "./pilot-readiness";
+
+// AI Gateway documents up to five retries. Until live verification proves
+// otherwise, reserve for the initial request plus all five for every call.
+// This is a reservation, not a claim about the provider's actual behavior.
+const PILOT_GATEWAY_ATTEMPTS = 6;
+const PILOT_CHAT_ROUTES = new Set(["extract", "analyze", "write", "repair", "judge"]);
 
 /** Reserve every provider attempt, including schema retries, before it leaves the Worker. */
 export function runModels(
@@ -13,13 +21,21 @@ export function runModels(
   const v = vault(env, vaultId);
   const started = new Map<string, number>();
   const prices = priceTable(env.MODEL_PRICES_JSON);
+  if (env.PILOT_SHARED_BUDGET !== undefined && !["true", "false"].includes(env.PILOT_SHARED_BUDGET))
+    throw new AppError("unavailable", "pilot budget configuration is invalid");
+  const pilot = env.PILOT_SHARED_BUDGET === "true" ? stagingPilotBudget(env) : null;
   const base = models(env, {
     async onAttemptStart(attempt) {
+      if (pilot && !sharedPilotSafetyReady())
+        throw new AppError("unavailable", "shared pilot identity and provider bounds are not verified");
       const cap = Number(env.DAILY_SPEND_CAP_USD);
       if (!Number.isFinite(cap) || cap <= 0)
         throw new AppError("unavailable", "model spending is not configured");
-      started.set(attempt.attemptId, Date.now());
       const price = prices[attempt.model];
+      // Workers AI bindings and conversion have unverified hidden attempts or
+      // usage bounds. A flat configured amount is not a proven provider cap.
+      if (pilot && (!PILOT_CHAT_ROUTES.has(attempt.route) || !price))
+        throw new AppError("unavailable", "this model route is not bounded for the shared pilot");
       if (price && (price[0] <= 0 || (attempt.maxOutputTokens > 0 && price[1] <= 0)))
         throw new AppError(
           "unavailable",
@@ -32,18 +48,28 @@ export function runModels(
               attempt.maxOutputTokens * price[1],
           )
         : Math.ceil(Number(env.MODEL_MAX_CALL_USD) * 1_000_000);
-      if (!Number.isSafeInteger(upper) || upper <= 0)
+      const reserved = pilot ? upper * PILOT_GATEWAY_ATTEMPTS : upper;
+      if (!Number.isSafeInteger(reserved) || reserved <= 0)
         throw new AppError(
           "unavailable",
           "this model has no configured cost bound",
         );
-      await v.reserveModelAttempt(
-        runId,
-        step,
-        attempt,
-        upper,
-        Math.floor(cap * 1_000_000),
-      );
+      if (pilot) await pilot.reserve(attempt.attemptId, reserved, PILOT_GATEWAY_ATTEMPTS);
+      try {
+        await v.reserveModelAttempt(
+          runId,
+          step,
+          attempt,
+          reserved,
+          Math.floor(cap * 1_000_000),
+        );
+      } catch (error) {
+        // No provider call was made; preserve the nonrefundable reservation.
+        // If settlement is uncertain the durable pilot record remains pending.
+        if (pilot) await pilot.settle(attempt.attemptId, 0);
+        throw error;
+      }
+      started.set(attempt.attemptId, Date.now());
     },
     async onUsage(usage) {
       if (!usage.attemptId) return;
@@ -59,6 +85,7 @@ export function runModels(
           : usage.costUsd !== null
             ? Math.ceil(usage.costUsd * 1_000_000)
             : null;
+      const shared = pilot ? await pilot.settle(usage.attemptId, cost) : null;
       await v.settleModelAttempt(
         usage.attemptId,
         cost,
@@ -81,8 +108,12 @@ export function runModels(
           cost ?? 0,
         ],
       });
+      // Missing usage and an overrun freeze the shared ledger and cannot be
+      // exposed as a successful pilot call even if the provider replied.
+      if (shared?.frozen) throw new AppError("unavailable", "the shared pilot budget is frozen");
     },
     async onAttemptError(attempt: ModelAttempt) {
+      if (pilot) await pilot.settle(attempt.attemptId, null);
       await v.settleModelAttempt(attempt.attemptId, null, null, null);
       env.METRICS?.writeDataPoint({
         indexes: [vaultId],
