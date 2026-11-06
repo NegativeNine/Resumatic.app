@@ -3531,10 +3531,17 @@ export class Vault extends DurableObject<Env> {
   async alarm(): Promise<void> {
     if (!this.initialised || this.gone) return;
     if (this.meta("account_deletion_intent") === "1") {
+      // An RPC can remain unresolved indefinitely. Install the next attempt
+      // before leaving the Vault so interruption cannot consume the only alarm.
+      await this.scheduleDeletionAlarm(Date.now() + 60_000);
       try {
         const userId = this.meta("user_id");
         if (!userId) throw new Error("deletion_owner_missing");
         await directoryForUser(this.env, userId).deleteAccount(userId, this.vaultId);
+        // Directory has acknowledged its own durable deletion alarm. A crash
+        // before this cleanup causes only an idempotent extra retry.
+        if (!this.gone && !this.destroying && this.initialised && this.meta("account_deletion_intent") === "1")
+          await this.ctx.storage.deleteAlarm();
       } catch {
         // Directory may have committed despite a lost reply. A durable retry
         // is safe and must not recreate an alarm after the vault is destroyed.

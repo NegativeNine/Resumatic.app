@@ -526,6 +526,14 @@ export class Directory extends DurableObject<Env> {
    * the Directory rows go. Each vault is handled on its own, so one failure never blocks the others.
    */
   async alarm(): Promise<void> {
+    // An external call can remain unresolved. Keep a durable retry before any
+    // such call; a final harmless idle alarm is allowed to consume itself.
+    if (
+      this.billing.pending() ||
+      this.vaultsIn("deleting").length > 0 ||
+      this.vaultsIn("swept").length > 0 ||
+      this.sql.exec(`SELECT vault_id FROM retired_vaults LIMIT 1`).toArray().length > 0
+    ) await this.scheduleAt(Date.now() + RETRY_MS);
     try {
       await this.billing.reconcile();
     } catch {
@@ -687,9 +695,11 @@ export class Directory extends DurableObject<Env> {
   }
 
   private async scheduleAt(when: number): Promise<void> {
-    const current = await this.ctx.storage.getAlarm();
-    if (current === null || current > when)
-      await this.ctx.storage.setAlarm(when);
+    await this.ctx.storage.transaction(async () => {
+      const current = await this.ctx.storage.getAlarm();
+      if (current === null || current > when)
+        await this.ctx.storage.setAlarm(when);
+    });
   }
 
   private vaultsIn(state: "deleting" | "swept"): VaultDbRow[] {

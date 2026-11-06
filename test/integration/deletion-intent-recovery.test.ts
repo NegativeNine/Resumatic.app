@@ -164,6 +164,39 @@ describe("durable deletion intent", () => {
     )).toBe("deleting");
   }, 15_000);
 
+  it("prearms another retry while the Directory call remains unresolved", async () => {
+    const user = await signIn();
+    const s = session(user.cookie);
+    const v = vault(env, s.vid);
+    const d = directory(env);
+    await runInDurableObject(d, (_instance, ctx) => {
+      ctx.storage.sql.exec(`INSERT INTO vault_initializations (vault_id, sticky) VALUES (?, 1)`, s.vid);
+    });
+    await v.beginAccountDeletion({ userId: s.uid, gen: s.gen, epoch: s.epoch });
+    let entered!: () => void, release!: () => void;
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const original = Directory.prototype.deleteAccount;
+    const spy = vi.spyOn(Directory.prototype, "deleteAccount").mockImplementation(async function (this: Directory, uid, vid) {
+      entered();
+      await hold;
+      return original.call(this, uid, vid);
+    });
+    let running: Promise<boolean> | undefined;
+    try {
+      running = runDurableObjectAlarm(v);
+      await ready;
+      expect(await runInDurableObject(v, (_instance, ctx) => ctx.storage.getAlarm())).toEqual(expect.any(Number));
+      release();
+      expect(await running).toBe(true);
+      expect(await runInDurableObject(d, (_instance, ctx) => ctx.storage.getAlarm())).toEqual(expect.any(Number));
+    } finally {
+      release();
+      await running?.catch(() => {});
+      spy.mockRestore();
+    }
+  }, 15_000);
+
   it("does not let an older workflow alarm overwrite the deletion retry", async () => {
     const user = await signIn();
     const s = session(user.cookie);

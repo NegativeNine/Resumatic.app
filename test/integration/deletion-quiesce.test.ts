@@ -2,6 +2,7 @@ import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 import { directory, vault } from "../../src/shared/stubs";
+import { Vault } from "../../src/vault/vault";
 import { fromBase64url } from "../../src/worker/crypto";
 import { signIn, uniqueEmail } from "./support";
 
@@ -11,6 +12,57 @@ function vaultId(cookie: string): string {
 }
 
 describe("deletion access revocation", () => {
+  it("keeps a Directory retry armed while a deletion RPC is unresolved", async () => {
+    const name = `delete-held-${crypto.randomUUID()}`;
+    const d = env.DIRECTORY.getByName(name);
+    const email = uniqueEmail();
+    const account = await d.signIn({ provider: "test", subject: email, email, hint: "enam" });
+    await d.deleteAccount(account.userId, account.vaultId);
+    await runInDurableObject(d, (_instance, ctx) => {
+      ctx.storage.sql.exec(`INSERT INTO vault_initializations (vault_id, sticky) VALUES (?, 1)`, account.vaultId);
+    });
+    let entered!: () => void, release!: () => void;
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const original = Vault.prototype.quiesce;
+    const spy = vi.spyOn(Vault.prototype, "quiesce").mockImplementation(async function (this: Vault) {
+      entered();
+      await hold;
+      return original.call(this);
+    });
+    let running: Promise<boolean> | undefined;
+    try {
+      running = runDurableObjectAlarm(d);
+      await ready;
+      expect(await runInDurableObject(env.DIRECTORY.getByName(name), (_instance, ctx) => ctx.storage.getAlarm())).toEqual(expect.any(Number));
+      release();
+      expect(await running).toBe(true);
+      expect(await runInDurableObject(env.DIRECTORY.getByName(name), (_instance, ctx) => ctx.storage.getAlarm())).toEqual(expect.any(Number));
+      expect(await runInDurableObject(env.DIRECTORY.getByName(name), (_instance, ctx) => ctx.storage.sql.exec(`SELECT vault_id FROM vaults WHERE vault_id=?`, account.vaultId).toArray())).toHaveLength(1);
+    } finally {
+      release();
+      await running?.catch(() => {});
+      spy.mockRestore();
+    }
+  }, 15_000);
+
+  it("does not reschedule an idle Directory alarm", async () => {
+    const d = env.DIRECTORY.getByName(`idle-${crypto.randomUUID()}`);
+    await runInDurableObject(d, (_instance, ctx) => ctx.storage.setAlarm(Date.now() + 60_000));
+    expect(await runDurableObjectAlarm(d)).toBe(true);
+    expect(await runInDurableObject(d, (_instance, ctx) => ctx.storage.getAlarm())).toBeNull();
+  });
+
+  it("preserves the earliest alarm when scheduling requests overlap", async () => {
+    const d = env.DIRECTORY.getByName(`alarm-race-${crypto.randomUUID()}`);
+    await runInDurableObject(d, async (instance, ctx) => {
+      const schedule = (instance as unknown as { scheduleAt(when: number): Promise<void> }).scheduleAt.bind(instance);
+      const earlier = Date.now() + 30_000;
+      await Promise.all([schedule(earlier + 60_000), schedule(earlier)]);
+      expect(await ctx.storage.getAlarm()).toBe(earlier);
+    });
+  });
+
   it("revokes copied sessions before acknowledging a deletion blocked by initialization", async () => {
     const user = await signIn();
     const vid = vaultId(user.cookie);
