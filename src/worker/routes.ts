@@ -1235,7 +1235,7 @@ app.post(
     const account = await stripeClient(cfg).customer(customer);
     const uid = account.metadata.account_uid;
     if (!uid) return c.body(null, 204);
-    await directoryForUser(c.env, uid).acceptBillingEvent(event);
+    await directoryForUser(c.env, uid).acceptBillingEvent(event, uid);
     return c.body(null, 204);
   },
 );

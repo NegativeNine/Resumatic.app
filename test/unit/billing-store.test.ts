@@ -117,6 +117,73 @@ function fixture() {
 }
 
 describe("durable billing reconciliation", () => {
+  it("attributes a first event before a customer account row exists and reconciles it", async () => {
+    const f = fixture();
+    try {
+      expect(f.db.prepare("SELECT COUNT(*) AS n FROM billing_accounts").get()!.n).toBe(0);
+      f.store.accept("u1", event("evt_firstlink"));
+      expect(f.db.prepare("SELECT customer_id,user_id,state FROM billing_events WHERE id=?").get("evt_firstlink"))
+        .toMatchObject({ customer_id: "cus_123", user_id: "u1", state: "pending" });
+      await f.store.reconcile();
+      expect(f.db.prepare("SELECT customer_id FROM billing_accounts WHERE user_id=?").get("u1"))
+        .toMatchObject({ customer_id: "cus_123" });
+      expect(f.deliver).toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("rejects an old unattributed caller and ignores a delayed delivery after deletion starts", () => {
+    const f = fixture();
+    try {
+      expect(() => f.store.accept(undefined, event("evt_oldworker"))).toThrow("attribution");
+      f.store.accept("u1", event("evt_before"));
+      f.state.active = false;
+      f.store.erase("u1", "cus_123");
+      // The Worker resolved Stripe metadata before deletion, but the RPC
+      // arrived only after the account stopped being active.
+      f.store.accept("u1", event("evt_late"));
+      expect(f.db.prepare("SELECT COUNT(*) AS n FROM billing_events").get()!.n).toBe(0);
+    } finally { f.db.close(); }
+  });
+
+  it("keeps an attributed event pending when Stripe metadata changes owner", async () => {
+    const f = fixture();
+    try {
+      f.store.accept("u1", event("evt_changedowner"));
+      f.fetcher.mockImplementation(async () => Response.json({ id: "cus_123", metadata: { account_uid: "u2" } }));
+      await expect(f.store.reconcile()).rejects.toThrow("pending");
+      expect(f.db.prepare("SELECT user_id,state FROM billing_events WHERE id=?").get("evt_changedowner"))
+        .toMatchObject({ user_id: "u1", state: "pending" });
+      expect(f.db.prepare("SELECT COUNT(*) AS n FROM billing_accounts").get()!.n).toBe(0);
+      expect(f.deliver).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("does not overwrite another reconciliation's attribution of a legacy event", async () => {
+    const f = fixture();
+    let release!: () => void;
+    let entered!: () => void;
+    const holding = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    try {
+      f.db.prepare("INSERT INTO billing_events(id,customer_id,created_at) VALUES(?,?,?)")
+        .run("evt_legacy", "cus_123", Date.now());
+      f.fetcher.mockImplementation(async () => {
+        entered();
+        await holding;
+        return Response.json({ id: "cus_123", metadata: { account_uid: "u1" } });
+      });
+      const attempt = f.store.reconcile();
+      const outcome = attempt.then(() => null, (error: Error) => error);
+      await ready;
+      f.db.prepare("UPDATE billing_events SET user_id=? WHERE id=?").run("u2", "evt_legacy");
+      release();
+      expect(await outcome).toBeInstanceOf(Error);
+      expect(f.db.prepare("SELECT user_id,state FROM billing_events WHERE id=?").get("evt_legacy"))
+        .toMatchObject({ user_id: "u2", state: "pending" });
+      expect(f.deliver).not.toHaveBeenCalled();
+    } finally { release(); f.db.close(); }
+  });
+
   it("delivers a cancellation when a full batch of other vault deliveries fails", async () => {
     const f = fixture();
     let failBad = true;
@@ -258,13 +325,14 @@ describe("durable billing reconciliation", () => {
     const now = Date.now();
     const clock = vi.spyOn(Date, "now").mockReturnValue(now);
     try {
-      f.store.accept(event("evt_initial"));
+      f.store.accept("u1", event("evt_initial"));
       await f.store.reconcile();
       expect(JSON.parse(String(f.db.prepare("SELECT entitlement FROM billing_accounts").get()!.entitlement)).planId).toBe("pro");
       for (let i = 0; i < 20; i++)
-        f.store.accept(event(`evt_bad${String(i).padStart(2, "0")}`, "customer.subscription.updated", { id: "sub_bad", customer: "cus_bad" }));
+        f.db.prepare("INSERT INTO billing_events(id,customer_id,created_at) VALUES(?,?,?)")
+          .run(`evt_bad${String(i).padStart(2, "0")}`, "cus_bad", now);
       f.state.subscriptions[1]!.status = "canceled";
-      f.store.accept(event("evt_cancel"));
+      f.store.accept("u1", event("evt_cancel"));
       await expect(f.store.reconcile()).rejects.toThrow("pending");
       expect(f.db.prepare("SELECT state FROM billing_events WHERE id='evt_cancel'").get()!.state).toBe("pending");
       expect(f.db.prepare("SELECT COUNT(*) AS n FROM billing_events WHERE id LIKE 'evt_bad%' AND next_attempt_at=?").get(now + 60_000)!.n).toBe(20);
@@ -295,7 +363,7 @@ describe("durable billing reconciliation", () => {
       throw new Error("temporary Stripe error");
     });
     try {
-      f.store.accept(event("evt_race"));
+      f.store.accept("u1", event("evt_race"));
       const attempt = f.store.reconcile();
       await paused;
       f.db.prepare("UPDATE billing_events SET next_attempt_at=? WHERE id='evt_race'").run(123);
@@ -322,14 +390,14 @@ describe("durable billing reconciliation", () => {
     });
     const clock = vi.spyOn(Date, "now");
     try {
-      f.store.accept(event("evt_initial"));
+      f.store.accept("u1", event("evt_initial"));
       await f.store.reconcile();
-      f.store.accept(event("evt_future", "invoice.paid", { id: "in_future", customer: "cus_123" }));
+      f.store.accept("u1", event("evt_future", "invoice.paid", { id: "in_future", customer: "cus_123" }));
       await f.store.reconcile();
       let account = f.db.prepare("SELECT entitlement FROM billing_accounts").get()!;
       expect(JSON.parse(String(account.entitlement))).toMatchObject({ planId: "pro", bucket: `paid:sub_new:${start}` });
       expect(f.store.nextPendingAt()).toBe(futureStart * 1000);
-      f.store.accept(event("evt_unrelated"));
+      f.store.accept("u1", event("evt_unrelated"));
       await f.store.reconcile();
       expect(f.db.prepare("SELECT state FROM billing_events WHERE id='evt_unrelated'").get()!.state).toBe("applied");
       clock.mockReturnValue(futureStart * 1000);
@@ -362,12 +430,12 @@ describe("durable billing reconciliation", () => {
     });
     const clock = vi.spyOn(Date, "now");
     try {
-      f.store.accept(event("evt_initial"));
+      f.store.accept("u1", event("evt_initial"));
       await f.store.reconcile();
-      f.store.accept(event("evt_future", "invoice.paid", { id: "in_future", customer: "cus_123" }));
+      f.store.accept("u1", event("evt_future", "invoice.paid", { id: "in_future", customer: "cus_123" }));
       await f.store.reconcile();
       f.state.subscriptions[1]!.status = "canceled";
-      f.store.accept(event("evt_cancel"));
+      f.store.accept("u1", event("evt_cancel"));
       await f.store.reconcile();
       expect(JSON.parse(String(f.db.prepare("SELECT entitlement FROM billing_accounts").get()!.entitlement)).planId).toBe("free");
       clock.mockReturnValue(end * 1000);
@@ -381,7 +449,7 @@ describe("durable billing reconciliation", () => {
   it("uses the current customer subscription and its paid invoice when old events arrive", async () => {
     const f = fixture();
     try {
-      f.store.accept(event("evt_current"));
+      f.store.accept("u1", event("evt_current"));
       await f.store.reconcile();
       expect(f.deliver.mock.calls[0]).toEqual([
         "vault1",
@@ -392,13 +460,13 @@ describe("durable billing reconciliation", () => {
           bucket: `paid:sub_new:${start}`,
         }),
       ]);
-      f.store.accept(
+      f.store.accept("u1",
         event("evt_old", "customer.subscription.deleted", {
           id: "sub_old",
           customer: "cus_123",
         }),
       );
-      f.store.accept(
+      f.store.accept("u1",
         event("evt_oldinvoice", "invoice.paid", {
           id: "in_old",
           customer: "cus_123",
@@ -442,11 +510,11 @@ describe("durable billing reconciliation", () => {
       return original(input, init);
     });
     try {
-      f.store.accept(event("evt_first"));
+      f.store.accept("u1", event("evt_first"));
       const older = f.store.reconcile();
       await paused;
       f.state.subscriptions[1]!.status = "canceled";
-      f.store.accept(event("evt_second"));
+      f.store.accept("u1", event("evt_second"));
       await f.store.reconcile();
       release();
       await older;
@@ -468,7 +536,7 @@ describe("durable billing reconciliation", () => {
     const now = Date.now();
     const clock = vi.spyOn(Date, "now").mockReturnValue(now);
     try {
-      f.store.accept(event("evt_initial"));
+      f.store.accept("u1", event("evt_initial"));
       f.state.failDelivery = true;
       await expect(f.store.reconcile()).rejects.toThrow("pending");
       expect(f.store.pending()).toBe(true);
@@ -478,7 +546,7 @@ describe("durable billing reconciliation", () => {
       expect(f.store.pending()).toBe(false);
       f.state.subscriptions[1]!.status = "past_due";
       f.state.invoiceStatus = "open";
-      f.store.accept(
+      f.store.accept("u1",
         event("evt_failed", "invoice.payment_failed", {
           id: "in_new",
           customer: "cus_123",
@@ -505,7 +573,7 @@ describe("durable billing reconciliation", () => {
     const f = fixture();
     try {
       f.state.subscriptions[0]!.status = "active";
-      f.store.accept(event("evt_duplicate"));
+      f.store.accept("u1", event("evt_duplicate"));
       await expect(f.store.reconcile()).rejects.toThrow("pending");
       expect(f.deliver).not.toHaveBeenCalled();
       expect(f.store.pending()).toBe(true);
@@ -517,10 +585,10 @@ describe("durable billing reconciliation", () => {
     const f = fixture();
     try {
       expect(() =>
-        f.store.accept({ ...event("evt_wrong"), livemode: true }),
+        f.store.accept("u1", { ...event("evt_wrong"), livemode: true }),
       ).toThrow("mode");
-      f.store.accept(event("evt_duplicate"));
-      f.store.accept(event("evt_duplicate"));
+      f.store.accept("u1", event("evt_duplicate"));
+      f.store.accept("u1", event("evt_duplicate"));
       expect(
         f.db.prepare("SELECT COUNT(*) AS n FROM billing_events").get()!.n,
       ).toBe(1);

@@ -356,7 +356,10 @@ export class Vault extends DurableObject<Env> {
     other?: { kind: string; id: string }[];
   }> {
     this.quiesce();
-    if (this.gone || !this.initialised) return { distill: [], tailor: [] };
+    if (this.gone || !this.initialised) {
+      this.requireNoUnidentifiedTables();
+      return { distill: [], tailor: [] };
+    }
     this.requireNoUnsettledDispatches();
     const distill = this.sql
       .exec<{ run_id: string }>(
@@ -383,7 +386,7 @@ export class Vault extends DurableObject<Env> {
     if (!this.gone && this.initialised) {
       this.setMeta("state", "closing");
       this.requireNoUnsettledDispatches();
-    }
+    } else this.requireNoUnidentifiedTables();
     this.destroying = true;
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
@@ -3655,11 +3658,7 @@ export class Vault extends DurableObject<Env> {
   async deletionProbe(): Promise<{ rows: number }> {
     // An uninitialized or partially destroyed object can still contain rows.
     // Inspect SQLite itself rather than inferring erasure from lifecycle flags.
-    const tables = this.sql
-      .exec<{ name: string }>(
-        `SELECT name FROM sqlite_master WHERE type='table' AND substr(name,1,7) <> 'sqlite_'`,
-      )
-      .toArray();
+    const tables = this.applicationTables();
     let rows = 0;
     for (const { name } of tables) {
       // Identifiers come from SQLite, but must still be quoted and escaped.
@@ -3670,6 +3669,20 @@ export class Vault extends DurableObject<Env> {
         .one().n;
     }
     return { rows };
+  }
+
+  private applicationTables(): { name: string }[] {
+    return this.sql
+      .exec<{ name: string }>(
+        `SELECT name FROM sqlite_master WHERE type='table' AND substr(name,1,7) <> 'sqlite_'`,
+      )
+      .toArray();
+  }
+
+  /** An absent lifecycle schema is not evidence that no Workflow was created. */
+  private requireNoUnidentifiedTables(): void {
+    if (this.applicationTables().length)
+      throw new AppError("unavailable", "vault schema is incomplete; operator review is required");
   }
   async adminRuns() {
     this.requireOpen();

@@ -178,8 +178,8 @@ export class Directory extends DurableObject<Env> {
         ),
     });
   }
-  async acceptBillingEvent(event: BillingEvent): Promise<void> {
-    this.billing.accept(event);
+  async acceptBillingEvent(event: BillingEvent, userId?: string): Promise<void> {
+    this.billing.accept(userId, event);
     if (this.billing.pending()) await this.scheduleAt(Date.now());
   }
 

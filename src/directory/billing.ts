@@ -41,7 +41,7 @@ export class BillingStore {
     private fetcher: typeof fetch = fetch,
   ) {}
 
-  accept(event: BillingEvent): void {
+  accept(userId: string | undefined, event: BillingEvent): void {
     const cfg = billingConfig(this.env);
     if (!cfg) throw new AppError("unavailable", "billing is not configured");
     if (event.livemode !== cfg.secretKey.startsWith("sk_live_"))
@@ -77,12 +77,21 @@ export class BillingStore {
       (invoice && !/^in_[A-Za-z0-9]+$/.test(invoice))
     )
       throw new AppError("invalid", "billing event has an invalid identifier");
+    // The Worker already read this UID from Stripe's customer metadata to
+    // select this Directory. Do not persist a newly delivered event without
+    // that attribution: older Workers must retry after the rollout instead.
+    if (typeof userId !== "string" || !userId || userId.length > 200)
+      throw new AppError("unavailable", "billing event attribution is unavailable");
+    // The Directory handles this synchronously, so a delayed webhook RPC
+    // cannot insert a new customer-only row after deletion begins.
+    if (!this.hooks.account(userId)) return;
     this.sql.exec(
-      `INSERT OR IGNORE INTO billing_events (id, customer_id, subscription_id, invoice_id, created_at) VALUES (?, ?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO billing_events (id, customer_id, subscription_id, invoice_id, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
       event.id,
       customer,
       subscription,
       invoice,
+      userId,
       Date.now(),
     );
   }
@@ -115,8 +124,8 @@ export class BillingStore {
     if (!cfg) return;
     const stripe = stripeClient(cfg, this.fetcher);
     const events = this.sql
-      .exec<{ id: string; customer_id: string; invoice_id: string | null; next_attempt_at: number }>(
-        `SELECT id, customer_id, invoice_id, next_attempt_at FROM billing_events WHERE state = 'pending' AND next_attempt_at <= ? ORDER BY next_attempt_at, created_at, id LIMIT 20`,
+      .exec<{ id: string; customer_id: string; invoice_id: string | null; user_id: string | null; next_attempt_at: number }>(
+        `SELECT id, customer_id, invoice_id, user_id, next_attempt_at FROM billing_events WHERE state = 'pending' AND next_attempt_at <= ? ORDER BY next_attempt_at, created_at, id LIMIT 20`,
         Date.now(),
       )
       .toArray();
@@ -125,15 +134,26 @@ export class BillingStore {
       try {
         const customer = await stripe.customer(event.customer_id);
         const uid = customer.metadata.account_uid;
+        // Once attributed, an event may never move to another user merely
+        // because Stripe metadata changed while reconciliation was pending.
+        if (event.user_id && event.user_id !== uid)
+          throw new AppError("unavailable", "billing customer attribution changed");
         if (!uid || !this.hooks.account(uid)) {
           this.sql.exec(`DELETE FROM billing_events WHERE id = ?`, event.id);
           continue;
         }
         this.sql.exec(
-          `UPDATE billing_events SET user_id = ? WHERE id = ?`,
+          `UPDATE billing_events SET user_id = ? WHERE id = ? AND (user_id IS NULL OR user_id = ?)`,
           uid,
           event.id,
+          uid,
         );
+        const attributed = this.sql.exec<{ user_id: string | null }>(
+          `SELECT user_id FROM billing_events WHERE id = ?`, event.id,
+        ).toArray()[0];
+        if (!attributed) continue; // An account erasure removed the event during I/O.
+        if (attributed.user_id !== uid)
+          throw new AppError("unavailable", "billing customer attribution changed");
         const row = this.sql
           .exec<{
             customer_id: string;
