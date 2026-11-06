@@ -1722,6 +1722,17 @@ export class Vault extends DurableObject<Env> {
     applicationId: string,
     requestKey = crypto.randomUUID(),
   ): Promise<{ resumeId: string; runId: string }> {
+    return this.tailorWithGuard(who, applicationId, requestKey, () => {});
+  }
+
+  /** The connected-app guard is rechecked after external reconciliation and before any new run. */
+  private async tailorWithGuard(
+    who: Who,
+    applicationId: string,
+    requestKey: string,
+    guard: () => void,
+  ): Promise<{ resumeId: string; runId: string }> {
+    guard();
     this.requireOwner(who);
     const app = this.sql
       .exec<ApplicationRow>(
@@ -1745,6 +1756,7 @@ export class Vault extends DurableObject<Env> {
     if (previous) return previous;
     await this.reconcileStaleRuns();
     this.requireOwner(who);
+    guard();
     // A second request with the same key may have started the run while
     // reconciliation was waiting on a Workflow status call.
     const concurrent = replay();
@@ -2199,12 +2211,15 @@ export class Vault extends DurableObject<Env> {
     return this.mcpGrants.revoke(who, id);
   }
   async authorizeMcp(claims: McpClaims, scope: McpScope) {
+    return this.requireMcp(claims, scope);
+  }
+  private requireMcp(claims: McpClaims, scope: McpScope): Who {
     if (claims.vid !== this.vaultId)
       throw new AppError("forbidden", "wrong account");
     return this.mcpGrants.authorize(claims, scope);
   }
   async mcpFacts(claims: McpClaims, input: { query?: string; limit?: number }) {
-    await this.authorizeMcp(claims, "vault:read");
+    this.requireMcp(claims, "vault:read");
     const words = (input.query ?? "")
       .toLowerCase()
       .split(/\s+/)
@@ -2221,11 +2236,13 @@ export class Vault extends DurableObject<Env> {
       }));
   }
   async mcpResume(claims: McpClaims, id: string, version?: number) {
-    const who = await this.authorizeMcp(claims, "vault:read");
+    const who = this.requireMcp(claims, "vault:read");
     const resume = await this.getResume(who, id, version);
+    this.requireMcp(claims, "vault:read");
     if (resume.state !== "ready")
       throw new AppError("conflict", "the resume is not ready");
     const render = await this.renderData(who, id, resume.version);
+    this.requireMcp(claims, "vault:read");
     return {
       id: resume.id,
       version: resume.version,
@@ -2238,10 +2255,12 @@ export class Vault extends DurableObject<Env> {
     applicationId: string,
     requestKey: string,
   ) {
-    return this.tailor(
-      await this.authorizeMcp(claims, "vault:generate"),
+    const who = this.requireMcp(claims, "vault:generate");
+    return this.tailorWithGuard(
+      who,
       applicationId,
       `mcp_${claims.grantId}_${requestKey}`,
+      () => { this.requireMcp(claims, "vault:generate"); },
     );
   }
 
