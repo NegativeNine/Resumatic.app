@@ -2,6 +2,7 @@
 // Run after the deployed synthetic lifecycle has produced a deletion manifest.
 // A denied session proves access revocation, not erasure. Missing store probes remain pending.
 import { readFile, writeFile } from "node:fs/promises";
+import { deletionProbeInput, workflowCoverage } from "./lib/deletion-audit.mjs";
 import { httpsOrigin } from "./lib/config.mjs";
 
 const args = process.argv.slice(2);
@@ -23,13 +24,7 @@ try {
   if (!base || !id || !secret || !arg("--manifest"))
     throw new Error("MISSING_AUDIT_CONFIGURATION");
   const manifest = JSON.parse(await readFile(arg("--manifest"), "utf8"));
-  if (
-    !/^[a-f0-9]{64}$/i.test(manifest.vaultId ?? "") ||
-    typeof manifest.userId !== "string" ||
-    manifest.base !== base ||
-    manifest.deletionRequested !== true
-  )
-    throw new Error("INVALID_DELETION_MANIFEST");
+  const probeInput = deletionProbeInput(manifest, base);
   const timeout = Number(arg("--timeout-seconds", "180"));
   if (!Number.isFinite(timeout) || timeout < 1 || timeout > 7200)
     throw new Error("INVALID_TIMEOUT");
@@ -45,13 +40,7 @@ try {
     const url = `${base}/admin/deletion-audits/${manifest.vaultId}`;
     const response = await fetch(url, {
       method: "POST",
-      body: JSON.stringify({
-        userId: manifest.userId,
-        sources: manifest.sources ?? [],
-        resumes: manifest.resumes ?? [],
-        documents: manifest.documents ?? [],
-        reembeddings: manifest.reembeddings ?? [],
-      }),
+      body: JSON.stringify(probeInput),
       redirect: "error",
       signal: AbortSignal.timeout(15_000),
       headers: {
@@ -75,9 +64,15 @@ try {
           ? result[key]
           : null;
     report.checks.retentionReviewed = result.retentionReviewed === true;
+    report.checks.workflowCoverage = workflowCoverage(
+      result.workflowCoverage,
+      probeInput,
+    );
     if (countKeys.some((key) => report.checks[key] === null))
       throw new Error("STORE_PROBE_INCOMPLETE");
     if (countKeys.every((key) => report.checks[key] === 0)) {
+      if (!report.checks.workflowCoverage.complete)
+        throw new Error("WORKFLOW_INVENTORY_ATTESTATION_PENDING");
       if (!report.checks.retentionReviewed)
         throw new Error("PLATFORM_RETENTION_REVIEW_PENDING");
       report.status = "passed";

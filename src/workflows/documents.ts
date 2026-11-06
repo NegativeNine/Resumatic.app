@@ -25,6 +25,7 @@ export interface DocumentParams {
 interface DocumentVault {
   claimRun(id: string): Promise<unknown>;
   documentInput(id: string): Promise<DocumentState>;
+  cachedRefinement(id: string): Promise<DocumentDraft | null>;
   searchFacts(
     queries: number[][],
     k: number,
@@ -81,6 +82,7 @@ export class DocumentWorkflow extends WorkflowEntrypoint<Env, DocumentParams> {
           if (!input.plan) throw new Error("document plan is missing");
           const draft =
             input.draft ??
+            (await v.cachedRefinement(runId)) ??
             (await writeDocument(
               runModels(this.env, vaultId, runId, "write"),
               input,

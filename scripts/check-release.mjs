@@ -50,6 +50,17 @@ try {
     !(evidence.extraction?.evaluatedUploads > 0)
   )
     report.missing.push("EXTRACTION_MEASUREMENTS");
+  // A strategy must satisfy the agreed quality thresholds as well as the
+  // no-fabrication gates. Missing, NaN, and impossible values fail closed.
+  if (
+    !Number.isFinite(evidence.extraction?.factRecall) ||
+    evidence.extraction.factRecall < 0.85 ||
+    evidence.extraction.factRecall > 1 ||
+    !Number.isFinite(evidence.extraction?.factPrecision) ||
+    evidence.extraction.factPrecision < 0.95 ||
+    evidence.extraction.factPrecision > 1
+  )
+    report.missing.push("EXTRACTION_QUALITY");
   if (
     evidence.grounding?.unsupportedClaims !== 0 ||
     !(evidence.grounding?.evaluatedLines > 0)

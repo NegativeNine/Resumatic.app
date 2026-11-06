@@ -1,3 +1,8 @@
+import {
+  refinementCacheKey,
+  cacheRefinement,
+  cachedRefinementDraft,
+} from "../pipeline/refine-cache";
 import { ExtractionFeedback } from "./extraction-feedback";
 import { conversionQuality } from "../pipeline/extract/quality";
 import { retryable } from "cloudflare:durable-objects";
@@ -78,6 +83,7 @@ const DEFAULT_TAILOR_LIMIT = 20;
 /** Uploads being read at once, and uploads kept per vault: each upload costs model calls. */
 const MAX_QUEUED_SOURCES = 3;
 const MAX_SOURCES = 50;
+const REFINE_CACHE_TTL_MS = 30 * 86400000;
 
 type SourceRow = {
   origin: "upload" | "ocr";
@@ -1865,6 +1871,28 @@ export class Vault extends DurableObject<Env> {
     };
   }
 
+  async cachedRefinement(runId: string): Promise<DocumentDraft | null> {
+    const input = await this.documentInput(runId);
+    const key = await refinementCacheKey(input, this.env.MODEL_WRITE);
+    this.requireOpen();
+    const run = this.runs.get(runId);
+    if (!key || !run || !["starting", "running"].includes(run.state))
+      return null;
+    const row = this.sql
+      .exec<{ draft: string }>(
+        `SELECT draft FROM refine_cache WHERE cache_key = ? AND created_at > ?`,
+        key,
+        Date.now() - REFINE_CACHE_TTL_MS,
+      )
+      .toArray()[0];
+    if (!row) return null;
+    try {
+      return cachedRefinementDraft(input, JSON.parse(row.draft));
+    } catch {
+      return null;
+    }
+  }
+
   async saveDocumentStep(
     runId: string,
     step: string,
@@ -1896,6 +1924,12 @@ export class Vault extends DurableObject<Env> {
         )
         .one().options,
     ) as NewDocument & { base?: ResumeBody };
+    const cachedInput =
+      options.kind === "refine" ? await this.documentInput(runId) : null;
+    const cacheKey = cachedInput
+      ? await refinementCacheKey(cachedInput, this.env.MODEL_WRITE)
+      : null;
+    this.requireOpen();
     const unchanged =
       options.kind === "refine" &&
       !!result.body &&
@@ -1963,6 +1997,32 @@ export class Vault extends DurableObject<Env> {
             row.id,
           );
         }
+        if (cacheKey && cachedInput) {
+          const verified = this.sql
+            .exec<{ result: string | null }>(
+              `SELECT result FROM document_requests WHERE run_id = ?`,
+              runId,
+            )
+            .one().result;
+          if (!verified || verified !== JSON.stringify(result))
+            throw new AppError("conflict", "the verified refinement changed");
+          const draft = JSON.stringify(cacheRefinement(cachedInput, result));
+          if (new TextEncoder().encode(draft).byteLength <= 65536) {
+            this.sql.exec(
+              `DELETE FROM refine_cache WHERE created_at <= ?`,
+              Date.now() - REFINE_CACHE_TTL_MS,
+            );
+            this.sql.exec(
+              `INSERT INTO refine_cache (cache_key,draft,created_at) VALUES (?,?,?) ON CONFLICT(cache_key) DO UPDATE SET draft=excluded.draft,created_at=excluded.created_at`,
+              cacheKey,
+              draft,
+              Date.now(),
+            );
+            this.sql.exec(
+              `DELETE FROM refine_cache WHERE cache_key IN (SELECT cache_key FROM refine_cache ORDER BY created_at DESC, cache_key DESC LIMIT -1 OFFSET 200)`,
+            );
+          }
+        }
         this.sql.exec(
           `INSERT INTO document_versions (document_id, version, data, created_at) VALUES (?, 1, ?, ?)`,
           runId,
@@ -1978,6 +2038,22 @@ export class Vault extends DurableObject<Env> {
       !unchanged,
     );
     if (completed.applied) this.recordRunTotal(runId);
+    if (completed.applied && cacheKey) {
+      const next = this.sql
+        .exec<{ at: number | null }>(
+          `SELECT MIN(created_at) + ? AS at FROM refine_cache`,
+          REFINE_CACHE_TTL_MS,
+        )
+        .one().at;
+      const scheduled = await this.ctx.storage.getAlarm();
+      if (
+        next !== null &&
+        (scheduled === null || scheduled > next) &&
+        this.initialised &&
+        this.meta("state") === "open"
+      )
+        await this.ctx.storage.setAlarm(next);
+    }
     this.broadcast("document", runId);
     if (options.resumeId) this.broadcast("resume", options.resumeId);
   }
@@ -2929,6 +3005,10 @@ export class Vault extends DurableObject<Env> {
     if (!this.initialised || this.meta("state") !== "open") return;
     this.shares.purgeExpired();
     this.mcpGrants.purgeExpired();
+    this.sql.exec(
+      `DELETE FROM refine_cache WHERE created_at <= ?`,
+      Date.now() - REFINE_CACHE_TTL_MS,
+    );
     for (const intent of this.uploads.cleanupCandidates()) {
       await this.env.FILES.delete(intent.r2Key);
       this.uploads.markCleaned(intent.requestKey, intent.r2Key);
@@ -2990,6 +3070,12 @@ export class Vault extends DurableObject<Env> {
       this.runs.listPending().length ? Date.now() + 60_000 : null,
       expiry,
       this.uploads.nextAlarm(),
+      this.sql
+        .exec<{ at: number | null }>(
+          `SELECT MIN(created_at) + ? AS at FROM refine_cache`,
+          REFINE_CACHE_TTL_MS,
+        )
+        .one().at,
     ].filter((n): n is number => n !== null);
     if (candidates.length)
       await this.ctx.storage.setAlarm(
@@ -3260,6 +3346,7 @@ async function runStopped(
     p.sourceProgress,
     p.tailorInput,
     p.documentInput,
+    p.cachedRefinement,
     p.saveSource,
     p.saveExtraction,
     p.saveVectors,

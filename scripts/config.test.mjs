@@ -185,6 +185,8 @@ test("release gates require passing evidence for the exact candidate commit", as
     unsupportedClaims: 0,
     failureRate: 0,
     evaluatedUploads: 40,
+    factRecall: 0.85,
+    factPrecision: 0.95,
   });
   Object.assign(evidence.grounding, {
     unsupportedClaims: 0,
@@ -228,6 +230,19 @@ test("release gates require passing evidence for the exact candidate commit", as
       }).status,
       2,
     );
+    for (const extraction of [
+      { ...evidence.extraction, factRecall: 0.849 },
+      { ...evidence.extraction, factPrecision: 0.949 },
+      { ...evidence.extraction, factRecall: 1.01 },
+      { ...evidence.extraction, factPrecision: null },
+      { ...evidence.extraction, factRecall: undefined },
+    ]) {
+      assert.equal(run({ ...evidence, extraction }).status, 2);
+      const result = JSON.parse(
+        await readFile(join(directory, "release-report.json"), "utf8"),
+      );
+      assert.ok(result.missing.includes("EXTRACTION_QUALITY"));
+    }
     assert.equal(
       JSON.parse(await readFile(join(directory, "release-report.json"), "utf8"))
         .status,

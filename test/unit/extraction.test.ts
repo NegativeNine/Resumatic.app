@@ -375,7 +375,7 @@ describe("segmentation and evaluation", () => {
       }),
     ).toThrow("label_unknown_unit");
   });
-  it("measures wrong assignment separately from span recall", () => {
+  it("counts wrong-role facts as misses while measuring assignment independently", () => {
     const testCase = CASES[0]!;
     const prediction = verifyExtraction(
       testCase.markdown,
@@ -383,7 +383,22 @@ describe("segmentation and evaluation", () => {
     ).extraction;
     prediction.facts[0]!.roleKey = null;
     const score = scoreCase(prediction, testCase.gold);
+    expect(score.recall).toBe(0.5);
+    expect(score.precision).toBe(0.5);
+    expect(score.reviewCost).toBe(4);
+    expect(score.assignment).toBe(0.5);
+  });
+  it("does not let a wrong-role prediction consume a correctly assigned match", () => {
+    const testCase = CASES[0]!;
+    const prediction = verifyExtraction(
+      testCase.markdown,
+      oraclePrediction(testCase),
+    ).extraction;
+    const correct = prediction.facts[0]!;
+    prediction.facts.unshift({ ...correct, roleKey: null });
+    const score = scoreCase(prediction, testCase.gold);
     expect(score.recall).toBe(1);
+    expect(score.precision).toBeCloseTo(2 / 3);
     expect(score.assignment).toBe(0.5);
   });
   it("matches agreement one-to-one", () => {

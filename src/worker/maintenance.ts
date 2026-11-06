@@ -178,6 +178,17 @@ maintenance.post("/deletion-audits/:id", async (c) => {
     r2Objects,
     oauthRecords: await oauthUserGrantCount(c.env, body.userId),
     activeRuns,
+    // Only the supplied IDs were checked. The endpoint has no independent way to
+    // prove that this caller-provided list covers every historical Workflow.
+    workflowCoverage: {
+      scope: "supplied_ids_only" as const,
+      checked:
+        body.sources.length +
+        body.resumes.length +
+        body.documents.length +
+        body.reembeddings.length,
+      complete: false as const,
+    },
     retentionReviewed: !!c.env.RETENTION_REVIEW_ID,
   });
 });

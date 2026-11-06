@@ -73,20 +73,38 @@ export function scoreCase(pred: VerifiedExtraction, gold: Gold): CaseScore {
     }),
   );
   candidates.sort((a, b) => b.overlap - a.overlap || a.p - b.p || a.g - b.g);
+  // Compute assignment on span-only pairs, so the metric can expose wrong-role
+  // predictions instead of becoming 100% by definition.
+  const spanP = new Set<number>();
+  const spanG = new Set<number>();
+  let assigned = 0;
+  const correctRole = (pair: { p: number; g: number }) => {
+    const p = pred.facts[pair.p]!;
+    const g = gold.facts[pair.g]!;
+    return (p.roleKey === null ? null : roleMap.get(p.roleKey)) === g.role;
+  };
+  for (const pair of candidates) {
+    if (spanP.has(pair.p) || spanG.has(pair.g)) continue;
+    spanP.add(pair.p);
+    spanG.add(pair.g);
+    if (correctRole(pair)) assigned++;
+  }
+
+  // Promotion precision/recall require both overlap and the correct role.
+  // Match these separately so a higher-overlap wrong-role prediction cannot
+  // consume a gold fact that a correctly assigned prediction also found.
   const matchedP = new Set<number>();
   const matchedG = new Set<number>();
-  let assigned = 0;
   let correctLevel = 0;
   let levelCount = 0;
   let inflation = 0;
   for (const pair of candidates) {
-    if (matchedP.has(pair.p) || matchedG.has(pair.g)) continue;
+    if (!correctRole(pair) || matchedP.has(pair.p) || matchedG.has(pair.g))
+      continue;
     matchedP.add(pair.p);
     matchedG.add(pair.g);
     const p = pred.facts[pair.p]!;
     const g = gold.facts[pair.g]!;
-    if ((p.roleKey === null ? null : roleMap.get(p.roleKey)) === g.role)
-      assigned++;
     if (g.level !== null) {
       levelCount++;
       correctLevel += Number(p.level === g.level);
@@ -120,7 +138,7 @@ export function scoreCase(pred: VerifiedExtraction, gold: Gold): CaseScore {
     evidenceCoverageRecall: ratio(covered, gold.facts.length),
     roleRecall: ratio(usedRoles.size, gold.roles.length),
     dateAccuracy: ratio(dateCorrect, usedRoles.size * 2),
-    assignment: ratio(assigned, matched),
+    assignment: ratio(assigned, spanP.size),
     levelAccuracy: ratio(correctLevel, levelCount),
     inflation,
     trapLeaks,

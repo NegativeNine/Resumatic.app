@@ -1,0 +1,95 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { strFromU8, unzipSync } from "fflate";
+import { describe, expect, it } from "vitest";
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { CASES } from "../extract-evals/cases";
+import { makeFixtures } from "../extract-evals/fixture-files.mjs";
+
+const root = resolve("test/extract-evals/fixtures");
+const hash = (bytes: Uint8Array) =>
+  createHash("sha256").update(bytes).digest("hex");
+const escape = (value: string) =>
+  value.replace(
+    /[&<>"']/g,
+    (c) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&apos;",
+      })[c]!,
+  );
+
+describe("synthetic source document fixtures", () => {
+  it("reproduces every checked-in byte and marks conversion and promotion pending", () => {
+    const generated = makeFixtures();
+    expect(generated).toHaveLength(41);
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, "manifest.json"), "utf8"),
+    ) as {
+      files: {
+        name: string;
+        sha256: string;
+        conversionStatus: string;
+        promotionEligible: boolean;
+      }[];
+    };
+    expect(manifest.files).toHaveLength(generated.length);
+    for (const fixture of generated) {
+      const entry = manifest.files.find((item) => item.name === fixture.name)!;
+      expect(entry).toBeDefined();
+      expect(entry.conversionStatus).toBe("not-run");
+      expect(entry.promotionEligible).toBe(false);
+      expect(hash(readFileSync(resolve(root, fixture.name)))).toBe(
+        entry.sha256,
+      );
+      expect(hash(fixture.bytes)).toBe(entry.sha256);
+    }
+  });
+  it("keeps the source text, languages, traps and real Word archive structure in DOCX", () => {
+    for (const c of CASES) {
+      const archive = unzipSync(readFileSync(resolve(root, `${c.id}.docx`)));
+      expect(archive["[Content_Types].xml"]).toBeDefined();
+      expect(archive["_rels/.rels"]).toBeDefined();
+      const document = strFromU8(archive["word/document.xml"]!);
+      for (const line of c.markdown.split(/\r?\n/))
+        expect(document).toContain(escape(line));
+    }
+  });
+  it("can be opened and read by PDF.js", async () => {
+    for (const [name, pages] of [
+      ["synthetic-01.pdf", 1],
+      ["synthetic-05.pdf", 1],
+      ["synthetic-long-5p.pdf", 5],
+    ] as const) {
+      const data = new Uint8Array(readFileSync(resolve(root, name)));
+      const loading = getDocument({ data, useSystemFonts: true });
+      try {
+        const pdf = await loading.promise;
+        expect(pdf.numPages).toBe(pages);
+        const text = await (await pdf.getPage(1)).getTextContent();
+        expect(text.items.length).toBeGreaterThan(0);
+      } finally {
+        await loading.destroy();
+      }
+    }
+  });
+  it("provides valid cross-reference offsets, multi-column pages, and a five-page stress input", () => {
+    for (const fixture of makeFixtures().filter((f) =>
+      f.name.endsWith(".pdf"),
+    )) {
+      const pdf = Buffer.from(fixture.bytes).toString("ascii");
+      expect(pdf.startsWith("%PDF-1.4\n")).toBe(true);
+      expect([...pdf.matchAll(/\/Type \/Page\b/g)]).toHaveLength(
+        fixture.meta.pages,
+      );
+      const xref = Number(/startxref\n(\d+)\n%%EOF/.exec(pdf)![1]);
+      expect(pdf.slice(xref, xref + 4)).toBe("xref");
+      if (fixture.meta.layout === "two-column")
+        expect(pdf).toContain("1 0 0 1 320 ");
+    }
+  });
+});

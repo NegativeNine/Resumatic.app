@@ -67,7 +67,7 @@ npm run e2e:staging
 node scripts/audit-deletion.mjs --manifest deletion-manifest.json --report deletion-audit.json
 ```
 
-The staging E2E requires `STAGING_URL` and `TEST_SIGNIN_KEY`. Its preflight budget is an authorization check, not a deployed hard spending cap: configure the deployed Vault spend reservation limits before running it. The E2E writes IDs to a deletion manifest and distinguishes account access revocation from storage erasure. The audit additionally needs Access service-token credentials. It passes only when all protected audit counters are known and zero, with the platform retention review recorded. Unknown stores, an unavailable endpoint or an incomplete retention review remain pending.
+The staging E2E requires `STAGING_URL`, `TEST_SIGNIN_KEY`, and explicit positive `EVAL_BUDGET_USD` and `EVAL_MAX_CALLS`. Before model calls it freezes those lifetime limits in the synthetic test Vault; the independently configured daily cap also applies. The run fails closed if the test-only budget endpoint is unavailable. The E2E records the Vault run ledger before deletion and distinguishes account access revocation from storage erasure. The audit additionally needs Access service-token credentials. Its Workflow probe checks every supplied ledger ID, including superseded attempts, but cannot independently prove that the captured inventory is complete. Therefore, even all-zero counters remain pending until an independent complete-inventory attestation exists; missing counters, an unavailable endpoint, or an incomplete retention review also remain pending.
 
 ## Metrics, alerts and abuse limits
 
@@ -77,7 +77,7 @@ Completed-run latency uses a separate `run_total` event. The dashboard aggregate
 
 To enable the fifteen-minute alert job, set `ALERTS_ENABLED=true`, `CF_ANALYTICS_TOKEN` with Account Analytics Read, `ALERT_WEBHOOK_URL`, and `ALERT_SPEND_USD_PER_15M`. Optional thresholds are `ALERT_FAILURE_RATE` and `ALERT_HTTP_5XX_RATE` (defaults 0.05), and `ALERT_MIN_ATTEMPTS` (default 20). Unknown model cost raises a separate alert. The webhook receives only window totals and error-category codes. Disabled alerts make no network request. Alerts can repeat while a threshold remains breached; operational acknowledgement belongs in the configured receiver.
 
-Queries weight rows by `_sample_interval`; these are sampled operational measurements, not a billing ledger. Quota and spend reservations in the Vault remain authoritative. The `AUTH_LIMIT` and `WRITE_LIMIT` bindings limit bursts per Cloudflare location. Authenticated writes use the user ID; guest authentication/OAuth requests use an HMAC of the IP address. Shared networks can still hit a guest limit. Missing optional bindings skip burst protection, so configure them before public launch.
+Queries weight rows by `_sample_interval`; these are sampled operational measurements, not a billing ledger. Quota and spend reservations in the Vault remain authoritative. The profile, role, and fact reads retry at most twice on transient retryable Durable Object errors, recreating the stub each time; overloaded errors are never retried. The `AUTH_LIMIT` and `WRITE_LIMIT` bindings limit bursts per Cloudflare location. Authenticated writes use the user ID; guest authentication/OAuth requests use an HMAC of the IP address. Shared networks can still hit a guest limit. Missing optional bindings skip burst protection, so configure them before public launch.
 
 ## Release evidence
 
@@ -87,7 +87,7 @@ The manual production workflow reads `RELEASE_EVIDENCE_JSON` from the protected 
 
 | Check | Required measurements |
 | --- | --- |
-| Extraction | `trapLeaks: 0`, `unsupportedClaims: 0`, `failureRate < 0.01`, positive `evaluatedUploads` |
+| Extraction | `trapLeaks: 0`, `unsupportedClaims: 0`, `failureRate < 0.01`, positive `evaluatedUploads`, `factRecall >= 0.85`, `factPrecision >= 0.95` (rates between 0 and 1) |
 | Grounding | `unsupportedClaims: 0`, positive `evaluatedLines` |
 | Latency | positive `p95Seconds < 90`, positive `sampleSize` |
 | Security | `openHighFindings: 0` |

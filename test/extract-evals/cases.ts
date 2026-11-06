@@ -12,6 +12,7 @@ export interface ExtractionCase {
     format: "markdown";
     language: string;
     traps: string[];
+    sources: { pdf: string; docx: string; conversionStatus: "not-run" };
   };
   gold: Gold;
 }
@@ -61,6 +62,11 @@ export const CASES: ExtractionCase[] = Array.from(
         format: "markdown",
         language,
         traps: index % 2 === 0 ? ["instruction"] : [],
+        sources: {
+          pdf: `fixtures/synthetic-${String(index + 1).padStart(2, "0")}.pdf`,
+          docx: `fixtures/synthetic-${String(index + 1).padStart(2, "0")}.docx`,
+          conversionStatus: "not-run",
+        },
       },
       gold: {
         roles: [

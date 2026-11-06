@@ -349,7 +349,9 @@ export async function verifyDocument(
     const body = structuredClone(input.base!);
     const update = (line: ResumeLine): ResumeLine => {
       const next = updates.get(line.id);
-      return next ? { ...line, text: next.text, status: next.status! } : line;
+      return next && next.text !== line.text
+        ? { ...line, text: next.text, status: next.status! }
+        : line;
     };
     if (body.summary) body.summary = update(body.summary);
     for (const section of body.sections)

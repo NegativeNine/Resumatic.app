@@ -3,6 +3,8 @@ import { bodyLimit } from "hono/body-limit";
 import { getCookie } from "hono/cookie";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
+import { durableReadResult } from "./rpc-read";
+import { unwrapResult } from "../shared/result";
 import { rateLimitRequest, httpRoute } from "./limits";
 import { OcrImagesSchema, validateTranscriptionInput } from "../ai/transcribe";
 import { revokeOAuthGrant } from "./mcp";
@@ -327,7 +329,14 @@ api.post("/test/model-budget", JSON_LIMIT, async (c) => {
 api.get("/me", async (c) => c.json(await myVault(c).me(c.get("who"))));
 
 api.get("/profile", async (c) =>
-  c.json(await myVault(c).getProfile(c.get("who"))),
+  c.json(
+    unwrapResult(
+      await durableReadResult(
+        () => myVault(c),
+        (v) => v.getProfile(c.get("who")),
+      ),
+    ),
+  ),
 );
 
 api.put("/profile", JSON_LIMIT, async (c) =>
@@ -477,7 +486,14 @@ api.get("/sources/:id/file", async (c) => {
 });
 
 api.get("/roles", async (c) =>
-  c.json({ roles: await myVault(c).listRoles(c.get("who")) }),
+  c.json({
+    roles: unwrapResult(
+      await durableReadResult(
+        () => myVault(c),
+        (v) => v.listRoles(c.get("who")),
+      ),
+    ),
+  }),
 );
 
 api.post("/roles", JSON_LIMIT, async (c) =>
@@ -501,9 +517,11 @@ api.get("/facts", async (c) => {
   if (state && !["proposed", "confirmed", "rejected"].includes(state))
     throw new AppError("invalid", "unknown state");
   return c.json({
-    facts: await myVault(c).listFacts(
-      c.get("who"),
-      state as ReviewState | undefined,
+    facts: unwrapResult(
+      await durableReadResult(
+        () => myVault(c),
+        (v) => v.listFacts(c.get("who"), state as ReviewState | undefined),
+      ),
     ),
   });
 });

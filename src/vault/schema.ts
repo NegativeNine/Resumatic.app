@@ -83,6 +83,9 @@ export const MIGRATIONS: readonly string[][] = [
   [...OPERATION_MIGRATIONS],
   [...UPLOAD_MIGRATIONS],
   [...FEEDBACK_MIGRATIONS],
+  [
+    `CREATE TABLE refine_cache (cache_key TEXT PRIMARY KEY, draft TEXT NOT NULL, created_at INTEGER NOT NULL)`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

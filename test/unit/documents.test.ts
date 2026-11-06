@@ -335,6 +335,23 @@ describe("evidence-preserving refinement", () => {
     expect(BASE.sections[0]!.lines[0]!.text).toBe("Built 2 services in Go");
   });
 
+  it("keeps a no-op refinement identical even when verification would change its status", async () => {
+    const baseline = structuredClone(BASE);
+    baseline.sections[0]!.lines[0]!.status = "repaired";
+    const m = models({
+      write: {
+        edits: [
+          { lineId: "line-1", text: baseline.sections[0]!.lines[0]!.text },
+        ],
+      },
+    });
+    const result = await generate(
+      m,
+      input({ kind: "refine", base: baseline, instruction: "Keep it as is" }),
+    );
+    expect(result.body).toEqual(baseline);
+  });
+
   it("retains the current line when a proposed rewrite cannot be verified", async () => {
     const m = models({
       write: {

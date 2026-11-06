@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { extractPrompt } from "../../src/ai/prompts";
 import type { Usage } from "../../src/ai/usage";
@@ -48,6 +49,14 @@ afterAll(() => {
     mode: live ? "live" : "harness-self-check",
     split,
     configurationHash,
+    sourceFixtureManifestHash: hash(
+      JSON.parse(
+        readFileSync(
+          resolve("test/extract-evals/fixtures/manifest.json"),
+          "utf8",
+        ),
+      ),
+    ),
     datasetHash: hash(
       CASES.map((c) => ({ id: c.id, markdown: c.markdown, gold: c.gold })),
     ),

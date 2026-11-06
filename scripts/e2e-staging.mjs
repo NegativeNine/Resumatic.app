@@ -61,6 +61,7 @@ const manifest = {
   vaultId: "",
   sources: [],
   resumes: [],
+  runs: [],
   deletionRequested: false,
 };
 async function saveManifest() {
@@ -271,6 +272,18 @@ async function main() {
   if (exported.facts.length !== facts.length)
     throw new Error("export is missing facts");
   log("exported");
+
+  // Capture all ledger IDs before deletion. The endpoint currently returns at most 100;
+  // a full page cannot establish that its result was complete.
+  const inventory = await json("GET", "/api/runs");
+  if (!Array.isArray(inventory.runs) || inventory.runs.length >= 100)
+    throw new Error("workflow inventory is unavailable or truncated");
+  manifest.runs = inventory.runs.map(({ id, kind, targetId }) => ({
+    id,
+    kind,
+    targetId,
+  }));
+  await saveManifest();
 
   await json("DELETE", "/auth/account", undefined, 202);
   manifest.deletionRequested = true;
