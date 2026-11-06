@@ -67,6 +67,83 @@ const PYTHON_LOCAL_ZIP64 = [
 ] as const;
 const fixture = (index: number): Uint8Array => Uint8Array.from(Buffer.from(PYTHON_LOCAL_ZIP64[index]!, "base64"));
 
+// Python zipfile with ZIP64_LIMIT=1: ZIP64 central sizes, EOCD and locator.
+// Includes stored/deflated members on seekable and non-seekable outputs.
+const PYTHON_CENTRAL_ZIP64 = [
+  "UEsDBC0AAAAAAAAAIQAV/nbe//////////8KABQAU2tpbGxzLmNzdgEAEAANAAAAAAAAAA0AAAAAAAAATmFtZQpHbwpSdXN0ClBLAQItAy0AAAAAAAAAIQAV/nbe//////////8KABQAAAAAAAAAAACAAQAAAABTa2lsbHMuY3N2AQAQAA0AAAAAAAAADQAAAAAAAABQSwYGLAAAAAAAAAAtAC0AAAAAAAAAAAABAAAAAAAAAAEAAAAAAAAATAAAAAAAAABJAAAAAAAAAFBLBgcAAAAAlQAAAAAAAAABAAAAUEsFBgAAAAABAAEATAAAAEkAAAAAAA==",
+  "UEsDBC0ACAAAAAAAIQAAAAAA//////////8KABQAU2tpbGxzLmNzdgEAEAAAAAAAAAAAAAAAAAAAAAAATmFtZQpHbwpSdXN0ClBLBwgV/nbeDQAAAAAAAAANAAAAAAAAAFBLAQItAy0ACAAAAAAAIQAV/nbe//////////8KABQAAAAAAAAAAACAAQAAAABTa2lsbHMuY3N2AQAQAA0AAAAAAAAADQAAAAAAAABQSwYGLAAAAAAAAAAtAC0AAAAAAAAAAAABAAAAAAAAAAEAAAAAAAAATAAAAAAAAABhAAAAAAAAAFBLBgcAAAAArQAAAAAAAAABAAAAUEsFBgAAAAABAAEATAAAAGEAAAAAAA==",
+  "UEsDBC0AAAAIAAAAIQAV/nbe//////////8KABQAU2tpbGxzLmNzdgEAEAANAAAAAAAAAA8AAAAAAAAA80vMTeVyz+cKKi0u4QIAUEsBAi0DLQAAAAgAAAAhABX+dt7//////////woAFAAAAAAAAAAAAIABAAAAAFNraWxscy5jc3YBABAADQAAAAAAAAAPAAAAAAAAAFBLBgYsAAAAAAAAAC0ALQAAAAAAAAAAAAEAAAAAAAAAAQAAAAAAAABMAAAAAAAAAEsAAAAAAAAAUEsGBwAAAACXAAAAAAAAAAEAAABQSwUGAAAAAAEAAQBMAAAASwAAAAAA",
+  "UEsDBC0ACAAIAAAAIQAAAAAA//////////8KABQAU2tpbGxzLmNzdgEAEAAAAAAAAAAAAAAAAAAAAAAA80vMTeVyz+cKKi0u4QIAUEsHCBX+dt4PAAAAAAAAAA0AAAAAAAAAUEsBAi0DLQAIAAgAAAAhABX+dt7//////////woAFAAAAAAAAAAAAIABAAAAAFNraWxscy5jc3YBABAADQAAAAAAAAAPAAAAAAAAAFBLBgYsAAAAAAAAAC0ALQAAAAAAAAAAAAEAAAAAAAAAAQAAAAAAAABMAAAAAAAAAGMAAAAAAAAAUEsGBwAAAACvAAAAAAAAAAEAAABQSwUGAAAAAAEAAQBMAAAAYwAAAAAA",
+] as const;
+const centralFixture = (index: number): Uint8Array => Uint8Array.from(Buffer.from(PYTHON_CENTRAL_ZIP64[index]!, "base64"));
+
+/** Add a ZIP64 trailer to an otherwise ordinary ZIP32 archive. */
+function zip64Envelope(original: Uint8Array, sentinel: boolean): Uint8Array {
+  const end = header(original, 0x06054b50);
+  const before = new DataView(original.buffer, original.byteOffset, original.byteLength);
+  const out = new Uint8Array(original.length + 76);
+  out.set(original.subarray(0, end));
+  out.set(original.subarray(end), end + 76);
+  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  view.setUint32(end, 0x06064b50, true);
+  view.setBigUint64(end + 4, 44n, true);
+  view.setUint16(end + 12, 45, true); view.setUint16(end + 14, 45, true);
+  view.setBigUint64(end + 24, BigInt(before.getUint16(end + 8, true)), true);
+  view.setBigUint64(end + 32, BigInt(before.getUint16(end + 10, true)), true);
+  view.setBigUint64(end + 40, BigInt(before.getUint32(end + 12, true)), true);
+  view.setBigUint64(end + 48, BigInt(before.getUint32(end + 16, true)), true);
+  view.setUint32(end + 56, 0x07064b50, true);
+  view.setBigUint64(end + 64, BigInt(end), true);
+  view.setUint32(end + 72, 1, true);
+  if (sentinel) {
+    view.setUint16(end + 76 + 8, 0xffff, true); view.setUint16(end + 76 + 10, 0xffff, true);
+    view.setUint32(end + 76 + 12, 0xffffffff, true); view.setUint32(end + 76 + 16, 0xffffffff, true);
+  }
+  return out;
+}
+
+function widenDescriptor(original: Uint8Array): Uint8Array {
+  const descriptor = header(original, 0x08074b50);
+  const before = new DataView(original.buffer, original.byteOffset, original.byteLength);
+  const out = new Uint8Array(original.length + 8);
+  out.set(original.subarray(0, descriptor + 8));
+  out.set(original.subarray(descriptor + 16), descriptor + 24);
+  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  view.setBigUint64(descriptor + 8, BigInt(before.getUint32(descriptor + 8, true)), true);
+  view.setBigUint64(descriptor + 16, BigInt(before.getUint32(descriptor + 12, true)), true);
+  const end = header(out, 0x06054b50);
+  view.setUint32(end + 16, view.getUint32(end + 16, true) + 8, true);
+  let central = view.getUint32(end + 16, true);
+  for (let index = 0; index < view.getUint16(end + 10, true); index++) {
+    const local = view.getUint32(central + 42, true);
+    if (local > descriptor) view.setUint32(central + 42, local + 8, true);
+    central += 46 + view.getUint16(central + 28, true) + view.getUint16(central + 30, true) + view.getUint16(central + 32, true);
+  }
+  return out;
+}
+
+/** Store the member's local-header pointer in the central ZIP64 extra field. */
+function zip64LocalOffset(original: Uint8Array, localOffset: bigint): Uint8Array {
+  const central = header(original, 0x02014b50);
+  const before = new DataView(original.buffer, original.byteOffset, original.byteLength);
+  const extra = central + 46 + before.getUint16(central + 28, true);
+  const insertion = extra + 4 + before.getUint16(extra + 2, true);
+  const out = new Uint8Array(original.length + 8);
+  out.set(original.subarray(0, insertion));
+  out.set(original.subarray(insertion), insertion + 8);
+  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  view.setBigUint64(insertion, localOffset, true);
+  view.setUint16(extra + 2, view.getUint16(extra + 2, true) + 8, true);
+  view.setUint16(central + 30, view.getUint16(central + 30, true) + 8, true);
+  view.setUint32(central + 42, 0xffffffff, true);
+  const end64 = header(out, 0x06064b50);
+  view.setBigUint64(end64 + 40, view.getBigUint64(end64 + 40, true) + 8n, true);
+  view.setBigUint64(header(out, 0x07064b50) + 8, BigInt(end64), true);
+  const end = header(out, 0x06054b50);
+  view.setUint32(end + 12, view.getUint32(end + 12, true) + 8, true);
+  return out;
+}
+
 describe("LinkedIn archive content integrity", () => {
   it.each([false, true])("rejects underreported decoded size, including a falsified local header: %s", (local) => {
     const zip = zipSync({ "Skills.csv": strToU8("Name\nGo\nRust\n") });
@@ -129,6 +206,47 @@ describe("LinkedIn archive content integrity", () => {
       expect(markdown).toContain("Name: Rust");
     },
   );
+
+  it.each(PYTHON_CENTRAL_ZIP64.map((_, index) => index))(
+    "imports Python's ZIP64 central-directory archive %i",
+    (index) => {
+      const markdown = linkedInMarkdown(centralFixture(index));
+      expect(markdown).toContain("Name: Go");
+      expect(markdown).toContain("Name: Rust");
+    },
+  );
+
+  it.each([false, true])("accepts ZIP64 trailers with ordinary 32-bit member descriptors (sentinels %s)", (sentinel) => {
+    expect(linkedInMarkdown(zip64Envelope(streamingArchive(), sentinel))).toContain("Name: Rust");
+  });
+
+  it("accepts an unambiguous 64-bit descriptor for a ZIP32 member in a ZIP64 archive", () => {
+    const signed = zip64Envelope(widenDescriptor(streamingArchive()), false);
+    expect(linkedInMarkdown(signed)).toContain("Name: Rust");
+  });
+
+  it("validates central ZIP64 local-header pointers before reading the archive", () => {
+    expect(linkedInMarkdown(zip64LocalOffset(centralFixture(0), 0n))).toContain("Name: Rust");
+    for (const offset of [1n, 2n ** 53n]) {
+      expect(() => linkedInMarkdown(zip64LocalOffset(centralFixture(0), offset))).toThrow();
+    }
+  });
+
+  it("rejects unsafe ZIP64 end records, locators and central extra fields", () => {
+    for (const mutate of [
+      (view: DataView, bytes: Uint8Array) => view.setBigUint64(header(bytes, 0x07064b50) + 8, 2n ** 53n, true),
+      (view: DataView, bytes: Uint8Array) => view.setBigUint64(header(bytes, 0x06064b50) + 32, 201n, true),
+      (view: DataView, bytes: Uint8Array) => view.setUint32(header(bytes, 0x07064b50) + 16, 2, true),
+      (view: DataView, bytes: Uint8Array) => view.setBigUint64(header(bytes, 0x06064b50) + 48, 2n ** 53n, true),
+      (view: DataView, bytes: Uint8Array) => view.setUint16(header(bytes, 0x06054b50) + 10, 2, true),
+      (view: DataView, bytes: Uint8Array) => view.setUint16(header(bytes, 0x02014b50) + 30, 4, true),
+      (view: DataView, bytes: Uint8Array) => view.setUint32(header(bytes, 0x07064b50), 0, true),
+    ]) {
+      const zip = centralFixture(0);
+      mutate(new DataView(zip.buffer, zip.byteOffset, zip.byteLength), zip);
+      expect(() => linkedInMarkdown(zip)).toThrow();
+    }
+  });
 
   it("accepts an unsigned ZIP64 data descriptor", () => {
     const original = fixture(3);

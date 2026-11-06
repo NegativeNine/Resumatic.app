@@ -17,8 +17,8 @@ const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
   return crc >>> 0;
 });
 
-/** Reject ambiguous ZIP32 directory pointers before inspecting any members. */
-function checkDirectory(bytes: Uint8Array): { crc: number; data: number }[] {
+/** Validate single-disk ZIP and ZIP64 directory pointers before inspecting members. */
+function checkDirectory(bytes: Uint8Array): { crc: number; data: number; compressed: number; original: number; method: number }[] {
   const bad = (): never => { throw new AppError("invalid", "the ZIP export could not be read"); };
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const bounds = (pos: number, length: number): void => {
@@ -28,6 +28,10 @@ function checkDirectory(bytes: Uint8Array): { crc: number; data: number }[] {
   const u16 = (pos: number): number => { bounds(pos, 2); return view.getUint16(pos, true); };
   const u32 = (pos: number): number => { bounds(pos, 4); return view.getUint32(pos, true); };
   const u64 = (pos: number): bigint => { bounds(pos, 8); return view.getBigUint64(pos, true); };
+  const safe = (value: bigint): number => {
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) bad();
+    return Number(value);
+  };
   let end = -1;
   for (let pos = bytes.length - 22; pos >= Math.max(0, bytes.length - 65557); pos--) {
     if (u32(pos) === 0x06054b50 && pos + 22 + u16(pos + 20) === bytes.length) {
@@ -35,25 +39,72 @@ function checkDirectory(bytes: Uint8Array): { crc: number; data: number }[] {
       break;
     }
   }
-  if (end < 0 || u16(end + 4) !== 0 || u16(end + 6) !== 0) bad();
-  const count = u16(end + 10), size = u32(end + 12), start = u32(end + 16);
-  // The uploaded archive is bounded to 10 MiB. ZIP64 and multi-disk layouts
-  // need separate validation rather than trusting truncated 32-bit pointers.
-  if (count === 0xffff || size === 0xffffffff || start === 0xffffffff ||
-      count !== u16(end + 8) || start + size !== end) bad();
+  if (end < 0) bad();
+  const disk32 = u16(end + 4), centralDisk32 = u16(end + 6);
+  const onDisk32 = u16(end + 8), count32 = u16(end + 10);
+  const size32 = u32(end + 12), start32 = u32(end + 16);
+  const locator = end >= 20 && u32(end - 20) === 0x07064b50;
+  let count: number, size: number, start: number, directoryEnd = end;
+  if (locator) {
+    if (u32(end - 16) !== 0 || u32(end - 4) !== 1) bad();
+    const record = safe(u64(end - 12));
+    bounds(record, 56);
+    if (u32(record) !== 0x06064b50 || u64(record + 4) < 44n ||
+        safe(u64(record + 4)) !== end - 20 - record - 12 ||
+        u32(record + 16) !== 0 || u32(record + 20) !== 0) bad();
+    const onDisk = safe(u64(record + 24));
+    count = safe(u64(record + 32));
+    size = safe(u64(record + 40));
+    start = safe(u64(record + 48));
+    if (onDisk !== count || ![0, 0xffff].includes(disk32) || ![0, 0xffff].includes(centralDisk32) ||
+        (onDisk32 !== 0xffff && onDisk32 !== count) || (count32 !== 0xffff && count32 !== count) ||
+        (size32 !== 0xffffffff && size32 !== size) || (start32 !== 0xffffffff && start32 !== start)) bad();
+    directoryEnd = record;
+  } else {
+    if (disk32 !== 0 || centralDisk32 !== 0 || count32 === 0xffff || onDisk32 !== count32 ||
+        size32 === 0xffffffff || start32 === 0xffffffff) bad();
+    count = count32; size = size32; start = start32;
+  }
+  if (start > directoryEnd || size !== directoryEnd - start) bad();
   if (count > 200) throw new AppError("too_large", "the archive has too many entries");
-  const records: { crc: number; data: number }[] = [];
+  const records: { crc: number; data: number; compressed: number; original: number; method: number }[] = [];
   let at = start;
   for (let i = 0; i < count; i++) {
     bounds(at, 46);
     if (u32(at) !== 0x02014b50) bad();
     const flags = u16(at + 8), method = u16(at + 10);
     const checksum = u32(at + 16);
-    const compressed = u32(at + 20), original = u32(at + 24);
+    const compressed32 = u32(at + 20), original32 = u32(at + 24);
     const nameLength = u16(at + 28), extraLength = u16(at + 30), commentLength = u16(at + 32);
-    const disk = u16(at + 34), local = u32(at + 42);
+    const disk16 = u16(at + 34), local32 = u32(at + 42);
     bounds(at + 46, nameLength + extraLength + commentLength);
-    if (disk !== 0 || local === 0xffffffff || compressed === 0xffffffff || original === 0xffffffff) bad();
+    let compressed = compressed32, original = original32, local = local32, disk = disk16;
+    const original64 = original32 === 0xffffffff, compressed64 = compressed32 === 0xffffffff;
+    const local64 = local32 === 0xffffffff, disk64 = disk16 === 0xffff;
+    if (original64 || compressed64 || local64 || disk64) {
+      if (!locator) bad();
+      const extraEnd = at + 46 + nameLength + extraLength;
+      let pos = at + 46 + nameLength, found = false;
+      while (pos < extraEnd) {
+        if (extraEnd - pos < 4) bad();
+        const id = u16(pos), length = u16(pos + 2);
+        pos += 4;
+        if (length > extraEnd - pos) bad();
+        if (id === 1) {
+          if (found) bad();
+          found = true;
+          const fieldEnd = pos + length;
+          const read64 = () => { if (fieldEnd - pos < 8) bad(); const value = safe(u64(pos)); pos += 8; return value; };
+          if (original64) original = read64();
+          if (compressed64) compressed = read64();
+          if (local64) local = read64();
+          if (disk64) { if (fieldEnd - pos < 4) bad(); disk = u32(pos); }
+          pos = fieldEnd;
+        } else pos += length;
+      }
+      if (!found) bad();
+    }
+    if (disk !== 0) bad();
     bounds(local, 30);
     if (u32(local) !== 0x04034b50 || u16(local + 6) !== flags || u16(local + 8) !== method ||
         u16(local + 26) !== nameLength || (flags & 1) !== 0) bad();
@@ -94,18 +145,25 @@ function checkDirectory(bytes: Uint8Array): { crc: number; data: number }[] {
     if (data > start || compressed > start - data) bad();
     if (flags & 8) {
       const descriptor = data + compressed;
-      const matches = (pos: number): boolean => pos >= 0 && pos + (localZip64 ? 20 : 12) <= start &&
-        u32(pos) === checksum && (localZip64
+      const matches = (pos: number, wide: boolean): boolean => pos >= 0 && pos + (wide ? 20 : 12) <= start &&
+        u32(pos) === checksum && (wide
           ? u64(pos + 4) === BigInt(compressed) && u64(pos + 12) === BigInt(original)
           : u32(pos + 4) === compressed && u32(pos + 8) === original);
-      const unsigned = matches(descriptor);
-      const signed = descriptor + 4 <= start && u32(descriptor) === 0x08074b50 && matches(descriptor + 4);
-      if (unsigned === signed) bad();
+      // ZIP64 archive trailers can coexist with ordinary ZIP32 members. Some
+      // writers use 64-bit descriptors even for those small members; accept
+      // either width only when exactly one signed/unsigned form matches.
+      const widths = localZip64 || original64 || compressed64 ? [true] : locator ? [false, true] : [false];
+      let matchesFound = 0;
+      for (const wide of widths) {
+        if (matches(descriptor, wide)) matchesFound++;
+        if (descriptor + 4 <= start && u32(descriptor) === 0x08074b50 && matches(descriptor + 4, wide)) matchesFound++;
+      }
+      if (matchesFound !== 1) bad();
     }
-    records.push({ crc: checksum, data });
+    records.push({ crc: checksum, data, compressed, original, method });
     at += 46 + nameLength + extraLength + commentLength;
   }
-  if (at !== end) bad();
+  if (at !== directoryEnd) bad();
   return records;
 }
 
@@ -252,6 +310,9 @@ export function linkedInDocument(
       filter(entry) {
         if (++entries > 200)
           throw new AppError("too_large", "the archive has too many entries");
+        const record = records[entries - 1];
+        if (!record || entry.originalSize !== record.original || entry.size !== record.compressed || entry.compression !== record.method)
+          throw new AppError("invalid", "the ZIP export could not be read");
         if (
           entry.name.startsWith("/") ||
           entry.name.split(/[\\/]/).includes("..")
@@ -268,10 +329,11 @@ export function linkedInDocument(
             "the archive contains duplicate career files",
           );
         names.add(name);
-        selected.set(entry.name, { size: entry.originalSize, compressed: entry.size, method: entry.compression, crc: records[entries - 1]!.crc, data: records[entries - 1]!.data });
+        selected.set(entry.name, { size: entry.originalSize, compressed: entry.size, method: entry.compression, crc: record.crc, data: record.data });
         return false; // Inspection only: never inflate using the untrusted directory size.
       },
     });
+    if (entries !== records.length) throw new AppError("invalid", "the ZIP export could not be read");
     files = readCareerMembers(bytes, selected);
   } catch (error) {
     if (error instanceof AppError) throw error;
