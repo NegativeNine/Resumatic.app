@@ -335,6 +335,8 @@ export class Vault extends DurableObject<Env> {
   }> {
     if (this.gone || !this.initialised) return { distill: [], tailor: [] };
     this.setMeta("state", "closing");
+    for (const ws of this.ctx.getWebSockets()) ws.close(1008, "Account closed");
+    this.requireNoUnsettledDispatches();
     const distill = this.sql
       .exec<{ run_id: string }>(
         `SELECT run_id FROM sources WHERE run_id IS NOT NULL UNION SELECT id AS run_id FROM runs WHERE kind = 'distill'`,
@@ -352,11 +354,14 @@ export class Vault extends DurableObject<Env> {
         `SELECT kind,id FROM runs WHERE kind NOT IN ('distill','tailor','embed')`,
       )
       .toArray();
-    for (const ws of this.ctx.getWebSockets()) ws.close(1008, "Account closed");
     return other.length ? { distill, tailor, other } : { distill, tailor };
   }
 
   async destroy(): Promise<void> {
+    if (!this.gone && this.initialised) {
+      this.setMeta("state", "closing");
+      this.requireNoUnsettledDispatches();
+    }
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
     this.gone = true;
@@ -2511,6 +2516,7 @@ export class Vault extends DurableObject<Env> {
   }
   async prepareMaintenance(): Promise<void> {
     requireMaintenanceFence(this.vaultId, this.env.RESTORE_FENCE_IDS);
+    this.requireNoUnsettledDispatches();
     for (const run of this.runs.listPending()) {
       if (run.kind === "embed")
         throw new AppError(
@@ -2548,6 +2554,7 @@ export class Vault extends DurableObject<Env> {
   }
   async controlCheckpoint() {
     requireMaintenanceFence(this.vaultId, this.env.RESTORE_FENCE_IDS);
+    this.requireNoUnsettledDispatches();
     if (this.runs.listPending().length)
       throw new AppError(
         "conflict",
@@ -3127,6 +3134,12 @@ export class Vault extends DurableObject<Env> {
   }
 
   private async dispatchRun(run: RunRecord): Promise<void> {
+    // The marker is durable before external I/O. Once closing starts, no new
+    // create may begin, even if an alarm resumed after an unrelated await.
+    if (this.gone || !this.initialised || this.meta("state") !== "open") return;
+    if ((this.env.RESTORE_FENCE_IDS ?? "").split(",").map((v) => v.trim()).includes(this.vaultId)) return;
+    if (this.sql.exec(`SELECT run_id FROM workflow_dispatches WHERE run_id = ?`, run.id).toArray().length) return;
+    this.sql.exec(`INSERT INTO workflow_dispatches (run_id) VALUES (?)`, run.id);
     try {
       if (run.kind === "tailor")
         await this.env.TAILOR.create({
@@ -3148,11 +3161,19 @@ export class Vault extends DurableObject<Env> {
           id: run.id,
           params: { vaultId: this.vaultId, runId: run.id },
         });
+      // A successful acknowledgement rules out this particular create arriving
+      // after deletion's inventory. Errors remain uncertain and fail closed.
+      this.sql.exec(`DELETE FROM workflow_dispatches WHERE run_id = ?`, run.id);
     } catch {
       this.runs.noteUncertain(run.id, "dispatch_uncertain");
     }
     if (this.runs.listPending().length)
       await this.ctx.storage.setAlarm(Date.now() + 60_000);
+  }
+
+  private requireNoUnsettledDispatches(): void {
+    if (this.sql.exec(`SELECT run_id FROM workflow_dispatches LIMIT 1`).toArray().length)
+      throw new AppError("unavailable", "workflow creation is unresolved; retry after it is settled");
   }
 
   async alarm(): Promise<void> {

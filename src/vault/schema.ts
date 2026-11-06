@@ -91,6 +91,14 @@ export const MIGRATIONS: readonly string[][] = [
   [
     `ALTER TABLE sources ADD COLUMN ocr_image_count INTEGER CHECK (ocr_image_count IS NULL OR ocr_image_count BETWEEN 1 AND 4)`,
   ],
+  [
+    `CREATE TABLE workflow_dispatches (run_id TEXT PRIMARY KEY)`,
+    // A run can reach a terminal state before its create acknowledgement is
+    // delivered. Upgrades cannot infer quiescence from the run state alone.
+    `INSERT INTO workflow_dispatches (run_id) SELECT id FROM runs WHERE kind != 'embed'`,
+    `INSERT OR IGNORE INTO workflow_dispatches (run_id) SELECT run_id FROM sources WHERE run_id IS NOT NULL`,
+    `INSERT OR IGNORE INTO workflow_dispatches (run_id) SELECT run_id FROM resumes WHERE run_id IS NOT NULL`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
