@@ -584,6 +584,10 @@ export class Vault extends DurableObject<Env> {
     if (next !== null) await this.scheduleRunAlarm(next);
     return reservation;
   }
+  expiredUploadForCleanup(who: Who, input: UploadDescriptor): boolean {
+    this.requireOwner(who);
+    return this.uploads.isExpired(input);
+  }
   async completeUpload(
     who: Who,
     input: UploadDescriptor,
@@ -1677,6 +1681,46 @@ export class Vault extends DurableObject<Env> {
     const row = this.resumeRow(id);
     if (row.state === "ready") this.resumeVersion(row);
     return this.snapshots.versions(id);
+  }
+
+  /** Start a fresh per-line review without changing the blocked snapshot. */
+  beginResumeReview(who: Who, resumeId: string, expectedVersion: number): { version: number } {
+    this.requireOwner(who);
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1)
+      throw new AppError("invalid", "the resume version is required");
+    const result = this.ctx.storage.transactionSync(() => {
+      this.requireOwner(who);
+      const row = this.resumeRow(resumeId);
+      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "the resume is not ready");
+      if (row.version === expectedVersion + 1) {
+        const saved = this.snapshots.read(resumeId, row.version);
+        if (saved?.provenance === "legacy" && saved.reviewStartedFrom === expectedVersion)
+          return { version: row.version };
+      }
+      if (row.version !== expectedVersion) throw new AppError("conflict", "the resume changed; refresh and try again");
+      if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
+        throw new AppError("conflict", "wait for the current document to finish");
+      const base = this.resumeVersion(row);
+      if (base.provenance !== "snapshot") throw new AppError("conflict", "this resume is already in review");
+      let blocked = false;
+      try { assertGroundedResume(base.render, base.facts, base.provenance, base.evidence); }
+      catch { blocked = true; }
+      if (!blocked) throw new AppError("conflict", "this resume does not need grounding review");
+      const version = row.version + 1;
+      const saved: ResumeVersion = {
+        ...base,
+        render: { ...base.render, version },
+        provenance: "legacy",
+        legacyReceipts: {},
+        reviewStartedFrom: expectedVersion,
+        legacyFinalizedFrom: undefined,
+      };
+      this.snapshots.save(resumeId, version, saved);
+      this.sql.exec(`UPDATE resumes SET version=? WHERE id=?`, version, resumeId);
+      return { version };
+    });
+    this.broadcast("resume", resumeId);
+    return result;
   }
 
   /** Promote only a fully rechecked current legacy version; never mutate history. */

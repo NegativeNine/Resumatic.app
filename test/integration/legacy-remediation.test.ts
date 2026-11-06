@@ -10,7 +10,7 @@ import { call, cookieFrom, eventually, fakeModels, JOB_DESCRIPTION, RESUME, sign
 beforeEach(() => setModels(() => fakeModels()));
 afterEach(() => setModels(null));
 
-async function fixture() {
+async function fixture(mode: "legacy" | "blockedSnapshot" | "verifiedSnapshot" = "legacy") {
   const user = await signIn();
   const upload = await user.upload("synthetic.pdf", RESUME);
   const { sourceId } = await upload.json() as { sourceId: string };
@@ -36,12 +36,15 @@ async function fixture() {
     const row = state.storage.sql.exec<{ data: string }>("SELECT data FROM resume_versions WHERE resume_id=? AND version=?", resumeId, generated.version).one();
     const saved = JSON.parse(row.data);
     const section = saved.render.body.sections.find((item: { lines: { id: string }[] }) => item.lines.some((line) => line.id === original.id));
-    section.lines = [original, { ...original, id: "legacy-duplicate", factIds: [...original.factIds] }];
+    section.lines = [
+      mode === "blockedSnapshot" ? { ...original, text: `${original.text} 987654321` } : original,
+      { ...original, id: "legacy-duplicate", factIds: [...original.factIds] },
+    ];
     saved.render.body.summary = null;
     saved.render.body.sections = [section];
     saved.render.body.skills = [];
-    saved.provenance = "legacy";
-    delete saved.evidence;
+    saved.provenance = mode === "legacy" ? "legacy" : "snapshot";
+    if (mode === "legacy") delete saved.evidence;
     delete saved.legacyReceipts;
     state.storage.sql.exec("UPDATE resume_versions SET data=? WHERE resume_id=? AND version=?", JSON.stringify(saved), resumeId, generated.version);
     state.storage.sql.exec("UPDATE resumes SET body=? WHERE id=?", JSON.stringify(saved.render.body), resumeId);
@@ -63,6 +66,60 @@ async function checkLine(user: User, applicationId: string, resumeId: string, ve
 }
 
 describe("legacy resume remediation", () => {
+  it("requires a blocked current snapshot and an owner before starting review", async () => {
+    const { user, resumeId, version } = await fixture("verifiedSnapshot");
+    expect((await user.fetch(`/api/resumes/${resumeId}/preview`)).status).toBe(200);
+    expect((await user.send("POST", `/api/resumes/${resumeId}/grounding-review`, { expectedVersion: version })).status).toBe(409);
+    const stranger = await signIn();
+    expect((await stranger.send("POST", `/api/resumes/${resumeId}/grounding-review`, { expectedVersion: version })).status).toBe(404);
+    expect((await user.json<ResumeView>(`/api/resumes/${resumeId}`)).version).toBe(version);
+  }, 30_000);
+
+  it("reviews a blocked snapshot as a new current version without changing the original or its shares", async () => {
+    const { user, applicationId, resumeId, original, version, oldGrantId, shareCookie } = await fixture("blockedSnapshot");
+    const before = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(before.needsGroundingReview).toBe(true);
+    expect((await user.fetch(`/api/resumes/${resumeId}/preview`)).status).toBe(409);
+    const beforeGrant = (await user.json<{ shares: { id: string; snapshot: unknown }[] }>("/api/export")).shares.find((item) => item.id === oldGrantId);
+    const start = await user.send("POST", `/api/resumes/${resumeId}/grounding-review`, { expectedVersion: version });
+    expect(start.status, await start.clone().text()).toBe(200);
+    expect(await start.json()).toEqual({ version: version + 1 });
+    expect(await (await user.send("POST", `/api/resumes/${resumeId}/grounding-review`, { expectedVersion: version })).json()).toEqual({ version: version + 1 });
+    const review = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(review.provenance).toBe("legacy");
+    expect(review.legacyReview).toMatchObject({ verifiedLineIds: [], totalLines: 2 });
+    expect((await user.fetch(`/api/resumes/${resumeId}/preview`)).status).toBe(409);
+    expect((await user.send("POST", `/api/resumes/${resumeId}/legacy-finalize`, { expectedVersion: review.version })).status).toBe(409);
+    expect((await checkLine(user, applicationId, resumeId, review.version, original.id, original.text, original.factIds)).state).toBe("ready");
+    const first = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect((await user.send("POST", `/api/resumes/${resumeId}/grounding-review`, { expectedVersion: version })).status).toBe(409);
+    expect(first.legacyReview?.verifiedLineIds).toEqual([original.id]);
+    expect((await checkLine(user, applicationId, resumeId, first.version, "legacy-duplicate", original.text, original.factIds)).state).toBe("ready");
+    const second = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    const finalized = await user.send("POST", `/api/resumes/${resumeId}/legacy-finalize`, { expectedVersion: second.version });
+    expect(finalized.status, await finalized.clone().text()).toBe(200);
+    expect((await user.fetch(`/api/resumes/${resumeId}/preview`)).status).toBe(200);
+    const saved = await user.json<ResumeView>(`/api/resumes/${resumeId}?version=${version}`);
+    expect(saved.body).toEqual(before.body);
+    expect(saved.needsGroundingReview).toBe(true);
+    expect((await user.fetch(`/api/resumes/${resumeId}/preview?version=${version}`)).status).toBe(409);
+    expect((await call("/share/snapshot", { cookie: shareCookie })).status).toBe(410);
+    const afterGrant = (await user.json<{ shares: { id: string; snapshot: unknown }[] }>("/api/export")).shares.find((item) => item.id === oldGrantId);
+    expect(afterGrant?.snapshot).toEqual(beforeGrant?.snapshot);
+  }, 30_000);
+
+  it("does not give a review receipt to an unsupported line", async () => {
+    const { user, applicationId, resumeId, original, version } = await fixture("blockedSnapshot");
+    expect((await user.send("POST", `/api/resumes/${resumeId}/grounding-review`, { expectedVersion: version })).status).toBe(200);
+    const result = await checkLine(user, applicationId, resumeId, version + 1, original.id, `${original.text} 987654321`, original.factIds);
+    expect(result.state).toBe("failed");
+    const review = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(review.version).toBe(version + 1);
+    expect(review.legacyReview?.verifiedLineIds).toEqual([]);
+    expect((await user.send("POST", `/api/resumes/${resumeId}/legacy-finalize`, { expectedVersion: review.version })).status).toBe(409);
+    expect((await user.fetch(`/api/resumes/${resumeId}/preview`)).status).toBe(409);
+  }, 30_000);
+
   it("requires fresh checks for unchanged shared lines and finalizes without rewriting history", async () => {
     const { user, applicationId, resumeId, original, version, oldGrantId, shareCookie } = await fixture();
     const before = await user.json<ResumeView>(`/api/resumes/${resumeId}`);

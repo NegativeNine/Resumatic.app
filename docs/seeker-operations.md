@@ -164,7 +164,7 @@ Official references: [OAuth authorization](https://developers.cloudflare.com/age
 
 ## Uploads and embedding rebuilds
 
-Upload reservations persist the metadata/body digest and a unique R2 key before writing bytes. Retries recover the same source; conflicting metadata fails before replacing an object. Uncertain writes retain their reservation, and cleanup first permanently expires a pending intent. Validate interrupted upload and deletion races against staging R2 before accepting this as live evidence.
+Upload reservations persist the metadata/body digest and a unique R2 key before writing bytes. Retries recover the same source; conflicting metadata fails before replacing an object. Uncertain writes retain their reservation, and cleanup first permanently expires a pending intent. If an acknowledged put completes after the expiry sweep, the Worker checks that its exact reservation is permanently expired before deleting that key again; a failed check or a generic conflict alone does not authorize deletion. This is best effort: a crash or a different in-flight put can still leave a late object. Validate interrupted upload and deletion races against staging R2 before accepting this as live evidence.
 
 Embedding rebuilds stage vectors per Vault while serving the previous generation, then activate only a complete generation. Fleet dispatch must use stable run IDs, bounded batches and the same model-budget reservations; failures stay resumable. Run a small staging canary and verify generation activation, cancellation and account deletion before starting a fleet rebuild. Rebuilding embeddings is a paid model operation and needs an explicit configured budget.
 

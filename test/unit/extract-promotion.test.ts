@@ -409,6 +409,16 @@ describe("private extraction evaluation evidence", () => {
       assessPromotion(root, written.runId, "audit.json").results[0]!.pending,
     ).toContain("insufficient_human_audit");
   });
+  it("binds the audit sample seed to the exact immutable run snapshot", () => {
+    const { root } = dataset();
+    const first = snapshot(root);
+    const second = snapshot(root);
+    const firstResult = assessPromotion(root, first.written.runId).results[0]!;
+    const secondResult = assessPromotion(root, second.written.runId).results[0]!;
+    expect(first.written.sha256).not.toBe(second.written.sha256);
+    expect(firstResult.sampleSeed).not.toBe(secondResult.sampleSeed);
+    expect(assessPromotion(root, first.written.runId).results[0]!.sampleKeys).toEqual(firstResult.sampleKeys);
+  });
   it("does not silently accept a judged unsupported candidate omitted from the human sample", () => {
     const { root } = dataset();
     const { audit, written } = snapshot(root, (data) => {

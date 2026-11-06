@@ -401,11 +401,13 @@ export function assessPromotion(root, runId, auditPath) {
           if (verdict === "unsupported") addReason(failed, "human_unsupported_ownership_level");
         }
       }
-      // Bind the sample to the immutable snapshot. An auditor cannot choose
-      // only easy examples after seeing the results.
+      // Bind the sample to this immutable snapshot, not just its dataset and
+      // configuration. This makes a new run use its own reproducible sample.
+      // It does not prevent an operator from deliberately grinding runs.
       const sampleSeed = hash([
         dataset.manifestHash,
         snapshot.configurationHash,
+        input.sha256,
         strategy,
       ]);
       const sampleKeys = [...eligibleKeys]

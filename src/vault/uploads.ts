@@ -216,6 +216,19 @@ export class UploadStore {
     return row ? fromRow(row) : null;
   }
 
+  /** Only a matching, permanently expired reservation can never publish this key. */
+  isExpired(input: UploadDescriptor): boolean {
+    this.validate(input);
+    const intent = this.get(input.requestKey);
+    if (!intent || intent.state !== "expired") return false;
+    try {
+      this.assertSame(intent, input);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Mark before deleting: completion can never race an expired object's cleanup. */
   cleanupCandidates(limit = 100): UploadIntent[] {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000)

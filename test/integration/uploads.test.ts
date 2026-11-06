@@ -10,6 +10,10 @@ import {
   type UploadIntent,
 } from "../../src/vault/uploads";
 import { RUN_MIGRATIONS, RunStore } from "../../src/vault/runs";
+import { completeReservedUpload } from "../../src/worker/upload-cleanup";
+import { readSession } from "../../src/worker/session";
+import { vault } from "../../src/shared/stubs";
+import { signIn } from "./support";
 
 async function withStore(
   test: (
@@ -185,6 +189,9 @@ describe("durable upload reservations", () => {
         store.complete(input, (intent) => insert(sql, intent)),
       ).toThrow("expired");
       expect(store.get(input.requestKey)?.state).toBe("expired");
+      expect(store.isExpired(input)).toBe(true);
+      expect(store.isExpired({ ...input, descriptorDigest: "b".repeat(64) })).toBe(false);
+      expect(store.isExpired({ ...input, requestKey: "other-request" })).toBe(false);
       const [candidate] = store.cleanupCandidates();
       expect(candidate?.r2Key).toBe(input.r2Key);
       expect(store.nextAlarm()).toBe(clock.now);
@@ -200,6 +207,63 @@ describe("durable upload reservations", () => {
       ).toThrow("storage key is already reserved");
       expect(sql.exec(`SELECT id FROM sources`).toArray()).toEqual([]);
     });
+  });
+
+  it("cleans a late acknowledged write even after the expiry sweep, without touching a committed retry", async () => {
+    await withStore(async (store, _runs, sql, clock, id) => {
+      const expired = descriptor(id, "expired");
+      const first = store.reserve(expired);
+      clock.now = first.intent.expiresAt;
+      expect(store.cleanupCandidates()).toHaveLength(1);
+      await env.FILES.delete(expired.r2Key);
+      store.markCleaned(expired.requestKey, expired.r2Key);
+      // An earlier put can acknowledge after that delete; completion must
+      // recheck the durable terminal intent, then remove this acknowledged put.
+      await env.FILES.put(expired.r2Key, "late");
+      await expect(completeReservedUpload(env.FILES, expired.r2Key, async () =>
+        store.complete(expired, (intent) => insert(sql, intent)), {
+          expired: async () => store.isExpired(expired),
+        })).rejects.toThrow("expired");
+      expect(await env.FILES.get(expired.r2Key)).toBeNull();
+      expect(() => store.reserve(expired)).toThrow("expired");
+      expect(() => store.reserve({ ...expired, requestKey: "new-request" })).toThrow("already reserved");
+
+      const committed = descriptor(id, "committed");
+      store.reserve(committed);
+      await env.FILES.put(committed.r2Key, "accepted");
+      store.complete(committed, (intent) => insert(sql, intent));
+      expect(store.isExpired(committed)).toBe(false);
+      // A descriptor mismatch may report a conflict, but must never delete
+      // bytes already accepted for the original request.
+      const changed = { ...committed, filename: "another.pdf" };
+      await expect(completeReservedUpload(env.FILES, changed.r2Key, async () =>
+        store.complete(changed, () => {}), { expired: async () => store.isExpired(changed) })).rejects.toThrow("different input");
+      expect(await (await env.FILES.get(committed.r2Key))!.text()).toBe("accepted");
+    });
+  });
+
+  it("requires the current owner's session to confirm an expired reservation across RPC", async () => {
+    const user = await signIn();
+    const session = await readSession(env.SESSION_KEY, user.cookie.slice("__Host-session=".length));
+    expect(session).not.toBeNull();
+    const { uid, vid, gen, epoch } = session!;
+    const who = { userId: uid, gen, epoch };
+    const stub = vault(env, vid);
+    const input = descriptor(vid, crypto.randomUUID());
+    await stub.reserveUpload(who, input);
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(`UPDATE upload_intents SET state='expired' WHERE request_key=?`, input.requestKey);
+    });
+    await env.FILES.put(input.r2Key, "late");
+    const complete = () => stub.completeUpload(who, input);
+    await expect(completeReservedUpload(env.FILES, input.r2Key, complete, {
+      expired: () => stub.expiredUploadForCleanup({ ...who, gen: gen + 1 }, input),
+    })).rejects.toThrow("expired");
+    expect(await (await env.FILES.get(input.r2Key))!.text()).toBe("late");
+    await expect(completeReservedUpload(env.FILES, input.r2Key, complete, {
+      expired: () => stub.expiredUploadForCleanup(who, input),
+    })).rejects.toThrow("expired");
+    expect(await env.FILES.get(input.r2Key)).toBeNull();
   });
 
   it("does not erase accepted bytes when the same request is retried with another filename", async () => {

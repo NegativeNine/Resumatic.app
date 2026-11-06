@@ -41,6 +41,28 @@ describe("late upload cleanup", () => {
     expect(bucket.delete).not.toHaveBeenCalled();
   });
 
+  it("cleans a conflict only after an authoritative exact-reservation expiry check", async () => {
+    const conflict = new AppError("conflict", "upload expired");
+    for (const [result, remove] of [[true, true], [false, false]] as const) {
+      const bucket = { delete: vi.fn(async (_key: string | string[]) => {}) };
+      const expired = vi.fn(async () => result);
+      await expect(completeReservedUpload(bucket, "unique-key", async () => { throw conflict; }, { expired })).rejects.toBe(conflict);
+      expect(expired).toHaveBeenCalledOnce();
+      expect(bucket.delete).toHaveBeenCalledTimes(Number(remove));
+    }
+  });
+
+  it("retains the object when the expiry lookup fails or the session ends", async () => {
+    const conflict = new AppError("conflict", "unknown state");
+    for (const error of [new AppError("unauthenticated", "session ended"), new Error("connection lost")]) {
+      const bucket = { delete: vi.fn(async (_key: string | string[]) => {}) };
+      await expect(completeReservedUpload(bucket, "key", async () => { throw conflict; }, {
+        expired: async () => { throw error; },
+      })).rejects.toBe(conflict);
+      expect(bucket.delete).not.toHaveBeenCalled();
+    }
+  });
+
   it("retries deletion twice, and logs only a fixed code if cleanup still fails", async () => {
     const failure = new AppError("gone", "the account is closed");
     const bucket = {
@@ -58,7 +80,7 @@ describe("late upload cleanup", () => {
           async () => {
             throw failure;
           },
-          wait,
+          { wait },
         ),
       ).rejects.toBe(failure);
       expect(bucket.delete).toHaveBeenCalledTimes(3);

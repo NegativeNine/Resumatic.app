@@ -133,11 +133,25 @@ export function ResumeSheet({
             This version contains wording without verified evidence, so its PDF,
             Word download and print preview are unavailable. Your text is still here.{" "}
             {!readOnly && resume.provenance === "snapshot"
-              ? "Review the cited facts, then confirm facts and tailor a new version."
+              ? "Start a line-by-line review below, or confirm your facts and tailor a new version."
               : !readOnly && review
                 ? "Review each line against confirmed facts to prepare a checked version."
                 : "Select Latest or confirm facts and tailor a new version to create a downloadable resume."}
           </p>
+        )}
+        {!readOnly && needsEvidence && resume.provenance === "snapshot" && resume.needsGroundingReview && (
+          <section className="card" aria-label="Review blocked resume">
+            <h2>Review this resume</h2>
+            <p>Start a new review version, then check each line against confirmed facts. The review becomes your latest version and cannot be downloaded until all checks pass. Your existing versions and share links are preserved.</p>
+            <button type="button" disabled={finalization.pending}
+              onClick={() => void finalization.run(async () => {
+                await api.beginResumeReview(resume.id, resume.version);
+                await reload();
+              })}>
+              {finalization.pending ? "Starting…" : "Start review"}
+            </button>
+            <ActionError message={finalization.error} />
+          </section>
         )}
         {!readOnly && review && (
           <section className="card" aria-label="Review older resume">

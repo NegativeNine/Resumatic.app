@@ -78,10 +78,16 @@ if (!browser?.startsWith("/")) {
     if (path === "/api/resumes/resume-1" && req.method === "GET" && state.resumeRunning) return send(res, 200, { id: "resume-1", applicationId: "application-1", state: "running", step: null, error: null, version: 0, createdAt: 1, dispatchUncertain: true, cancellationPending: state.resumeCancel, body: null, report: null, facts: {} });
     if (path === "/api/resumes/resume-1" && req.method === "GET") return send(res, 200, { id: "resume-1", applicationId: "application-1", state: "ready", provenance: state.resumeLegacy ? "legacy" : "snapshot", ...(state.resumeNeedsGroundingReview ? { needsGroundingReview: true } : {}), ...(state.resumeLegacy ? { legacyReview: { verifiedLineIds: state.legacyChecked ? ["line-1"] : [], totalLines: 1, headersReady: state.legacyHeadersReady, skillsReady: true } } : {}), step: null, error: null, version: state.resumeVersion, createdAt: 1, report: null, facts: { "fact-1": { text: fact.text, quote: fact.quote } }, body: { summary: null, sections: [{ roleId: "role-1", kind: "job", org: role.org, title: role.title, startDate: role.startDate, endDate: null, lines: [{ id: "line-1", text: state.resumeText, factIds: state.resumeUncited ? [] : ["fact-1"], status: state.resumeUncited ? "edited" : "kept" }] }], skills: [] } });
     if (path === "/api/resumes/resume-1/versions") return send(res, 200, { versions: [] });
+    if (path === "/api/resumes/resume-1/grounding-review" && req.method === "POST") {
+      const body = JSON.parse((await read(req)).toString("utf8"));
+      if (state.resumeLegacy || !state.resumeNeedsGroundingReview || body.expectedVersion !== state.resumeVersion) return send(res, 409, { error: "conflict" });
+      state.resumeLegacy = true; state.legacyChecked = false; state.legacyHeadersReady = false; state.resumeVersion++;
+      return send(res, 200, { version: state.resumeVersion });
+    }
     if (path === "/api/resumes/resume-1/legacy-finalize" && req.method === "POST") {
       const body = JSON.parse((await read(req)).toString("utf8"));
       if (!state.resumeLegacy || !state.legacyChecked || !state.legacyHeadersReady || body.expectedVersion !== state.resumeVersion) return send(res, 409, { error: "conflict" });
-      state.resumeLegacy = false; state.legacyFinalized = true; state.resumeVersion++;
+      state.resumeLegacy = false; state.resumeNeedsGroundingReview = false; state.legacyFinalized = true; state.resumeVersion++;
       return send(res, 200, { version: state.resumeVersion });
     }
     if (path === "/api/runs/document-2/cancel" && req.method === "POST") { state.documents.find((d) => d.id === "document-2").cancellationPending = true; res.writeHead(202); res.end(); return; }
@@ -224,8 +230,11 @@ if (!browser?.startsWith("/")) {
     await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download PDF')`);
     if (JSON.stringify(state.manualEdits.at(-1)?.manualFactIds) !== '["fact-1"]') throw new Error("REMEDIATION_FACT_MISSING");
     stage = "legacy_resume_review";
-    state.resumeLegacy = true; state.legacyChecked = false; state.legacyHeadersReady = false; await call("Page.reload");
+    state.resumeNeedsGroundingReview = true; await call("Page.reload");
+    await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Start review')`);
+    await clickText("button", "Start review");
     await wait(`document.body?.innerText.includes('0 of 1 lines checked') && document.body?.innerText.includes("headings don't match")`);
+    if (!state.resumeLegacy) throw new Error("SNAPSHOT_REVIEW_NOT_STARTED");
     if (!await evalPage(`[...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create checked version')?.disabled`)) throw new Error("LEGACY_FINALIZE_NOT_BLOCKED");
     await clickText("button", "Review line");
     await wait(`!!document.querySelector('.line fieldset input[type="checkbox"]')`);

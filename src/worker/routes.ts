@@ -493,7 +493,9 @@ api.post("/sources", UPLOAD_LIMIT, async (c) => {
   });
   return c.json(
     await completeReservedUpload(c.env.FILES, descriptor.r2Key, () =>
-      myVault(c).completeUpload(c.get("who"), descriptor),
+      myVault(c).completeUpload(c.get("who"), descriptor), {
+        expired: () => myVault(c).expiredUploadForCleanup(c.get("who"), descriptor),
+      },
     ),
     201,
   );
@@ -552,7 +554,9 @@ api.post(
     });
     return c.json(
       await completeReservedUpload(c.env.FILES, descriptor.r2Key, () =>
-        myVault(c).completeUpload(c.get("who"), descriptor),
+        myVault(c).completeUpload(c.get("who"), descriptor), {
+          expired: () => myVault(c).expiredUploadForCleanup(c.get("who"), descriptor),
+        },
       ),
       202,
     );
@@ -736,6 +740,11 @@ api.patch("/resumes/:id/lines/:lineId", JSON_LIMIT, async (c) => {
 api.post("/resumes/:id/legacy-finalize", JSON_LIMIT, async (c) => {
   const { expectedVersion } = await jsonBody(c, z.object({ expectedVersion: z.number().int().positive() }));
   return c.json(await myVault(c).finalizeLegacyResume(c.get("who"), c.req.param("id"), expectedVersion));
+});
+
+api.post("/resumes/:id/grounding-review", JSON_LIMIT, async (c) => {
+  const { expectedVersion } = await jsonBody(c, z.object({ expectedVersion: z.number().int().positive() }));
+  return c.json(await myVault(c).beginResumeReview(c.get("who"), c.req.param("id"), expectedVersion));
 });
 
 /** Renders once per resume version and serves the cached PDF after that. */

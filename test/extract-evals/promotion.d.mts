@@ -29,6 +29,7 @@ export function assessPromotion(
     pending: string[];
     failed: string[];
     sampleKeys: string[];
+    sampleSeed: string;
     metrics: Record<string, number | null>;
   }[];
   winner: string | null;

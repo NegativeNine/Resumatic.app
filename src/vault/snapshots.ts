@@ -28,6 +28,8 @@ export interface ResumeVersion {
   legacyReceipts?: Record<string, { text: string; roleId: string | null; factIds: string[]; facts: FactRecord[]; roles: RoleRecord[] }>;
   /** Identifies an idempotently finalized legacy version. */
   legacyFinalizedFrom?: number;
+  /** Identifies an explicit transition from a blocked snapshot to review. */
+  reviewStartedFrom?: number;
   provenance: "snapshot" | "legacy";
 }
 
