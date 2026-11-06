@@ -357,6 +357,8 @@ describe("private extraction evaluation evidence", () => {
     const commit = "a".repeat(40);
     const names = ["models", "googleSignin", "extraction", "grounding", "ats", "stagingE2e", "billing", "security", "deletion", "latency", "betaOperations"];
     const evidence: Record<string, any> = Object.fromEntries(names.map((name) => [name, { status: "passed", commit, reportUrl: `https://reports.example.test/${name}` }]));
+    const models = extractionConfiguration(["llm:default"], "production", { priceOverrides: {} }).models;
+    Object.assign(evidence.models, { writerModel: models.MODEL_WRITE, judgeModel: models.MODEL_JUDGE, writerFamily: "claude", judgeFamily: "gpt" });
     const metrics = report.results[0]!.metrics;
     Object.assign(evidence.extraction, { trapLeaks: 0, unsupportedClaims: 0, evaluatedUploads: metrics.cases, failureRate: metrics.failureRate, factRecall: metrics.recall, factPrecision: metrics.precision, promotion: report, priceOverrides: process.env.EVAL_MODEL_PRICES ? JSON.parse(process.env.EVAL_MODEL_PRICES) : {} });
     Object.assign(evidence.grounding, { unsupportedClaims: 0, evaluatedLines: 1 });
