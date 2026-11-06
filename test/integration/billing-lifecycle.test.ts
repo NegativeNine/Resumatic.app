@@ -5,6 +5,73 @@ import { vault } from "../../src/shared/stubs";
 import { Vault } from "../../src/vault/vault";
 
 describe("billing identifiers during account deletion", () => {
+  it("fences an in-flight customer create and records its ID after closure", async () => {
+    const stub = vault(env, env.VAULT.newUniqueId().toString());
+    const userId = crypto.randomUUID();
+    await stub.init(userId);
+    let entered!: () => void, release!: () => void;
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    vi.stubGlobal("fetch", async () => {
+      entered();
+      await hold;
+      return Response.json({ id: "cus_late" });
+    });
+    try {
+      await runInDurableObject(stub, async (instance) => {
+        const local = (instance as unknown as { env: Record<string, unknown> }).env;
+        const saved = { ...local };
+        Object.assign(local, {
+          BILLING_ENABLED: "true",
+          BILLING_PLANS_JSON: JSON.stringify({ free: { generationLimit: 3 }, paid: [{ id: "pro", priceId: "price_pro", generationLimit: 50 }] }),
+          STRIPE_SECRET_KEY: "sk_test_secret", STRIPE_WEBHOOK_SECRET: "whsec_secret",
+          STRIPE_API_VERSION: "2026-09-30.endive", APP_ORIGIN: "https://app.example.com",
+        });
+        try {
+          const opening = instance.billingCheckout({ userId, gen: 1 }, "pro", "test-key");
+          const outcome = opening.then(() => null, (error: Error) => error);
+          await ready;
+          await expect(instance.close()).rejects.toThrow("customer creation is unresolved");
+          await expect(instance.destroy()).rejects.toThrow("customer creation is unresolved");
+          release();
+          expect(await outcome).toBeInstanceOf(Error);
+          expect(await instance.billingCustomerForDeletion()).toBe("cus_late");
+          await expect(instance.close()).resolves.toBeDefined();
+        } finally {
+          release();
+          for (const key of Object.keys(local)) if (!(key in saved)) delete local[key];
+          Object.assign(local, saved);
+        }
+      });
+    } finally { release(); vi.unstubAllGlobals(); }
+  });
+
+  it("keeps deletion recovery fenced when its customer response is lost", async () => {
+    const stub = vault(env, env.VAULT.newUniqueId().toString());
+    await stub.init(crypto.randomUUID());
+    vi.stubGlobal("fetch", async () => { throw new Error("synthetic lost response"); });
+    try {
+      await runInDurableObject(stub, async (instance, state) => {
+        const local = (instance as unknown as { env: Record<string, unknown> }).env;
+        const saved = { ...local };
+        Object.assign(local, {
+          BILLING_PLANS_JSON: JSON.stringify({ free: { generationLimit: 3 }, paid: [{ id: "pro", priceId: "price_pro", generationLimit: 50 }] }),
+          STRIPE_SECRET_KEY: "sk_test_secret", STRIPE_WEBHOOK_SECRET: "whsec_secret",
+          STRIPE_API_VERSION: "2026-09-30.endive", APP_ORIGIN: "https://app.example.com",
+        });
+        state.storage.sql.exec("INSERT INTO meta (key,value) VALUES ('billing_customer_requested','1'), ('billing_customer_requested_at',?)", String(Date.now()));
+        try {
+          await instance.close();
+          await expect(instance.billingCustomerForDeletion()).rejects.toThrow();
+          await expect(instance.destroy()).rejects.toThrow("customer creation is unresolved");
+        } finally {
+          for (const key of Object.keys(local)) if (!(key in saved)) delete local[key];
+          Object.assign(local, saved);
+        }
+      });
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("keeps exact checkout IDs across a lost Vault destruction acknowledgement", async () => {
     const d = env.DIRECTORY.getByName(`billing-delete-${crypto.randomUUID()}`);
     const email = `${crypto.randomUUID()}@example.com`;

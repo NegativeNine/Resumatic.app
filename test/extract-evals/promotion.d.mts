@@ -3,6 +3,7 @@ export interface CandidateForKey {
   strategy: string;
   roleKey: string | null;
   kind: string;
+  level: string | null;
   span: readonly [number, number];
   text: string;
   quote: string;

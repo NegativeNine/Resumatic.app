@@ -102,7 +102,8 @@ export function scoreVerified(pred, gold, markdown) {
     if (correctRole(pair)) assigned++;
   }
   const matchedP = new Set(),
-    matchedG = new Set();
+    matchedG = new Set(),
+    levelCheckedP = new Set();
   let correctLevel = 0,
     levelCount = 0,
     inflation = 0,
@@ -116,6 +117,7 @@ export function scoreVerified(pred, gold, markdown) {
       g = gold.facts[pair.g];
     if (g.kind === "skill") matchedSkills++;
     if (g.level !== null) {
+      levelCheckedP.add(pair.p);
       levelCount++;
       correctLevel += Number(p.level === g.level);
       inflation += Number((rank[p.level] ?? 0) > (rank[g.level] ?? 0));
@@ -167,6 +169,11 @@ export function scoreVerified(pred, gold, markdown) {
     assignment: ratio(assigned, spanP.size),
     levelAccuracy: ratio(correctLevel, levelCount),
     inflation,
+    // Ownership on an unmatched prediction, or one whose gold level is null,
+    // needs a separate human verdict; a text-only judge does not assess it.
+    unverifiedLevelIndexes: pred.facts.flatMap((f, i) =>
+      f.level !== null && !levelCheckedP.has(i) ? [i] : [],
+    ),
     trapLeaks,
     reviewCost:
       pred.facts.length -

@@ -191,6 +191,7 @@ function snapshot(root: string, mutate: (data: any) => void = () => {}) {
           strategy,
           roleKey: f.roleKey,
           kind: f.kind,
+          level: f.level,
           span: f.span,
           text: f.text,
           quote: f.quote,
@@ -433,6 +434,10 @@ describe("private extraction evaluation evidence", () => {
       // The quote and text stay the same, so the text-only judge reports
       // supported, but this label would let downstream grounding claim more.
       row.prediction.facts[0].level = "founded";
+      const candidate = data.candidates.find((c: any) => c.key === row.candidateKeys[0]);
+      candidate.level = "founded";
+      candidate.key = candidateKey(candidate);
+      row.candidateKeys[0] = candidate.key;
       row.score = scoreCase(row.prediction, item.gold, item.markdown);
     });
     saveAudit(root, audit);
@@ -440,6 +445,45 @@ describe("private extraction evaluation evidence", () => {
     expect(result.winner).toBeNull();
     expect(result.results[0]!.failed).toContain("ownership_level_inflation");
     expect(result.results[0]!.metrics.levelInflation).toBe(1);
+  });
+  it.each(["unmatched", "null-gold"])('requires a separate human level verdict for %s facts', (variant) => {
+    const { root, manifest } = dataset();
+    if (variant === "null-gold") {
+      const entry = manifest.cases[0]!;
+      const gold = JSON.parse(readFileSync(join(root, entry.gold.path), "utf8"));
+      gold.facts[0].level = null;
+      entry.gold = put(root, entry.gold.path, JSON.stringify(gold));
+      put(root, "manifest.json", JSON.stringify(manifest));
+    }
+    const source = loadPrivateDataset(root);
+    let key = "";
+    const { audit, written } = snapshot(root, (data) => {
+      const row = data.records[0];
+      const fact = row.prediction.facts[0];
+      const candidate = data.candidates.find((c: any) => c.key === row.candidateKeys[0]);
+      if (variant === "unmatched") { fact.roleKey = null; candidate.roleKey = null; }
+      fact.level = "founded";
+      candidate.level = "founded";
+      key = candidate.key = candidateKey(candidate);
+      row.candidateKeys[0] = key;
+      const item = source.cases.find((c) => c.id === row.caseId)!;
+      row.score = scoreCase(row.prediction, item.gold, item.markdown);
+    });
+    saveAudit(root, audit);
+    let result = assessPromotion(root, written.runId, "audit.json");
+    expect(result.winner).toBeNull();
+    expect(result.results[0]!.pending).toContain("ownership_level_audit_missing");
+    expect(result.results[0]!.metrics.levelUnverified).toBe(1);
+    const review = audit.records.find((r: any) => r.candidateKey === key)! as any;
+    review.levelVerdict = "unsupported";
+    saveAudit(root, audit);
+    result = assessPromotion(root, written.runId, "audit.json");
+    expect(result.results[0]!.failed).toContain("human_unsupported_ownership_level");
+    review.levelVerdict = "supported";
+    saveAudit(root, audit);
+    result = assessPromotion(root, written.runId, "audit.json");
+    expect(result.results[0]!.metrics.levelReviewed).toBe(1);
+    expect(result.winner).toBe("llm:default");
   });
   it("rejects a changed audit and independently re-scores the private predictions", () => {
     const { root } = dataset();
@@ -478,6 +522,7 @@ describe("private extraction evaluation evidence", () => {
           strategy: row.strategy,
           roleKey: f.roleKey,
           kind: f.kind,
+          level: f.level,
           span: f.span,
           text: f.text,
           quote: f.quote,

@@ -218,6 +218,7 @@ describe.sequential("extraction evaluation", () => {
                 strategy: strategyId,
                 roleKey: fact.roleKey,
                 kind: fact.kind,
+                level: fact.level,
                 span: fact.span,
                 text: fact.text,
                 quote: fact.quote,

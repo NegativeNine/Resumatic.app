@@ -46,7 +46,9 @@ function validResult(winner) {
     metrics.failureRate >= 0 && metrics.failureRate < 0.01 &&
     finite(metrics.recall) && metrics.recall >= 0.85 && metrics.recall <= 1 &&
     finite(metrics.precision) && metrics.precision >= 0.95 && metrics.precision <= 1 &&
-    metrics.trapLeaks === 0 && metrics.levelInflation === 0 && count(metrics.reviewedFacts, 50) &&
+    metrics.trapLeaks === 0 && metrics.levelInflation === 0 &&
+    count(metrics.levelUnverified, 0) && metrics.levelReviewed === metrics.levelUnverified &&
+    count(metrics.reviewedFacts, 50) &&
     count(metrics.disagreements, 0) && finite(metrics.meanCostUsd) && metrics.meanCostUsd >= 0
   );
 }

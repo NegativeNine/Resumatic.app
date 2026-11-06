@@ -22,6 +22,7 @@ const Candidate = z
     strategy: Strategy,
     roleKey: z.string().nullable(),
     kind: z.enum(["accomplishment", "skill", "credential"]),
+    level: z.enum(["contributed", "implemented", "led", "owned", "founded"]).nullable(),
     span: Span,
     text: z.string().max(600),
     quote: z.string().max(800),
@@ -118,6 +119,7 @@ const Audit = z
           .object({
             candidateKey: Hex,
             verdict: z.enum(["supported", "unsupported"]),
+            levelVerdict: z.enum(["supported", "unsupported"]).nullable().optional(),
             reviewerId: Opaque,
             adjudicatedBy: Opaque.nullable(),
           })
@@ -134,6 +136,7 @@ export function candidateKey(candidate) {
     candidate.strategy,
     candidate.roleKey,
     candidate.kind,
+    candidate.level,
     candidate.span,
     candidate.text,
     candidate.quote,
@@ -293,6 +296,7 @@ export function assessPromotion(root, runId, auditPath) {
                 strategy,
                 roleKey: fact.roleKey,
                 kind: fact.kind,
+                level: fact.level,
                 span: fact.span,
                 text: fact.text,
                 quote: fact.quote,
@@ -385,6 +389,18 @@ export function assessPromotion(root, runId, auditPath) {
       if (successes.some((r) => (r.unsupportedClaims ?? 0) > 0))
         addReason(failed, "judge_unsupported_claims");
       const eligibleKeys = new Set(successes.flatMap((r) => r.candidateKeys));
+      const uncheckedLevels = new Set(successes.flatMap((r) =>
+        r.score.unverifiedLevelIndexes.map((i) => r.candidateKeys[i]),
+      ));
+      let reviewedLevels = 0;
+      for (const key of uncheckedLevels) {
+        const verdict = audits.get(key)?.levelVerdict;
+        if (!verdict) addReason(pending, "ownership_level_audit_missing");
+        else {
+          reviewedLevels++;
+          if (verdict === "unsupported") addReason(failed, "human_unsupported_ownership_level");
+        }
+      }
       // Bind the sample to the immutable snapshot. An auditor cannot choose
       // only easy examples after seeing the results.
       const sampleSeed = hash([
@@ -458,6 +474,8 @@ export function assessPromotion(root, runId, auditPath) {
             : null,
           trapLeaks: sum("trapLeaks"),
           levelInflation: sum("inflation"),
+          levelUnverified: uncheckedLevels.size,
+          levelReviewed: reviewedLevels,
           reviewCost: successes.length
             ? sum("reviewCost") / successes.length
             : null,

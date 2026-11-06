@@ -5,6 +5,7 @@ import { ActionError, Field, PageHeader } from "../components/ui";
 import { BillingTools, CoachSharingTools } from "../components/AccountTools";
 import { ConnectedApps } from "../components/ConnectedApps";
 import { useAction } from "../hooks";
+import { href } from "../router";
 import { useSession } from "../session";
 
 const CONFIRM_PHRASE = "delete my account";
@@ -25,11 +26,14 @@ export function AccountPage() {
         <section className="card" aria-labelledby="data-heading">
           <h2 id="data-heading">Your data</h2>
           <p className="card-text">
-            Download everything in your vault as one JSON file: your profile,
-            sources, roles, facts with their quotes, applications and resumes.
+            Download your vault data as a JSON file, including your profile,
+            source text, roles, facts with their quotes, applications and resumes.
+            Original uploaded files are not included in the JSON. Download each
+            one from <a href={href.sources}>Sources &amp; facts</a> while your account
+            is active.
           </p>
           <a className="button" href={api.exportUrl} download>
-            Download all my data
+            Download vault data (JSON)
           </a>
         </section>
         <DeleteAccount />
@@ -218,7 +222,8 @@ function DeleteAccount() {
       <p className="card-text">
         This permanently deletes your account and everything in your vault:
         uploaded files, roles, facts, applications and resumes. It can't be
-        undone, so you may want to download your data first.
+        undone. Before deleting, download your vault data and any original files
+        you want to keep from <a href={href.sources}>Sources &amp; facts</a>.
       </p>
       <form
         onSubmit={(e) => {

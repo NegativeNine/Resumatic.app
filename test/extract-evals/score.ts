@@ -46,6 +46,7 @@ export interface CaseScore {
   assignment: number;
   levelAccuracy: number;
   inflation: number;
+  unverifiedLevelIndexes: number[];
   trapLeaks: number;
   reviewCost: number;
   matched: number;

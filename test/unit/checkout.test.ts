@@ -13,6 +13,7 @@ function fixture() {
     closed: false,
     calls: 0,
     dispatches: 0,
+    customerDispatches: 0,
   };
   const sessions = new Map<string, BillingCheckoutSession>();
   let holdFirst: Promise<void> | null = null;
@@ -64,12 +65,17 @@ function fixture() {
         state.intent = null;
       },
       customerId: () => state.customer,
-      setCustomer: (id) => {
-        state.customer = id;
-      },
       markCustomerRequested() {},
       requireOwner() {
         if (state.closed) throw new Error("closed");
+      },
+      beginCustomerDispatch() {
+        if (state.closed) throw new Error("closed");
+        state.customerDispatches++;
+      },
+      settleCustomerDispatch(id) {
+        state.customer = id;
+        state.customerDispatches--;
       },
       beginCheckoutDispatch() {
         if (state.closed) throw new Error("closed");
@@ -193,5 +199,14 @@ describe("durable checkout intent", () => {
     expect(f.state.dispatches).toBe(1);
     await f.coordinator.open("pro");
     expect(f.state.dispatches).toBe(1);
+  });
+  it("keeps a failed customer create fenced after a later successful retry", async () => {
+    const f = fixture();
+    vi.mocked(f.stripe.createCustomer).mockRejectedValueOnce(new Error("response lost"));
+    await expect(f.coordinator.open("pro")).rejects.toThrow("response lost");
+    expect(f.state.customerDispatches).toBe(1);
+    await f.coordinator.open("pro");
+    expect(f.state.customer).toBe("cus_test");
+    expect(f.state.customerDispatches).toBe(1);
   });
 });

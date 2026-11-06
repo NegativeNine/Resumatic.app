@@ -63,16 +63,16 @@ npm run eval:extract -- --private-dataset=/absolute/private/staging --promote=<r
 Save an owner-only `audit.json` under the private directory, binding it to the **exact** snapshot hash, manifest hash, and configuration hash printed by the assessment. Each `candidateKey` must refer to a snapshot item. Use a distinct `adjudicatedBy` identifier whenever a reviewer disagrees with the model judge.
 
 ```json
-{"version":1,"snapshotSha256":"<snapshot SHA-256>","manifestHash":"<manifest SHA-256>","configurationHash":"<configuration SHA-256>","allDisagreementsReviewed":true,"records":[{"candidateKey":"<sample key>","verdict":"supported","reviewerId":"reviewer_opaque_01","adjudicatedBy":null}]}
+{"version":1,"snapshotSha256":"<snapshot SHA-256>","manifestHash":"<manifest SHA-256>","configurationHash":"<configuration SHA-256>","allDisagreementsReviewed":true,"records":[{"candidateKey":"<sample key>","verdict":"supported","levelVerdict":"supported","reviewerId":"reviewer_opaque_01","adjudicatedBy":null}]}
 ```
 
-This excerpt shows one record; a complete audit has at least the 50 selected unique facts per strategy plus all disagreements. The final assessment makes no model calls:
+This excerpt shows one record; a complete audit has at least the 50 selected unique facts per strategy plus all disagreements. It also needs a `levelVerdict` for every fact with a non-null ownership level that is unmatched or whose matching gold level is null. Review the recorded level against the source, not just the fact text. The candidate key binds the level as well as the quote, so two levels on the same text are distinct. The final assessment makes no model calls:
 
 ```sh
 npm run eval:extract -- --private-dataset=/absolute/private/staging --promote=<run-id> --audit=audit.json
 ```
 
-A winner is returned only when the full dataset and audit evidence are present, the current strategy/code/model/price configuration matches the tested configuration, every held-out run is accounted for, scores and verdict counts are independently recomputed from the snapshot, recall is at least 85%, precision is at least 95%, there are zero instruction leaks, unsupported claims and ownership-level inflations against matched labeled facts, failure rate is below 1%, and spend is priced. Level inflation is checked separately because the entailment judge sees fact text and quote, not the level stored with the fact. This comparison covers matched facts with a non-null gold level; it does not prove that unlabeled or unmatched levels are supported. Eligible strategies rank by mean review cost, then mean measured cost and p95 latency; missing data stays pending. The human attestations must be reviewed by an authorized operator before any deployment.
+A winner is returned only when the full dataset and audit evidence are present, the current strategy/code/model/price configuration matches the tested configuration, every held-out run is accounted for, scores and verdict counts are independently recomputed from the snapshot, recall is at least 85%, precision is at least 95%, there are zero instruction leaks, unsupported claims and ownership-level inflations against matched labeled facts, failure rate is below 1%, and spend is priced. Level inflation is checked separately because the entailment judge sees fact text and quote, not the level stored with the fact. For unmatched or null-gold facts with a non-null level, promotion requires a separate human-supported level verdict; a missing verdict is pending and an unsupported verdict fails. Aggregate `levelUnverified` and `levelReviewed` counts make this coverage visible. Eligible strategies rank by mean review cost, then mean measured cost and p95 latency; missing data stays pending. The human attestations must be reviewed by an authorized operator before any deployment.
 
 ## One-shot initial staging pilot
 

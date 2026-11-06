@@ -2973,9 +2973,6 @@ export class Vault extends DurableObject<Env> {
         this.sql.exec(`DELETE FROM meta WHERE key = 'checkout_intent'`);
       },
       customerId: () => this.meta("stripe_customer"),
-      setCustomer: (id) => {
-        if (!this.gone) this.setMeta("stripe_customer", id);
-      },
       markCustomerRequested: () => {
         if (this.meta("billing_customer_requested") !== "1") {
           this.setMeta("billing_customer_requested_at", String(Date.now()));
@@ -2983,6 +2980,8 @@ export class Vault extends DurableObject<Env> {
         }
       },
       requireOwner: () => this.requireOwner(who),
+      beginCustomerDispatch: () => this.beginBillingCustomerDispatch(who),
+      settleCustomerDispatch: (id) => this.settleBillingCustomerDispatch(id),
       beginCheckoutDispatch: () => this.ctx.storage.transactionSync(() => {
         this.requireOwner(who);
         const count = Number(this.meta("billing_checkout_dispatches") ?? "0");
@@ -3022,6 +3021,30 @@ export class Vault extends DurableObject<Env> {
   async billingCancelCheckout(who: Who): Promise<void> {
     await this.checkoutCoordinator(who).cancel();
   }
+  private beginBillingCustomerDispatch(who?: Who): void {
+    this.ctx.storage.transactionSync(() => {
+      if (who) this.requireOwner(who);
+      else if (!this.initialised || this.gone || this.destroying)
+        throw new AppError("gone", "account is unavailable");
+      const count = Number(this.meta("billing_customer_dispatches") ?? "0");
+      if (!Number.isSafeInteger(count) || count < 0 || count >= Number.MAX_SAFE_INTEGER)
+        throw new AppError("unavailable", "customer dispatch state requires operator review");
+      this.setMeta("billing_customer_dispatches", String(count + 1));
+    });
+  }
+
+  private settleBillingCustomerDispatch(customerId: string): void {
+    this.ctx.storage.transactionSync(() => {
+      const count = Number(this.meta("billing_customer_dispatches") ?? "0");
+      if (!Number.isSafeInteger(count) || count < 1 || !/^cus_[A-Za-z0-9_]+$/.test(customerId) || customerId.length > 255)
+        throw new AppError("unavailable", "customer dispatch state requires operator review");
+      const current = this.meta("stripe_customer");
+      if (current && current !== customerId)
+        throw new AppError("unavailable", "billing customer requires operator review");
+      this.setMeta("stripe_customer", customerId);
+      this.setMeta("billing_customer_dispatches", String(count - 1));
+    });
+  }
   billingCheckoutSessionsForDeletion(): string[] {
     if (!this.initialised || this.gone) return [];
     try {
@@ -3050,11 +3073,12 @@ export class Vault extends DurableObject<Env> {
     const cfg = billingConfig({ ...this.env, BILLING_ENABLED: "true" });
     if (!cfg)
       throw new AppError("unavailable", "billing cleanup is not configured");
+    this.beginBillingCustomerDispatch();
     const created = await stripeClient(cfg).createCustomer(
       this.meta("user_id")!,
       `customer:${this.meta("user_id")}`,
     );
-    if (!this.gone) this.setMeta("stripe_customer", created.id);
+    this.settleBillingCustomerDispatch(created.id);
     return created.id;
   }
   async recoverBillingCustomer(customerId: string): Promise<void> {
@@ -3518,6 +3542,9 @@ export class Vault extends DurableObject<Env> {
   private requireNoUnsettledDispatches(): void {
     if (this.sql.exec(`SELECT run_id FROM workflow_dispatches UNION ALL SELECT run_id FROM workflow_redispatches LIMIT 1`).toArray().length)
       throw new AppError("unavailable", "workflow creation is unresolved; retry after it is settled");
+    const customerDispatches = Number(this.meta("billing_customer_dispatches") ?? "0");
+    if (!Number.isSafeInteger(customerDispatches) || customerDispatches !== 0)
+      throw new AppError("unavailable", "customer creation is unresolved; operator review may be required");
     const checkoutDispatches = Number(this.meta("billing_checkout_dispatches") ?? "0");
     if (!Number.isSafeInteger(checkoutDispatches) || checkoutDispatches !== 0)
       throw new AppError("unavailable", "checkout creation is unresolved; operator review may be required");

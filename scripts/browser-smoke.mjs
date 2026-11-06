@@ -140,7 +140,11 @@ if (!browser?.startsWith("/")) {
     await clickText("button", "Cancel tailoring");
     await wait(`document.body?.innerText.includes("Cancellation is pending")`);
     if (!state.resumeCancel) throw new Error("RESUME_CANCEL_NOT_SENT");
-    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, roleAndFactReview: true, applicationCreation: true, applicationTracking: true, coverLetterDisplay: true, tailoredResumeDisplay: true, uncertainDocumentCancellation: true, uncertainResumeCancellation: true } }));
+    stage = "export_disclosure";
+    await clickText("nav a", "Account");
+    await wait(`document.body?.innerText.includes('Original uploaded files are not included in the JSON')`);
+    if (!await evalPage(`!!document.querySelector('a[href="/api/export"]') && [...document.querySelectorAll('a[href="#/sources"]')].some(x => x.textContent.includes('Sources & facts'))`)) throw new Error("EXPORT_DOWNLOAD_LINKS_MISSING");
+    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, roleAndFactReview: true, applicationCreation: true, applicationTracking: true, coverLetterDisplay: true, tailoredResumeDisplay: true, uncertainDocumentCancellation: true, uncertainResumeCancellation: true, exportDisclosure: true } }));
   } catch {
     console.log(JSON.stringify({ status: "failed", reason: "BROWSER_SMOKE_FAILED", stage, promotionEligible: false })); process.exitCode = 1;
   } finally {

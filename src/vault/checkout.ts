@@ -19,9 +19,10 @@ export interface CheckoutHooks {
   writeIntent(value: string): void;
   clearIntent(): void;
   customerId(): string | null;
-  setCustomer(id: string): void;
   markCustomerRequested(): void;
   requireOwner(): void;
+  beginCustomerDispatch(): void;
+  settleCustomerDispatch(customerId: string): void;
   beginCheckoutDispatch(): void;
   settleCheckoutDispatch(sessionId: string): void;
 }
@@ -101,12 +102,15 @@ export class CheckoutCoordinator {
           "conflict",
           "billing customer confirmation is uncertain; contact support before starting another payment",
         );
+      // Fence the remote creation before leaving the object. A lost response
+      // may still create a customer, so only a known response can settle it.
+      this.hooks.beginCustomerDispatch();
       const created = await this.stripe.createCustomer(
         this.userId,
         `customer:${this.userId}`,
       );
       // Preserve the identifier even if deletion began while creating it; cleanup needs it.
-      this.hooks.setCustomer(created.id);
+      this.hooks.settleCustomerDispatch(created.id);
       customer = created.id;
     }
     this.current(intent);
