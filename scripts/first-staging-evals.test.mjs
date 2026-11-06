@@ -1,0 +1,420 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawn, spawnSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
+import {
+  createPilotLedger,
+  reservePilotLedger,
+} from "../test/extract-evals/budget-ledger.mjs";
+import { runFirstStagingEvals } from "./first-staging-evals.mjs";
+
+async function temporary(fn) {
+  const dir = await mkdtemp(join(tmpdir(), "resumatic-pilot-"));
+  try {
+    return await fn(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+const input = {
+  live: true,
+  budgetUsd: 10,
+  maxCalls: 50,
+  dataset: "unused",
+  strategy: "llm:default",
+};
+const env = {
+  CF_ACCOUNT_ID: "account",
+  CF_AI_TOKEN: "secret",
+  AI_GATEWAY_ID: "gateway",
+  EVAL_PRICE_REVIEW_DATE: new Date().toISOString().slice(0, 10),
+  EVAL_BILLING_GUARD_REVIEW_DATE: new Date().toISOString().slice(0, 10),
+  EVAL_BILLING_GUARD_SCOPE: "all-model-paths",
+  EVAL_BILLING_GUARD_USD: "10",
+  SEEDED_LIVE: "1",
+  RECORD_MODE: "1",
+  EVAL_ENV: "production",
+};
+const vars = {
+  CF_ACCOUNT_ID: "account",
+  AI_GATEWAY_ID: "gateway",
+  MODEL_EXTRACT: "provider/a",
+  MODEL_ANALYZE: "provider/b",
+  MODEL_WRITE: "provider/c",
+  MODEL_JUDGE: "provider/d",
+};
+const prices = Object.fromEntries(
+  [
+    "provider/a",
+    "provider/b",
+    "provider/c",
+    "provider/d",
+    "@cf/baai/bge-m3",
+    "@cf/baai/bge-reranker-base",
+  ].map((x) => [x, [1, 1]]),
+);
+const cases = Array.from({ length: 30 }, (_, i) => ({
+  id: `case-${String(i + 1).padStart(16, "0")}`,
+  split: i < 20 ? "dev" : "holdout",
+  meta: { origin: i < 20 ? "synthetic" : "real" },
+}));
+function deps(dir, spawn) {
+  return {
+    stateRoot: dir,
+    readConfig: async () => ({ config: { vars } }),
+    loadDataset: () => ({ root: dir, cases }),
+    knownPrices: prices,
+    spawn,
+  };
+}
+
+test("one-shot campaign passes only explicit pilot files and fixed partitions", () =>
+  temporary(async (dir) => {
+    const calls = [];
+    const spawn = (exe, args, opts) => {
+      calls.push({ exe, args, opts });
+      const names =
+        opts.env.EVAL_BUDGET_LEDGER_SUITE === "extraction"
+          ? [cases[0].id, cases[1].id]
+          : ["scope and numbers", "instructions hidden"];
+      const output = args
+        .find((a) => a.startsWith("--outputFile="))
+        .slice("--outputFile=".length);
+      writeFileSync(
+        output,
+        JSON.stringify({
+          numFailedTests: 0,
+          testResults: [
+            {
+              assertionResults: names.map((fullName) => ({
+                status: "passed",
+                fullName,
+              })),
+            },
+          ],
+        }),
+      );
+      return { status: 0 };
+    };
+    const result = await runFirstStagingEvals(
+      { ...input, env },
+      deps(dir, spawn),
+    );
+    assert.equal(result.promotionEligible, false);
+    assert.equal(result.status, "completed");
+    assert.equal(calls.length, 2);
+    assert.deepEqual(
+      calls.map((c) => [
+        c.opts.env.EVAL_BUDGET_LEDGER_SUITE,
+        c.opts.env.EVAL_BUDGET_USD,
+        c.opts.env.EVAL_MAX_CALLS,
+      ]),
+      [
+        ["extraction", "5", "25"],
+        ["tailoring", "5", "25"],
+      ],
+    );
+    assert.ok(calls[0].args.includes("test/extract-evals/run.eval.ts"));
+    assert.ok(calls[1].args.includes("test/evals/no-fabrication.eval.ts"));
+    assert.ok(
+      calls.every(
+        (c) =>
+          c.args.includes("--maxWorkers=1") &&
+          c.args.includes("--no-file-parallelism") &&
+          c.opts.env.EVAL_ENV === "staging" &&
+          c.opts.env.SEEDED_LIVE === "0" &&
+          c.opts.env.RECORD_MODE === "0",
+      ),
+    );
+    await assert.rejects(
+      () => runFirstStagingEvals({ ...input, env }, deps(dir, spawn)),
+      /live_eval_campaign_already_started/,
+    );
+    assert.equal(calls.length, 2);
+  }));
+
+test("preflight failures make no subprocess calls or campaign marker", () =>
+  temporary(async (dir) => {
+    let count = 0;
+    const d = deps(dir, () => {
+      count++;
+      return { status: 0 };
+    });
+    await assert.rejects(
+      () => runFirstStagingEvals({ ...input, live: false, env }, d),
+      /EXPLICIT_LIVE_REQUIRED/,
+    );
+    await assert.rejects(
+      () => runFirstStagingEvals({ ...input, budgetUsd: 10.01, env }, d),
+      /PILOT_AUTHORIZATION_INVALID/,
+    );
+    await assert.rejects(
+      () => runFirstStagingEvals({ ...input, maxCalls: 51, env }, d),
+      /PILOT_AUTHORIZATION_INVALID/,
+    );
+    await assert.rejects(
+      () =>
+        runFirstStagingEvals({ ...input, env: { ...env, CF_AI_TOKEN: "" } }, d),
+      /PILOT_CREDENTIALS_REQUIRED/,
+    );
+    await assert.rejects(
+      () =>
+        runFirstStagingEvals(
+          { ...input, env },
+          {
+            ...d,
+            loadDataset: () => ({ root: dir, cases: cases.slice(0, 29) }),
+          },
+        ),
+      /PILOT_DATASET_INCOMPLETE/,
+    );
+    await assert.rejects(
+      () => runFirstStagingEvals({ ...input, env }, { ...d, knownPrices: {} }),
+      /PILOT_MODEL_PRICE_REQUIRED/,
+    );
+    await assert.rejects(
+      () =>
+        runFirstStagingEvals(
+          {
+            ...input,
+            env: { ...env, EVAL_BILLING_GUARD_SCOPE: "gateway-only" },
+          },
+          d,
+        ),
+      /PILOT_BILLING_GUARD_REQUIRED/,
+    );
+    await assert.rejects(
+      () =>
+        runFirstStagingEvals(
+          { ...input, env: { ...env, EVAL_BILLING_GUARD_USD: "11" } },
+          d,
+        ),
+      /PILOT_BILLING_GUARD_REQUIRED/,
+    );
+    await assert.rejects(
+      () =>
+        runFirstStagingEvals(
+          {
+            ...input,
+            env: { ...env, EVAL_MODEL_PRICES: '{"provider/a":[0,0]}' },
+          },
+          d,
+        ),
+      /PILOT_PRICES_INVALID/,
+    );
+    assert.equal(count, 0);
+    assert.ok(createPilotLedger(dir, 10_000_000, 50).file);
+  }));
+
+test("every restart and concurrent worker shares durable reservations and separate caps", () =>
+  temporary(async (dir) => {
+    const l = createPilotLedger(dir, 10_000_000, 50);
+    const code = `import {reservePilotLedger} from ${JSON.stringify(new URL("../test/extract-evals/budget-ledger.mjs", import.meta.url).href)};let n=0;for(let i=0;i<30;i++){try{reservePilotLedger(process.env.LEDGER,'extraction',5000000,25,200000);n++;}catch{}}process.stdout.write(String(n));`;
+    const run = () =>
+      new Promise((resolve, reject) => {
+        const p = spawn(process.execPath, ["--input-type=module", "-e", code], {
+          env: { ...process.env, LEDGER: l.file },
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+        let out = "";
+        p.stdout.on("data", (b) => (out += b));
+        p.on("exit", (c) =>
+          c === 0 ? resolve(Number(out)) : reject(new Error("child_failed")),
+        );
+      });
+    const successes = (await Promise.all([run(), run(), run(), run()])).reduce(
+      (a, b) => a + b,
+      0,
+    );
+    assert.ok(successes > 0 && successes <= 25);
+    // Fill remaining reservations from a new process context; none can be refunded on failure.
+    let total = successes;
+    while (true) {
+      try {
+        reservePilotLedger(l.file, "extraction", 5_000_000, 25, 200_000);
+        total++;
+      } catch (e) {
+        assert.match(e.message, /live_eval_budget_exhausted/);
+        break;
+      }
+    }
+    assert.equal(total, 25);
+    assert.deepEqual(
+      reservePilotLedger(l.file, "tailoring", 5_000_000, 25, 100_000),
+      { calls: 1, reservedUsd: 0.1 },
+    );
+    assert.throws(
+      () => reservePilotLedger(l.file, "tailoring", 10_000_000, 50, 1),
+      /live_eval_ledger_unavailable/,
+    );
+  }));
+
+test("tampered or symlink ledger fails closed", () =>
+  temporary(async (dir) => {
+    const l = createPilotLedger(dir, 10_000_000, 50);
+    await rm(l.file);
+    await writeFile(join(dir, "other"), "not a ledger", { mode: 0o600 });
+    await symlink(join(dir, "other"), l.file);
+    assert.throws(
+      () => reservePilotLedger(l.file, "extraction", 5_000_000, 25, 1),
+      /live_eval_ledger_unavailable/,
+    );
+  }));
+
+test("synthetic mode clears inherited private dataset and rejects ambiguous modes", () =>
+  temporary(async (dir) => {
+    const syntheticCases = Array.from({ length: 3 }, (_, i) => ({
+      id: `synthetic-0${i + 1}`,
+      split: "dev",
+      meta: { origin: "synthetic" },
+    }));
+    let privateReads = 0;
+    const calls = [];
+    const spawn = (exe, args, opts) => {
+      calls.push(opts.env);
+      const names =
+        opts.env.EVAL_BUDGET_LEDGER_SUITE === "extraction"
+          ? ["synthetic-01", "synthetic-02"]
+          : ["scope and numbers", "instructions hidden"];
+      const output = args
+        .find((a) => a.startsWith("--outputFile="))
+        .slice("--outputFile=".length);
+      writeFileSync(
+        output,
+        JSON.stringify({
+          numFailedTests: 0,
+          testResults: [
+            {
+              assertionResults: names.map((fullName) => ({
+                status: "passed",
+                fullName,
+              })),
+            },
+          ],
+        }),
+      );
+      return { status: 0 };
+    };
+    const d = {
+      ...deps(dir, spawn),
+      syntheticCases,
+      loadDataset: () => {
+        privateReads++;
+        throw Error("must not load private data");
+      },
+    };
+    await assert.rejects(
+      () => runFirstStagingEvals({ ...input, synthetic: true, env }, d),
+      /PILOT_DATASET_MODE_REQUIRED/,
+    );
+    const result = await runFirstStagingEvals(
+      {
+        ...input,
+        dataset: undefined,
+        synthetic: true,
+        env: { ...env, EXTRACT_DATASET_DIR: "private-inherited" },
+      },
+      d,
+    );
+    assert.equal(result.status, "completed");
+    assert.equal(privateReads, 0);
+    assert.ok(calls.every((e) => !("EXTRACT_DATASET_DIR" in e)));
+  }));
+
+test("a zero-test subprocess cannot produce a completed pilot", () =>
+  temporary(async (dir) => {
+    const spawn = (exe, args) => {
+      const output = args
+        .find((a) => a.startsWith("--outputFile="))
+        .slice("--outputFile=".length);
+      writeFileSync(
+        output,
+        JSON.stringify({
+          numFailedTests: 0,
+          testResults: [{ assertionResults: [] }],
+        }),
+      );
+      return { status: 0 };
+    };
+    const result = await runFirstStagingEvals(
+      { ...input, env },
+      deps(dir, spawn),
+    );
+    assert.equal(result.status, "incomplete");
+    assert.equal(result.promotionEligible, false);
+  }));
+
+test("weighted reservations count possible hidden gateway attempts", () =>
+  temporary(async (dir) => {
+    const l = createPilotLedger(dir, 10_000_000, 50);
+    for (let i = 0; i < 4; i++)
+      reservePilotLedger(l.file, "extraction", 5_000_000, 25, 100, 6);
+    assert.throws(
+      () => reservePilotLedger(l.file, "extraction", 5_000_000, 25, 100, 6),
+      /live_eval_budget_exhausted/,
+    );
+    assert.deepEqual(
+      reservePilotLedger(l.file, "tailoring", 5_000_000, 25, 100, 6),
+      { calls: 6, reservedUsd: 0.0001 },
+    );
+  }));
+
+test("actual isolated Vitest workers share the same durable ledger", () =>
+  temporary(async (dir) => {
+    const l = createPilotLedger(dir, 10_000_000, 50);
+    const childEnv = {
+      ...process.env,
+      TEST_PILOT_LEDGER_WORKER: "1",
+      EVAL_BUDGET_LEDGER: l.file,
+      EVAL_BUDGET_LEDGER_SUITE: "extraction",
+      EVAL_BUDGET_USD: "5",
+      EVAL_MAX_CALLS: "25",
+    };
+    for (let i = 0; i < 2; i++) {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "node_modules/vitest/vitest.mjs",
+          "run",
+          "--project",
+          "unit",
+          "test/unit/pilot-ledger-worker.test.ts",
+          "--maxWorkers=1",
+          "--no-file-parallelism",
+        ],
+        { env: childEnv, stdio: "ignore" },
+      );
+      assert.equal(result.status, 0);
+    }
+    const db = new DatabaseSync(l.file, { readOnly: true });
+    try {
+      assert.equal(
+        db
+          .prepare("SELECT used_calls FROM budgets WHERE suite = 'extraction'")
+          .get().used_calls,
+        12,
+      );
+    } finally {
+      db.close();
+    }
+  }));
+
+test("a process dying after reservation cannot refund or reset the ledger", () =>
+  temporary(async (dir) => {
+    const l = createPilotLedger(dir, 10_000_000, 50);
+    const code = `import {reservePilotLedger} from ${JSON.stringify(new URL("../test/extract-evals/budget-ledger.mjs", import.meta.url).href)};reservePilotLedger(process.env.LEDGER,'extraction',5000000,25,100,6);process.kill(process.pid,'SIGKILL');`;
+    const result = spawnSync(
+      process.execPath,
+      ["--input-type=module", "-e", code],
+      { env: { ...process.env, LEDGER: l.file }, stdio: "ignore" },
+    );
+    assert.equal(result.signal, "SIGKILL");
+    assert.deepEqual(
+      reservePilotLedger(l.file, "extraction", 5_000_000, 25, 100, 6),
+      { calls: 12, reservedUsd: 0.0002 },
+    );
+  }));

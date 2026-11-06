@@ -88,6 +88,9 @@ export const MIGRATIONS: readonly string[][] = [
   [
     `CREATE TABLE refine_cache (cache_key TEXT PRIMARY KEY, draft TEXT NOT NULL, created_at INTEGER NOT NULL)`,
   ],
+  [
+    `ALTER TABLE sources ADD COLUMN ocr_image_count INTEGER CHECK (ocr_image_count IS NULL OR ocr_image_count BETWEEN 1 AND 4)`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

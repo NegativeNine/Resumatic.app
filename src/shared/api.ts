@@ -103,6 +103,9 @@ export interface Me {
 }
 
 export interface SourceView {
+  /** Number of page images submitted for OCR; null for ordinary PDFs and old sources.
+   * This does not assert the number of pages in the original PDF. */
+  conversionImageCount?: number | null;
   conversionWarnings?: ("little-text" | "short-lines" | "no-structure")[];
   origin?: "upload" | "ocr";
   extractor?: string | null;

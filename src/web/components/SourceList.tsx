@@ -80,6 +80,8 @@ function SourceRow({
             <p className="meta">
               <Badge tone="queued">Image transcription</Badge> · Check proposed
               facts against the original PDF.
+              {source.conversionImageCount != null &&
+                ` ${source.conversionImageCount} image${source.conversionImageCount === 1 ? "" : "s"} submitted.`}
             </p>
           )}
         </div>

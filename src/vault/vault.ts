@@ -10,7 +10,7 @@ import { retryable } from "cloudflare:durable-objects";
 import { DurableObject } from "cloudflare:workers";
 import { runModels } from "../workflows/models";
 import { base64url, sha256 } from "../worker/crypto";
-import { extractorFor } from "../pipeline/extract";
+import { extractorFor, sourceFormat } from "../pipeline/extract";
 import { McpGrantStore } from "./mcp-grants";
 import type { McpClaims, McpScope, McpGrant, NewMcpGrant } from "../shared/mcp";
 import type {
@@ -87,6 +87,7 @@ const MAX_SOURCES = 50;
 const REFINE_CACHE_TTL_MS = 30 * 86400000;
 
 type SourceRow = {
+  ocr_image_count: number | null;
   origin: "upload" | "ocr";
   extractor: string | null;
   parent_source_id: string | null;
@@ -490,6 +491,26 @@ export class Vault extends DurableObject<Env> {
     return this.extractionFeedbackStore.list();
   }
 
+  private extractionStrategy(
+    origin: "upload" | "ocr" | undefined,
+    filename: string,
+  ): string {
+    try {
+      return extractorFor(
+        this.env,
+        this.vaultId,
+        sourceFormat(origin, filename),
+      ).id.replace(/llm:default$/, `llm:${this.env.MODEL_EXTRACT}`);
+    } catch {
+      // Treat bad deployment configuration as an operational failure and never
+      // include its contents in an error, log, or user response.
+      throw new AppError(
+        "unavailable",
+        "extraction is temporarily unavailable",
+      );
+    }
+  }
+
   private get uploads(): UploadStore {
     return new UploadStore(
       this.sql,
@@ -503,8 +524,13 @@ export class Vault extends DurableObject<Env> {
   }
   async reserveUpload(who: Who, input: UploadDescriptor) {
     this.requireOwner(who);
-    const reservation = this.uploads.reserve(input);
-    const next = this.uploads.nextAlarm();
+    const store = this.uploads;
+    // Validate deployment routing before a new reservation can lead to an R2
+    // write. Completed retries remain available under a later bad deployment.
+    if (store.get(input.requestKey)?.state !== "complete")
+      this.extractionStrategy(input.origin, input.filename);
+    const reservation = store.reserve(input);
+    const next = store.nextAlarm();
     if (next !== null) {
       const alarm = await this.ctx.storage.getAlarm();
       if (alarm === null || alarm > next) await this.ctx.storage.setAlarm(next);
@@ -516,11 +542,10 @@ export class Vault extends DurableObject<Env> {
     input: UploadDescriptor,
   ): Promise<{ sourceId: string }> {
     this.requireOwner(who);
-    const extractor = extractorFor(this.env, this.vaultId).id.replace(
-      /llm:default$/,
-      `llm:${this.env.MODEL_EXTRACT}`,
-    );
     const result = this.uploads.complete(input, (intent) => {
+      // Resolve only for a new source. A committed upload replay must keep its
+      // pinned strategy even if the deployment configuration later changes.
+      const extractor = this.extractionStrategy(intent.origin, intent.filename);
       const id = intent.sourceId;
       this.runs.begin(
         {
@@ -590,10 +615,7 @@ export class Vault extends DurableObject<Env> {
         `you can keep at most ${MAX_SOURCES} uploads`,
       );
     const id = crypto.randomUUID();
-    const extractor = extractorFor(this.env, this.vaultId).id.replace(
-      /llm:default$/,
-      `llm:${this.env.MODEL_EXTRACT}`,
-    );
+    const extractor = this.extractionStrategy(s.origin, s.filename);
     this.runs.begin(
       {
         id,
@@ -637,8 +659,9 @@ export class Vault extends DurableObject<Env> {
         origin: "upload" | "ocr";
         extractor: string | null;
         markdown: string | null;
+        ocr_image_count: number | null;
       }>(
-        `SELECT s.id, s.filename, s.state, s.error, s.created_at, s.origin, s.extractor, s.markdown,
+        `SELECT s.id, s.filename, s.state, s.error, s.created_at, s.origin, s.extractor, s.markdown, s.ocr_image_count,
            (SELECT COUNT(*) FROM facts f WHERE f.source_id = s.id AND f.state = 'proposed') AS proposed
          FROM sources s ORDER BY s.created_at DESC`,
       )
@@ -652,11 +675,15 @@ export class Vault extends DurableObject<Env> {
         proposed: r.proposed,
         origin: r.origin,
         extractor: r.extractor,
+        conversionImageCount: r.origin === "ocr" ? r.ocr_image_count : null,
         conversionWarnings:
           r.markdown !== null &&
-          r.origin === "upload" &&
-          /\.pdf$/i.test(r.filename)
-            ? conversionQuality(r.markdown).reasons
+          (r.origin === "ocr" ||
+            (r.origin === "upload" && /\.pdf$/i.test(r.filename)))
+            ? conversionQuality(
+                r.markdown,
+                r.origin === "ocr" ? r.ocr_image_count : null,
+              ).reasons
             : [],
       }));
   }
@@ -706,10 +733,7 @@ export class Vault extends DurableObject<Env> {
       throw new AppError("conflict", "this run stopped");
     const extractor =
       source.extractor ??
-      extractorFor(this.env, this.vaultId).id.replace(
-        /llm:default$/,
-        `llm:${this.env.MODEL_EXTRACT}`,
-      );
+      this.extractionStrategy(source.origin, source.filename);
     if (!source.extractor)
       this.sql.exec(
         `UPDATE sources SET extractor = ? WHERE id = ?`,
@@ -752,13 +776,27 @@ export class Vault extends DurableObject<Env> {
 
   async saveSource(
     sourceId: string,
-    patch: { markdown?: string; state?: SourceState; error?: string | null },
+    patch: {
+      markdown?: string;
+      state?: SourceState;
+      error?: string | null;
+      ocrImageCount?: number;
+    },
     runId?: string,
   ): Promise<void> {
     this.requireOpen();
     const source = this.sourceRow(sourceId);
     if (runId && source.run_id !== runId)
       throw new AppError("conflict", "this attempt was superseded");
+    if (
+      patch.ocrImageCount !== undefined &&
+      (source.origin !== "ocr" ||
+        patch.markdown === undefined ||
+        !Number.isInteger(patch.ocrImageCount) ||
+        patch.ocrImageCount < 1 ||
+        patch.ocrImageCount > 4)
+    )
+      throw new AppError("invalid", "invalid transcription image count");
     const id = source.run_id ?? sourceId;
     const write = () => {
       if (patch.markdown !== undefined && source.markdown === null) {
@@ -770,8 +808,9 @@ export class Vault extends DurableObject<Env> {
           Date.now(),
         );
         this.sql.exec(
-          `UPDATE sources SET markdown = ? WHERE id = ?`,
+          `UPDATE sources SET markdown = ?, ocr_image_count = ? WHERE id = ?`,
           patch.markdown,
+          patch.ocrImageCount ?? null,
           sourceId,
         );
       }
@@ -2321,6 +2360,7 @@ export class Vault extends DurableObject<Env> {
           origin: s.origin,
           extractor: s.extractor,
           parentSourceId: s.parent_source_id,
+          conversionImageCount: s.origin === "ocr" ? s.ocr_image_count : null,
           file: `/api/sources/${s.id}/file`,
         })),
       roles: await this.listRoles(who),

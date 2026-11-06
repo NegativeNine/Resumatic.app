@@ -57,6 +57,10 @@ npm run evals
 npm run eval:extract -- --strategy=llm:default,clairic --split=dev --repeat=3
 ```
 
+Per-format extraction routing is opt-in. `EXTRACTOR_BY_FORMAT` is a JSON object whose optional keys are `pdf`, `docx`, `linkedin`, and `ocr`, and whose values are valid extractor IDs, for example `{"pdf":"clairic","docx":"llm:default"}`. This example is configuration syntax, not a recommendation. An unmapped format uses `EXTRACTOR`; the configured vault-hash experiment still overrides the format default for its challenger cohort. All routes are validated, and a source's chosen strategy is pinned when its upload is committed, including across Workflow retries and later deployment changes. Do not set format routes until the corresponding real-format evaluation has met its promotion gates.
+
+Conversion-quality warnings are heuristics, not a determination that a file was read correctly. Cloudflare's documented Markdown conversion response does not provide a PDF page count, so ordinary PDF page counts remain unknown. OCR sources record the number of page images actually submitted, not a claim about the original PDF's total pages; sparse-text checks can use that known image count. Calibrate the thresholds with the real dataset before relying on them for format-specific decisions.
+
 Use the extraction CLI's offline mode for harness development; it is not a model-quality result. Keep real consenting-user fixtures outside Git. Promotion reports must name model IDs, prompt hashes, split and repetition count. Held-out promotion results cannot be replaced by development results or hand-picked examples.
 
 `MODEL_TRANSCRIBE` is optional. Configuring a model does not accept its license. For example, the Workers AI Llama vision model requires an operator to accept its terms before its first image request. Keep OCR unavailable until that step and a budgeted image check are complete. Image-derived proposals have weaker evidence and must retain that label.

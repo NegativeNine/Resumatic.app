@@ -389,7 +389,7 @@ api.post("/sources", UPLOAD_LIMIT, async (c) => {
   const descriptor = {
     requestKey: request,
     descriptorDigest: digest,
-    filename: file.name.slice(0, 200),
+    filename: uploadFilename(file.name, extension),
     contentType,
     byteLength: file.size,
     r2Key: sourceKey(c.get("session").vid, `${request}-${digest}`),
@@ -432,7 +432,7 @@ api.post(
       referenceDate: new Date().toISOString().slice(0, 10),
     });
     const metadata = {
-      filename: `${original.filename.slice(0, 170)} (image transcription)`,
+      filename: `${safePrefix(original.filename, 170)} (image transcription)`,
       contentType: "application/json",
       origin: "ocr" as const,
       parentSourceId: c.req.param("id"),
@@ -1041,6 +1041,19 @@ async function jsonBody<T>(c: C, schema: z.ZodType<T>): Promise<T> {
       z.prettifyError(parsed.error).replace(/\s+/g, " ").slice(0, 300),
     );
   return parsed.data;
+}
+
+/** Keep filenames within the storage limit without splitting a Unicode code point. */
+function safePrefix(value: string, maxUnits: number): string {
+  const prefix = value.slice(0, maxUnits);
+  return /[\uD800-\uDBFF]$/.test(prefix) ? prefix.slice(0, -1) : prefix;
+}
+
+/** Preserve the original extension because conversion and routing depend on it. */
+function uploadFilename(value: string, extension: string): string {
+  if (value.length <= 200) return value;
+  const suffix = `.${extension}`;
+  return safePrefix(value, 200 - suffix.length) + suffix;
 }
 
 function fileName(text: string): string {

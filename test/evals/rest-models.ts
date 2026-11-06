@@ -72,7 +72,8 @@ async function workersAi<T>(
   passes = 1,
 ): Promise<T> {
   for (let attempt = 0; ; attempt++) {
-    budget.reserve(model, JSON.stringify(body), 0, passes);
+    // Clairic may make up to one internal extraction pass per requested field.
+    budget.reserve(model, JSON.stringify(body), 0, passes, passes);
     const res = await fetch(
       `https://api.cloudflare.com/client/v4/accounts/${creds.accountId}/ai/run/${model}`,
       {
@@ -104,7 +105,14 @@ export function restModels(
   opts: { onUsage?: UsageObserver; budget?: EvalBudget } = {},
 ): Models {
   const env = vars as unknown as Env;
-  const budget = opts.budget ?? evalBudgetFromEnv();
+  // A supervised pilot must never accidentally replace its durable ledger with
+  // an independently constructed, process-local budget.
+  const sharedBudget = process.env.EVAL_BUDGET_LEDGER
+    ? evalBudgetFromEnv()
+    : undefined;
+  if (sharedBudget && opts.budget && opts.budget !== sharedBudget)
+    throw new Error("live_eval_ledger_required");
+  const budget = sharedBudget ?? opts.budget ?? evalBudgetFromEnv();
   const onUsage: UsageObserver = async (usage) => {
     await opts.onUsage?.(budget.observe(usage));
   };
@@ -120,7 +128,8 @@ export function restModels(
           route,
           onUsage,
           beforeAttempt: (model, input, maxOutputTokens) =>
-            budget.reserve(model, input, maxOutputTokens),
+            // Until verified live, cover the platform maximum of five retries.
+            budget.reserve(model, input, maxOutputTokens, 6, 6),
         },
         messages,
         schema,

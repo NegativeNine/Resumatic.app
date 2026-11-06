@@ -52,22 +52,30 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
               "the uploaded file is missing; upload it again",
             );
           const m = runModels(this.env, vaultId, event.instanceId, "convert");
-          const markdown =
-            info.origin === "ocr"
-              ? (
-                  await m.transcribePages!(
-                    validateTranscriptionInput(await object.json()),
-                  )
-                ).markdown
-              : info.filename.toLowerCase().endsWith(".zip")
-                ? linkedInMarkdown(new Uint8Array(await object.arrayBuffer()))
-                : await m.toMarkdown(info.filename, await object.blob());
+          let markdown: string;
+          let ocrImageCount: number | undefined;
+          if (info.origin === "ocr") {
+            const input = validateTranscriptionInput(await object.json());
+            ocrImageCount = input.images.length;
+            markdown = (await m.transcribePages!(input)).markdown;
+          } else {
+            markdown = info.filename.toLowerCase().endsWith(".zip")
+              ? linkedInMarkdown(new Uint8Array(await object.arrayBuffer()))
+              : await m.toMarkdown(info.filename, await object.blob());
+          }
           if (!markdown.trim())
             throw new AppError(
               "invalid",
               "no text could be read from this file",
             );
-          await v.saveSource(sourceId, { markdown }, event.instanceId);
+          await v.saveSource(
+            sourceId,
+            {
+              markdown,
+              ...(ocrImageCount === undefined ? {} : { ocrImageCount }),
+            },
+            event.instanceId,
+          );
           return { chars: markdown.length };
         }),
       );

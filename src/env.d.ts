@@ -6,6 +6,7 @@ interface ResumaticSecrets {
   SESSION_KEY: string;
   EXTRACTOR?: string;
   EXTRACTOR_EXPERIMENT?: string;
+  EXTRACTOR_BY_FORMAT?: string;
   BILLING_ENABLED?: string;
   BILLING_PLANS_JSON?: string;
   STRIPE_SECRET_KEY?: string;

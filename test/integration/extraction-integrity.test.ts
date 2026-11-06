@@ -162,6 +162,10 @@ describe("extraction commit integrity", () => {
             mimeType: "image/png",
             base64: btoa(String.fromCharCode(...bytes)),
           },
+          {
+            mimeType: "image/png",
+            base64: btoa(String.fromCharCode(...bytes)),
+          },
         ],
         referenceDate: "2026-11-06",
       }),
@@ -177,6 +181,15 @@ describe("extraction commit integrity", () => {
     );
     expect((await waitForSource(user, sourceId)).state).toBe("ready");
     expect(transcriptions).toBe(1);
+    const listed = (
+      await user.json<{ sources: import("../../src/shared/api").SourceView[] }>(
+        "/api/sources",
+      )
+    ).sources;
+    expect(listed.find((s) => s.id === sourceId)?.conversionImageCount).toBe(2);
+    expect(
+      listed.find((s) => s.id === originalId)?.conversionImageCount,
+    ).toBeNull();
     expect(options.calls?.toMarkdown).toBe(1);
     expect((await user.json(`/api/sources/${originalId}/text`)).origin).toBe(
       "upload",
