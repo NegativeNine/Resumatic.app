@@ -207,6 +207,7 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
     EXTRACT_SPLIT: "dev",
     EXTRACT_REPEAT: "1",
     EVAL_BUDGET_LEDGER: ledger.file,
+    PILOT_REQUIRE_EVIDENCE: "0",
   };
   delete base.EXTRACT_DATASET_DIR;
   if (!options.synthetic) base.EXTRACT_DATASET_DIR = data.root;
@@ -216,6 +217,7 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
       EVAL_BUDGET_LEDGER_SUITE: suite,
       EVAL_BUDGET_USD: String(allocation.micros / 1_000_000),
       EVAL_MAX_CALLS: String(allocation.calls),
+      PILOT_REQUIRE_EVIDENCE: suite === "extraction" ? "1" : "0",
     };
     const reportFile = join(
       dirname(ledger.file),

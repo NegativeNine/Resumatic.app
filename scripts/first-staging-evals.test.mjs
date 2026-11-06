@@ -196,6 +196,8 @@ test("one-shot campaign passes only explicit pilot files and fixed partitions", 
     );
     assert.ok(calls[0].args.includes("test/extract-evals/run.eval.ts"));
     assert.ok(calls[1].args.includes("test/evals/no-fabrication.eval.ts"));
+    assert.equal(calls[0].opts.env.PILOT_REQUIRE_EVIDENCE, "1");
+    assert.equal(calls[1].opts.env.PILOT_REQUIRE_EVIDENCE, "0");
     assert.ok(
       calls.every(
         (c) =>

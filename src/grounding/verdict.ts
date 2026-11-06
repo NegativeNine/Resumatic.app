@@ -46,12 +46,8 @@ export function checkLine(
       problems.push("cites a fact outside the selection");
       continue;
     }
-    if (
-      line.roleId !== null &&
-      fact.roleId !== null &&
-      fact.roleId !== line.roleId
-    ) {
-      problems.push("cites a fact from another role");
+    if (line.roleId !== null && fact.roleId !== line.roleId) {
+      problems.push("cites a fact not assigned to this role");
       continue;
     }
     cited.push(authoritativeFact(fact));
@@ -72,11 +68,7 @@ export function fallbackFact(
   for (const id of line.factIds) {
     const fact = facts.get(id);
     if (!fact || !selected.has(id)) continue;
-    if (
-      line.roleId !== null &&
-      fact.roleId !== null &&
-      fact.roleId !== line.roleId
-    )
+    if (line.roleId !== null && fact.roleId !== line.roleId)
       continue;
     return authoritativeFact(fact);
   }

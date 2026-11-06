@@ -2,6 +2,9 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 
 const environment = { ...process.env };
+// The exploratory pilot invokes Vitest directly. Ordinary evaluations must
+// retain zero-recall cases even if a pilot flag was inherited from a shell.
+delete environment.PILOT_REQUIRE_EVIDENCE;
 let promotionRun;
 let audit;
 for (const arg of process.argv.slice(2)) {

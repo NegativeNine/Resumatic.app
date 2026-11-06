@@ -658,6 +658,7 @@ export class Vault extends DurableObject<Env> {
   async listSources(who: Who): Promise<SourceView[]> {
     this.requireOwner(who);
     await this.reconcileStaleSources();
+    await this.rearmPendingCancellation();
     this.requireOwner(who);
     return this.sql
       .exec<{
@@ -1403,6 +1404,8 @@ export class Vault extends DurableObject<Env> {
 
   async listApplications(who: Who): Promise<ApplicationView[]> {
     this.requireOwner(who);
+    await this.rearmPendingCancellation();
+    this.requireOwner(who);
     const resumes = this.sql
       .exec<{
         id: string;
@@ -1532,6 +1535,8 @@ export class Vault extends DurableObject<Env> {
   }
 
   async getResume(who: Who, id: string, version?: number): Promise<ResumeView> {
+    this.requireOwner(who);
+    await this.rearmPendingCancellation();
     this.requireOwner(who);
     const row = this.resumeRow(id);
     const ready = row.state === "ready";
@@ -2296,17 +2301,26 @@ export class Vault extends DurableObject<Env> {
     applicationId: string,
   ): Promise<DocumentView[]> {
     this.requireOwner(who);
+    await this.rearmPendingCancellation();
+    this.requireOwner(who);
     const ids = this.sql
       .exec<{ id: string }>(
         `SELECT id FROM documents WHERE application_id = ? ORDER BY created_at DESC`,
         applicationId,
       )
       .toArray();
-    return Promise.all(ids.map(({ id }) => this.getDocument(who, id)));
+    return ids.map(({ id }) => this.documentView(id));
   }
 
   async getDocument(who: Who, id: string): Promise<DocumentView> {
     this.requireOwner(who);
+    await this.rearmPendingCancellation();
+    this.requireOwner(who);
+    return this.documentView(id);
+  }
+
+  /** Build a view only after its caller has checked ownership. */
+  private documentView(id: string): DocumentView {
     const row = this.sql
       .exec<{
         id: string;
@@ -3212,10 +3226,14 @@ export class Vault extends DurableObject<Env> {
 
   async listRuns(who: Who) {
     this.requireOwner(who);
+    await this.rearmPendingCancellation();
+    this.requireOwner(who);
     return this.runs.list();
   }
 
   async runInfo(who: Who, runId: string) {
+    this.requireOwner(who);
+    await this.rearmPendingCancellation();
     this.requireOwner(who);
     const run = this.runs.get(runId);
     if (!run) throw new AppError("not_found", "no such run");
@@ -3392,6 +3410,20 @@ export class Vault extends DurableObject<Env> {
 
   private cancellationPending(runId: string | null): boolean {
     return Boolean(runId && this.runs.get(runId)?.state === "cancel_requested");
+  }
+
+  /** A transient alarm failure must not strand an already accepted cancellation. */
+  private async rearmPendingCancellation(): Promise<void> {
+    if (
+      !this.sql.exec(`SELECT id FROM runs WHERE state = 'cancel_requested' LIMIT 1`).toArray().length
+    ) return;
+    try {
+      // Keep any earlier alarm; a later authenticated poll retries if storage is
+      // unavailable. This schedules reconciliation, never settles the run.
+      await this.scheduleRunAlarm(Date.now() + 60_000);
+    } catch {
+      // Status remains readable and a future poll can attempt to rearm again.
+    }
   }
 
   async alarm(): Promise<void> {

@@ -17,6 +17,7 @@ import {
 } from "./private-dataset.mjs";
 import { candidateKey } from "./promotion.mjs";
 import { extractionConfiguration } from "./configuration.mjs";
+import { requirePilotExtraction } from "../evals/nonvacuity";
 
 const live = process.env.EXTRACT_LIVE === "1";
 const split = process.env.EXTRACT_SPLIT || "dev";
@@ -195,6 +196,13 @@ describe.sequential("extraction evaluation", () => {
             const { extraction, dropped } = verifyExtraction(
               testCase.markdown,
               raw,
+            );
+            requirePilotExtraction(
+              extraction,
+              testCase.gold,
+              process.env.PILOT_REQUIRE_EVIDENCE === "1" &&
+                process.env.EVAL_BUDGET_LEDGER_SUITE === "extraction" &&
+                Boolean(process.env.EVAL_BUDGET_LEDGER),
             );
             const score = scoreCase(extraction, testCase.gold);
             const verdicts = models

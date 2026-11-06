@@ -168,6 +168,33 @@ describe("verifyDraft", () => {
     expect(verified.lines.map((l) => l.status)).toEqual(["replaced"]);
     expect(verified.lines[0]!.text).toBe("Built the billing API used by 3 teams");
   });
+
+  it("does not print an unattached fact under an employer even after repair or fallback", async () => {
+    const loose: FactRecord = {
+      id: "loose",
+      roleId: null,
+      kind: "accomplishment",
+      text: "Built an internal tool",
+      level: "implemented",
+      quote: "Built an internal tool",
+    };
+    const draft: Draft = {
+      lines: [
+        line("role", "r1", loose.text, [loose.id]),
+        line("summary", null, loose.text, [loose.id]),
+      ],
+    };
+    const result = await verifyDraft(
+      fakeModels({ repairs: { [loose.text]: loose.text } }),
+      draft,
+      { factIds: [loose.id], skillIds: [], gaps: [] },
+      [loose],
+    );
+    expect(result.lines.map((item) => [item.id, item.roleId, item.text])).toEqual([
+      ["summary", null, loose.text],
+    ]);
+    expect(result.report.dropped).toBe(1);
+  });
 });
 
 describe("composeBody", () => {

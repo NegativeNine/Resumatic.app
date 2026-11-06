@@ -108,12 +108,12 @@ describe("checkLine", () => {
     quote: text,
   });
   const facts = new Map(
-    [fact("a", "r1", "Built the billing API"), fact("b", "r2", "Mentored 2 engineers", "led"), fact("c", "r1", "Wrote the on-call handbook")].map((f) => [
+    [fact("a", "r1", "Built the billing API"), fact("b", "r2", "Mentored 2 engineers", "led"), fact("c", "r1", "Wrote the on-call handbook"), fact("loose", null, "Built an internal tool")].map((f) => [
       f.id,
       f,
     ]),
   );
-  const selected = new Set(["a", "b"]);
+  const selected = new Set(["a", "b", "loose"]);
 
   it("passes a grounded line", () => {
     expect(checkLine({ roleId: "r1", text: "Built the billing API", factIds: ["a"] }, facts, selected).ok).toBe(true);
@@ -128,6 +128,15 @@ describe("checkLine", () => {
 
   it("lets the summary cite any role", () => {
     expect(checkLine({ roleId: null, text: "Built the billing API and mentored 2 engineers", factIds: ["a", "b"] }, facts, selected).ok).toBe(true);
+    expect(checkLine({ roleId: null, text: "Built an internal tool", factIds: ["loose"] }, facts, selected).ok).toBe(true);
+    expect(fallbackFact({ roleId: null, text: "x", factIds: ["loose"] }, facts, selected)?.id).toBe("loose");
+  });
+
+  it("does not attribute an unattached fact to a specific role, including fallback", () => {
+    const line = { roleId: "r1", text: "Built an internal tool", factIds: ["loose"] };
+    expect(checkLine(line, facts, selected)).toEqual({ ok: false, problems: ["cites a fact not assigned to this role"] });
+    expect(fallbackFact(line, facts, selected)).toBeNull();
+    expect(fallbackFact({ ...line, factIds: ["loose", "a"] }, facts, selected)?.id).toBe("a");
   });
 
   it("falls back to the first usable fact, or to nothing", () => {
