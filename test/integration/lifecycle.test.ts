@@ -62,14 +62,19 @@ describe("Directory sign-in", () => {
     }
   });
 
-  it("keeps an uncertain initialization fenced instead of retrying blindly", async () => {
+  it("retries an uncertain initialization without clearing its deletion fence", async () => {
     const email = uniqueEmail();
     const input = { provider: "test" as const, subject: email, email, hint: "enam" as const };
     const init = vi.spyOn(Vault.prototype, "init").mockRejectedValueOnce(new Error("unavailable: simulated outage"));
     try {
       expect(await outcome(directory(env).signIn(input))).toMatch(/simulated outage/);
-      expect(await outcome(directory(env).signIn(input))).toMatch(/initialization is unresolved/);
-      expect(init).toHaveBeenCalledTimes(1);
+      const { vaultId, userId } = await directory(env).signIn(input);
+      expect(init).toHaveBeenCalledTimes(2);
+      expect((await vault(env, vaultId).openSession(userId)).gen).toBe(1);
+      const marker = await runInDurableObject(directory(env), (_instance, ctx) =>
+        ctx.storage.sql.exec<{ sticky: number }>(`SELECT sticky FROM vault_initializations WHERE vault_id = ?`, vaultId).one(),
+      );
+      expect(marker.sticky).toBe(1);
     } finally {
       init.mockRestore();
     }

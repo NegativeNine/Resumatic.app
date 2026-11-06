@@ -97,7 +97,8 @@ describe("deletion and Workflow dispatch", () => {
         state.storage.sql.exec(`INSERT INTO applications (id, jd_text, created_at) VALUES (?, 'old job', 1)`, appId);
         state.storage.sql.exec(`INSERT INTO resumes (id, application_id, state, run_id, created_at) VALUES (?, ?, 'ready', ?, 1)`, oldResume, appId, oldResume);
         state.storage.sql.exec(`DROP TABLE workflow_dispatches`);
-        state.storage.sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(SCHEMA_VERSION - 1));
+        state.storage.sql.exec(`DROP TABLE workflow_redispatches`);
+        state.storage.sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(SCHEMA_VERSION - 2));
         return [created.sourceId, oldSource, oldResume].sort();
       } finally {
         local.DISTILL = original;

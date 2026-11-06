@@ -99,6 +99,15 @@ export const MIGRATIONS: readonly string[][] = [
     `INSERT OR IGNORE INTO workflow_dispatches (run_id) SELECT run_id FROM sources WHERE run_id IS NOT NULL`,
     `INSERT OR IGNORE INTO workflow_dispatches (run_id) SELECT run_id FROM resumes WHERE run_id IS NOT NULL`,
   ],
+  [
+    // Once redispatch is attempted, no acknowledgement can prove that an
+    // earlier uncertain request will not arrive later. Keep this fence.
+    `CREATE TABLE workflow_redispatches (run_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL, next_at INTEGER NOT NULL)`,
+    // Also protect the original marker from older code that deletes it on ACK.
+    `CREATE TRIGGER keep_uncertain_dispatch BEFORE DELETE ON workflow_dispatches
+       WHEN EXISTS (SELECT 1 FROM workflow_redispatches WHERE run_id = OLD.run_id)
+       BEGIN SELECT RAISE(IGNORE); END`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
@@ -115,7 +124,7 @@ export function hasSchema(sql: SqlStorage): boolean {
 }
 
 /** Applies any migrations newer than the vault's recorded version. */
-export function migrate(sql: SqlStorage): void {
+export function migrate(sql: SqlStorage, transaction: <T>(fn: () => T) => T): void {
   const row = sql
     .exec<{ value: string }>(
       `SELECT value FROM meta WHERE key = 'schema_version'`,
@@ -123,20 +132,25 @@ export function migrate(sql: SqlStorage): void {
     .toArray()[0];
   let version = row ? Number(row.value) : 0;
   while (version < MIGRATIONS.length) {
-    for (const statement of MIGRATIONS[version] ?? []) sql.exec(statement);
-    version += 1;
-    sql.exec(
-      `INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
-      String(version),
-    );
+    const next = version + 1;
+    transaction(() => {
+      for (const statement of MIGRATIONS[version] ?? []) sql.exec(statement);
+      sql.exec(
+        `INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+        String(next),
+      );
+    });
+    version = next;
   }
 }
 
 /** Creates the first version of the schema, for init(). */
-export function createSchema(sql: SqlStorage): void {
-  for (const statement of MIGRATIONS[0] ?? []) sql.exec(statement);
-  sql.exec(
-    `INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '1')`,
-  );
-  migrate(sql);
+export function createSchema(sql: SqlStorage, transaction: <T>(fn: () => T) => T): void {
+  transaction(() => {
+    for (const statement of MIGRATIONS[0] ?? []) sql.exec(statement);
+    sql.exec(
+      `INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '1')`,
+    );
+  });
+  migrate(sql, transaction);
 }

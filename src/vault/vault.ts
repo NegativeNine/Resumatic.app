@@ -85,6 +85,8 @@ const DEFAULT_TAILOR_LIMIT = 20;
 const MAX_QUEUED_SOURCES = 3;
 const MAX_SOURCES = 50;
 const REFINE_CACHE_TTL_MS = 30 * 86400000;
+// Same-ID recovery is bounded. A retry never resolves the original uncertainty.
+const REDISPATCH_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
 
 type SourceRow = {
   ocr_image_count: number | null;
@@ -269,6 +271,8 @@ export function resetDay(month: string): string {
 export class Vault extends DurableObject<Env> {
   private initialised = false;
   private gone = false;
+  // Set synchronously before deletion awaits any storage operation.
+  private closing = false;
   private vectorCache: Map<string, Float32Array> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -276,7 +280,7 @@ export class Vault extends DurableObject<Env> {
     void ctx.blockConcurrencyWhile(async () => {
       // Only init() creates the schema, so a destroyed vault stays empty when it wakes.
       if (hasSchema(this.sql)) {
-        migrate(this.sql);
+        migrate(this.sql, (fn) => this.ctx.storage.transactionSync(fn));
         this.initialised = true;
         if (!this.meta("embedding_model"))
           this.setMeta("embedding_model", "@cf/baai/bge-m3");
@@ -305,7 +309,7 @@ export class Vault extends DurableObject<Env> {
   async init(userId: string): Promise<void> {
     if (this.gone) throw new AppError("gone", "this vault was destroyed");
     if (!this.initialised) {
-      createSchema(this.sql);
+      createSchema(this.sql, (fn) => this.ctx.storage.transactionSync(fn));
       this.initialised = true;
     }
     const owner = this.meta("user_id");
@@ -334,6 +338,7 @@ export class Vault extends DurableObject<Env> {
     other?: { kind: string; id: string }[];
   }> {
     if (this.gone || !this.initialised) return { distill: [], tailor: [] };
+    this.closing = true;
     this.setMeta("state", "closing");
     for (const ws of this.ctx.getWebSockets()) ws.close(1008, "Account closed");
     this.requireNoUnsettledDispatches();
@@ -358,6 +363,7 @@ export class Vault extends DurableObject<Env> {
   }
 
   async destroy(): Promise<void> {
+    this.closing = true;
     if (!this.gone && this.initialised) {
       this.setMeta("state", "closing");
       this.requireNoUnsettledDispatches();
@@ -2268,13 +2274,17 @@ export class Vault extends DurableObject<Env> {
 
   async failDocument(runId: string, message: string): Promise<void> {
     this.requireOpen();
-    const run = this.runs.get(runId);
-    if (!run || !["refine", "letter", "prep", "questions"].includes(run.kind) || run.targetId !== runId || ["succeeded", "cancelled", "failed"].includes(run.state))
-      return;
     this.ctx.storage.transactionSync(() => {
+      const run = this.runs.get(runId);
+      if (
+        !run ||
+        !["refine", "letter", "prep", "questions"].includes(run.kind) ||
+        run.targetId !== runId ||
+        !["starting", "running"].includes(run.state)
+      ) return;
       this.runs.fail(runId, "generation_failed");
       this.sql.exec(
-        `UPDATE documents SET state = 'failed', error = ? WHERE id = ?`,
+        `UPDATE documents SET state = 'failed', error = ? WHERE id = ? AND state = 'running'`,
         message,
         runId,
       );
@@ -3215,43 +3225,105 @@ export class Vault extends DurableObject<Env> {
   private async dispatchRun(run: RunRecord): Promise<void> {
     // The marker is durable before external I/O. Once closing starts, no new
     // create may begin, even if an alarm resumed after an unrelated await.
-    if (this.gone || !this.initialised || this.meta("state") !== "open") return;
+    if (this.closing || this.gone || !this.initialised || this.meta("state") !== "open") return;
     if ((this.env.RESTORE_FENCE_IDS ?? "").split(",").map((v) => v.trim()).includes(this.vaultId)) return;
-    if (this.sql.exec(`SELECT run_id FROM workflow_dispatches WHERE run_id = ?`, run.id).toArray().length) return;
+    if (this.hasUnsettledDispatch(run.id)) return;
     this.sql.exec(`INSERT INTO workflow_dispatches (run_id) VALUES (?)`, run.id);
     try {
-      if (run.kind === "tailor")
-        await this.env.TAILOR.create({
-          id: run.id,
-          params: { vaultId: this.vaultId, resumeId: run.targetId },
-        });
-      else if (run.kind === "reembed")
-        await this.env.REEMBED.create({
-          id: run.id,
-          params: { vaultId: this.vaultId, runId: run.id },
-        });
-      else if (run.kind === "distill")
-        await this.env.DISTILL.create({
-          id: run.id,
-          params: { vaultId: this.vaultId, sourceId: run.targetId },
-        });
-      else
-        await this.env.DOCUMENTS.create({
-          id: run.id,
-          params: { vaultId: this.vaultId, runId: run.id },
-        });
+      // Arrange recovery before outbound I/O: eviction while create is pending
+      // must not leave a starting run without an alarm.
+      await this.scheduleRunAlarm(Date.now() + 60_000);
+      const current = this.redispatchableRun(run.id);
+      if (!current) {
+        // This invocation never issued create. A concurrent recovery may have
+        // installed a separate sticky fence, which must never be removed.
+        this.sql.exec(`DELETE FROM workflow_dispatches WHERE run_id = ?`, run.id);
+        return;
+      }
+      await this.createWorkflow(current);
       // A successful acknowledgement rules out this particular create arriving
       // after deletion's inventory. Errors remain uncertain and fail closed.
-      this.sql.exec(`DELETE FROM workflow_dispatches WHERE run_id = ?`, run.id);
+      this.sql.exec(
+        `DELETE FROM workflow_dispatches WHERE run_id = ? AND NOT EXISTS (SELECT 1 FROM workflow_redispatches WHERE run_id = ?)`,
+        run.id,
+        run.id,
+      );
     } catch {
       this.runs.noteUncertain(run.id, "dispatch_uncertain");
     }
-    if (this.runs.listPending().length)
-      await this.ctx.storage.setAlarm(Date.now() + 60_000);
+  }
+
+  private async createWorkflow(run: RunRecord): Promise<void> {
+    if (run.kind === "tailor")
+      await this.env.TAILOR.create({ id: run.id, params: { vaultId: this.vaultId, resumeId: run.targetId } });
+    else if (run.kind === "reembed")
+      await this.env.REEMBED.create({ id: run.id, params: { vaultId: this.vaultId, runId: run.id } });
+    else if (run.kind === "distill")
+      await this.env.DISTILL.create({ id: run.id, params: { vaultId: this.vaultId, sourceId: run.targetId } });
+    else if (["refine", "letter", "prep", "questions"].includes(run.kind))
+      await this.env.DOCUMENTS.create({ id: run.id, params: { vaultId: this.vaultId, runId: run.id } });
+    else throw new AppError("invalid", "unsupported workflow run");
+  }
+
+  private async scheduleRunAlarm(at: number): Promise<void> {
+    const existing = await this.ctx.storage.getAlarm();
+    if (this.closing || this.gone || !this.initialised || this.meta("state") !== "open") return;
+    if (existing === null || existing > at) {
+      await this.ctx.storage.setAlarm(at);
+      // A close can begin while setAlarm is in flight. An alarm is not useful
+      // after closing and must not survive a completed destroy.
+      if (this.closing || this.gone || !this.initialised || this.meta("state") !== "open")
+        await this.ctx.storage.deleteAlarm();
+    }
+  }
+
+  /** Re-read after every await; a stale alarm must not start new work. */
+  private redispatchableRun(id: string): RunRecord | null {
+    if (this.closing || this.gone || !this.initialised || this.meta("state") !== "open") return null;
+    if ((this.env.RESTORE_FENCE_IDS ?? "").split(",").map((v) => v.trim()).includes(this.vaultId)) return null;
+    const run = this.runs.get(id);
+    if (!run || run.state !== "starting") return null;
+    if (run.kind === "distill") {
+      if (!this.sql.exec(`SELECT id FROM sources WHERE id = ? AND run_id = ? AND state = 'queued'`, run.targetId, id).toArray().length) return null;
+    } else if (run.kind === "tailor") {
+      if (!this.sql.exec(`SELECT id FROM resumes WHERE id = ? AND run_id = ? AND state = 'running'`, run.targetId, id).toArray().length) return null;
+    } else if (["refine", "letter", "prep", "questions"].includes(run.kind)) {
+      if (run.targetId !== id || !this.sql.exec(`SELECT id FROM documents WHERE id = ? AND state = 'running'`, id).toArray().length) return null;
+    } else if (run.kind === "reembed") {
+      if (run.targetId !== id || !this.sql.exec(`SELECT id FROM embedding_jobs WHERE id = ? AND state = 'building'`, id).toArray().length) return null;
+    } else return null;
+    return run;
+  }
+
+  /** Bounded liveness recovery. The sticky fence survives every outcome. */
+  private async redispatchUncertain(id: string): Promise<void> {
+    if (!this.hasUnsettledDispatch(id) || !this.redispatchableRun(id)) return;
+    let row = this.sql.exec<{ attempts: number; next_at: number }>(
+      `SELECT attempts, next_at FROM workflow_redispatches WHERE run_id = ?`, id,
+    ).toArray()[0];
+    if (row && (row.attempts >= REDISPATCH_DELAYS_MS.length || row.next_at > Date.now())) return;
+    // Install the permanent fence before yielding; an older create ACK may
+    // concurrently delete workflow_dispatches, but cannot delete this row.
+    this.sql.exec(`INSERT OR IGNORE INTO workflow_redispatches (run_id, attempts, next_at) VALUES (?, 0, 0)`, id);
+    await this.scheduleRunAlarm(Date.now() + 60_000);
+    const current = this.redispatchableRun(id);
+    row = this.sql.exec<{ attempts: number; next_at: number }>(
+      `SELECT attempts, next_at FROM workflow_redispatches WHERE run_id = ?`, id,
+    ).toArray()[0];
+    if (!current || !row || row.attempts >= REDISPATCH_DELAYS_MS.length || row.next_at > Date.now()) return;
+    const delay = REDISPATCH_DELAYS_MS[row.attempts]!;
+    this.sql.exec(`UPDATE workflow_redispatches SET attempts = attempts + 1, next_at = ? WHERE run_id = ?`, Date.now() + delay, id);
+    try {
+      // No await between the final lifecycle check and the external create.
+      await this.createWorkflow(current);
+    } catch {
+      // A duplicate, transport error, or unknown response cannot settle any
+      // earlier create. Poll the instance; do not remove the sticky fence.
+    }
   }
 
   private requireNoUnsettledDispatches(): void {
-    if (this.sql.exec(`SELECT run_id FROM workflow_dispatches LIMIT 1`).toArray().length)
+    if (this.sql.exec(`SELECT run_id FROM workflow_dispatches UNION ALL SELECT run_id FROM workflow_redispatches LIMIT 1`).toArray().length)
       throw new AppError("unavailable", "workflow creation is unresolved; retry after it is settled");
   }
 
@@ -3259,7 +3331,7 @@ export class Vault extends DurableObject<Env> {
     return Boolean(
       runId &&
         this.sql
-          .exec(`SELECT run_id FROM workflow_dispatches WHERE run_id = ?`, runId)
+          .exec(`SELECT run_id FROM workflow_dispatches WHERE run_id = ? UNION ALL SELECT run_id FROM workflow_redispatches WHERE run_id = ? LIMIT 1`, runId, runId)
           .toArray().length,
     );
   }
@@ -3324,25 +3396,37 @@ export class Vault extends DurableObject<Env> {
           else if (run.kind !== "distill")
             await this.failDocument(run.id, "Generation stopped. Try again.");
           else {
-            this.runs.fail(run.id, "execution_failed");
-            this.sql.exec(
-              `UPDATE sources SET state = 'failed', error = 'Reading stopped. Try again.' WHERE id = ?`,
-              run.targetId,
-            );
+            // Cancellation or a newer attempt may arrive while status() is in
+            // flight. Check the current ledger and source together before
+            // publishing failure from the stale alarm snapshot.
+            this.ctx.storage.transactionSync(() => {
+              const current = this.runs.get(run.id);
+              if (!current || current.kind !== "distill" || current.targetId !== run.targetId || !["starting", "running"].includes(current.state)) return;
+              this.runs.fail(run.id, "execution_failed");
+              this.sql.exec(
+                `UPDATE sources SET state = 'failed', error = 'Reading stopped. Try again.' WHERE id = ? AND run_id = ? AND state = 'queued'`,
+                run.targetId,
+                run.id,
+              );
+            });
           }
         }
       } catch (error) {
         // The platform's explicit not-found result is the only safe reason to create again.
         if (isMissingWorkflow(error) && run.state === "starting") {
-          if (this.hasUnsettledDispatch(run.id))
+          // The run may have been cancelled while get()/status() was pending.
+          if (this.runs.get(run.id)?.state !== "starting") continue;
+          if (this.hasUnsettledDispatch(run.id)) {
             this.runs.noteUncertain(run.id, "dispatch_uncertain");
-          else await this.dispatchRun(run);
+            await this.redispatchUncertain(run.id);
+          } else await this.dispatchRun(run);
         } else if (isMissingWorkflow(error) && run.state === "cancel_requested" && !this.hasUnsettledDispatch(run.id))
           this.finishCancelledRun(run);
         else if (!this.dispatchUncertain(run.id))
           this.runs.noteUncertain(run.id, "status_uncertain");
       }
     }
+    if (this.closing || this.gone || !this.initialised || this.meta("state") !== "open") return;
     const expiry = this.sql
       .exec<{ at: number | null }>(
         `SELECT MIN(expires_at) AS at FROM share_grants`,
@@ -3360,9 +3444,7 @@ export class Vault extends DurableObject<Env> {
         .one().at,
     ].filter((n): n is number => n !== null);
     if (candidates.length)
-      await this.ctx.storage.setAlarm(
-        Math.max(Date.now() + 1000, Math.min(...candidates)),
-      );
+      await this.scheduleRunAlarm(Math.max(Date.now() + 1000, Math.min(...candidates)));
   }
 
   private finishCancelledRun(run: RunRecord): void {
@@ -3546,13 +3628,16 @@ export class Vault extends DurableObject<Env> {
   }
 
   private markResumeFailed(resumeId: string, error: string): void {
-    const row = this.sql
-      .exec<ResumeRow>(`SELECT * FROM resumes WHERE id = ?`, resumeId)
-      .toArray()[0];
-    if (!row || row.state !== "running") return;
     this.ctx.storage.transactionSync(() => {
-      if (row.run_id && this.runs.get(row.run_id))
-        this.runs.fail(row.run_id, "generation_failed");
+      const row = this.sql
+        .exec<ResumeRow>(`SELECT * FROM resumes WHERE id = ?`, resumeId)
+        .toArray()[0];
+      if (!row || row.state !== "running") return;
+      const run = row.run_id ? this.runs.get(row.run_id) : null;
+      // fail() leaves cancellation and terminal states alone, so the resume
+      // must not be changed to failed when the ledger did not transition.
+      if (run && !["starting", "running"].includes(run.state)) return;
+      if (run) this.runs.fail(run.id, "generation_failed");
       this.sql.exec(
         `UPDATE resumes SET state = 'failed', error = ? WHERE id = ?`,
         error,

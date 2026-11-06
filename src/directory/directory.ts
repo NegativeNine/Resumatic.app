@@ -44,7 +44,7 @@ export class Directory extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     void ctx.blockConcurrencyWhile(async () =>
-      migrateDirectory(this.ctx.storage.sql),
+      migrateDirectory(this.ctx.storage.sql, (fn) => this.ctx.storage.transactionSync(fn)),
     );
   }
 
@@ -154,8 +154,23 @@ export class Directory extends DurableObject<Env> {
         throw new AppError("conflict", "vault initialization owner changed");
       return await ongoing.promise;
     }
-    this.requireInitializationSettled(vaultId);
-    this.sql.exec(`INSERT INTO vault_initializations (vault_id) VALUES (?)`, vaultId);
+    // Recovery is allowed only for the owner and vault already recorded by
+    // the Directory. No new identifier or owner may be supplied by a retry.
+    const recorded = this.sql.exec<{ user_id: string }>(
+      `SELECT user_id FROM vaults WHERE vault_id = ? AND state = 'creating'
+       UNION SELECT user_id FROM vault_replacements WHERE target_id = ? AND state = 'preparing'`,
+      vaultId, vaultId,
+    ).toArray();
+    if (recorded.length !== 1 || recorded[0]!.user_id !== userId)
+      throw new AppError("conflict", "vault initialization identity changed");
+    const existing = this.sql.exec(`SELECT vault_id FROM vault_initializations WHERE vault_id = ?`, vaultId).toArray().length > 0;
+    if (existing) {
+      // The earlier request may still arrive. Persist this before retrying;
+      // neither this acknowledgement nor an earlier one may remove it.
+      this.sql.exec(`UPDATE vault_initializations SET sticky = 1 WHERE vault_id = ?`, vaultId);
+    } else {
+      this.sql.exec(`INSERT INTO vault_initializations (vault_id, sticky) VALUES (?, 0)`, vaultId);
+    }
     const promise = (async () => {
       const id = this.env.VAULT.idFromString(vaultId);
       const stub = hint
@@ -164,7 +179,9 @@ export class Directory extends DurableObject<Env> {
       // An exception, including an interrupted acknowledgement, cannot establish
       // that init did not run or cannot arrive later. Keep the marker in that case.
       await stub.init(userId);
-      this.sql.exec(`DELETE FROM vault_initializations WHERE vault_id = ?`, vaultId);
+      // A successful first attempt can settle its own marker. A recovery
+      // attempt cannot prove the outcome of any earlier attempt.
+      this.sql.exec(`DELETE FROM vault_initializations WHERE vault_id = ? AND sticky = 0`, vaultId);
     })();
     this.initializing.set(vaultId, { userId, promise });
     try {

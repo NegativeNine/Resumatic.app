@@ -33,9 +33,17 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
     `INSERT OR IGNORE INTO vault_initializations (vault_id) SELECT target_id FROM vault_replacements`,
     `INSERT OR IGNORE INTO vault_initializations (vault_id) SELECT vault_id FROM retired_vaults`,
   ],
+  [
+    // Existing markers represent unknown outcomes. A retry must never erase
+    // them merely because its own acknowledgement arrived.
+    `ALTER TABLE vault_initializations ADD COLUMN sticky INTEGER NOT NULL DEFAULT 1 CHECK (sticky IN (0, 1))`,
+    // Older implementations used an unconditional DELETE after init. Protect
+    // sticky rows at the database boundary as well as in current code.
+    `CREATE TRIGGER guard_sticky_vault_initializations BEFORE DELETE ON vault_initializations WHEN OLD.sticky = 1 BEGIN SELECT RAISE(IGNORE); END`,
+  ],
 ];
 
-export function migrateDirectory(sql: SqlStorage): void {
+export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T): void {
   sql.exec(
     `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
   );
@@ -46,12 +54,15 @@ export function migrateDirectory(sql: SqlStorage): void {
     .toArray()[0];
   let version = row ? Number(row.value) : 0;
   while (version < DIRECTORY_MIGRATIONS.length) {
-    for (const statement of DIRECTORY_MIGRATIONS[version] ?? [])
-      sql.exec(statement);
-    version += 1;
-    sql.exec(
-      `INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
-      String(version),
-    );
+    const next = version + 1;
+    transaction(() => {
+      for (const statement of DIRECTORY_MIGRATIONS[version] ?? [])
+        sql.exec(statement);
+      sql.exec(
+        `INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+        String(next),
+      );
+    });
+    version = next;
   }
 }

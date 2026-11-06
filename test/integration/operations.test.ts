@@ -33,7 +33,7 @@ async function storage<T>(
 ): Promise<T> {
   return runInDurableObject(target, async (_instance, state) => {
     const sql = state.storage.sql;
-    if (!hasSchema(sql)) createSchema(sql);
+    if (!hasSchema(sql)) createSchema(sql, (fn) => state.storage.transactionSync(fn));
     for (const migration of OPERATION_MIGRATIONS) sql.exec(migration);
     const transaction = <R>(callback: () => R): R =>
       state.storage.transactionSync(callback);
