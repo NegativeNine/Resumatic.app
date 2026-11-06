@@ -19,6 +19,7 @@
 //   POST   /api/sources/:id/cancel     request cancellation of the current reading run
 //   GET    /api/roles                  { roles: RoleView[] }
 //   POST   /api/roles                  NewRole -> 201 { roleId }   (a role the uploads missed)
+//   POST   /api/v3/roles               NewRole + Idempotency-Key -> 201 { roleId }
 //   PATCH  /api/roles/:id              RolePatch -> 204
 //   GET    /api/facts?state=           { facts: FactView[] }
 //   POST   /api/facts                  NewFact -> 201 { factId }

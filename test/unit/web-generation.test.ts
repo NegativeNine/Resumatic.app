@@ -75,4 +75,23 @@ describe("generation request keys", () => {
     expect(keys[1]).toBe(keys[0]);
     expect(keys[2]).not.toBe(keys[0]);
   });
+
+  it.each([false, true])("reuses a manual role key after a lost response (unknown-end capability %s)", async (unknownEnd) => {
+    const keys: string[] = [], paths: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (path: RequestInfo | URL, init?: RequestInit) => {
+      paths.push(String(path));
+      keys.push((init?.headers as Record<string, string>)["idempotency-key"]!);
+      if (keys.length === 1) throw new TypeError("connection lost");
+      return Response.json({ roleId: "role" });
+    }));
+    const role = { kind: "job" as const, org: crypto.randomUUID(), title: null, startDate: null, endDate: null,
+      ...(unknownEnd ? { unknownEndStartDate: "2020" } : {}) };
+    const add = unknownEnd ? api.addRoleV2 : api.addRole;
+    await expect(add(role)).rejects.toThrow("connection lost");
+    await expect(add(role)).resolves.toEqual({ roleId: "role" });
+    await expect(add(role)).resolves.toEqual({ roleId: "role" });
+    expect(paths).toEqual(["/api/v3/roles", "/api/v3/roles", "/api/v3/roles"]);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
+  });
 });

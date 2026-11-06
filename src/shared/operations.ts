@@ -7,6 +7,8 @@ export const TRANSFER_TABLES = [
   "source_revisions",
   "evidence",
   "roles",
+  // Preserve manual role idempotency across a fenced vault replacement.
+  "role_create_requests",
   "facts",
   // Preserve manual fact idempotency across a fenced vault replacement.
   "fact_create_requests",

@@ -17,9 +17,9 @@ if (!browser?.startsWith("/")) {
   process.exitCode = 2;
 } else {
   const temp = await mkdtemp(join(tmpdir(), "resumatic-browser-smoke-"));
-  let vite, server, chrome, ws, releaseManualFact, releaseManualRole, releaseAnswer;
+  let vite, server, chrome, ws, releaseManualFact, releaseManualRole, releaseAnswer, releaseJob, releaseProfile;
   let stage = "setup";
-  const state = { signedIn: false, source: false, sourceRunning: false, sourceCancel: false, sourceFailed: false, sourceRetryKeys: [], documentRetryKeys: [], roleState: "proposed", factState: "proposed", manualFact: null, manualFactKeys: [], manualRoles: [], uploadKeys: [], applications: [], documents: [], tailored: false, resumeRunning: false, resumeCancel: false, resumeUncited: false, resumeLegacy: false, resumeNeedsGroundingReview: false, legacyChecked: false, legacyHeadersReady: false, legacyFinalized: false, legacyExtraLine: false, resumeText: "Built 12 payment services", resumeVersion: 1, manualEdits: [], manualDocument: null };
+  const state = { signedIn: false, source: false, sourceRunning: false, sourceCancel: false, sourceFailed: false, sourceRetryKeys: [], documentRetryKeys: [], roleState: "proposed", factState: "proposed", manualFact: null, manualFactKeys: [], manualRoles: [], manualRoleKeys: [], uploadKeys: [], applications: [], documents: [], tailored: false, resumeRunning: false, resumeCancel: false, resumeUncited: false, resumeLegacy: false, resumeNeedsGroundingReview: false, legacyChecked: false, legacyHeadersReady: false, legacyFinalized: false, legacyExtraLine: false, resumeText: "Built 12 payment services", resumeVersion: 1, manualEdits: [], manualDocument: null };
   const role = { id: "role-1", kind: "job", org: "Acme Example", title: "Engineer", startDate: "2021", endDate: null, state: "proposed", quote: "Acme Example — Engineer", sourceId: "source-1", revision: 1 };
   const fact = { id: "fact-1", roleId: "role-1", kind: "accomplishment", text: "Built 12 payment services", level: null, levelNeedsReview: true, previousLevel: "led", origin: "user", state: "proposed", quote: "Built 12 payment services", sourceId: "source-1", revision: 1 };
   const me = { userId: "synthetic-user", profile: { name: "Avery Example", email: "avery@example.test", phone: "", location: "", links: [] }, quota: { used: 0, limit: 3, month: "2026-11" } };
@@ -31,16 +31,32 @@ if (!browser?.startsWith("/")) {
     if (!path.startsWith("/api/")) return next();
     if (path === "/api/me") return state.signedIn ? send(res, 200, me) : send(res, 401, { error: "unauthenticated", message: "sign in" });
     if (!state.signedIn) return send(res, 401, { error: "unauthenticated" });
+    if (path === "/api/profile" && req.method === "PUT") {
+      const body = JSON.parse((await read(req)).toString("utf8"));
+      state.profileRequests ??= [];
+      state.profileRequests.push(body);
+      await new Promise((resolve) => { releaseProfile = resolve; });
+      if (state.profileRequests.length === 1) return send(res, 503, { error: "unavailable" });
+      me.profile = body;
+      return send(res, 200, body);
+    }
     if (path === "/api/shares" && req.method === "GET") return send(res, 200, { grants: [{ id: "legacy-grant", epoch: "synthetic", createdAt: Date.now(), expiresAt: Date.now() + 60_000, revokedAt: null, factCount: 0, resumeCount: 1, available: false }] });
     if (path === "/api/sources" && req.method === "GET") return send(res, 200, { sources: state.source ? [{ id: "source-1", filename: "synthetic.pdf", state: state.sourceRunning ? "queued" : state.sourceFailed ? "failed" : "ready", retryRunId: state.sourceFailed ? "run-1" : undefined, dispatchUncertain: state.sourceRunning, cancellationPending: state.sourceCancel, error: null, createdAt: 1, proposed: 2 }, { id: "source-ocr", filename: "synthetic.pdf (image transcription)", state: "ready", origin: "ocr", parentSourceId: "source-1", error: null, createdAt: 2, proposed: 0 }] : [] });
     if (path === "/api/sources/source-1/cancel" && req.method === "POST") { state.sourceCancel = true; res.writeHead(202); res.end(); return; }
     if (path === "/api/runs/run-1/retry" && req.method === "POST") { const key = req.headers["idempotency-key"]; if (typeof key !== "string" || !key) return send(res, 400, { error: "invalid" }); state.sourceRetryKeys.push(key); if (state.sourceRetryKeys.length === 1) return send(res, 503, { error: "unavailable" }); state.sourceFailed = false; return send(res, 202, { runId: "run-2", targetId: "source-1" }); }
     if (path === "/api/roles" && req.method === "GET") return send(res, 200, { roles: [...(state.source ? [{ ...role, state: state.roleState }] : []), ...state.manualRoles] });
-    if (path === "/api/roles" && req.method === "POST") {
+    if ((path === "/api/roles" || path === "/api/v3/roles") && req.method === "POST") {
       const body = JSON.parse((await read(req)).toString("utf8"));
       if (body.org !== "Synthetic Volunteer Group") return send(res, 400, { error: "invalid" });
-      await new Promise((resolve) => { releaseManualRole = resolve; });
-      state.manualRoles.push({ id: "manual-role", ...body, state: "confirmed", quote: null, sourceId: null, revision: 1 });
+      const key = req.headers["idempotency-key"];
+      if (path !== "/api/v3/roles" || typeof key !== "string" || !key) return send(res, 400, { error: "invalid" });
+      state.manualRoleKeys.push(key);
+      if (state.manualRoles.length === 0) {
+        state.manualRoles.push({ id: "manual-role", ...body, state: "confirmed", quote: null, sourceId: null, revision: 1 });
+        await new Promise((resolve) => { releaseManualRole = resolve; });
+        return send(res, 503, { error: "unavailable" });
+      }
+      if (key !== state.manualRoleKeys[0]) return send(res, 409, { error: "conflict" });
       return send(res, 201, { roleId: "manual-role" });
     }
     if (path === "/api/facts" && req.method === "GET") return send(res, 200, { facts: [...(state.source ? [{ ...fact, state: state.factState }] : []), ...(state.manualFact ? [state.manualFact] : [])] });
@@ -81,6 +97,10 @@ if (!browser?.startsWith("/")) {
     if (path === "/api/applications" && req.method === "POST") {
       const body = JSON.parse((await read(req)).toString("utf8"));
       if (typeof body.jdText !== "string" || body.jdText.length < 40) return send(res, 400, { error: "invalid" });
+      state.jobRequests ??= [];
+      state.jobRequests.push(body);
+      await new Promise((resolve) => { releaseJob = resolve; });
+      if (state.jobRequests.length === 1) return send(res, 503, { error: "unavailable" });
       state.applications.push({ id: "application-1", company: null, title: null, excerpt: "Synthetic platform engineer job", createdAt: 1, resumes: [], status: "saved", appliedAt: null, notes: "", revision: 1 });
       return send(res, 201, { applicationId: "application-1" });
     }
@@ -242,9 +262,29 @@ if (!browser?.startsWith("/")) {
     await wait(`!![...document.querySelectorAll('form[aria-label="Add a role"] button')].find(x => x.textContent.trim() === 'Saving…')`);
     if (!await evalPage(`(() => { const f = document.querySelector('form[aria-label="Add a role"]'); return !!f && [...f.querySelectorAll('input, select')].every(e => e.disabled) && [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Add a role')?.disabled; })()`)) throw new Error("MANUAL_ROLE_FIELDS_NOT_LOCKED");
     finishManualRole();
+    await wait(`!!document.querySelector('form[aria-label="Add a role"] [role="alert"]')`);
+    if (!await evalPage(`(() => { const f = document.querySelector('form[aria-label="Add a role"]'); return f?.querySelector('input[type="text"]')?.value === 'Synthetic Volunteer Group' && [...f.querySelectorAll('input, select')].every(e => !e.disabled); })()`)) throw new Error("MANUAL_ROLE_RETRY_INPUT_LOST");
+    await clickText('form[aria-label="Add a role"] button', "Add role");
     await wait(`!document.querySelector('form[aria-label="Add a role"]') && document.activeElement?.textContent.trim() === 'Add a role'`);
-    if (state.manualRoles.length !== 1) throw new Error("MANUAL_ROLE_NOT_SAVED");
-    stage = "application"; await clickText("nav a", "Applications"); await wait(`!!document.querySelector('textarea')`); await evalPage(`document.querySelector('textarea').focus()`); await call("Input.insertText", { text: "Synthetic platform engineer position requiring experience building reliable payment services and APIs." }); await clickText("button", "Save job"); await wait(`document.body?.innerText.includes('Synthetic platform engineer job')`);
+    if (state.manualRoles.length !== 1 || state.manualRoleKeys.length !== 2 || state.manualRoleKeys[0] !== state.manualRoleKeys[1]) throw new Error("MANUAL_ROLE_RETRY_KEY_MISMATCH");
+    stage = "application";
+    const jobText = "Synthetic platform engineer position requiring experience building reliable payment services and APIs.";
+    await clickText("nav a", "Applications"); await wait(`!!document.querySelector('textarea')`); await evalPage(`document.querySelector('textarea').focus()`); await call("Input.insertText", { text: jobText });
+    await clickText("button", "Save job");
+    let finishJob = await waitForRelease(() => releaseJob); releaseJob = undefined;
+    await wait(`document.querySelector('form.card textarea')?.readOnly`);
+    if (!await evalPage(`document.querySelector('form.card')?.getAttribute('aria-busy') === 'true' && document.activeElement === document.querySelector('form.card textarea')`)) throw new Error("JOB_SAVING_FOCUS_LOST");
+    await call("Input.insertText", { text: " should not be inserted" });
+    if (!await evalPage(`document.querySelector('form.card textarea')?.value === ${JSON.stringify(jobText)}`)) throw new Error("JOB_EDITABLE_DURING_SAVE");
+    finishJob();
+    await wait(`!!document.querySelector('form.card [role="alert"]') && !document.querySelector('form.card textarea')?.readOnly`);
+    if (!await evalPage(`document.querySelector('form.card textarea')?.value === ${JSON.stringify(jobText)} && document.activeElement === document.querySelector('form.card textarea')`)) throw new Error("JOB_FAILURE_DRAFT_OR_FOCUS_LOST");
+    await clickText("button", "Save job");
+    finishJob = await waitForRelease(() => releaseJob); releaseJob = undefined;
+    await wait(`document.querySelector('form.card textarea')?.readOnly`);
+    finishJob();
+    await wait(`document.body?.innerText.includes('Synthetic platform engineer job')`);
+    if (state.jobRequests.length !== 2 || state.jobRequests.some((body) => body.jdText !== jobText) || !await evalPage(`document.querySelector('form.card textarea')?.value === '' && !document.querySelector('form.card textarea')?.readOnly && document.activeElement === document.querySelector('form.card textarea')`)) throw new Error("JOB_SAVE_RESULT_WRONG");
     stage = "tracking"; await clickText("button", "Track & prepare"); await wait(`!!document.querySelector('.application-workspace select')`); await evalPage(`(() => { const e = document.querySelector('.application-workspace select'); e.value = 'applied'; e.dispatchEvent(new Event('change', { bubbles: true })); })()`); await evalPage(`document.querySelector('.application-workspace textarea').focus()`); await call("Input.insertText", { text: "Synthetic follow-up note" }); await clickText("button", "Save tracking details"); await wait(`document.querySelector('.application-workspace')?.innerText.includes('Saved.')`); if (state.applications[0]?.status !== "applied" || state.applications[0]?.notes !== "Synthetic follow-up note") throw new Error("TRACKING_NOT_SAVED");
     stage = "cover_letter"; await clickText("button", "Create cover letter"); await wait(`!![...document.querySelectorAll('summary')].find(x => x.textContent.trim() === 'Read cover letter')`); await clickText("summary", "Read cover letter"); await wait(`document.body?.innerText.includes('I built 12 payment services.')`);
     await wait(`(() => { const link = [...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download Word'); return link?.origin === location.origin && link.getAttribute('href') === '/api/documents/document-1/docx' && link.referrerPolicy === 'no-referrer'; })()`);
@@ -339,11 +379,29 @@ if (!browser?.startsWith("/")) {
     stage = "export_disclosure";
     await clickText("nav a", "Account");
     await wait(`document.body?.innerText.includes('up to 128 source files and 100 MiB')`);
+    stage = "profile_submission_lock";
+    await evalPage(`(() => { const e = document.querySelector('input[autocomplete="name"]'); e.focus(); e.setSelectionRange(e.value.length, e.value.length); })()`);
+    await call("Input.insertText", { text: " Senior" });
+    await clickText("button", "Save profile");
+    let finishProfile = await waitForRelease(() => releaseProfile); releaseProfile = undefined;
+    await wait(`document.querySelector('form[aria-labelledby="profile-heading"] input[autocomplete="name"]')?.readOnly`);
+    if (!await evalPage(`(() => { const f = document.querySelector('form[aria-labelledby="profile-heading"]'); return f?.getAttribute('aria-busy') === 'true' && [...f.querySelectorAll('input, textarea')].every(e => e.readOnly) && document.activeElement === f.querySelector('input[autocomplete="name"]'); })()`)) throw new Error("PROFILE_SAVING_FOCUS_LOST");
+    await call("Input.insertText", { text: " should not be inserted" });
+    if (!await evalPage(`document.querySelector('input[autocomplete="name"]')?.value === 'Avery Example Senior'`)) throw new Error("PROFILE_EDITABLE_DURING_SAVE");
+    finishProfile();
+    await wait(`!!document.querySelector('form[aria-labelledby="profile-heading"] [role="alert"]') && !document.querySelector('input[autocomplete="name"]')?.readOnly`);
+    if (!await evalPage(`document.querySelector('input[autocomplete="name"]')?.value === 'Avery Example Senior' && document.activeElement === document.querySelector('input[autocomplete="name"]')`)) throw new Error("PROFILE_FAILURE_DRAFT_OR_FOCUS_LOST");
+    await clickText("button", "Save profile");
+    finishProfile = await waitForRelease(() => releaseProfile); releaseProfile = undefined;
+    await wait(`document.querySelector('input[autocomplete="name"]')?.readOnly`);
+    finishProfile();
+    await wait(`document.body?.innerText.includes('Profile saved.')`);
+    if (state.profileRequests.length !== 2 || state.profileRequests.some((body) => body.name !== "Avery Example Senior") || !await evalPage(`document.querySelector('input[autocomplete="name"]')?.value === 'Avery Example Senior' && !document.querySelector('input[autocomplete="name"]')?.readOnly && document.activeElement === document.querySelector('input[autocomplete="name"]')`)) throw new Error("PROFILE_SAVE_RESULT_WRONG");
     await wait(`document.body?.innerText.includes('This link is currently unavailable.')`);
     if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Revoke link')`)) throw new Error("SHARE_REVOKE_MISSING");
     if (!await evalPage(`!!document.querySelector('a[href="/api/export/archive"]')`)) throw new Error("ARCHIVE_LINK_MISSING");
     if (!await evalPage(`!!document.querySelector('a[href="/api/export"]') && [...document.querySelectorAll('a[href="#/sources"]')].some(x => x.textContent.includes('Sources & facts'))`)) throw new Error("EXPORT_DOWNLOAD_LINKS_MISSING");
-    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, factLevelReview: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, editorFocusReturn: true, applicationCreation: true, applicationTracking: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true } }));
+    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, factLevelReview: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, profileSubmissionLock: true, applicationTracking: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true } }));
   } catch {
     console.log(JSON.stringify({ status: "failed", reason: "BROWSER_SMOKE_FAILED", stage, promotionEligible: false })); process.exitCode = 1;
   } finally {

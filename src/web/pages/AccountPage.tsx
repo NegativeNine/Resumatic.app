@@ -89,6 +89,7 @@ function ProfileForm() {
     <form
       className="card"
       aria-labelledby="profile-heading"
+      aria-busy={pending}
       onSubmit={(e) => {
         e.preventDefault();
         void save();
@@ -105,6 +106,7 @@ function ProfileForm() {
             type="text"
             autoComplete="name"
             value={draft.name}
+            readOnly={pending}
             onChange={edit("name")}
           />
         </Field>
@@ -114,6 +116,7 @@ function ProfileForm() {
             type="email"
             autoComplete="email"
             value={draft.email}
+            readOnly={pending}
             onChange={edit("email")}
           />
         </Field>
@@ -123,6 +126,7 @@ function ProfileForm() {
             type="tel"
             autoComplete="tel"
             value={draft.phone}
+            readOnly={pending}
             onChange={edit("phone")}
           />
         </Field>
@@ -133,6 +137,7 @@ function ProfileForm() {
             autoComplete="address-level2"
             placeholder="City, country"
             value={draft.location}
+            readOnly={pending}
             onChange={edit("location")}
           />
         </Field>
@@ -146,6 +151,7 @@ function ProfileForm() {
           id={`${id}-links`}
           rows={3}
           value={draft.links}
+          readOnly={pending}
           onChange={edit("links")}
           aria-describedby={`${id}-links-hint`}
         />

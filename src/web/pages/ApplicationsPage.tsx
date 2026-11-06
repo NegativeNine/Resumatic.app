@@ -189,6 +189,7 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
   return (
     <form
       className="card"
+      aria-busy={pending}
       onSubmit={(e) => {
         e.preventDefault();
         void save();
@@ -202,6 +203,7 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
         id={id}
         rows={10}
         value={text}
+        readOnly={pending}
         onChange={(e) => {
           setText(e.target.value);
           setSaved(false);

@@ -11,6 +11,6 @@ it("sends unknown-end role writes to versioned routes without a legacy fallback"
   }));
   await api.addRoleV2({ kind: "job", org: "Acme", title: null, startDate: null, endDate: null, unknownEndStartDate: "2020" });
   await api.updateRoleV2("r1", { unknownEndStartDate: "2021", startDate: null, endDate: null });
-  expect(calls.map(({ url, method }) => [method, url])).toEqual([["POST", "/api/v2/roles"], ["PATCH", "/api/v2/roles/r1"]]);
+  expect(calls.map(({ url, method }) => [method, url])).toEqual([["POST", "/api/v3/roles"], ["PATCH", "/api/v2/roles/r1"]]);
   expect(calls.map(({ body }) => body.unknownEndStartDate)).toEqual(["2020", "2021"]);
 });

@@ -138,6 +138,10 @@ export const MIGRATIONS: readonly string[][] = [
     // duplicated in the request ledger.
     `CREATE TABLE fact_create_requests (request_key TEXT PRIMARY KEY, input_digest TEXT NOT NULL, fact_id TEXT NOT NULL REFERENCES facts(id))`,
   ],
+  [
+    // Preserve the result of a manual role submission after a lost response.
+    `CREATE TABLE role_create_requests (request_key TEXT PRIMARY KEY, input_digest TEXT NOT NULL, role_id TEXT NOT NULL REFERENCES roles(id))`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

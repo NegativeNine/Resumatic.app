@@ -159,6 +159,13 @@ describe("maintenance replacement lifecycle", () => {
     });
     expect(manual.status).toBe(201);
     const { factId: manualId } = (await manual.json()) as { factId: string };
+    const manualRole = { kind: "volunteer", org: "Community Group", title: null, startDate: "2020", endDate: null };
+    const roleKey = crypto.randomUUID();
+    const savedRole = await user.fetch("/api/v3/roles", {
+      method: "POST", headers: { "content-type": "application/json", "idempotency-key": roleKey }, body: JSON.stringify(manualRole),
+    });
+    expect(savedRole.status).toBe(201);
+    const { roleId: manualRoleId } = await savedRole.json() as { roleId: string };
     expect((await user.json("/api/me")).quota).toEqual(initialQuota);
 
     const op = crypto.randomUUID();
@@ -299,6 +306,12 @@ describe("maintenance replacement lifecycle", () => {
     expect(replay.status).toBe(201);
     expect(await replay.json()).toEqual({ factId: manualId });
     expect((await replacement.json("/api/facts")).facts).toHaveLength(facts.length + 2);
+    const roleReplay = await replacement.fetch("/api/v3/roles", {
+      method: "POST", headers: { "content-type": "application/json", "idempotency-key": roleKey }, body: JSON.stringify(manualRole),
+    });
+    expect(roleReplay.status).toBe(201);
+    expect(await roleReplay.json()).toEqual({ roleId: manualRoleId });
+    expect((await replacement.json("/api/roles")).roles).toHaveLength(roles.length + 1);
     const answerFact = (await replacement.json("/api/facts")).facts.find(
       (fact: { id: string }) => fact.id === answerId,
     );

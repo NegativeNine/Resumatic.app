@@ -366,6 +366,7 @@ const RolePatch = NewRoleBody.partial().extend({
   expectedRevision: z.number().int().positive().optional(),
 });
 const NewRoleV2Body = NewRoleBody.extend({ unknownEndStartDate: roleDate }).strict();
+const NewRoleV3Body = NewRoleBody.extend({ unknownEndStartDate: roleDate.optional() }).strict();
 const RolePatchV2 = NewRoleV2Body.partial().extend({
   expectedRevision: z.number().int().positive().optional(),
 }).strict();
@@ -656,6 +657,14 @@ api.post("/v2/roles", JSON_LIMIT, async (c) => {
   if (c.env.ROLE_UNKNOWN_END_ENABLED !== "true")
     throw new AppError("unavailable", "unknown end dates are not enabled");
   return c.json(await myVault(c).addRoleV2(c.get("who"), await jsonBody(c, NewRoleV2Body)), 201);
+});
+// The separate route and RPC prevent older code from silently discarding the
+// idempotency key, including while the optional role-date feature is enabled.
+api.post("/v3/roles", JSON_LIMIT, async (c) => {
+  const input = await jsonBody(c, NewRoleV3Body);
+  return c.json(await myVault(c).addRoleIdempotent(
+    c.get("who"), input, requestKey(c), c.env.ROLE_UNKNOWN_END_ENABLED === "true",
+  ), 201);
 });
 api.patch("/v2/roles/:id", JSON_LIMIT, async (c) => {
   if (c.env.ROLE_UNKNOWN_END_ENABLED !== "true")

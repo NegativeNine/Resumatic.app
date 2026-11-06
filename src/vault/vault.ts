@@ -1178,6 +1178,41 @@ export class Vault extends DurableObject<Env> {
     return { roleId: id };
   }
 
+  /** Versioned RPC: a lost response can be retried without duplicating a role. */
+  async addRoleIdempotent(who: Who, r: NewRole, requestKey: string, workerAllowsUnknownEnd: boolean): Promise<{ roleId: string }> {
+    this.requireOwner(who);
+    if (!/^[a-zA-Z0-9_-]{1,100}$/.test(requestKey))
+      throw new AppError("invalid", "invalid request key");
+    const hasUnknownEnd = r.unknownEndStartDate !== undefined;
+    const digest = base64url(await sha256(JSON.stringify([
+      r.kind, r.org, r.title, r.startDate, r.endDate,
+      hasUnknownEnd, r.unknownEndStartDate ?? null,
+    ])));
+    this.requireOwner(who);
+    return this.ctx.storage.transactionSync(() => {
+      const previous = this.sql.exec<{ input_digest: string; role_id: string }>(
+        `SELECT input_digest, role_id FROM role_create_requests WHERE request_key = ?`, requestKey,
+      ).toArray()[0];
+      if (previous) {
+        if (previous.input_digest !== digest)
+          throw new AppError("conflict", "this role request changed");
+        return { roleId: previous.role_id };
+      }
+      if (hasUnknownEnd && (workerAllowsUnknownEnd !== true || this.env.ROLE_UNKNOWN_END_ENABLED !== "true"))
+        throw new AppError("unavailable", "unknown end dates are not enabled");
+      const unknown = r.unknownEndStartDate ?? null;
+      if (unknown && (!DATE_PATTERN.test(unknown) || r.startDate !== null || r.endDate !== null))
+        throw new AppError("invalid", "an unknown end cannot be combined with other dates");
+      const id = crypto.randomUUID();
+      this.sql.exec(
+        `INSERT INTO roles (id, kind, org, title, start_date, end_date, unknown_end_start_date, state) VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed')`,
+        id, r.kind, r.org, r.title, r.startDate, r.endDate, unknown,
+      );
+      this.sql.exec(`INSERT INTO role_create_requests (request_key, input_digest, role_id) VALUES (?, ?, ?)`, requestKey, digest, id);
+      return { roleId: id };
+    });
+  }
+
   /** Versioned edit validates the effective dates before making any change. */
   async editRoleV2(who: Who, id: string, patch: RolePatch): Promise<void> {
     this.requireOwner(who);
