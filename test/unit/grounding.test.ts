@@ -489,6 +489,28 @@ describe("scope", () => {
     expect(checkClaim("Increased investments in training by 20%", [{ text: "Reduced investments in hiring by 20%", level: "founded" }]).problems.some((problem) => problem.startsWith("outcome direction contradicted"))).toBe(false);
   });
 
+  it("does not swap percentages between two explicitly quantified outcomes", () => {
+    const evidence = [{ text: "Reduced latency by 50% and increased throughput by 30%", level: "implemented" as const }];
+    expect(checkClaim("Reduced latency by 30%", evidence).ok).toBe(false);
+    expect(checkClaim("Reduced latency by 50%", evidence).ok).toBe(true);
+    expect(checkClaim("Increased throughput by 30%", evidence).ok).toBe(true);
+    expect(checkClaim("Cut latency by 30%", [
+      { text: "Reduced latency by 50%", level: "implemented" },
+      { text: "Increased throughput by 30%", level: "implemented" },
+    ]).ok).toBe(false);
+    expect(checkClaim("Reduced latency by 30%", [
+      ...evidence, { text: "Reduced latency by 30% in another service", level: "implemented" },
+    ]).ok).toBe(true);
+  });
+
+  it("leaves ambiguous and unparsed percentage relationships to the judge", () => {
+    const hasSwap = (text: string) => checkClaim("Reduced latency by 30%", [{ text, level: "implemented" }])
+      .problems.some((problem) => problem.startsWith("outcome percentage assigned"));
+    expect(hasSwap("Did not reduce latency by 50%; increased throughput by 30%")).toBe(false);
+    expect(hasSwap("Reduced latency by 50% and increased throughput by 30%; latency fell by 30% elsewhere")).toBe(false);
+    expect(hasSwap("Reduced latency by at least 50% and increased throughput by 30%")).toBe(false);
+  });
+
   it("reports every problem at once", () => {
     const result = checkClaim("Led a Rust rewrite that cut costs by 50%", [{ text: "Helped with a Go rewrite", level: "contributed" }]);
     expect(result.ok).toBe(false);

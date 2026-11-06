@@ -204,6 +204,29 @@ describe("verifyDraft", () => {
     ]);
   });
 
+  it("does not print a percentage taken from a different cited outcome", async () => {
+    const fact = record("metrics", "r1", "Reduced latency by 50% and increased throughput by 30%");
+    const base = fakeModels();
+    let judged = 0;
+    const models: Models = {
+      ...base,
+      complete: async (route, messages, schema) => {
+        if (route === "repair") return schema.parse({ text: "Reduced latency by 30%" });
+        if (route === "judge") {
+          judged++;
+          return schema.parse({ verdicts: [{ id: "l1", verdict: "supported", reason: "" }] });
+        }
+        return base.complete(route, messages, schema);
+      },
+    };
+    const draft = { lines: [line("l1", "r1", "Reduced latency by 30%", [fact.id])] };
+    const result = await verifyDraft(models, draft, { factIds: [fact.id], skillIds: [], gaps: [] }, [fact]);
+    expect(judged).toBe(0);
+    expect(result.lines.map(({ text, status }) => ({ text, status }))).toEqual([
+      { text: fact.text, status: "replaced" },
+    ]);
+  });
+
   it("keeps, repairs, replaces and drops, in draft order, and never prints a sentence twice", async () => {
     const draft: Draft = {
       lines: [

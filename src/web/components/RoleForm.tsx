@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import { ROLE_KINDS, type RoleKind, type RoleView } from "../../shared/api";
-import { api } from "../api";
+import { api, ApiError } from "../api";
+import { roleWriteObserved } from "../role-save";
 import { ROLE_KIND_LABEL } from "../format";
 import { useAction, type Action, type Reload } from "../hooks";
 import { useSession } from "../session";
@@ -17,16 +18,18 @@ interface Props {
 }
 
 export function RoleForm({ role, reload, onClose, onAdded, action }: Props) {
+  // Keep the submitted revision and date interpretation fixed while editing.
+  const [original] = useState(role);
   const { me } = useSession();
   const allowUnknownEnd = me.capabilities?.roleDateUnknownEnd === true;
-  const datesLocked = Boolean(role?.unknownEndStartDate && !allowUnknownEnd);
-  const [kind, setKind] = useState<RoleKind>(role?.kind ?? "job");
-  const [org, setOrg] = useState(role?.org ?? "");
-  const [title, setTitle] = useState(role?.title ?? "");
-  const [start, setStart] = useState(role?.unknownEndStartDate ?? role?.startDate ?? "");
-  const [end, setEnd] = useState(role?.endDate ?? "");
-  const [unknownEnd, setUnknownEnd] = useState(Boolean(role?.unknownEndStartDate));
-  const [baseRevision] = useState(role?.revision ?? 1);
+  const datesLocked = Boolean(original?.unknownEndStartDate && !allowUnknownEnd);
+  const [kind, setKind] = useState<RoleKind>(original?.kind ?? "job");
+  const [org, setOrg] = useState(original?.org ?? "");
+  const [title, setTitle] = useState(original?.title ?? "");
+  const [start, setStart] = useState(original?.unknownEndStartDate ?? original?.startDate ?? "");
+  const [end, setEnd] = useState(original?.endDate ?? "");
+  const [unknownEnd, setUnknownEnd] = useState(Boolean(original?.unknownEndStartDate));
+  const [baseRevision] = useState(original?.revision ?? 1);
   const localAction = useAction();
   const { run, pending, error, setError } = action ?? localAction;
   const id = useId();
@@ -51,12 +54,24 @@ export function RoleForm({ role, reload, onClose, onAdded, action }: Props) {
     };
     let added: string | null = null;
     const ok = await run(async () => {
-      if (role) {
+      if (original) {
         const update = allowUnknownEnd ? api.updateRoleV2 : api.updateRole;
-        await update(role.id, {
+        const patch = {
           ...fields,
           expectedRevision: baseRevision,
-        });
+        };
+        try {
+          await update(original.id, patch);
+        } catch (error) {
+          if (error instanceof ApiError && (error.status === 401 || error.status === 410)) throw error;
+          let current: RoleView | undefined;
+          try { current = (await api.reviewView()).roles.find((item) => item.id === original.id); }
+          catch (readError) {
+            if (readError instanceof ApiError && (readError.status === 401 || readError.status === 410)) throw readError;
+            throw error;
+          }
+          if (!roleWriteObserved(current, original, patch)) throw error;
+        }
       } else {
         const add = allowUnknownEnd ? api.addRoleV2 : api.addRole;
         // New-role date fields are always present; only existing unavailable

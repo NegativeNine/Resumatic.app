@@ -70,6 +70,17 @@ if (!browser?.startsWith("/")) {
     if (path === "/api/sources/source-1/cancel" && req.method === "POST") { state.sourceCancel = true; res.writeHead(202); res.end(); return; }
     if (path === "/api/runs/run-1/retry" && req.method === "POST") { const key = req.headers["idempotency-key"]; if (typeof key !== "string" || !key) return send(res, 400, { error: "invalid" }); state.sourceRetryKeys.push(key); if (state.sourceRetryKeys.length === 1) return send(res, 503, { error: "unavailable" }); state.sourceFailed = false; return send(res, 202, { runId: "run-2", targetId: "source-1" }); }
     if (path === "/api/roles" && req.method === "GET") return send(res, 200, { roles: [...(state.source && !state.hideSourceRole ? [{ ...role, state: state.roleState }] : []), ...state.manualRoles] });
+    if (path === "/api/roles/role-1" && req.method === "PATCH") {
+      const body = JSON.parse((await read(req)).toString("utf8"));
+      state.roleEditAttempts = (state.roleEditAttempts ?? 0) + 1;
+      if (body.expectedRevision !== role.revision) return send(res, 409, { error: "conflict" });
+      const { expectedRevision: _revision, ...fields } = body;
+      Object.assign(role, fields);
+      role.revision++;
+      // Simulate a committed update whose response and first fresh read are lost.
+      state.sourcePollFailures = 1;
+      return send(res, 503, { error: "unavailable" });
+    }
     if ((path === "/api/roles" || path === "/api/v3/roles") && req.method === "POST") {
       const body = JSON.parse((await read(req)).toString("utf8"));
       if (body.org !== "Synthetic Volunteer Group") return send(res, 400, { error: "invalid" });
@@ -334,6 +345,17 @@ if (!browser?.startsWith("/")) {
     await wait(`document.body?.innerText.includes('Ready · 1 role and 1 fact to review')`);
     if (state.sourceRetryKeys.length !== 2 || state.sourceRetryKeys[0] !== state.sourceRetryKeys[1]) throw new Error("SOURCE_RETRY_KEY_MISMATCH");
     await wait(`document.body?.innerText.includes('Ready · 1 role and 1 fact to review')`);
+    stage = "role_edit_lost_response";
+    await clickText("button", "Edit role");
+    await wait(`!!document.querySelector('.group form input[id$="-title"]')`);
+    await evalPage(`(() => { const e = document.querySelector('.group form input[id$="-title"]'); e.focus(); e.setSelectionRange(e.value.length, e.value.length); })()`);
+    await call("Input.insertText", { text: " Senior" });
+    await clickText(".group button", "Save role");
+    await wait(`!!document.querySelector('.group [role="alert"]')`);
+    if (!await evalPage(`document.querySelector('.group form input[id$="-title"]')?.value === 'Engineer Senior'`)) throw new Error('ROLE_EDIT_DRAFT_LOST');
+    await clickText(".group button", "Save role");
+    await wait(`!document.querySelector('.group form input[id$="-title"]')`);
+    if (role.title !== "Engineer Senior" || state.roleEditAttempts !== 2) throw new Error('ROLE_EDIT_NOT_RECONCILED');
     stage = "review_role"; await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Confirm role')`); await clickText("button", "Confirm role"); await wait(`!([...document.querySelectorAll('button')].some(x => x.textContent.trim() === 'Confirm role'))`);
     await wait(`document.body?.innerText.includes('Ready · 1 fact to review')`);
     stage = "fact_level_review"; await wait(`document.body?.innerText.includes('needs your confirmation before it is used')`); await clickText('.fact button', 'Edit');
@@ -584,7 +606,7 @@ if (!browser?.startsWith("/")) {
     await call("Page.navigate", { url: `${origin}/share?invalid=1#synthetic-invalid` });
     await wait(`document.body?.innerText.includes('Share unavailable')`);
     if (await evalPage(`location.hash !== '' || !![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Try again')`)) throw new Error("EXPIRED_SHARE_NOT_TERMINAL");
-    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, sourceRoleOnly: true, sourceEmpty: true, pollRecovery: true, pollNonTransient: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, factLevelReview: true, factEditLostResponse: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, jobRetryKey: true, profileSubmissionLock: true, profileConcurrentEdit: true, profileLostResponse: true, applicationTracking: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, legacySkillRemoval: true, checkedSkillRemoval: true, checkedLineRemoval: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true, stableResourceReload: true, shareRetry: true, expiredShare: true } }));
+    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, sourceRoleOnly: true, sourceEmpty: true, pollRecovery: true, pollNonTransient: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, roleEditLostResponse: true, factLevelReview: true, factEditLostResponse: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, jobRetryKey: true, profileSubmissionLock: true, profileConcurrentEdit: true, profileLostResponse: true, applicationTracking: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, legacySkillRemoval: true, checkedSkillRemoval: true, checkedLineRemoval: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true, stableResourceReload: true, shareRetry: true, expiredShare: true } }));
   } catch {
     console.log(JSON.stringify({ status: "failed", reason: "BROWSER_SMOKE_FAILED", stage, promotionEligible: false })); process.exitCode = 1;
   } finally {

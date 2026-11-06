@@ -428,6 +428,45 @@ export function unsupportedNumbers(claim: string, evidence: string): string[] {
     .map((n) => n.raw);
 }
 
+type PercentOutcome = { key: string; object: string; quantity: NumberToken };
+/** Recognize only direct, unqualified English percentage outcomes. */
+function percentOutcomes(text: string): PercentOutcome[] {
+  const pattern = /\b(increased|increase|raised|raise|grew|grown|grow|boosted|boost|decreased|decrease|reduced|reduce|lowered|lower|cut|cuts)\s+(?:(?:the|our|their|its|my)\s+)?([a-z]+(?:-[a-z]+)*(?:[ \t]+[a-z]+(?:-[a-z]+)*)?)\s+by\s+(\d+(?:\.\d+)?|\.\d+)\s*(%|percent\b|per[ \t]+cent\b)/gi;
+  const out: PercentOutcome[] = [];
+  for (const m of text.matchAll(pattern)) {
+    const preceding = text.slice(Math.max(0, m.index - 100), m.index).split(/[.!?;:\n]/).at(-1) ?? "";
+    // Negation or counterfactual language can reverse the proposition. Leave
+    // those cases for the independent judge rather than guessing.
+    if (/\b(?:not|never|no|without|avoid(?:ed|ing)?|prevent(?:ed|ing)?|if|whether|would|could|might)\b/i.test(preceding)) continue;
+    const object = m[2]!.toLowerCase().replace(/\s+/g, " ");
+    if (/\b(?:of|in|on|at|for|with|across|using|during|from|and|or|but)\b/.test(object)) continue;
+    const verb = m[1]!.toLowerCase();
+    const direction = /^(?:increas|rais|grew|grown|grow|boost)/.test(verb) ? "up" : "down";
+    const quantity = numbersIn(`${m[3]}${m[4]}`);
+    if (quantity.length === 1 && quantity[0]!.percent && Number.isFinite(quantity[0]!.value))
+      out.push({ key: `${direction}:${object}`, object, quantity: quantity[0]! });
+  }
+  return out;
+}
+
+/** Catch a narrow swap where both percentages are explicitly tied to different outcomes. */
+function swappedOutcomePercentages(claim: string, evidence: string[]): string[] {
+  const candidates = percentOutcomes(claim);
+  if (!candidates.length) return [];
+  const outcomes = evidence.flatMap(percentOutcomes);
+  const mentioned = evidence.flatMap(numbersIn);
+  return candidates.flatMap((candidate) => {
+    const same = outcomes.filter((known) => known.key === candidate.key);
+    if (!same.length || same.some((known) => sameNumber(candidate.quantity, known.quantity))) return [];
+    const matching = outcomes.filter((known) => sameNumber(candidate.quantity, known.quantity));
+    // An unparsed occurrence could support this claim; avoid making a false
+    // assertion about how that other occurrence relates to the outcome.
+    if (!matching.some((known) => known.key !== candidate.key) ||
+        mentioned.filter((number) => sameNumber(candidate.quantity, number)).length !== matching.length) return [];
+    return [candidate.object];
+  });
+}
+
 const NOT_NAMES = new Set(["i", "a", "an", "the", "and", "or", "of", "in", "on", "at", "to", "for", "with", "by", "via"]);
 
 /**
@@ -663,6 +702,8 @@ export function checkClaim(claim: string, evidence: Evidence[], options: { detec
   if (options.detectDirection !== false) {
     const reversed = contradictedDirections(claim, evidence.flatMap((item) => [item.text, item.quote ?? ""]));
     if (reversed.length) problems.push(`outcome direction contradicted by the evidence: ${reversed.join(", ")}`);
+    const swapped = swappedOutcomePercentages(claim, evidence.flatMap((item) => [item.text, item.quote ?? ""]));
+    if (swapped.length) problems.push(`outcome percentage assigned to a different metric: ${swapped.join(", ")}`);
   }
   const claimed = scopeRank(claim);
   const supported = Math.max(
