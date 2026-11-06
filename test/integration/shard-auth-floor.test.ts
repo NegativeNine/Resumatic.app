@@ -16,7 +16,7 @@ async function account() {
   const held = await directoryForSignIn(config, input);
   const first = await directoryForSignIn(config, input);
   const current = await first.directory.signIn(first.input);
-  await global.bindIdentityHome("google", input.subject, current.userId, input.authEpoch);
+  await global.bindIdentityHome("google", input.subject, current.userId, input.authEpoch, undefined, false, first.input.shardClaimToken);
   return { global, input, held, current, home: directoryForUser(env, current.userId) };
 }
 
@@ -33,6 +33,13 @@ it("rejects a pre-migration create after a previously erased shard wakes", async
   await runInDurableObject(f.home, (_instance, state) => {
     state.storage.sql.exec(`UPDATE meta SET value='0' WHERE key='shard_auth_floor'`);
     state.storage.sql.exec(`DELETE FROM meta WHERE key='shard_rollout_epoch'`);
+    state.storage.sql.exec(`DROP TRIGGER guard_shard_home_claim_bind`);
+    state.storage.sql.exec(`DROP TRIGGER remove_shard_home_claim_token`);
+    state.storage.sql.exec(`DROP TRIGGER remove_shard_identity_claim_on_identity`);
+    state.storage.sql.exec(`DROP TRIGGER remove_shard_identity_claim_token`);
+    state.storage.sql.exec(`DROP TABLE shard_home_claim_tokens`);
+    state.storage.sql.exec(`DROP TABLE shard_identity_claim_tokens`);
+    state.storage.sql.exec(`DROP TABLE shard_home_bind_claim_marker`);
     state.storage.sql.exec(`DROP TABLE shard_rollout_barrier`);
     state.storage.sql.exec(`UPDATE meta SET value='12' WHERE key='schema_version'`);
   });

@@ -98,7 +98,7 @@ describe("sharded Google home release: adversarial ordering", () => {
     await g.addInvite(subject);
     const target = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
     const account = await target.directory.signIn(target.input);
-    await g.bindIdentityHome("google", subject, account.userId, p.authEpoch);
+    await g.bindIdentityHome("google", subject, account.userId, p.authEpoch, undefined, false, target.input.shardClaimToken);
     const shard = directoryForUser(env, account.userId);
     await shard.deleteAccount(account.userId, account.vaultId);
 
@@ -154,7 +154,7 @@ describe("sharded Google home release: adversarial ordering", () => {
     await g.addInvite(subject);
     const target = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
     const account = await target.directory.signIn(target.input);
-    await g.bindIdentityHome("google", subject, account.userId, p.authEpoch);
+    await g.bindIdentityHome("google", subject, account.userId, p.authEpoch, undefined, false, target.input.shardClaimToken);
     const shard = directoryForUser(env, account.userId);
     await shard.deleteAccount(account.userId, account.vaultId);
     await runInDurableObject(shard, (_instance, state) => {
@@ -205,7 +205,7 @@ describe("sharded Google home release: adversarial ordering", () => {
     await g.addInvite(subject);
     const target = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
     const account = await target.directory.signIn(target.input);
-    await g.bindIdentityHome("google", subject, account.userId, p.authEpoch);
+    await g.bindIdentityHome("google", subject, account.userId, p.authEpoch, undefined, false, target.input.shardClaimToken);
     const shard = directoryForUser(env, account.userId);
     await shard.deleteAccount(account.userId, account.vaultId);
 

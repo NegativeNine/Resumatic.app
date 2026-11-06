@@ -187,14 +187,29 @@ export class Directory extends DurableObject<Env> {
    * Finds or creates the user and their vault. Rows are written before the first await, so a
    * second sign-in racing the first finds them and gets the same vault. Safe to repeat.
    */
-  async signIn(p: SignInInput): Promise<{ userId: string; vaultId: string; created?: boolean }> {
+  async signIn(p: SignInInput): Promise<{ userId: string; vaultId: string; created?: boolean; shardClaimToken?: string | null }> {
     if (p.authExpiryMs !== undefined) requireFreshAuth(p.authExpiryMs);
+    if (p.shardClaimToken !== undefined &&
+        (p.provider !== "google" || !Number.isInteger(p.homeShard) || p.homeShard! < 0 || p.homeShard! > 15 ||
+          !this.ctx.id.equals(this.env.DIRECTORY.idFromName(`directory-${p.homeShard}`)) || typeof p.shardClaimToken !== "string" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(p.shardClaimToken)))
+      throw new AppError("invalid", "invalid account placement claim");
     // Existing identities also need the original authorization epoch: a
     // stale callback must not attach to a replacement account after erasure.
     if ((this.isGlobal || this.isShard) && p.provider === "google") this.googleWrite(p.provider, p.authEpoch, () => {});
     const email = p.email.trim().toLowerCase();
     let row = this.findAccount(p.provider, p.subject);
     let created = false;
+    const storedShardClaim = (userId: string) => this.sql.exec<{ token: string }>(
+      `SELECT token FROM shard_identity_claim_tokens WHERE provider=? AND subject=? AND user_id=?`, p.provider, p.subject, userId,
+    ).toArray()[0]?.token ?? null;
+    // Do not initialize a vault for an already-known conflicting generation.
+    // The check below is repeated after initialization because that I/O yields.
+    if (row && p.shardClaimToken) {
+      const existingClaim = storedShardClaim(row.user_id);
+      if (existingClaim !== p.shardClaimToken)
+        throw new AppError("conflict", "account placement changed; retry sign-in");
+    }
     const attempt = p.placementAttempt;
     if (attempt && (!syntheticPlacementIdentity(p.provider, p.subject) || email !== p.subject.toLowerCase()))
       throw new AppError("unavailable", "placement fencing is restricted to synthetic identities");
@@ -248,6 +263,8 @@ export class Directory extends DurableObject<Env> {
           p.subject,
           userId,
         );
+        if (p.shardClaimToken)
+          this.sql.exec(`INSERT INTO shard_identity_claim_tokens (provider,subject,user_id,token) VALUES (?,?,?,?)`, p.provider, p.subject, userId, p.shardClaimToken);
         if (attempt) {
           this.sql.exec(`INSERT INTO placement_identities(provider,subject,generation,user_id) VALUES (?,?,?,?)`, p.provider, p.subject, attempt.generation, userId);
           this.placement.accept(attempt, userId);
@@ -290,7 +307,10 @@ export class Directory extends DurableObject<Env> {
     )
       throw new AppError("forbidden", "this account is being deleted");
     if (p.authExpiryMs !== undefined) requireFreshAuth(p.authExpiryMs);
-    return { userId: row.user_id, vaultId: row.vault_id, ...(p.reportCreation ? { created } : {}) };
+    const shardClaimToken = storedShardClaim(row.user_id);
+    if (p.shardClaimToken && p.shardClaimToken !== shardClaimToken)
+      throw new AppError("conflict", "account placement changed; retry sign-in");
+    return { userId: row.user_id, vaultId: row.vault_id, ...(p.reportCreation ? { created, shardClaimToken } : {}) };
   }
 
   /** A marker precedes cross-object init and survives an uncertain outcome. */
@@ -402,6 +422,46 @@ export class Directory extends DurableObject<Env> {
         .one().shard;
     });
   }
+  /** Claim a new Google shard home with an opaque token recorded atomically. */
+  async claimIdentityHomeV2(
+    provider: string,
+    subject: string,
+    preferredShard: number | null,
+    email?: string,
+    authExpiryMs?: number,
+    authEpoch?: number,
+  ): Promise<{ shard: number | null; shardClaimToken: string | null }> {
+    if (!this.isGlobal || provider !== "google") throw new AppError("invalid", "invalid account placement");
+    if (authExpiryMs !== undefined) requireFreshAuth(authExpiryMs);
+    if (preferredShard !== null && (!Number.isInteger(preferredShard) || preferredShard < 0 || preferredShard > 15))
+      throw new AppError("invalid", "invalid directory shard");
+    if (this.env.INVITE_ONLY !== "false") {
+      if (typeof email !== "string" || !email.trim())
+        throw new AppError("unavailable", "sign-in service is updating; try again");
+      if (!this.isInvited(email.trim().toLowerCase()))
+        throw new AppError("forbidden", "this email has not been invited to the beta yet");
+    }
+    return this.googleWrite(provider, authEpoch, () => {
+      let home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null; placement_state: string }>(
+        `SELECT shard,user_id,generation,placement_state FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
+      ).toArray()[0];
+      if (!home) {
+        this.sql.exec(`INSERT INTO identity_homes(provider,subject,shard) VALUES (?,?,?)`, provider, subject, preferredShard);
+        if (preferredShard !== null)
+          this.sql.exec(`INSERT INTO shard_home_claim_tokens(provider,subject,token) VALUES (?,?,?)`, provider, subject, crypto.randomUUID());
+        home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null; placement_state: string }>(
+          `SELECT shard,user_id,generation,placement_state FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
+        ).one();
+      }
+      if (home.generation || home.placement_state !== "open")
+        throw new AppError("unavailable", "account placement requires review");
+      const token = this.sql.exec<{ token: string }>(`SELECT token FROM shard_home_claim_tokens WHERE provider=? AND subject=?`, provider, subject).toArray()[0]?.token ?? null;
+      // Minting a token after an older claim would not fence its in-flight calls.
+      if (home.shard !== null && home.user_id === null && !token)
+        throw new AppError("unavailable", "legacy account placement requires review");
+      return { shard: home.shard, shardClaimToken: token };
+    });
+  }
   async placementEpoch(): Promise<number> {
     return this.placement.epoch();
   }
@@ -451,11 +511,16 @@ export class Directory extends DurableObject<Env> {
     authEpoch?: number,
     authExpiryMs?: number,
     requireBound = false,
+    shardClaimToken?: string | null,
+    checkClaim = false,
   ): Promise<void> {
     // The Worker may have sent this RPC while the OAuth state was fresh, but
     // it can be delayed in transit. Never mutate the home on an expired state.
     if (authExpiryMs !== undefined) requireFreshAuth(authExpiryMs);
-    if (typeof requireBound !== "boolean") throw new AppError("invalid", "invalid account placement check");
+    if (typeof requireBound !== "boolean" || typeof checkClaim !== "boolean" ||
+        (shardClaimToken != null && (typeof shardClaimToken !== "string" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(shardClaimToken))))
+      throw new AppError("invalid", "invalid account placement check");
     return this.googleWrite(provider, authEpoch, () => {
       const home = this.sql.exec<{ shard: number | null; user_id: string | null; generation: string | null; placement_state: string }>(
         `SELECT shard,user_id,generation,placement_state FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
@@ -472,21 +537,47 @@ export class Directory extends DurableObject<Env> {
       }
       if (home.generation && home.user_id === null)
         throw new AppError("unavailable", "registered placement must be settled before binding");
+      let verifiedClaim = false;
+      if (home.shard !== null) {
+        const stored = this.sql.exec<{ token: string }>(`SELECT token FROM shard_home_claim_tokens WHERE provider=? AND subject=?`, provider, subject).toArray()[0]?.token ?? null;
+        if (checkClaim && (stored !== null || shardClaimToken != null) && (shardClaimToken ?? null) !== stored)
+          throw new AppError("conflict", "account placement changed; retry sign-in");
+        verifiedClaim = Boolean(stored && shardClaimToken === stored);
+        // Even an older caller must not bind a newly tokenized, unbound home
+        // without its token. Existing generation-less homes remain legacy.
+        if (home.user_id === null && !verifiedClaim && (checkClaim || stored !== null))
+          throw new AppError("unavailable", "sharded account placement requires review");
+      }
       // A previously observed shard identity may be a survivor from an older
       // placement. An unbound claim cannot prove that it belongs to that user.
-      if (requireBound && home.user_id === null)
+      if (requireBound && home.user_id === null && !verifiedClaim)
         throw new AppError("unavailable", "sharded account placement requires review");
       if (home.placement_state !== "open" || (shard ? Number(shard[1]) : null) !== home.shard ||
           (home.user_id !== null && home.user_id !== userId))
         throw new AppError("conflict", "account placement changed; retry sign-in");
-      this.sql.exec(
-        `UPDATE identity_homes SET user_id=? WHERE provider=? AND subject=? AND (user_id IS NULL OR user_id=?)`,
-        userId,
-        provider,
-        subject,
-        userId,
-      );
+      if (verifiedClaim && home.user_id === null)
+        this.sql.exec(`INSERT INTO shard_home_bind_claim_marker(provider,subject,token) VALUES (?,?,?)`, provider, subject, shardClaimToken!);
+      try {
+        this.sql.exec(
+          `UPDATE identity_homes SET user_id=? WHERE provider=? AND subject=? AND (user_id IS NULL OR user_id=?)`,
+          userId,
+          provider,
+          subject,
+          userId,
+        );
+      } finally {
+        if (verifiedClaim && home.user_id === null)
+          this.sql.exec(`DELETE FROM shard_home_bind_claim_marker WHERE provider=? AND subject=?`, provider, subject);
+      }
     });
+  }
+
+  /** New callers use a distinct RPC so an older coordinator cannot ignore the claim check. */
+  async bindIdentityHomeV2(provider: string, subject: string, userId: string, authEpoch: number | undefined,
+    authExpiryMs: number | undefined, requireBound: boolean, shardClaimToken?: string | null): Promise<void> {
+    if (!this.isGlobal || provider !== "google" || directoryNameForUser(userId) === "global")
+      throw new AppError("invalid", "invalid account placement");
+    return this.bindIdentityHome(provider, subject, userId, authEpoch, authExpiryMs, requireBound, shardClaimToken, true);
   }
   async deletionProbe(userId: string, vaultId: string): Promise<number> {
     let count = 0;
@@ -502,6 +593,7 @@ export class Directory extends DurableObject<Env> {
       "placement_finalizations",
       "placement_receipts",
       "placement_identities",
+      "shard_identity_claim_tokens",
       "shard_deletion_releases",
       "shard_identity_delete_marker",
       "global_shard_home_release_marker",
@@ -515,6 +607,17 @@ export class Directory extends DurableObject<Env> {
         )
         .one().n;
     }
+    count += this.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM shard_home_claim_tokens t JOIN identity_homes h ON h.provider=t.provider AND h.subject=t.subject WHERE h.user_id=?`,
+      userId,
+    ).one().n;
+    // Orphaned and unbound coordinator tokens have no attributable user ID.
+    // Never report a zero for any deletion while such an identity marker exists.
+    count += this.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM shard_home_claim_tokens t LEFT JOIN identity_homes h ON h.provider=t.provider AND h.subject=t.subject WHERE h.provider IS NULL OR h.user_id IS NULL`,
+    ).one().n;
+    // A nonempty transaction marker is not expected outside a successful bind.
+    count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM shard_home_bind_claim_marker`).one().n;
     count += this.sql
       .exec<{ n: number }>(
         `SELECT COUNT(*) AS n FROM billing_events WHERE user_id=?`,
@@ -955,15 +1058,20 @@ export class Directory extends DurableObject<Env> {
         code: "billing_unavailable",
       });
     }
-    for (const v of this.vaultsIn("deleting")) {
-      try {
-        await this.erase(v.vault_id);
-      } catch (e) {
-        console.error("deletion step failed", {
-          vaultId: v.vault_id,
-          code: logErrorCode(e),
-        });
-      }
+    const deleting = this.vaultsIn("deleting");
+    // One stalled account should not prevent the other accounts in this
+    // bounded batch from starting their own independent deletion work.
+    for (let offset = 0; offset < deleting.length; offset += 4) {
+      await Promise.all(deleting.slice(offset, offset + 4).map(async (v) => {
+        try {
+          await this.erase(v.vault_id);
+        } catch (e) {
+          console.error("deletion step failed", {
+            vaultId: v.vault_id,
+            code: logErrorCode(e),
+          });
+        }
+      }));
     }
     for (const retired of this.sql
       .exec<{ vault_id: string; state: string; swept_at: number | null }>(
@@ -1100,10 +1208,29 @@ export class Directory extends DurableObject<Env> {
   }
 
   private async erase(vaultId: string): Promise<void> {
-    const stub = this.env.VAULT.get(this.env.VAULT.idFromString(vaultId));
-    await stub.quiesce();
-    this.requireInitializationSettled(vaultId);
-    const runs = await stub.close();
+    const id = this.env.VAULT.idFromString(vaultId);
+    await this.env.VAULT.get(id).quiesce();
+    // Do not let an unrelated unresolved dispatch indefinitely postpone
+    // cancellation of already-known billing or removal of visible objects.
+    // These attempts are provisional: they cannot settle a fence or mark a
+    // vault swept, and the authoritative billing check and R2 sweep below are
+    // repeated only after close succeeds. Use separate stubs so a failed RPC
+    // does not poison another concurrent operation.
+    const [billingAttempt, sweepAttempt, closeAttempt] = await Promise.allSettled([
+      this.preliminaryBillingCleanup(vaultId),
+      deletePrefix(this.env.FILES, vaultPrefix(vaultId)),
+      (async () => {
+        this.requireInitializationSettled(vaultId);
+        return this.env.VAULT.get(id).close();
+      })(),
+    ]);
+    if (billingAttempt.status === "rejected")
+      console.error("preliminary billing cleanup pending", { code: logErrorCode(billingAttempt.reason) });
+    if (sweepAttempt.status === "rejected")
+      console.error("preliminary source cleanup pending", { code: logErrorCode(sweepAttempt.reason) });
+    if (closeAttempt.status === "rejected") throw closeAttempt.reason;
+    const runs = closeAttempt.value;
+    const stub = this.env.VAULT.get(id);
     const customer = await stub.billingCustomerForDeletion();
     const newCheckoutIds = await stub.billingCheckoutSessionsForDeletion();
     const previous = this.sql.exec<{ stripe_customer: string | null; stripe_checkout_sessions: string }>(
@@ -1138,6 +1265,25 @@ export class Directory extends DurableObject<Env> {
       Date.now(),
       vaultId,
     );
+  }
+
+  /** Best effort only: never create or infer an unknown billing customer. */
+  private async preliminaryBillingCleanup(vaultId: string): Promise<void> {
+    const id = this.env.VAULT.idFromString(vaultId);
+    const known = await this.env.VAULT.get(id).knownBillingForDeletion();
+    const previous = this.sql.exec<{ stripe_customer: string | null; stripe_checkout_sessions: string }>(
+      `SELECT stripe_customer, stripe_checkout_sessions FROM vaults WHERE vault_id=?`, vaultId,
+    ).one();
+    if (previous.stripe_customer && known.customer && previous.stripe_customer !== known.customer)
+      throw new AppError("unavailable", "billing customer requires operator review");
+    const customer = known.customer ?? previous.stripe_customer;
+    const sessions = [...new Set([...parseCheckoutIds(previous.stripe_checkout_sessions), ...known.checkoutIds])];
+    if (sessions.length > 2000) throw new AppError("unavailable", "checkout history requires operator review");
+    if (!customer && sessions.length) throw new AppError("unavailable", "checkout customer requires operator review");
+    // Persist the exact IDs before any network I/O, even if a later close or
+    // destruction acknowledgement is lost.
+    this.sql.exec(`UPDATE vaults SET stripe_customer=?, stripe_checkout_sessions=? WHERE vault_id=?`, customer, JSON.stringify(sessions), vaultId);
+    if (customer) await cleanupBillingCustomer(this.env, customer, fetch, sessions);
   }
 
   private sweepDelay(): number {

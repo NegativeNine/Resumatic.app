@@ -298,7 +298,7 @@ export async function startSession(env: Env, input: SignInInput): Promise<string
     throw new AppError("unavailable", "sessions are not configured");
   if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
   const target = await directoryForSignIn(env, input);
-  let account: { userId: string; vaultId: string; created?: boolean };
+  let account: { userId: string; vaultId: string; created?: boolean; shardClaimToken?: string | null };
   try {
     account = await target.directory.signIn({ ...target.input, reportCreation: true });
   } finally {
@@ -310,7 +310,11 @@ export async function startSession(env: Env, input: SignInInput): Promise<string
   // lookup. Only the RPC that actually inserted it can bind an unbound home.
   // An older Directory omits `created`, which fails closed on sharded homes.
   const requireBound = target.input.homeShard !== undefined && account.created !== true;
-  await directory(env).bindIdentityHome(input.provider, input.subject, userId, input.authEpoch, input.authExpiryMs, requireBound);
+  const checkClaim = input.provider === "google" && target.input.homeShard !== undefined;
+  if (checkClaim)
+    await directory(env).bindIdentityHomeV2(input.provider, input.subject, userId, input.authEpoch, input.authExpiryMs, requireBound, account.shardClaimToken);
+  else
+    await directory(env).bindIdentityHome(input.provider, input.subject, userId, input.authEpoch, input.authExpiryMs, requireBound);
   if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
   const { gen, epoch } = await vault(env, vaultId).openSession(userId);
   const cookie = sessionCookie(

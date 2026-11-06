@@ -47,7 +47,18 @@ function removeExportCacheMigration(sql: SqlStorage): void {
   sql.exec(`DROP TABLE export_cache`);
 }
 
+function removeShardClaimMigration(sql: SqlStorage): void {
+  sql.exec(`DROP TRIGGER guard_shard_home_claim_bind`);
+  sql.exec(`DROP TRIGGER remove_shard_home_claim_token`);
+  sql.exec(`DROP TRIGGER remove_shard_identity_claim_on_identity`);
+  sql.exec(`DROP TRIGGER remove_shard_identity_claim_token`);
+  sql.exec(`DROP TABLE shard_home_claim_tokens`);
+  sql.exec(`DROP TABLE shard_identity_claim_tokens`);
+  sql.exec(`DROP TABLE shard_home_bind_claim_marker`);
+}
+
 function removeV3Migration(sql: SqlStorage): void {
+  removeShardClaimMigration(sql);
   sql.exec(`DROP TABLE shard_rollout_barrier`);
   sql.exec(`DELETE FROM meta WHERE key='shard_rollout_epoch'`);
   for (const trigger of ["guard_shard_google_insert_v3", "guard_shard_google_delete_v3", "guard_global_google_release_v3"]) sql.exec(`DROP TRIGGER ${trigger}`);
@@ -73,10 +84,30 @@ function removeGlobalAuthMigration(sql: SqlStorage): void {
 }
 
 describe("atomic schema migrations", () => {
+  it("rolls back the shard claim tables, triggers and version together", async () => {
+    const stub = env.DIRECTORY.getByName(`claim-migration-${crypto.randomUUID()}`);
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec(`INSERT INTO identity_homes(provider,subject,shard,user_id) VALUES ('test','legacy',3,'s3:legacy')`);
+      removeShardClaimMigration(sql);
+      const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((q) => q.includes("CREATE TABLE shard_home_claim_tokens")));
+      expect(previous).toBeGreaterThan(0);
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrateDirectory(failAtTrigger(sql, "remove_shard_identity_claim_token"), tx)).toThrow(/synthetic migration interruption/);
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name IN ('shard_home_claim_tokens','shard_identity_claim_tokens','shard_home_bind_claim_marker','guard_shard_home_claim_bind','remove_shard_home_claim_token','remove_shard_identity_claim_on_identity','remove_shard_identity_claim_token')`).toArray()).toEqual([]);
+      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(previous));
+      expect(sql.exec<{ user_id: string }>(`SELECT user_id FROM identity_homes WHERE subject='legacy'`).one().user_id).toBe("s3:legacy");
+      migrateDirectory(sql, tx);
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name IN ('shard_home_claim_tokens','shard_identity_claim_tokens','shard_home_bind_claim_marker','guard_shard_home_claim_bind','remove_shard_home_claim_token','remove_shard_identity_claim_on_identity','remove_shard_identity_claim_token')`).toArray()).toHaveLength(7);
+      expect(sql.exec(`SELECT * FROM shard_home_claim_tokens`).toArray()).toEqual([]);
+    });
+  });
   it("rolls back the rollout barrier and epoch together, then retries once", async () => {
     const stub = env.DIRECTORY.getByName(`rollout-migration-${crypto.randomUUID()}`);
     await runInDurableObject(stub, (_instance, state) => {
       const sql = state.storage.sql;
+      removeShardClaimMigration(sql);
       sql.exec(`DROP TABLE shard_rollout_barrier`);
       sql.exec(`INSERT INTO meta(key,value) VALUES ('global_auth_epoch','9') ON CONFLICT(key) DO UPDATE SET value='9'`);
       const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((q) => q.includes("CREATE TABLE shard_rollout_barrier")));

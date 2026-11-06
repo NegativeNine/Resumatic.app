@@ -128,6 +128,21 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
     // data. Every shard installs it before accepting a request after upgrade.
     `CREATE TABLE shard_rollout_barrier (slot INTEGER PRIMARY KEY CHECK(slot=1), epoch INTEGER NOT NULL)`,
   ],
+  [
+    // A fresh sharded claim and its target identity share an opaque token.
+    // Older generation-less homes are deliberately not backfilled.
+    `CREATE TABLE shard_home_claim_tokens (provider TEXT NOT NULL, subject TEXT NOT NULL, token TEXT NOT NULL, PRIMARY KEY(provider,subject))`,
+    `CREATE TABLE shard_identity_claim_tokens (provider TEXT NOT NULL, subject TEXT NOT NULL, user_id TEXT NOT NULL, token TEXT NOT NULL, PRIMARY KEY(provider,subject))`,
+    `CREATE TABLE shard_home_bind_claim_marker (provider TEXT NOT NULL, subject TEXT NOT NULL, token TEXT NOT NULL, PRIMARY KEY(provider,subject))`,
+    `CREATE TRIGGER guard_shard_home_claim_bind BEFORE UPDATE OF user_id ON identity_homes
+       WHEN OLD.provider='google' AND OLD.shard IS NOT NULL AND OLD.user_id IS NULL AND NEW.user_id IS NOT NULL
+         AND EXISTS(SELECT 1 FROM shard_home_claim_tokens t WHERE t.provider=OLD.provider AND t.subject=OLD.subject)
+         AND NOT EXISTS(SELECT 1 FROM shard_home_bind_claim_marker m JOIN shard_home_claim_tokens t ON t.provider=m.provider AND t.subject=m.subject AND t.token=m.token WHERE m.provider=OLD.provider AND m.subject=OLD.subject)
+       BEGIN SELECT RAISE(ABORT, 'shard_claim_required'); END`,
+    `CREATE TRIGGER remove_shard_home_claim_token AFTER DELETE ON identity_homes BEGIN DELETE FROM shard_home_claim_tokens WHERE provider=OLD.provider AND subject=OLD.subject; END`,
+    `CREATE TRIGGER remove_shard_identity_claim_on_identity AFTER DELETE ON identities BEGIN DELETE FROM shard_identity_claim_tokens WHERE provider=OLD.provider AND subject=OLD.subject AND user_id=OLD.user_id; END`,
+    `CREATE TRIGGER remove_shard_identity_claim_token AFTER DELETE ON users BEGIN DELETE FROM shard_identity_claim_tokens WHERE user_id=OLD.user_id; END`,
+  ],
 ];
 
 export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T, global = false, shard = false): void {

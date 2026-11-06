@@ -6,8 +6,10 @@ import type { Directory } from "../../src/directory/directory";
 import {
   allDirectories,
   directory,
+  directoryByName,
   directoryForUser,
 } from "../../src/shared/stubs";
+import { identityShard } from "../../src/shared/operations";
 import type { SignInInput } from "../../src/shared/types";
 import { startSession } from "../../src/worker/routes";
 import { eventually } from "./support";
@@ -85,7 +87,7 @@ describe("Directory placement in Durable Objects", () => {
     await directory(env).addInvite(p.email);
     const target = await directoryForSignIn(configured("16"), p);
     const account = await target.directory.signIn(target.input);
-    await directory(env).bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch);
+    await directory(env).bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, target.input.shardClaimToken);
     const home = directoryForUser(env, account.userId);
     await home.deleteAccount(account.userId, account.vaultId);
     await runDurableObjectAlarm(home);
@@ -105,6 +107,10 @@ describe("Directory placement in Durable Objects", () => {
           .toArray(),
     );
     expect(claims).toEqual([]);
+    expect(await runInDurableObject(directory(env), (_instance, state) => state.storage.sql
+      .exec(`SELECT * FROM shard_home_claim_tokens WHERE provider=? AND subject=?`, p.provider, p.subject).toArray())).toEqual([]);
+    expect(await runInDurableObject(home, (_instance, state) => state.storage.sql
+      .exec(`SELECT * FROM shard_identity_claim_tokens WHERE user_id=?`, account.userId).toArray())).toEqual([]);
   });
 
   it.each([["16", "1"], ["1", "16"]])(
@@ -114,7 +120,7 @@ describe("Directory placement in Durable Objects", () => {
       await directory(env).addInvite(p.email);
       const initial = await directoryForSignIn(configured(oldPlacement), p);
       const old = await initial.directory.signIn(initial.input);
-      await directory(env).bindIdentityHome(p.provider, p.subject, old.userId, p.authEpoch);
+      await directory(env).bindIdentityHome(p.provider, p.subject, old.userId, p.authEpoch, undefined, false, initial.input.shardClaimToken);
       // This routing result can be held by an in-flight sign-in while the
       // account is erased and an independently routed sign-in creates another.
       const stale = await directoryForSignIn(configured(oldPlacement), p);
@@ -130,7 +136,7 @@ describe("Directory placement in Durable Objects", () => {
       const freshInput = { ...p, authEpoch: await directory(env).googleAuthEpoch() };
       const fresh = await directoryForSignIn(configured(newPlacement), freshInput);
       const replacement = await fresh.directory.signIn(fresh.input);
-      await directory(env).bindIdentityHome(p.provider, p.subject, replacement.userId, freshInput.authEpoch);
+      await directory(env).bindIdentityHome(p.provider, p.subject, replacement.userId, freshInput.authEpoch, undefined, false, fresh.input.shardClaimToken);
       expect(replacement.userId).not.toBe(old.userId);
       await runInDurableObject(stale.directory, async (instance) => {
         await expect((instance as Directory).signIn(stale.input)).rejects.toThrow(/account changed|sign-in is stale/);
@@ -210,7 +216,7 @@ describe("Directory placement in Durable Objects", () => {
     await global.addInvite(p.email);
     const target = await directoryForSignIn(configured("16"), p);
     const account = await target.directory.signIn(target.input);
-    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch);
+    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, target.input.shardClaimToken);
     const shard = Number(account.userId.match(/^s(\d+):/)![1]);
     expect(await startSession(configured("16"), p)).toContain("__Host-session=");
     const repeated = await Promise.all([startSession(configured("16"), p), startSession(configured("16"), p)]);
@@ -219,14 +225,14 @@ describe("Directory placement in Durable Objects", () => {
     // identity; a new authorization must not silently revive the orphan.
     await global.forgetGoogleShardHomeV3(p.subject, shard, account.userId);
     const fresh = { ...p, authEpoch: await global.googleAuthEpoch() };
-    await expect(startSession(configured("16"), fresh)).rejects.toThrow("sharded account placement requires review");
+    await expect(startSession(configured("16"), fresh)).rejects.toThrow(/account placement (?:changed|requires review)/);
     expect(await directoryForUser(env, account.userId).existingIdentity(p.provider, p.subject)).toEqual(account);
     const homes = await runInDurableObject(global, (_instance, state) => state.storage.sql
       .exec(`SELECT shard FROM identity_homes WHERE provider=? AND subject=?`, p.provider, p.subject).toArray());
     expect(homes).toEqual([]);
     // A new, unbound claim cannot prove ownership of the surviving row.
     await global.claimIdentityHome(p.provider, p.subject, shard, p.email, undefined, fresh.authEpoch);
-    await expect(startSession(configured("16"), fresh)).rejects.toThrow("sharded account placement requires review");
+    await expect(startSession(configured("16"), fresh)).rejects.toThrow(/account placement (?:changed|requires review)/);
     const unbound = await runInDurableObject(global, (_instance, state) => state.storage.sql
       .exec<{ user_id: string | null }>(`SELECT user_id FROM identity_homes WHERE provider=? AND subject=?`, p.provider, p.subject).one());
     expect(unbound.user_id).toBeNull();
@@ -245,6 +251,160 @@ describe("Directory placement in Durable Objects", () => {
     expect(locations.filter(Boolean)).toHaveLength(1);
   });
 
+  it("recovers an interrupted first bind only when the target and home claim tokens match", async () => {
+    const p = await input();
+    const global = directory(env);
+    await global.addInvite(p.email);
+    const target = await directoryForSignIn(configured("16"), p);
+    expect(target.input.shardClaimToken).toMatch(/^[0-9a-f-]{36}$/);
+    const account = await target.directory.signIn({ ...target.input, reportCreation: true });
+    expect(account).toMatchObject({ created: true, shardClaimToken: target.input.shardClaimToken });
+    await runInDurableObject(global, async (instance) => {
+      await expect((instance as Directory).bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch))
+        .rejects.toThrow("sharded account placement requires review");
+    });
+    await runInDurableObject(global, (_instance, state) => {
+      const sql = state.storage.sql;
+      // Model an older runtime that satisfies the earlier epoch guard but
+      // knows nothing about the new claim-token guard.
+      sql.exec(`INSERT INTO global_auth_marker(slot,epoch) VALUES (1,?)`, p.authEpoch!);
+      try {
+        expect(() => sql.exec(`UPDATE identity_homes SET user_id=? WHERE provider=? AND subject=?`, account.userId, p.provider, p.subject))
+          .toThrow(/shard_claim_required/);
+      } finally { sql.exec(`DELETE FROM global_auth_marker WHERE slot=1`); }
+    });
+    // The first response is lost before the global home is bound. A later
+    // sign-in sees an existing identity, not a new creation.
+    expect(await startSession(configured("16"), p)).toContain("__Host-session=");
+    const home = await runInDurableObject(global, (_instance, state) => state.storage.sql
+      .exec<{ user_id: string | null }>(`SELECT user_id FROM identity_homes WHERE provider=? AND subject=?`, p.provider, p.subject).one());
+    expect(home.user_id).toBe(account.userId);
+    // An older target response cannot silently bypass an existing claim token.
+    await runInDurableObject(global, async (instance) => {
+      await expect((instance as Directory).bindIdentityHomeV2(p.provider, p.subject, account.userId, p.authEpoch, undefined, true))
+        .rejects.toThrow("account placement changed");
+    });
+    expect(await startSession(configured("16"), p)).toContain("__Host-session=");
+  });
+
+  it("does not bind a surviving shard identity to a new claim generation", async () => {
+    const p = await input();
+    const global = directory(env);
+    await global.addInvite(p.email);
+    const target = await directoryForSignIn(configured("16"), p);
+    const account = await target.directory.signIn({ ...target.input, reportCreation: true });
+    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, account.shardClaimToken, true);
+    await global.forgetGoogleShardHomeV3(p.subject, target.input.homeShard!, account.userId);
+    const freshEpoch = await global.googleAuthEpoch();
+    const replacement = await global.claimIdentityHomeV2(p.provider, p.subject, target.input.homeShard!, p.email, undefined, freshEpoch);
+    expect(replacement.shardClaimToken).not.toBe(account.shardClaimToken);
+    await expect(startSession(configured("16"), { ...p, authEpoch: freshEpoch })).rejects.toThrow("account placement changed");
+    const home = await runInDurableObject(global, (_instance, state) => state.storage.sql
+      .exec<{ user_id: string | null }>(`SELECT user_id FROM identity_homes WHERE provider=? AND subject=?`, p.provider, p.subject).one());
+    expect(home.user_id).toBeNull();
+  });
+
+  it("rejects a conflicting shard generation before initializing its vault", async () => {
+    const p = await input();
+    await directory(env).addInvite(p.email);
+    const target = await directoryForSignIn(configured("16"), p);
+    const account = await target.directory.signIn(target.input);
+    await runInDurableObject(target.directory, async (instance, state) => {
+      state.storage.sql.exec(`UPDATE vaults SET state='creating' WHERE vault_id=?`, account.vaultId);
+      const internal = instance as unknown as { initializeVault: (...args: unknown[]) => Promise<void> };
+      const init = vi.spyOn(internal, "initializeVault").mockRejectedValue(new Error("unexpected initialization"));
+      try {
+        await expect((instance as Directory).signIn({ ...target.input, shardClaimToken: crypto.randomUUID() }))
+          .rejects.toThrow("account placement changed");
+        expect(init).not.toHaveBeenCalled();
+      } finally { init.mockRestore(); }
+    });
+  });
+
+  it("rejects a tokenized claim for a legacy target before initializing its vault", async () => {
+    const p = await input();
+    await directory(env).addInvite(p.email);
+    const target = await directoryForSignIn(configured("16"), p);
+    const account = await target.directory.signIn({ ...target.input, shardClaimToken: undefined });
+    await runInDurableObject(target.directory, async (instance, state) => {
+      state.storage.sql.exec(`UPDATE vaults SET state='creating' WHERE vault_id=?`, account.vaultId);
+      const internal = instance as unknown as { initializeVault: (...args: unknown[]) => Promise<void> };
+      const init = vi.spyOn(internal, "initializeVault").mockRejectedValue(new Error("unexpected initialization"));
+      try {
+        await expect((instance as Directory).signIn(target.input)).rejects.toThrow("account placement changed");
+        expect(init).not.toHaveBeenCalled();
+      } finally { init.mockRestore(); }
+    });
+  });
+
+  it("rejects a token removed while vault initialization yields", async () => {
+    const p = await input();
+    await directory(env).addInvite(p.email);
+    const target = await directoryForSignIn(configured("16"), p);
+    const account = await target.directory.signIn(target.input);
+    await runInDurableObject(target.directory, async (instance, state) => {
+      state.storage.sql.exec(`UPDATE vaults SET state='creating' WHERE vault_id=?`, account.vaultId);
+      const internal = instance as unknown as { initializeVault: (...args: unknown[]) => Promise<void> };
+      const init = vi.spyOn(internal, "initializeVault").mockImplementation(async () => {
+        state.storage.sql.exec(`DELETE FROM shard_identity_claim_tokens WHERE provider=? AND subject=?`, p.provider, p.subject);
+      });
+      try {
+        await expect((instance as Directory).signIn(target.input)).rejects.toThrow("account placement changed");
+        expect(init).toHaveBeenCalledOnce();
+      } finally { init.mockRestore(); }
+    });
+  });
+
+  it("leaves an unbound legacy shard claim without a token pending for review", async () => {
+    const p = await input();
+    const global = directory(env);
+    await global.addInvite(p.email);
+    const home = await global.claimIdentityHome(p.provider, p.subject, 3, p.email, undefined, p.authEpoch);
+    expect(home).toBe(3);
+    await runInDurableObject(global, async (instance) => {
+      await expect((instance as Directory).claimIdentityHomeV2(p.provider, p.subject, 3, p.email, undefined, p.authEpoch))
+        .rejects.toThrow("legacy account placement requires review");
+    });
+  });
+
+  it("keeps an already bound legacy shard account reachable without a claim token", async () => {
+    const p = await input();
+    const global = directory(env);
+    await global.addInvite(p.email);
+    const shard = await identityShard(p.provider, p.subject);
+    await global.claimIdentityHome(p.provider, p.subject, shard, p.email, undefined, p.authEpoch);
+    const target = directoryByName(env, `directory-${shard}`);
+    const account = await target.signIn({ ...p, homeShard: shard, inviteAuthorized: true });
+    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch);
+    expect(await startSession(configured("16"), p)).toContain("__Host-session=");
+  });
+
+  it("does not fall back to an older coordinator that lacks claim-aware binding", async () => {
+    const p = await input();
+    const shardClaimToken = crypto.randomUUID();
+    const legacyBind = vi.fn(async () => {});
+    const global = {
+      existingIdentity: async () => null,
+      requireInvite: async () => {},
+      claimIdentityHomeV2: async (_provider: string, _subject: string, shard: number) => ({ shard, shardClaimToken }),
+      bindIdentityHome: legacyBind,
+      // Older coordinators do not implement bindIdentityHomeV2.
+    };
+    const shard = {
+      existingIdentity: async () => null,
+      signIn: async () => ({ userId: `s1:${crypto.randomUUID()}`, vaultId: "synthetic-vault", created: true, shardClaimToken }),
+    };
+    const openSession = vi.fn(async () => ({ gen: 1, epoch: "synthetic" }));
+    const bindings = {
+      SESSION_KEY: "synthetic-secret", DIRECTORY_SHARDS: "16",
+      DIRECTORY: { idFromName: (name: string) => name, get: (name: string) => name === "global" ? global : shard },
+      VAULT: { idFromString: (id: string) => id, get: () => ({ openSession }) },
+    } as unknown as Env;
+    await expect(startSession(bindings, p)).rejects.toThrow();
+    expect(legacyBind).not.toHaveBeenCalled();
+    expect(openSession).not.toHaveBeenCalled();
+  });
+
   it("distinguishes the RPC that inserted a shard identity from a later discovery", async () => {
     const p = await input();
     const global = directory(env);
@@ -261,7 +421,7 @@ describe("Directory placement in Durable Objects", () => {
       await expect((instance as Directory).bindIdentityHome(p.provider, p.subject, discovered.userId, p.authEpoch, undefined, true))
         .rejects.toThrow("sharded account placement requires review");
     });
-    await global.bindIdentityHome(p.provider, p.subject, inserted.userId, p.authEpoch);
+    await global.bindIdentityHome(p.provider, p.subject, inserted.userId, p.authEpoch, undefined, false, inserted.shardClaimToken);
     await expect(global.bindIdentityHome(p.provider, p.subject, discovered.userId, p.authEpoch, undefined, true)).resolves.toBeUndefined();
   });
 
@@ -272,7 +432,7 @@ describe("Directory placement in Durable Objects", () => {
     const target = await directoryForSignIn(configured("16"), p);
     const account = await target.directory.signIn({ ...target.input, reportCreation: true });
     expect(account.created).toBe(true);
-    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch);
+    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, account.shardClaimToken);
     const shard = target.input.homeShard!;
     await global.forgetGoogleShardHomeV3(p.subject, shard, account.userId);
     const epoch = await global.googleAuthEpoch();
@@ -296,7 +456,9 @@ describe("Directory placement in Durable Objects", () => {
         existingIdentity: async () => null,
         requireInvite: async () => {},
         claimIdentityHome: async (_provider: string, _subject: string, shard: number) => shard,
+        claimIdentityHomeV2: async (_provider: string, _subject: string, shard: number) => ({ shard, shardClaimToken: crypto.randomUUID() }),
         bindIdentityHome: bind,
+        bindIdentityHomeV2: bind,
       };
       const shard = {
         existingIdentity: async () => null,

@@ -23,7 +23,7 @@ describe("sharded account invitation claims", () => {
     await global.requireInvite(p.email);
     const initial = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
     const account = await initial.directory.signIn(initial.input);
-    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch);
+    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, initial.input.shardClaimToken);
     const home = directoryForUser(env, account.userId);
     await home.deleteAccount(account.userId, account.vaultId);
     await runDurableObjectAlarm(home);
@@ -55,7 +55,7 @@ describe("sharded account invitation claims", () => {
     await global.addInvite(p.email);
     const initial = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
     const account = await initial.directory.signIn(initial.input);
-    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch);
+    await global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, initial.input.shardClaimToken);
     await global.removeInvite(p.email);
     const returning = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "1" }, p);
     expect(await returning.directory.signIn(returning.input)).toEqual(account);

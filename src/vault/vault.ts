@@ -2321,7 +2321,7 @@ export class Vault extends DurableObject<Env> {
         const facts = Object.fromEntries(capturedFacts.map((f) => [f.id, { text: f.text, quote: f.quote }]));
         const analysis =
           parseOrNull<Analysis>(row.run_analysis) ?? input.analysis;
-        this.snapshots.save(resumeId, row.version, {
+        const snapshot: ResumeVersion = {
           render: {
             profile: input.profile,
             body: publication.body,
@@ -2333,7 +2333,12 @@ export class Vault extends DurableObject<Env> {
           facts,
           evidence: evidenceForFacts(capturedFacts),
           provenance: "snapshot",
-        });
+        };
+        // Rendering and sharing apply this same deterministic gate. Check it
+        // before committing the run so a bad checkpoint cannot consume credit
+        // and leave the user with a "ready" resume that cannot be exported.
+        assertGroundedResume(snapshot.render, snapshot.facts, snapshot.provenance, snapshot.evidence);
+        this.snapshots.save(resumeId, row.version, snapshot);
       }
       for (const [column, value] of updates)
         this.sql.exec(
@@ -3745,6 +3750,11 @@ export class Vault extends DurableObject<Env> {
     } catch {
       throw new AppError("unavailable", "checkout history requires operator review");
     }
+  }
+  /** Read known billing identifiers without starting customer recovery. */
+  knownBillingForDeletion(): { customer: string | null; checkoutIds: string[] } {
+    if (!this.initialised || this.gone) return { customer: null, checkoutIds: [] };
+    return { customer: this.meta("stripe_customer"), checkoutIds: this.billingCheckoutSessionsForDeletion() };
   }
   async billingCustomerForDeletion(): Promise<string | null> {
     if (!this.initialised || this.gone) return null;

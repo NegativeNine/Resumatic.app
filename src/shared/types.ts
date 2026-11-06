@@ -32,6 +32,8 @@ export interface SignInInput {
   expectedUserId?: string;
   /** Internal: request whether this particular sign-in inserted the identity. */
   reportCreation?: boolean;
+  /** Internal: opaque generation issued by the global coordinator for a new shard home. */
+  shardClaimToken?: string;
   /** Internal experimental placement dispatch, reserved by the global Directory. */
   placementAttempt?: import("../directory/placement-fence").PlacementAttempt;
 }

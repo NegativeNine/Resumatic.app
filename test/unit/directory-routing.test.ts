@@ -13,6 +13,7 @@ const input: SignInInput = {
 
 function fixture(shards?: string) {
   const homes = new Map<string, number | null>();
+  const tokens = new Map<string, string>();
   const identities = new Map<string, { userId: string; vaultId: string }>();
   const stubs = new Map<
     string,
@@ -21,6 +22,7 @@ function fixture(shards?: string) {
       existingIdentity: ReturnType<typeof vi.fn>;
       requireInvite: ReturnType<typeof vi.fn>;
       claimIdentityHome: ReturnType<typeof vi.fn>;
+      claimIdentityHomeV2: ReturnType<typeof vi.fn>;
     }
   >();
   const get = (name: string) => {
@@ -40,6 +42,13 @@ function fixture(shards?: string) {
             return homes.get(key)!;
           },
         ),
+        claimIdentityHomeV2: vi.fn(async (provider: string, subject: string, preferred: number | null) => {
+          const key = `${provider}:${subject}`;
+          if (!homes.has(key)) homes.set(key, preferred);
+          const shard = homes.get(key)!;
+          if (shard !== null && !tokens.has(key)) tokens.set(key, crypto.randomUUID());
+          return { shard, shardClaimToken: tokens.get(key) ?? null };
+        }),
       });
     return stubs.get(name)!;
   };
@@ -88,7 +97,7 @@ describe("Directory shard routing", () => {
     const shard = await identityShard(input.provider, input.subject);
     const result = await directoryForSignIn(f.env, input);
     expect(f.get("global").requireInvite).toHaveBeenCalledWith(input.email);
-    expect(f.get("global").claimIdentityHome).toHaveBeenCalledWith(
+    expect(f.get("global").claimIdentityHomeV2).toHaveBeenCalledWith(
       "google",
       input.subject,
       shard,
@@ -101,6 +110,7 @@ describe("Directory shard routing", () => {
       ...input,
       homeShard: shard,
       inviteAuthorized: true,
+      shardClaimToken: expect.any(String),
     });
   });
 

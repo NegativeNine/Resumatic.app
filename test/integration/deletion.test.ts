@@ -150,8 +150,11 @@ describe("account deletion", () => {
       await eventually(async () => attempts > 0, "the first deletion attempt");
       expect((await vaultRow(vid))?.state).toBe("deleting");
       expect(
-        (await env.FILES.list({ prefix: vaultPrefix(vid) })).objects.length,
-      ).toBeGreaterThan(0);
+        (await env.FILES.list({ prefix: vaultPrefix(vid) })).objects,
+      ).toEqual([]); // The provisional sweep can proceed during a close outage.
+      expect(await runInDurableObject(vault(env, vid), (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM sources`).one().count,
+      )).toBeGreaterThan(0);
       const refused = await testLogin(user.email);
       expect(refused.status).toBe(403);
       expect(await refused.json()).toMatchObject({ error: "forbidden" });

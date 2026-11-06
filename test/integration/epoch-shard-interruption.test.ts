@@ -58,6 +58,7 @@ it("recovers a sharded account whose home bind was interrupted by another accoun
   // has been disabled. The fresh authorization binds the same account.
   const fresh = { ...sharded, authEpoch: await global.googleAuthEpoch() };
   const retry = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "1" }, fresh);
-  expect((await retry.directory.signIn(retry.input)).userId).toBe(created.userId);
-  await global.bindIdentityHome(sharded.provider, sharded.subject, created.userId, fresh.authEpoch);
+  const recovered = await retry.directory.signIn({ ...retry.input, reportCreation: true });
+  expect(recovered.userId).toBe(created.userId);
+  await global.bindIdentityHomeV2(sharded.provider, sharded.subject, created.userId, fresh.authEpoch, undefined, true, recovered.shardClaimToken);
 });

@@ -16,21 +16,24 @@ it("keeps account deletion pending when a fresh listing finds a visible write du
   await runInDurableObject(directory(env), async (instance, state) => {
     const bindings = (instance as unknown as { env: Env }).env;
     const original = bindings.FILES;
-    let inject = true;
+    let injections = 0;
     bindings.FILES = {
       list: original.list.bind(original),
       async delete(keys: string | string[]) {
         await original.delete(keys);
-        if (inject) {
-          inject = false;
-          // This acknowledged write is visible before the confirmation list.
-          // It does not model or settle a later, still-in-flight write.
+        if (injections < 2) {
+          injections++;
+          // The first write arrives during the provisional sweep, and the
+          // second arrives during the authoritative post-close sweep. Both
+          // are visible before their respective confirmation lists. Neither
+          // models or settles a later, still-in-flight write.
           await original.put(`${prefix}sources/arrived-during-sweep`, "synthetic");
         }
       },
     } as R2Bucket;
     try {
       await instance.alarm();
+      expect(injections).toBe(2);
       expect(state.storage.sql.exec<{ state: string }>(`SELECT state FROM vaults WHERE vault_id=?`, vid).one().state).toBe("deleting");
       expect(await original.head(`${prefix}sources/arrived-during-sweep`)).not.toBeNull();
       await instance.alarm();

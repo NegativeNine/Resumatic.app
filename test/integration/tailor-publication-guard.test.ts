@@ -25,7 +25,8 @@ it("publishes only the body and report recomposed from the verified checkpoint",
       runs: { begin(input: object, write: () => void): unknown };
       snapshots: { capture(id: string, metadata: object, facts: FactRecord[], roles: RoleRecord[], vectors: Map<string, Float32Array>): void };
     };
-    internals.runs.begin({ id: runId, kind: "tailor", targetId: runId, requestKey: runId, inputDigest: runId, steps: ["analyze", "select", "write", "verify"] }, () => {
+    const quota = { key: `free:${runId}`, startAt: Date.now() - 60_000, endAt: Date.now() + 60_000, limit: 3 };
+    internals.runs.begin({ id: runId, kind: "tailor", targetId: runId, requestKey: runId, inputDigest: runId, steps: ["analyze", "select", "write", "verify"], quota }, () => {
       sql.exec(`INSERT INTO resumes (id,application_id,state,run_id,created_at) VALUES (?,?,'running',?,1)`, runId, appId, runId);
       internals.snapshots.capture(runId, { applicationId: appId, jdText: "job", analysis: null, profile: { name: "", email: "", phone: "", location: "", links: [] } }, [fact], [role], new Map());
     });
@@ -58,6 +59,14 @@ it("publishes only the body and report recomposed from the verified checkpoint",
     const stale = structuredClone(verified); stale.lines[0]!.text = "Different verified text";
     sql.exec(`UPDATE resumes SET verified=? WHERE id=?`, JSON.stringify(stale), runId);
     await expect(instance.saveStep(runId, "finish", { state: "ready", body, report: verified.report }, runId)).rejects.toThrow(/verified checkpoint/);
+    // Even a matching checkpoint must pass the deterministic checks applied
+    // to export; otherwise it would consume credit and become unusable.
+    const unsupported = structuredClone(verified); unsupported.lines[0]!.text = "Built 500 services";
+    sql.exec(`UPDATE resumes SET verified=? WHERE id=?`, JSON.stringify(unsupported), runId);
+    const unsupportedBody = composeBody(unsupported, [role], [fact], selection);
+    await expect(instance.saveStep(runId, "finish", { state: "ready", body: unsupportedBody, report: unsupported.report }, runId)).rejects.toThrow(/unverified content/);
+    expect(sql.exec<{ state: string }>(`SELECT state FROM resumes WHERE id=?`, runId).one().state).toBe("running");
+    expect(sql.exec<{ used: number; reserved: number }>(`SELECT used,reserved FROM quota_buckets WHERE bucket_key=?`, quota.key).one()).toEqual({ used: 0, reserved: 1 });
     sql.exec(`UPDATE resumes SET verified=? WHERE id=?`, JSON.stringify(verified), runId);
     // RPC object property order is irrelevant to the content being published.
     const reordered = JSON.parse(JSON.stringify(body, (_key, value: unknown) =>
@@ -66,6 +75,7 @@ it("publishes only the body and report recomposed from the verified checkpoint",
     const reorderedReport = Object.fromEntries(Object.entries(verified.report).reverse()) as typeof verified.report;
     await expect(instance.saveStep(runId, "finish", { state: "ready", body: reordered, report: reorderedReport }, runId)).resolves.toBeUndefined();
     expect(sql.exec<{ state: string }>(`SELECT state FROM resumes WHERE id=?`, runId).one().state).toBe("ready");
+    expect(sql.exec<{ used: number; reserved: number }>(`SELECT used,reserved FROM quota_buckets WHERE bucket_key=?`, quota.key).one()).toEqual({ used: 1, reserved: 0 });
     // A duplicate finish after success is idempotent and cannot overwrite it.
     await expect(instance.saveStep(runId, "finish", { state: "ready", body: changedText, report: verified.report }, runId)).resolves.toBeUndefined();
     expect(JSON.parse(sql.exec<{ body: string }>(`SELECT body FROM resumes WHERE id=?`, runId).one().body)).toEqual(body);
