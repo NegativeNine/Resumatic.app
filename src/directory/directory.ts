@@ -122,7 +122,11 @@ export class Directory extends DurableObject<Env> {
       if (
         p.provider !== "test" &&
         this.env.INVITE_ONLY !== "false" &&
-        !p.inviteAuthorized &&
+        // A global-home account can validate and create inside this object's
+        // input gate. A routed authorization may have become stale while a
+        // prior account was erased, so do not trust it on this path. Sharded
+        // homes still need the separately validated control-plane decision.
+        (p.homeShard === undefined || !p.inviteAuthorized) &&
         !this.isInvited(email)
       ) {
         throw new AppError(
@@ -286,8 +290,11 @@ export class Directory extends DurableObject<Env> {
       )
       .one().shard;
   }
-  async reservePlacementAttempt(provider: string, subject: string, preferred: number | null): Promise<PlacementAttempt> {
-    return this.placement.reserve(provider, subject, preferred);
+  async placementEpoch(): Promise<number> {
+    return this.placement.epoch();
+  }
+  async reservePlacementAttempt(provider: string, subject: string, preferred: number | null, expectedEpoch: number): Promise<PlacementAttempt> {
+    return this.placement.reserve(provider, subject, preferred, expectedEpoch);
   }
   async sealPlacementAttempt(attempt: PlacementAttempt): Promise<{ userId: string | null }> {
     return this.placement.seal(attempt);

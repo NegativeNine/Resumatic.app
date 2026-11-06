@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 import { directoryForSignIn, settleRoutedPlacement } from "../../src/directory/routing";
 import type { Directory } from "../../src/directory/directory";
+import { PlacementFence } from "../../src/directory/placement-fence";
 import { allDirectories, directory, directoryForUser, vault } from "../../src/shared/stubs";
 import type { SignInInput } from "../../src/shared/types";
 import { eventually } from "./support";
@@ -26,6 +27,72 @@ async function signIn(p: SignInInput, shards: "1" | "16") {
 }
 
 describe("experimental synthetic placement fencing", () => {
+  it("defaults a legacy coordinator epoch to zero and rolls back release if the epoch cannot advance", async () => {
+    const stub = env.DIRECTORY.getByName(`epoch-migration-${crypto.randomUUID()}`);
+    const p = input();
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      const fence = new PlacementFence(sql, <T>(fn: () => T) => state.storage.transactionSync(fn));
+      // Old Directory databases have no placement_epoch row.
+      expect(sql.exec(`SELECT value FROM meta WHERE key='placement_epoch'`).toArray()).toHaveLength(0);
+      expect(fence.epoch()).toBe(0);
+      const attempt = fence.reserve(p.provider, p.subject, null, 0);
+      const sealed = fence.seal(attempt);
+      fence.settle(p.provider, p.subject, attempt, sealed.userId);
+      fence.beginOrphanCleanup(p.provider, p.subject, attempt.generation);
+      sql.exec(`CREATE TRIGGER fail_placement_epoch BEFORE INSERT ON meta WHEN NEW.key='placement_epoch' BEGIN SELECT RAISE(ABORT,'synthetic epoch failure'); END`);
+      try {
+        expect(() => fence.finishOrphanCleanup(p.provider, p.subject, attempt.generation)).toThrow("synthetic epoch failure");
+        expect(fence.epoch()).toBe(0);
+        expect(fence.inspect(p.provider, p.subject)).toMatchObject({ state: "orphan", generation: attempt.generation });
+        expect(sql.exec(`SELECT generation FROM placement_releases WHERE generation=?`, attempt.generation).toArray()).toHaveLength(0);
+      } finally {
+        sql.exec(`DROP TRIGGER fail_placement_epoch`);
+      }
+      expect(fence.finishOrphanCleanup(p.provider, p.subject, attempt.generation)).toBe("released");
+      expect(fence.epoch()).toBe(1);
+      expect(fence.finishOrphanCleanup(p.provider, p.subject, attempt.generation)).toBe("released");
+      expect(fence.epoch()).toBe(1);
+    });
+  });
+
+  it("rejects a reserve delayed across a completed synthetic deletion", async () => {
+    const p = input();
+    const global = directory(env);
+    // This snapshot is returned before the first account is created; the
+    // reservation request carrying it is delayed until after deletion.
+    const oldEpoch = await global.placementEpoch();
+    const old = await signIn(p, "16");
+    const home = directoryForUser(env, old.userId);
+    await home.deleteAccount(old.userId, old.vaultId);
+    await runDurableObjectAlarm(home);
+    await eventually(async () => !(await home.existingIdentity(p.provider, p.subject)), "old synthetic account erasure");
+    expect(await global.placementEpoch()).toBe(oldEpoch + 1);
+    await runInDurableObject(global, async (instance) => {
+      await expect((instance as Directory).reservePlacementAttempt(p.provider, p.subject, old.routed.input.placementAttempt!.shard, oldEpoch)).rejects.toThrow("sign-in is stale");
+    });
+    expect(await global.inspectSyntheticPlacement(p.provider, p.subject)).toBeNull();
+    const replacement = await signIn(p, "1");
+    expect(replacement.userId).not.toBe(old.userId);
+  }, 30_000);
+
+  it("requires a safe retry when an unrelated synthetic deletion advances the epoch", async () => {
+    const waiting = input();
+    const unrelated = input();
+    const global = directory(env);
+    const oldEpoch = await global.placementEpoch();
+    const account = await signIn(unrelated, "1");
+    const home = directoryForUser(env, account.userId);
+    await home.deleteAccount(account.userId, account.vaultId);
+    await runDurableObjectAlarm(home);
+    await eventually(async () => !(await home.existingIdentity(unrelated.provider, unrelated.subject)), "unrelated synthetic account erasure");
+    await runInDurableObject(global, async (instance) => {
+      await expect((instance as Directory).reservePlacementAttempt(waiting.provider, waiting.subject, null, oldEpoch)).rejects.toThrow("sign-in is stale");
+    });
+    const fresh = await signIn(waiting, "1");
+    expect(fresh.userId).toBeTruthy();
+  }, 30_000);
+
   it.each([["1", "16"], ["16", "1"]] as const)("seals a held creation before deletion across %s to %s placement", async (oldShards, newShards) => {
     const p = input();
     const held = await directoryForSignIn(configured(oldShards), p);
@@ -79,12 +146,13 @@ describe("experimental synthetic placement fencing", () => {
   it("bounds unresolved attempts and can reconcile the whole synthetic backlog", async () => {
     const p = input();
     const global = directory(env);
-    for (let i = 0; i < 128; i++) await global.reservePlacementAttempt(p.provider, p.subject, null);
+    const epoch = await global.placementEpoch();
+    for (let i = 0; i < 128; i++) await global.reservePlacementAttempt(p.provider, p.subject, null, epoch);
     await runInDurableObject(global, async (instance) => {
-      await expect((instance as Directory).reservePlacementAttempt(p.provider, p.subject, null)).rejects.toThrow("too many pending sign-in attempts");
+      await expect((instance as Directory).reservePlacementAttempt(p.provider, p.subject, null, epoch)).rejects.toThrow("too many pending sign-in attempts");
     });
     expect(await global.reconcileSyntheticPlacement(p.provider, p.subject)).toEqual({ remaining: 0 });
-    expect(await global.reservePlacementAttempt(p.provider, p.subject, null)).toMatchObject({ shard: null });
+    expect(await global.reservePlacementAttempt(p.provider, p.subject, null, epoch)).toMatchObject({ shard: null });
     expect(await global.reconcileSyntheticPlacement(p.provider, p.subject)).toEqual({ remaining: 0 });
   }, 30_000);
 
@@ -187,8 +255,9 @@ describe("experimental synthetic placement fencing", () => {
     const first = await global.closePlacementHome(p.provider, p.subject, gen, account.userId);
     expect(first).toEqual([held.input.placementAttempt]);
     expect(await global.closePlacementHome(p.provider, p.subject, gen, account.userId)).toEqual(first);
+    const epoch = await global.placementEpoch();
     await runInDurableObject(global, async (instance) => {
-      await expect((instance as Directory).reservePlacementAttempt(p.provider, p.subject, held.input.placementAttempt!.shard)).rejects.toThrow("deletion is in progress");
+      await expect((instance as Directory).reservePlacementAttempt(p.provider, p.subject, held.input.placementAttempt!.shard, epoch)).rejects.toThrow("deletion is in progress");
     });
     const sealed = await held.directory.sealPlacementAttempt(held.input.placementAttempt!);
     await global.settlePlacementAttempt(p.provider, p.subject, held.input.placementAttempt!, sealed.userId);
@@ -216,7 +285,7 @@ describe("experimental synthetic placement fencing", () => {
   it("does not let raw protocol methods modify real identities", async () => {
     const global = directory(env);
     await runInDurableObject(global, async (instance) => {
-      await expect((instance as Directory).reservePlacementAttempt("google", "real-subject", null)).rejects.toThrow("restricted to synthetic");
+      await expect((instance as Directory).reservePlacementAttempt("google", "real-subject", null, 0)).rejects.toThrow("restricted to synthetic");
       await expect((instance as Directory).reconcileSyntheticPlacement("google", "real-subject")).rejects.toThrow("restricted to synthetic");
     });
   });
@@ -267,7 +336,7 @@ describe("experimental synthetic placement fencing", () => {
     const p = input();
     const shard = 3;
     // The caller loses this reservation response and never dispatches it.
-    const lost = await directory(env).reservePlacementAttempt(p.provider, p.subject, shard);
+    const lost = await directory(env).reservePlacementAttempt(p.provider, p.subject, shard, await directory(env).placementEpoch());
     const account = await signIn(p, "16");
     expect(account.routed.input.homeShard).toBe(shard);
     const home = directoryForUser(env, account.userId);
@@ -301,9 +370,12 @@ describe("experimental synthetic placement fencing", () => {
         sql.exec(`UPDATE placement_receipts SET user_id=NULL WHERE user_id=? AND state='sealed'`, account.userId);
       });
     });
+    const epoch = await directory(env).placementEpoch();
     await directory(env).releasePlacementHome(p.provider, p.subject, generation, account.userId);
+    expect(await directory(env).placementEpoch()).toBe(epoch + 1);
     const replacement = await signIn(p, shards === "1" ? "16" : "1");
     await runDurableObjectAlarm(home);
+    expect(await directory(env).placementEpoch()).toBe(epoch + 1);
     expect(await home.deletionProbe(account.userId, account.vaultId)).toBe(0);
     const locations = await Promise.all([...allDirectories(env)].map((d) => d.existingIdentity(p.provider, p.subject)));
     expect(locations.filter(Boolean)).toEqual([{ userId: replacement.userId, vaultId: replacement.vaultId }]);

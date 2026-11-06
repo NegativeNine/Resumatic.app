@@ -1,0 +1,74 @@
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { env } from "cloudflare:workers";
+import { describe, expect, it } from "vitest";
+import type { Directory } from "../../src/directory/directory";
+import { directoryForSignIn } from "../../src/directory/routing";
+import { directory } from "../../src/shared/stubs";
+import type { SignInInput } from "../../src/shared/types";
+import { eventually } from "./support";
+
+function input(): SignInInput {
+  const id = crypto.randomUUID();
+  return { provider: "google", subject: `invite-${id}`, email: `invite-${id}@example.test`, hint: "enam" };
+}
+
+describe("global-home invite authorization", () => {
+  it("rejects a stale authorization after deletion, and accepts a new invite", async () => {
+    const p = input();
+    const global = directory(env);
+    await global.addInvite(p.email);
+    // This decision predates the other sign-in and must not authorize a later
+    // creation after deletion has revoked the invitation.
+    const held = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "1" }, p);
+    expect(held.input.inviteAuthorized).toBe(true);
+    expect(held.input.expectedUserId).toBeUndefined();
+    const original = await held.directory.signIn(held.input);
+    await global.bindIdentityHome(p.provider, p.subject, original.userId);
+    await global.deleteAccount(original.userId, original.vaultId);
+    await runDurableObjectAlarm(global);
+    await eventually(async () => !(await global.existingIdentity(p.provider, p.subject)), "identity erasure");
+    expect((await global.listInvites()).some((invite) => invite.email === p.email)).toBe(false);
+    await runInDurableObject(held.directory, async (instance) => {
+      await expect((instance as Directory).signIn(held.input)).rejects.toThrow("not been invited");
+    });
+    expect(await global.existingIdentity(p.provider, p.subject)).toBeNull();
+
+    await global.addInvite(p.email);
+    const replacement = await held.directory.signIn(held.input);
+    expect(replacement.userId).not.toBe(original.userId);
+    expect(await held.directory.signIn(held.input)).toEqual(replacement);
+  }, 30_000);
+
+  it("keeps existing accounts accessible when their invite is removed", async () => {
+    const p = input();
+    const global = directory(env);
+    await global.addInvite(p.email);
+    const account = await global.signIn(p);
+    await global.removeInvite(p.email);
+    expect(await global.signIn(p)).toEqual(account);
+  }, 30_000);
+
+  it("preserves explicit open registration and test identities", async () => {
+    const global = directory(env);
+    await runInDurableObject(global, async (instance) => {
+      const local = (instance as unknown as { env: Env }).env;
+      const previous = local.INVITE_ONLY;
+      try {
+        local.INVITE_ONLY = "false";
+        expect((await (instance as Directory).signIn(input())).userId).toBeTruthy();
+      } finally {
+        local.INVITE_ONLY = previous;
+      }
+    });
+    const email = `test-${crypto.randomUUID()}@example.test`;
+    expect((await global.signIn({ provider: "test", subject: email, email, hint: "enam" })).userId).toBeTruthy();
+  }, 30_000);
+
+  it("preserves control-plane authorization for a new sharded account", async () => {
+    const p = input();
+    await directory(env).addInvite(p.email);
+    const routed = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "16" }, p);
+    expect(routed.input.inviteAuthorized).toBe(true);
+    expect((await routed.directory.signIn(routed.input)).userId).toMatch(/^s(?:[0-9]|1[0-5]):/);
+  }, 30_000);
+});

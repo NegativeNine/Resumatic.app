@@ -5,6 +5,7 @@ import { allDirectories, directory, vault } from "../shared/stubs";
 import { operationalMetrics } from "./metrics";
 import { oauthUserGrantCount } from "./mcp";
 import { AppError } from "../shared/errors";
+import { correlateCacheWrites } from "./cache-correlation";
 import { isMissingWorkflowInstance } from "../shared/workflow-errors";
 import { nextR2Cursor } from "../shared/r2";
 import {
@@ -159,6 +160,18 @@ maintenance.get("/vaults/:id/reembed/:run", async (c) =>
 maintenance.get("/vaults/:id/cache-write-fences", async (c) =>
   c.json(await vault(c.env, id(c.req.param("id"))).cacheWriteFences()),
 );
+
+// A bounded, read-only hint. An empty scan or a matching object is never
+// evidence that a dispatched write settled or cannot still arrive.
+maintenance.get("/vaults/:id/cache-write-correlation", async (c) => {
+  const vaultId = id(c.req.param("id"));
+  const snapshot = await (async () => {
+    try { return await vault(c.env, vaultId).cacheWriteFences(); }
+    catch { return { status: "unavailable" as const }; }
+  })();
+  c.header("cache-control", "private, no-store");
+  return c.json(await correlateCacheWrites(c.env.FILES, vaultId, snapshot));
+});
 
 maintenance.post("/deletion-audits/:id", async (c) => {
   const vid = id(c.req.param("id"));

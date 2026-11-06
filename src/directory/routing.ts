@@ -19,7 +19,8 @@ type DirectoryStub = ReturnType<typeof directory> & {
     subject: string,
     preferredShard: number | null,
   ): Promise<number | null>;
-  reservePlacementAttempt(provider: string, subject: string, preferred: number | null): Promise<PlacementAttempt>;
+  placementEpoch(): Promise<number>;
+  reservePlacementAttempt(provider: string, subject: string, preferred: number | null, expectedEpoch: number): Promise<PlacementAttempt>;
   sealPlacementAttempt(attempt: PlacementAttempt): Promise<{ userId: string | null }>;
   settlePlacementAttempt(provider: string, subject: string, attempt: PlacementAttempt, userId: string | null): Promise<void>;
   reconcileSyntheticPlacement(provider: string, subject: string): Promise<{ remaining: number }>;
@@ -58,6 +59,9 @@ export async function directoryForSignIn(
   };
   const global = directory(env) as DirectoryStub;
   const fencedIdentity = placementFenceEnabled(env) && syntheticPlacementIdentity(input.provider, input.subject) && input.email.toLowerCase() === input.subject.toLowerCase();
+  // Snapshot before any identity or invite lookup. A released synthetic claim
+  // advances this coordinator-wide value atomically with the release.
+  const epoch = fencedIdentity ? await global.placementEpoch() : undefined;
   const existingGlobal = await global.existingIdentity(input.provider, input.subject);
   if (existingGlobal) {
     if (fencedIdentity) await global.reconcileSyntheticPlacement(input.provider, input.subject);
@@ -81,7 +85,7 @@ export async function directoryForSignIn(
       "Directory shard configuration must be 1 or 16",
     );
   const attempt = fencedIdentity
-    ? await global.reservePlacementAttempt(input.provider, input.subject, configuration === "16" ? shard : null)
+    ? await global.reservePlacementAttempt(input.provider, input.subject, configuration === "16" ? shard : null, epoch!)
     : undefined;
   const home = attempt?.shard ?? (attempt ? null : await global.claimIdentityHome(
     input.provider, input.subject, configuration === "16" ? shard : null,

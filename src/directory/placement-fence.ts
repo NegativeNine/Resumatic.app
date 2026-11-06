@@ -25,11 +25,30 @@ export const syntheticPlacementIdentity = (provider: string, subject: string) =>
 export class PlacementFence {
   constructor(private sql: SqlStorage, private transaction: SyncTransaction) {}
 
-  reserve(provider: string, subject: string, preferred: number | null): PlacementAttempt {
+  /** Coordinator-wide epoch contains no identity data; a released generation advances it. */
+  epoch(): number {
+    const value = this.sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='placement_epoch'`).toArray()[0]?.value ?? "0";
+    const epoch = Number(value);
+    if (!/^(?:0|[1-9]\d*)$/.test(value) || !Number.isSafeInteger(epoch))
+      throw new AppError("unavailable", "placement epoch requires review");
+    return epoch;
+  }
+
+  /** Called only inside the transaction that releases a claim. */
+  private advanceEpoch(): void {
+    const next = this.epoch() + 1;
+    if (!Number.isSafeInteger(next)) throw new AppError("unavailable", "placement epoch requires review");
+    this.sql.exec(`INSERT INTO meta(key,value) VALUES ('placement_epoch',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, String(next));
+  }
+
+  reserve(provider: string, subject: string, preferred: number | null, expectedEpoch: number): PlacementAttempt {
     if (!syntheticPlacementIdentity(provider, subject)) throw new AppError("unavailable", "placement fencing is restricted to synthetic identities");
     if (preferred !== null && (!Number.isInteger(preferred) || preferred < 0 || preferred > 15))
       throw new AppError("invalid", "invalid directory shard");
+    if (!Number.isSafeInteger(expectedEpoch) || expectedEpoch < 0)
+      throw new AppError("invalid", "invalid placement epoch");
     return this.transaction(() => {
+      if (this.epoch() !== expectedEpoch) throw new AppError("conflict", "sign-in is stale; retry");
       let home = this.home(provider, subject);
       if (!home) {
         const generation = crypto.randomUUID();
@@ -95,6 +114,7 @@ export class PlacementFence {
       }
       this.sql.exec(`INSERT INTO placement_releases(generation) VALUES (?)`, generation);
       this.sql.exec(`DELETE FROM identity_homes WHERE provider=? AND subject=? AND generation=? AND user_id IS NULL AND placement_state='orphan'`, provider, subject, generation);
+      this.advanceEpoch();
       return "released";
     });
   }
@@ -177,6 +197,7 @@ export class PlacementFence {
         throw new AppError("unavailable", "account placement attempts are unresolved");
       this.sql.exec(`INSERT INTO placement_releases(generation) VALUES (?)`, generation);
       this.sql.exec(`DELETE FROM identity_homes WHERE provider=? AND subject=? AND generation=? AND user_id=?`, provider, subject, generation, userId);
+      this.advanceEpoch();
     });
   }
 }
