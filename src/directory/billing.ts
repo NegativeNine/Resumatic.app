@@ -14,6 +14,10 @@ export const BILLING_MIGRATIONS = [
   `CREATE TABLE billing_events (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, subscription_id TEXT, invoice_id TEXT, user_id TEXT, state TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL)`,
   `CREATE TABLE billing_accounts (user_id TEXT PRIMARY KEY, customer_id TEXT NOT NULL UNIQUE, subscription_id TEXT, paid_period TEXT, entitlement TEXT, revision INTEGER NOT NULL DEFAULT 0, delivered_revision INTEGER NOT NULL DEFAULT 0)`,
 ];
+export const BILLING_DEFERRED_MIGRATIONS = [
+  `ALTER TABLE billing_events ADD COLUMN next_attempt_at INTEGER NOT NULL DEFAULT 0`,
+  `CREATE INDEX billing_pending_by_time ON billing_events (state, next_attempt_at, created_at)`,
+];
 
 /** Durable inbox and entitlement outbox. Webhooks trigger a read of current customer state. */
 export class BillingStore {
@@ -91,13 +95,21 @@ export class BillingStore {
     );
   }
 
+  /** Earliest queued attempt, or now for an undelivered entitlement. */
+  nextPendingAt(now = Date.now()): number | null {
+    if (this.sql.exec(`SELECT user_id FROM billing_accounts WHERE delivered_revision < revision LIMIT 1`).toArray().length) return now;
+    const row = this.sql.exec<{ at: number | null }>(`SELECT MIN(next_attempt_at) AS at FROM billing_events WHERE state = 'pending'`).toArray()[0];
+    return row?.at == null ? null : Math.max(now, row.at);
+  }
+
   async reconcile(): Promise<void> {
     const cfg = billingConfig(this.env);
     if (!cfg) return;
     const stripe = stripeClient(cfg, this.fetcher);
     const events = this.sql
-      .exec<{ id: string; customer_id: string; invoice_id: string | null }>(
-        `SELECT id, customer_id, invoice_id FROM billing_events WHERE state = 'pending' ORDER BY created_at, id LIMIT 20`,
+      .exec<{ id: string; customer_id: string; invoice_id: string | null; next_attempt_at: number }>(
+        `SELECT id, customer_id, invoice_id, next_attempt_at FROM billing_events WHERE state = 'pending' AND next_attempt_at <= ? ORDER BY created_at, id LIMIT 20`,
+        Date.now(),
       )
       .toArray();
     let failed = false;
@@ -152,7 +164,7 @@ export class BillingStore {
           );
         const subscription =
           open[0] ?? all.find((sub) => sub.id === row?.subscription_id) ?? null;
-        let paid: PaidPeriod | null = row?.paid_period
+        let paid: (PaidPeriod & { invoiceId?: string }) | null = row?.paid_period
           ? JSON.parse(row.paid_period)
           : null;
         if (
@@ -161,6 +173,19 @@ export class BillingStore {
           paid.priceId !== subscription.items.data[0]!.price.id
         )
           paid = null;
+        const now = Date.now();
+        let nextAttempt: number | null = null;
+        const future = new Map<string, number>();
+        if (paid && paid.periodStart * 1000 > now) {
+          if (paid.invoiceId && /^in_[A-Za-z0-9]+$/.test(paid.invoiceId)) {
+            future.set(paid.invoiceId, paid.periodStart * 1000);
+            paid = null;
+          } else {
+            // A legacy row without the invoice ID cannot be independently
+            // re-fetched later. Keep it, and retry this event at its boundary.
+            nextAttempt = paid.periodStart * 1000;
+          }
+        }
         const invoiceIds = new Set<string>();
         if (event.invoice_id) invoiceIds.add(event.invoice_id);
         const latestInvoice = subscription?.latest_invoice;
@@ -176,12 +201,22 @@ export class BillingStore {
             settled &&
             subscription &&
             settled.subscriptionId === subscription.id &&
-            settled.priceId === subscription.items.data[0]!.price.id &&
-            (!paid || settled.paidThrough > paid.paidThrough)
-          )
-            paid = settled;
+            settled.priceId === subscription.items.data[0]!.price.id
+          ) {
+            const begins = settled.periodStart * 1000;
+            if (begins > now) future.set(settled.invoiceId, begins);
+            else if (!paid || settled.paidThrough > paid.paidThrough) paid = settled;
+          }
         }
-        const entitlement = entitlementFor(subscription, cfg, paid);
+        if (subscription?.status !== "active" && subscription?.status !== "past_due") {
+          nextAttempt = null;
+          future.clear();
+        }
+        const entitlement = entitlementFor(subscription, cfg, paid, now);
+        // Stripe's subscription snapshot may lag the newly paid invoice at
+        // the boundary. Keep retrying while its paid coverage is live.
+        if (subscription?.status === "active" && paid && paid.periodStart * 1000 <= now && paid.paidThrough > now && entitlement.planId === "free")
+          nextAttempt = now + 60_000;
         // Account deletion may have interleaved with the Stripe reads.
         if (!this.hooks.account(uid)) {
           this.sql.exec(`DELETE FROM billing_events WHERE id = ?`, event.id);
@@ -191,12 +226,12 @@ export class BillingStore {
           // Other alarm invocations can reconcile while Stripe requests are in flight.
           // Never overwrite a newer snapshot with a response fetched before it.
           const currentEvent = this.sql
-            .exec<{ state: string }>(
-              `SELECT state FROM billing_events WHERE id = ?`,
+            .exec<{ state: string; next_attempt_at: number }>(
+              `SELECT state, next_attempt_at FROM billing_events WHERE id = ?`,
               event.id,
             )
             .toArray()[0];
-          if (!currentEvent || currentEvent.state !== "pending") return;
+          if (!currentEvent || currentEvent.state !== "pending" || currentEvent.next_attempt_at !== event.next_attempt_at) return;
           const currentRow = this.sql
             .exec<{
               customer_id: string;
@@ -216,6 +251,16 @@ export class BillingStore {
               "billing state changed during reconciliation",
             );
           }
+          for (const [invoiceId, begins] of future) {
+            // This internal inbox entry retains the invoice ID even if
+            // Stripe's latest_invoice changes before the service period.
+            const deferredId = `deferred:${invoiceId}`;
+            if (deferredId === event.id) nextAttempt = begins;
+            else this.sql.exec(
+              `INSERT OR IGNORE INTO billing_events (id, customer_id, subscription_id, invoice_id, user_id, state, created_at, next_attempt_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
+              deferredId, event.customer_id, subscription!.id, invoiceId, uid, now, begins,
+            );
+          }
           this.sql.exec(
             `INSERT INTO billing_accounts (user_id, customer_id, subscription_id, paid_period, entitlement, revision) VALUES (?, ?, ?, ?, ?, 1)
 ON CONFLICT(user_id) DO UPDATE SET subscription_id = excluded.subscription_id, paid_period = excluded.paid_period, entitlement = excluded.entitlement,
@@ -226,10 +271,10 @@ revision = billing_accounts.revision + CASE WHEN billing_accounts.entitlement !=
             paid ? JSON.stringify(paid) : null,
             JSON.stringify(entitlement),
           );
-          this.sql.exec(
-            `UPDATE billing_events SET state = 'applied' WHERE id = ?`,
-            event.id,
-          );
+          if (nextAttempt !== null)
+            this.sql.exec(`UPDATE billing_events SET next_attempt_at = ? WHERE id = ?`, nextAttempt, event.id);
+          else
+            this.sql.exec(`UPDATE billing_events SET state = 'applied' WHERE id = ?`, event.id);
         });
       } catch {
         failed = true;

@@ -804,12 +804,13 @@ export class Directory extends DurableObject<Env> {
   async alarm(): Promise<void> {
     // An external call can remain unresolved. Keep a durable retry before any
     // such call; a final harmless idle alarm is allowed to consume itself.
+    const billingAt = this.billing.nextPendingAt();
     if (
-      this.billing.pending() ||
       this.vaultsIn("deleting").length > 0 ||
       this.vaultsIn("swept").length > 0 ||
       this.sql.exec(`SELECT vault_id FROM retired_vaults LIMIT 1`).toArray().length > 0
     ) await this.scheduleAt(Date.now() + RETRY_MS);
+    else if (billingAt !== null) await this.scheduleAt(Math.max(Date.now() + RETRY_MS, billingAt));
     try {
       await this.billing.reconcile();
     } catch {
@@ -998,18 +999,22 @@ export class Directory extends DurableObject<Env> {
   }
 
   private async scheduleNext(): Promise<void> {
+    const now = Date.now();
+    const candidates: number[] = [];
     if (
       this.sql.exec(`SELECT vault_id FROM retired_vaults LIMIT 1`).toArray()
         .length
     )
-      return this.scheduleAt(Date.now() + RETRY_MS);
-    if (this.billing.pending()) return this.scheduleAt(Date.now() + RETRY_MS);
+      candidates.push(now + RETRY_MS);
+    const billingAt = this.billing.nextPendingAt(now);
+    if (billingAt !== null) candidates.push(Math.max(now + RETRY_MS, billingAt));
     if (this.vaultsIn("deleting").length > 0)
-      return this.scheduleAt(Date.now() + RETRY_MS);
+      candidates.push(now + RETRY_MS);
     const swept = this.vaultsIn("swept").map(
       (v) => (v.swept_at ?? 0) + this.sweepDelay(),
     );
-    if (swept.length > 0) return this.scheduleAt(Math.min(...swept));
+    candidates.push(...swept);
+    if (candidates.length > 0) return this.scheduleAt(Math.min(...candidates));
   }
 
   private async scheduleAt(when: number): Promise<void> {

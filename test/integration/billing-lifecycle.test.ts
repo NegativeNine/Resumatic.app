@@ -5,6 +5,30 @@ import { vault } from "../../src/shared/stubs";
 import { Vault } from "../../src/vault/vault";
 
 describe("billing identifiers during account deletion", () => {
+  it("schedules a future billing retry at its boundary instead of polling each minute", async () => {
+    const directory = env.DIRECTORY.getByName(`billing-scheduler-${crypto.randomUUID()}`);
+    const due = Date.now() + 3_600_000;
+    await runInDurableObject(directory, async (instance, state) => {
+      state.storage.sql.exec(`INSERT INTO billing_events (id,customer_id,created_at,next_attempt_at) VALUES ('deferred:in_future','cus_test',?,?)`, Date.now(), due);
+      await instance.alarm();
+      expect(await state.storage.getAlarm()).toBe(due);
+    });
+  });
+  it("does not spend a future paid bucket that was delivered by older code", async () => {
+    const stub = vault(env, env.VAULT.newUniqueId().toString());
+    const userId = crypto.randomUUID();
+    await stub.init(userId);
+    const now = Math.floor(Date.now() / 1000);
+    const plan = {
+      planId: "pro", generationLimit: 999,
+      bucket: `paid:sub_test:${now + 120}`, validUntil: (now + 3600) * 1000,
+      subscriptionId: "sub_test", status: "active" as const, cancelAtPeriodEnd: false,
+    };
+    await stub.setPlan(1, plan);
+    expect((await stub.me({ userId, gen: 1 })).quota.limit).not.toBe(999);
+    await stub.setPlan(2, { ...plan, bucket: `paid:sub_test:${now - 1}` });
+    expect((await stub.me({ userId, gen: 1 })).quota.limit).toBe(999);
+  });
   it("fences an in-flight customer create and records its ID after closure", async () => {
     const stub = vault(env, env.VAULT.newUniqueId().toString());
     const userId = crypto.randomUUID();

@@ -3278,16 +3278,17 @@ export class Vault extends DurableObject<Env> {
 
   private quotaBucket(): QuotaBucket {
     const cfg = billingConfig(this.env);
+    const now = Date.now();
     const plan = this.meta("entitlement")
       ? (JSON.parse(this.meta("entitlement")!) as Entitlement)
       : null;
     if (
       plan?.validUntil &&
-      plan.validUntil > Date.now() &&
+      plan.validUntil > now &&
       plan.planId !== "free"
     ) {
       const startAt = Number(plan.bucket.split(":").at(-1)) * 1000;
-      return {
+      if (Number.isSafeInteger(startAt) && startAt <= now) return {
         key: plan.bucket,
         startAt,
         endAt: plan.validUntil,

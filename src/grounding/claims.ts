@@ -34,10 +34,18 @@ const NUMBER_WORDS: Record<string, number> = {
   twelve: 12,
   dozen: 12,
   twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
   hundred: 100,
 };
 
 const SCALES: Record<string, number> = {
+  hundred: 100,
   k: 1e3,
   thousand: 1e3,
   m: 1e6,
@@ -75,7 +83,8 @@ function ordinalValue(text: string): number {
 }
 
 const NUMBER = /(?<![\w.])(?:([+\-−])\s*)?(?:([$€£]|USD\b|EUR\b|GBP\b)\s*)?([+\-−])?((?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?|\.\d+)(?:e[+\-]?\d+)?)(?:\s?(%|percent\b|per cent\b|x\b|×|times\b|-?fold\b|k\b|thousand\b|mm\b|m\b|million\b|bn\b|b\b|billion\b))?(?:\s?(dollars?|euros?|pounds?\s+sterling|USD|EUR|GBP)\b)?(?![\w])/gi;
-const WORD_NUMBER = /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozen|twenty|hundred)(?=\b|fold\b)(?:\s*(%|percent\b|per cent\b|x\b|×|times\b|-?fold\b))?(?:\s*(dollars?|euros?|pounds?\s+sterling|USD|EUR|GBP)\b)?/gi;
+const WORD_NUMBER = /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)(?=\b|fold\b)(?:\s*(%|percent\b|per cent\b|x\b|×|times\b|-?fold\b))?(?:\s*(dollars?|euros?|pounds?\s+sterling|USD|EUR|GBP)\b)?/gi;
+const COMPOUND_CARDINAL = /\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[^\S\r\n\u2028\u2029]|[-‐-―−])+(one|two|three|four|five|six|seven|eight|nine)(?=\b|fold\b)(?:[^\S\r\n\u2028\u2029]*(%|percent\b|per cent\b|x\b|×|times\b|-?fold\b|hundred\b|thousand\b|million\b|billion\b))?(?:[^\S\r\n\u2028\u2029]*(dollars?|euros?|pounds?[^\S\r\n\u2028\u2029]+sterling|USD|EUR|GBP)\b)?/gi;
 
 function currencyOf(unit: string | undefined): NumberToken["currency"] {
   const normalized = unit?.trim().toLowerCase();
@@ -133,6 +142,26 @@ function dateComponents(text: string): { components: DateComponent[]; numericRan
   }
   const month = "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
   const monthNumber = (name: string) => pad(String(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(name.slice(0, 3).toLowerCase()) + 1));
+  // Written cardinal days such as "March twenty-five, 2021" are dates,
+  // not evidence of twenty-five employees.
+  const horizontal = "[^\\S\\r\\n\\u2028\\u2029]";
+  const compoundDay = `(?:twenty|thirty)(?:${horizontal}|[-‐-―−])+(?:one|two|three|four|five|six|seven|eight|nine)`;
+  for (const match of text.matchAll(new RegExp(`\\b(${month})\\.?${horizontal}+(${compoundDay})(?:,${horizontal}*|${horizontal}+)((?:19|20)\\d{2})\\b`, "gi"))) {
+    const [tens, ones] = match[2]!.toLowerCase().split(/(?:[^\S\r\n\u2028\u2029]|[-‐-―−])+/);
+    const day = NUMBER_WORDS[tens!]! + NUMBER_WORDS[ones!]!;
+    if (day > 31) continue;
+    const key = `iso:${match[3]}:${monthNumber(match[1]!)}:${pad(String(day))}`;
+    mark(match.index + match[0].indexOf(match[2]!), match[2]!, "day", key);
+    mark(match.index + match[0].lastIndexOf(match[3]!), match[3]!, "year", key);
+  }
+  for (const match of text.matchAll(new RegExp(`\\b(${compoundDay})${horizontal}+(${month})\\.?${horizontal}+((?:19|20)\\d{2})\\b`, "gi"))) {
+    const [tens, ones] = match[1]!.toLowerCase().split(/(?:[^\S\r\n\u2028\u2029]|[-‐-―−])+/);
+    const day = NUMBER_WORDS[tens!]! + NUMBER_WORDS[ones!]!;
+    if (day > 31) continue;
+    const key = `iso:${match[3]}:${monthNumber(match[2]!)}:${pad(String(day))}`;
+    mark(match.index, match[1]!, "day", key);
+    mark(match.index + match[0].lastIndexOf(match[3]!), match[3]!, "year", key);
+  }
   // Written ordinal days must remain dates, not evidence for an unrelated rank.
   for (const match of text.matchAll(new RegExp(`\\b(${month})\\.?\\s+(${ORDINAL_WORD_PATTERN})(?:,\\s*|\\s+)((?:19|20)\\d{2})\\b`, "gi"))) {
     const day = ordinalValue(match[2]!);
@@ -224,6 +253,30 @@ export function numbersIn(text: string): NumberToken[] {
   const wordScan = text.split("");
   for (const match of ordinals)
     for (let i = match.index; i < match.index + match[0].length; i++) wordScan[i] = " ";
+  // A compound cardinal is one quantity: the components in "twenty-five"
+  // cannot independently justify claims of either twenty or five.
+  for (const match of wordScan.join("").matchAll(COMPOUND_CARDINAL)) {
+    const unit = (match[3] ?? "").toLowerCase().replace(/\s+/g, " ");
+    let value = NUMBER_WORDS[match[1]!.toLowerCase()]! + NUMBER_WORDS[match[2]!.toLowerCase()]!;
+    value *= SCALES[unit] ?? 1;
+    const before = text.slice(0, match.index);
+    if (/(?:\b(?:minus|negative)[^\S\r\n\u2028\u2029]+|[-−][^\S\r\n\u2028\u2029]*)(?:(?:[$€£]|USD|EUR|GBP)[^\S\r\n\u2028\u2029]*)?$/i.test(before)) value = -value;
+    const prefix = before.match(/(?:[$€£]|\b(?:USD|EUR|GBP))[^\S\r\n\u2028\u2029]*$/i)?.[0];
+    const prefixCurrency = currencyOf(prefix);
+    const suffixCurrency = currencyOf(match[4]);
+    const currency = prefixCurrency && suffixCurrency && prefixCurrency !== suffixCurrency ? "conflicting" : prefixCurrency ?? suffixCurrency;
+    const component = dates.components.find((item) => item.start === match.index && item.part === "day");
+    // An adjacent written month without a year is still date context. Use an
+    // unresolved key so it cannot be combined with a different dated event.
+    const month = "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?";
+    const nearMonth = value <= 31 && !unit && !currency && (
+      new RegExp(`\\b(${month})\\.?[^\\S\\r\\n\\u2028\\u2029]+$`, "i").exec(before)?.[1] ??
+      new RegExp(`^[^\\S\\r\\n\\u2028\\u2029]+(${month})\\b`, "i").exec(text.slice(match.index + match[0].length))?.[1]
+    );
+    const dateKey = component?.key ?? (nearMonth ? `unresolved:${nearMonth.slice(0, 3).toLowerCase()}` : null);
+    out.push({ value, percent: unit === "%" || unit === "percent" || unit === "per cent", multiplier: isMultiplier(unit), ordinal: false, currency, raw: text.slice(match.index, match.index + match[0].length).trim(), date: !!dateKey, datePart: dateKey ? "day" : null, dateKey });
+    for (let i = match.index; i < match.index + match[0].length; i++) wordScan[i] = " ";
+  }
   for (const match of wordScan.join("").matchAll(WORD_NUMBER)) {
     const magnitude = NUMBER_WORDS[match[1]!.toLowerCase()];
     if (magnitude === undefined) continue;

@@ -40,6 +40,8 @@ function priorVersion(fragment: string): number {
 }
 
 function removeShardReleaseMigration(sql: SqlStorage): void {
+  sql.exec(`DROP INDEX billing_pending_by_time`);
+  sql.exec(`ALTER TABLE billing_events DROP COLUMN next_attempt_at`);
   for (const trigger of ["guard_shard_google_identity_delete", "guard_global_google_shard_home_delete"]) sql.exec(`DROP TRIGGER ${trigger}`);
   for (const table of ["shard_deletion_releases", "shard_identity_delete_marker", "global_shard_home_release_marker"]) sql.exec(`DROP TABLE ${table}`);
   sql.exec(`DELETE FROM meta WHERE key='shard_deletion_guard'`);
@@ -52,6 +54,28 @@ function removeGlobalAuthMigration(sql: SqlStorage): void {
 }
 
 describe("atomic schema migrations", () => {
+  it("rolls back the deferred billing column, index and version together, then preserves queued events on retry", async () => {
+    const stub = env.DIRECTORY.getByName(`billing-migration-${crypto.randomUUID()}`);
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec(`INSERT INTO billing_events(id,customer_id,state,created_at) VALUES ('evt_legacy','cus_legacy','pending',123)`);
+      sql.exec(`DROP INDEX billing_pending_by_time`);
+      sql.exec(`ALTER TABLE billing_events DROP COLUMN next_attempt_at`);
+      const previous = DIRECTORY_MIGRATIONS.findIndex((migration) => migration.some((q) => q.includes("ALTER TABLE billing_events ADD COLUMN next_attempt_at")));
+      expect(previous).toBeGreaterThan(0);
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrateDirectory(failAtVersion(sql, previous + 1), tx)).toThrow(/synthetic version-write interruption/);
+      expect(sql.exec<{value:string}>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(previous));
+      expect(() => sql.exec(`SELECT next_attempt_at FROM billing_events`).toArray()).toThrow();
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE type='index' AND name='billing_pending_by_time'`).toArray()).toHaveLength(0);
+      expect(sql.exec<{id:string}>(`SELECT id FROM billing_events`).one().id).toBe("evt_legacy");
+      migrateDirectory(sql, tx);
+      expect(sql.exec<{value:string}>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(DIRECTORY_MIGRATIONS.length));
+      expect(sql.exec<{id:string;next_attempt_at:number}>(`SELECT id,next_attempt_at FROM billing_events`).one()).toEqual({ id: "evt_legacy", next_attempt_at: 0 });
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE type='index' AND name='billing_pending_by_time'`).toArray()).toHaveLength(1);
+    });
+  });
   it.each(["global", "shard"] as const)("installs the %s shard-release guard atomically with its version", async (mode) => {
     const stub = env.DIRECTORY.getByName(`release-migration-${crypto.randomUUID()}`);
     await runInDurableObject(stub, (_instance, state) => {

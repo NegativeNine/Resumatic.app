@@ -195,6 +195,11 @@ describe("billing deployment and entitlements", () => {
     );
     expect(freeQuotaBucket(Date.UTC(2027, 0, 1))).toBe("free:2027-01");
   });
+  it("starts a paid period only at its actual service boundary", () => {
+    const future = { ...paidPeriod, periodStart: start + 2000 };
+    expect(entitlementFor(subscription(), cfg, future, (start + 2000) * 1000 - 1).planId).toBe("free");
+    expect(entitlementFor(subscription(), cfg, future, (start + 2000) * 1000).planId).toBe("pro");
+  });
   it("settles only complete paid recurring invoices, excluding prorations and one-offs", () => {
     const invoice = {
       id: "in_1",

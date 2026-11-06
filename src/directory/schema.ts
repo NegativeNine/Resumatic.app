@@ -1,4 +1,4 @@
-import { BILLING_MIGRATIONS } from "./billing";
+import { BILLING_MIGRATIONS, BILLING_DEFERRED_MIGRATIONS } from "./billing";
 import { PLACEMENT_FENCE_MIGRATIONS } from "./placement-fence";
 // Directory tables. Holds identities and the vault directory; never career data.
 
@@ -101,6 +101,7 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
        AND NOT EXISTS(SELECT 1 FROM global_shard_home_release_marker WHERE provider=OLD.provider AND subject=OLD.subject AND user_id=OLD.user_id)
      BEGIN SELECT RAISE(ABORT, 'shard_deletion_barrier_required'); END`,
   ],
+  BILLING_DEFERRED_MIGRATIONS,
 ];
 
 export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T, global = false, shard = false): void {

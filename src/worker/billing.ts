@@ -187,6 +187,7 @@ export function entitlementFor(
       "unavailable",
       "subscription does not match a configured plan",
     );
+  if (subscription.status === "active" && start * 1000 > nowMs) return free;
   // This product has no trials. A paid invoice must match both this subscription and price.
   let until = 0;
   const paid =
@@ -194,6 +195,11 @@ export function entitlementFor(
     previousPaidPeriod.priceId === item.price.id
       ? previousPaidPeriod
       : null;
+  if (paid && (
+    !Number.isSafeInteger(paid.periodStart) || paid.periodStart <= 0 ||
+    !Number.isSafeInteger(paid.paidThrough) || paid.paidThrough <= paid.periodStart * 1000 ||
+    paid.periodStart * 1000 > nowMs
+  )) return free;
   if (subscription.status === "active" && paid)
     until = Math.min(end * 1000, paid.paidThrough);
   if (subscription.status === "past_due" && paid) until = paid.paidThrough;

@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
-import { BillingStore, BILLING_MIGRATIONS } from "../../src/directory/billing";
+import { BillingStore, BILLING_MIGRATIONS, BILLING_DEFERRED_MIGRATIONS } from "../../src/directory/billing";
 import {
   cleanupBillingCustomer,
   type BillingEvent,
@@ -76,6 +76,7 @@ function fixture() {
     },
   } as unknown as SqlStorage;
   for (const statement of BILLING_MIGRATIONS) db.exec(statement);
+  for (const statement of BILLING_DEFERRED_MIGRATIONS) db.exec(statement);
   const state = {
     subscriptions: [
       subscription("sub_old", "canceled", "in_old"),
@@ -115,6 +116,77 @@ function fixture() {
 }
 
 describe("durable billing reconciliation", () => {
+  it("retains current paid access, queues future invoices by ID, and processes other events", async () => {
+    const f = fixture();
+    const original = f.fetcher.getMockImplementation()!;
+    const futureStart = end;
+    const futureEnd = end + 2_592_000;
+    f.fetcher.mockImplementation(async (input, init) => {
+      if (new URL(String(input)).pathname === "/v1/invoices/in_future") {
+        const value = invoice("in_future");
+        value.lines.data[0]!.period = { start: futureStart, end: futureEnd };
+        return Response.json(value);
+      }
+      return original(input, init);
+    });
+    const clock = vi.spyOn(Date, "now");
+    try {
+      f.store.accept(event("evt_initial"));
+      await f.store.reconcile();
+      f.store.accept(event("evt_future", "invoice.paid", { id: "in_future", customer: "cus_123" }));
+      await f.store.reconcile();
+      let account = f.db.prepare("SELECT entitlement FROM billing_accounts").get()!;
+      expect(JSON.parse(String(account.entitlement))).toMatchObject({ planId: "pro", bucket: `paid:sub_new:${start}` });
+      expect(f.store.nextPendingAt()).toBe(futureStart * 1000);
+      f.store.accept(event("evt_unrelated"));
+      await f.store.reconcile();
+      expect(f.db.prepare("SELECT state FROM billing_events WHERE id='evt_unrelated'").get()!.state).toBe("applied");
+      clock.mockReturnValue(futureStart * 1000);
+      // The invoice may be paid before the subscription snapshot rolls over.
+      await f.store.reconcile();
+      expect(JSON.parse(String(f.db.prepare("SELECT entitlement FROM billing_accounts").get()!.entitlement)).planId).toBe("free");
+      expect(f.store.nextPendingAt()).toBe(futureStart * 1000 + 60_000);
+      f.state.subscriptions[1]!.items.data[0]!.current_period_start = futureStart;
+      f.state.subscriptions[1]!.items.data[0]!.current_period_end = futureEnd;
+      clock.mockReturnValue(futureStart * 1000 + 60_000);
+      await f.store.reconcile();
+      account = f.db.prepare("SELECT entitlement FROM billing_accounts").get()!;
+      expect(JSON.parse(String(account.entitlement))).toMatchObject({ planId: "pro", bucket: `paid:sub_new:${futureStart}` });
+      expect(f.store.pending()).toBe(false);
+    } finally {
+      clock.mockRestore();
+      f.db.close();
+    }
+  });
+  it("rechecks the subscription at a deferred invoice boundary after cancellation", async () => {
+    const f = fixture();
+    const original = f.fetcher.getMockImplementation()!;
+    f.fetcher.mockImplementation(async (input, init) => {
+      if (new URL(String(input)).pathname === "/v1/invoices/in_future") {
+        const value = invoice("in_future");
+        value.lines.data[0]!.period = { start: end, end: end + 2_592_000 };
+        return Response.json(value);
+      }
+      return original(input, init);
+    });
+    const clock = vi.spyOn(Date, "now");
+    try {
+      f.store.accept(event("evt_initial"));
+      await f.store.reconcile();
+      f.store.accept(event("evt_future", "invoice.paid", { id: "in_future", customer: "cus_123" }));
+      await f.store.reconcile();
+      f.state.subscriptions[1]!.status = "canceled";
+      f.store.accept(event("evt_cancel"));
+      await f.store.reconcile();
+      expect(JSON.parse(String(f.db.prepare("SELECT entitlement FROM billing_accounts").get()!.entitlement)).planId).toBe("free");
+      clock.mockReturnValue(end * 1000);
+      await f.store.reconcile();
+      expect(JSON.parse(String(f.db.prepare("SELECT entitlement FROM billing_accounts").get()!.entitlement)).planId).toBe("free");
+    } finally {
+      clock.mockRestore();
+      f.db.close();
+    }
+  });
   it("uses the current customer subscription and its paid invoice when old events arrive", async () => {
     const f = fixture();
     try {

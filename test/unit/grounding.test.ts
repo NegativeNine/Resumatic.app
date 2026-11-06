@@ -30,6 +30,38 @@ describe("quoteIsVerbatim", () => {
 });
 
 describe("numbers", () => {
+  it("treats written compound cardinals as one quantity, not their components", () => {
+    for (const wording of ["twenty-five", "twenty five", "twenty‑five"]) {
+      expect(unsupportedNumbers("Managed 25 people", `Managed ${wording} people`)).toEqual([]);
+      expect(unsupportedNumbers(`Managed ${wording} people`, "Managed 25 people")).toEqual([]);
+      expect(unsupportedNumbers("Managed 5 people", `Managed ${wording} people`)).toEqual(["5"]);
+      expect(unsupportedNumbers("Managed 20 people", `Managed ${wording} people`)).toEqual(["20"]);
+      expect(unsupportedNumbers(`Managed ${wording} people`, "Managed 20 people and 5 people")).toEqual([wording]);
+    }
+    expect(unsupportedNumbers("Lost -25%", "Lost minus twenty-five percent")).toEqual([]);
+    expect(unsupportedNumbers("Gained 25%", "Lost minus twenty-five percent")).toEqual(["25%"]);
+    for (const prefix of ["-", "−"]) {
+      expect(unsupportedNumbers("Gained 25%", `Changed ${prefix}twenty-five percent`)).toEqual(["25%"]);
+      expect(unsupportedNumbers("Changed -25%", `Changed ${prefix}twenty-five percent`)).toEqual([]);
+    }
+    expect(unsupportedNumbers("Managed 21 people", "Managed twenty-onefolded people")).toEqual(["21"]);
+    expect(unsupportedNumbers("Raised $25,000,000", "Raised twenty-five million dollars")).toEqual([]);
+    expect(unsupportedNumbers("Managed 25 people", "Managed twenty-five hundred people")).toEqual(["25"]);
+    expect(unsupportedNumbers("Ranked 25th", "Ranked twenty-fifth")).toEqual([]);
+    expect(unsupportedNumbers("Managed 25 people", "Started March twenty-five, 2021")).toEqual(["25"]);
+    expect(unsupportedNumbers("Managed 25 people", "Started March twenty-five")).toEqual(["25"]);
+    expect(unsupportedNumbers("Managed 25 people", "Started twenty-five March")).toEqual(["25"]);
+    expect(unsupportedNumbers("Started March twenty-five, 2021", "Started March 25, 2021")).toEqual([]);
+  });
+
+  it("does not join written compound numbers or their date context across lines", () => {
+    for (const lineBreak of ["\n", "\r\n", "\u2028", "\u2029"]) {
+      expect(unsupportedNumbers("Managed 25 people", `Managed twenty${lineBreak}five people`)).toEqual(["25"]);
+      expect(unsupportedNumbers("Managed 25 people", `Managed twenty-${lineBreak}five people`)).toEqual(["25"]);
+      expect(unsupportedNumbers("Started March twenty-five, 2021", `Started March${lineBreak}twenty-five, 2021`)).not.toEqual([]);
+      expect(unsupportedNumbers("Started March twenty-five, 2021", `Started March twenty-five,${lineBreak}2021`)).not.toEqual([]);
+    }
+  });
   it("reads units, scales, separators and number words", () => {
     const values = (text: string) => numbersIn(text).map((n) => [n.value, n.percent]);
     expect(values("Cut costs by 30%")).toEqual([[30, true]]);
@@ -45,7 +77,7 @@ describe("numbers", () => {
     expect(unsupportedNumbers("Handled 2 million events", "handled 2M events")).toEqual([]);
     expect(unsupportedNumbers("Mentored three engineers", "mentored 3 engineers")).toEqual([]);
     expect(unsupportedNumbers("Cut costs by 30%", "cut costs by 30 dollars")).toEqual(["30%"]);
-    expect(unsupportedNumbers("Served 40 services", "served forty services")).toEqual(["40"]);
+    expect(unsupportedNumbers("Served 40 services", "served forty services")).toEqual([]);
     expect(unsupportedNumbers("Grew users 10x", "grew users 5x")).toEqual(["10x"]);
     expect(unsupportedNumbers("From 2019 to 2021", "2019–2021")).toEqual([]);
     expect(unsupportedNumbers("From 2018 to 2021", "2019–2021")).toEqual(["2018"]);
