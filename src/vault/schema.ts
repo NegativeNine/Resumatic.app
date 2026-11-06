@@ -1,3 +1,4 @@
+import { INTERVIEW_MIGRATIONS } from "./interview";
 import { FEEDBACK_MIGRATIONS } from "./extraction-feedback";
 import { UPLOAD_MIGRATIONS } from "./uploads";
 import { OPERATION_MIGRATIONS } from "./operations";
@@ -83,6 +84,7 @@ export const MIGRATIONS: readonly string[][] = [
   [...OPERATION_MIGRATIONS],
   [...UPLOAD_MIGRATIONS],
   [...FEEDBACK_MIGRATIONS],
+  [...INTERVIEW_MIGRATIONS],
   [
     `CREATE TABLE refine_cache (cache_key TEXT PRIMARY KEY, draft TEXT NOT NULL, created_at INTEGER NOT NULL)`,
   ],

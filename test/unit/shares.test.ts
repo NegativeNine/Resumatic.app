@@ -116,6 +116,12 @@ function store() {
 describe("coach share snapshots", () => {
   it("copies only selected public fields and preserves user-authored status", () => {
     const original = selection();
+    original.facts[0]!.interview = {
+      documentId: "private-doc",
+      questionId: "q1",
+      question: "private interview question",
+      quote: "private interview answer",
+    };
     const snapshot = snapshotSelection(original, now);
     const json = JSON.stringify(snapshot);
     expect(json).not.toContain("private");

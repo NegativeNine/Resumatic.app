@@ -139,6 +139,8 @@ export interface RolePatch {
 }
 
 export interface FactView {
+  /** Original user-authored interview answer; it is historical after a fact edit. */
+  interview?: import("./interview").InterviewProvenance | null;
   evidenceOrigin?: "upload" | "ocr";
   confidence?: number | null;
   reviewReasons?: string[];

@@ -125,6 +125,16 @@ function FactEvidence({
   fact: FactView;
   filenames: ReadonlyMap<string, string>;
 }) {
+  if (fact.interview)
+    return (
+      <>
+        <p className="meta">Your answer to: {fact.interview.question}</p>
+        <Quote
+          text={fact.interview.quote}
+          caption="Your original interview answer"
+        />
+      </>
+    );
   if (!fact.quote) {
     return fact.origin === "user" ? (
       <p className="meta">

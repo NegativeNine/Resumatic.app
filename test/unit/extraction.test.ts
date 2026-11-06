@@ -375,6 +375,71 @@ describe("segmentation and evaluation", () => {
       }),
     ).toThrow("label_unknown_unit");
   });
+  it("does not match a same-organisation role with a disjoint header", () => {
+    const testCase = CASES[0]!;
+    const prediction = verifyExtraction(
+      testCase.markdown,
+      oraclePrediction(testCase),
+    ).extraction;
+    prediction.roles[0]!.span = prediction.facts[0]!.span;
+    expect(scoreCase(prediction, testCase.gold)).toMatchObject({
+      roleRecall: 0,
+      recall: 0,
+      assignment: 0,
+    });
+  });
+  it("requires the known title and dates for role recall, while measuring dates independently", () => {
+    const testCase = CASES[0]!;
+    const prediction = verifyExtraction(
+      testCase.markdown,
+      oraclePrediction(testCase),
+    ).extraction;
+    prediction.roles[0]!.title = "Incorrect title";
+    expect(scoreCase(prediction, testCase.gold)).toMatchObject({
+      roleRecall: 0,
+      dateAccuracy: 1,
+      recall: 1,
+    });
+    prediction.roles[0]!.title = testCase.gold.roles[0]!.title;
+    prediction.roles[0]!.startDate = "2022";
+    expect(scoreCase(prediction, testCase.gold)).toMatchObject({
+      roleRecall: 0,
+      dateAccuracy: 0,
+      recall: 1,
+    });
+  });
+  it("matches repeated employers one-to-one by overlapping headers rather than prediction order", () => {
+    const testCase = CASES[0]!;
+    const prediction = verifyExtraction(
+      testCase.markdown,
+      oraclePrediction(testCase),
+    ).extraction;
+    const originalGold = testCase.gold.roles[0]!;
+    const duplicateGold = {
+      ...originalGold,
+      id: "r2",
+      header: prediction.facts[0]!.span,
+    };
+    const gold = {
+      ...testCase.gold,
+      roles: [originalGold, duplicateGold],
+      facts: testCase.gold.facts.map((fact, i) => ({
+        ...fact,
+        role: i === 0 ? "r2" : fact.role,
+      })),
+    };
+    prediction.roles.unshift({
+      ...prediction.roles[0]!,
+      key: "r2",
+      span: duplicateGold.header,
+    });
+    prediction.facts[0]!.roleKey = "r2";
+    expect(scoreCase(prediction, gold)).toMatchObject({
+      roleRecall: 1,
+      recall: 1,
+      assignment: 1,
+    });
+  });
   it("counts wrong-role facts as misses while measuring assignment independently", () => {
     const testCase = CASES[0]!;
     const prediction = verifyExtraction(
@@ -465,6 +530,18 @@ describe("model usage and spending guard", () => {
       }).costUsd,
     ).toBeCloseTo(0.0011);
   });
+  it("uses configured prices for measured cost rather than stale built-in prices", () => {
+    const budget = new EvalBudget({
+      usd: 1,
+      maxCalls: 1,
+      prices: { "@cf/openai/gpt-oss-120b": [10, 20] },
+    });
+    const usage = reportUsage("extract", "@cf/openai/gpt-oss-120b", {
+      input_tokens: 1000,
+      output_tokens: 1000,
+    });
+    expect(budget.observe(usage).costUsd).toBeCloseTo(0.03);
+  });
   it("reports and reserves every schema retry", async () => {
     const usage: Usage[] = [];
     const budget = new EvalBudget({ usd: 1, maxCalls: 2 });
@@ -503,6 +580,24 @@ describe("model usage and spending guard", () => {
     expect(usage).toHaveLength(2);
     expect(budget.calls).toBe(2);
     expect(() => budget.reserve("@cf/openai/gpt-oss-20b", "test", 1)).toThrow(
+      "live_eval_budget_exhausted",
+    );
+  });
+  it("rejects zero-price overrides and routes without an applicable cost bound", () => {
+    expect(
+      () =>
+        new EvalBudget({
+          usd: 1,
+          maxCalls: 1,
+          prices: { "fake/model": [0, 0] },
+        }),
+    ).toThrow("live_eval_price_invalid");
+    const budget = new EvalBudget({
+      usd: 1,
+      maxCalls: 1,
+      prices: { "fake/model": [0, 1] },
+    });
+    expect(() => budget.reserve("fake/model", "input", 0)).toThrow(
       "live_eval_budget_exhausted",
     );
   });

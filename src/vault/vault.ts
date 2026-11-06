@@ -1,3 +1,4 @@
+import type { InterviewAnswer } from "../shared/interview";
 import {
   refinementCacheKey,
   cacheRefinement,
@@ -113,6 +114,10 @@ type RoleRow = {
   quote: string | null;
 };
 type FactRow = {
+  interview_document_id?: string | null;
+  interview_question_id?: string | null;
+  interview_question?: string | null;
+  interview_quote?: string | null;
   evidence_origin?: "upload" | "ocr";
   confidence?: number | null;
   review_reasons?: string;
@@ -169,6 +174,7 @@ export interface ResumePatch {
 }
 
 export interface VaultExport {
+  interviewAnswers: Record<string, string | number | null>[];
   generationInputs: Record<string, string | number | null>[];
   generationItems: Record<string, string | number | null>[];
   documentRequests: Record<string, string | number | null>[];
@@ -1037,8 +1043,8 @@ export class Vault extends DurableObject<Env> {
     const params = state ? [state] : [];
     return this.sql
       .exec<FactRow>(
-        `SELECT f.id, f.role_id, f.kind, f.text, f.level, f.origin, f.state, f.source_id, f.revision, f.confidence, f.review_reasons, e.quote, e.start, e.end, s.origin AS evidence_origin
-         FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id LEFT JOIN sources s ON s.id = f.source_id ${where}
+        `SELECT f.id, f.role_id, f.kind, f.text, f.level, f.origin, f.state, f.source_id, f.revision, f.confidence, f.review_reasons, e.quote, e.start, e.end, s.origin AS evidence_origin, i.document_id AS interview_document_id, i.question_id AS interview_question_id, i.question AS interview_question, i.quote AS interview_quote
+         FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id LEFT JOIN sources s ON s.id = f.source_id LEFT JOIN interview_answers i ON i.fact_id = f.id ${where}
          ORDER BY f.updated_at DESC`,
         ...params,
       )
@@ -1099,6 +1105,109 @@ export class Vault extends DurableObject<Env> {
       }
     });
     this.vectorCache = null;
+  }
+
+  /** Answers are user-authored; retries identify the exact question and answer before model I/O. */
+  async answerInterview(
+    who: Who,
+    documentId: string,
+    questionId: string,
+    input: InterviewAnswer,
+    requestKey: string,
+  ): Promise<{ factId: string }> {
+    const answer = input.answer.trim();
+    if (
+      !answer ||
+      answer.length > 600 ||
+      !/^[a-zA-Z0-9_-]{1,100}$/.test(requestKey)
+    )
+      throw new AppError("invalid", "invalid interview answer");
+    const digest = base64url(
+      await sha256(
+        JSON.stringify([documentId, questionId, input.roleId, answer]),
+      ),
+    );
+    this.requireOwner(who);
+    const existing = () =>
+      this.sql
+        .exec<{ fact_id: string; input_digest: string }>(
+          `SELECT fact_id,input_digest FROM interview_answers WHERE request_key = ?`,
+          requestKey,
+        )
+        .toArray()[0];
+    const previous = existing();
+    if (previous) {
+      if (previous.input_digest !== digest)
+        throw new AppError("conflict", "this answer request changed");
+      return { factId: previous.fact_id };
+    }
+    const question = this.interviewQuestion(documentId, questionId);
+    if (input.roleId) this.requireUsableRole(input.roleId);
+    const embeddingModel = this.activeEmbeddingModel();
+    const vector = await this.embedOne(answer);
+    this.requireOwner(who);
+    if (embeddingModel !== this.activeEmbeddingModel())
+      throw new AppError("conflict", "the search index changed; try again");
+    const factId = this.ctx.storage.transactionSync(() => {
+      const prior = existing();
+      if (prior) {
+        if (prior.input_digest !== digest)
+          throw new AppError("conflict", "this answer request changed");
+        return prior.fact_id;
+      }
+      if (this.interviewQuestion(documentId, questionId) !== question)
+        throw new AppError(
+          "conflict",
+          "this question changed; refresh and try again",
+        );
+      if (input.roleId) this.requireUsableRole(input.roleId);
+      const id = crypto.randomUUID(),
+        now = Date.now();
+      this.sql.exec(
+        `INSERT INTO facts (id,role_id,kind,text,level,origin,state,vector,updated_at) VALUES (?,?,'accomplishment',?,NULL,'user','confirmed',?,?)`,
+        id,
+        input.roleId,
+        answer,
+        packVector(vector),
+        now,
+      );
+      this.sql.exec(
+        `INSERT INTO interview_answers (fact_id,document_id,question_id,question,quote,request_key,input_digest,created_at) VALUES (?,?,?,?,?,?,?,?)`,
+        id,
+        documentId,
+        questionId,
+        question,
+        answer,
+        requestKey,
+        digest,
+        now,
+      );
+      this.extractionFeedbackStore.manual(id, now);
+      return id;
+    });
+    this.vectorCache = null;
+    return { factId };
+  }
+
+  private interviewQuestion(documentId: string, questionId: string): string {
+    const row = this.sql
+      .exec<{ kind: string; state: string; data: string | null }>(
+        `SELECT d.kind,d.state,v.data FROM documents d LEFT JOIN document_versions v ON v.document_id=d.id AND v.version=d.version WHERE d.id=?`,
+        documentId,
+      )
+      .toArray()[0];
+    if (!row) throw new AppError("not_found", "no such document");
+    if (row.kind !== "questions" || row.state !== "ready" || !row.data)
+      throw new AppError("conflict", "the questions are not ready");
+    const parsed = JSON.parse(row.data) as {
+      result?: { questions?: { id: string; question: string }[] };
+    };
+    const question = parsed.result?.questions?.find(
+      (q) => q.id === questionId,
+    )?.question;
+    if (typeof question !== "string" || !question || question.length > 1000)
+      throw new AppError("not_found", "no such question");
+    return question;
   }
 
   /** A fact the user types is their own claim, so it is confirmed at once. */
@@ -2129,6 +2238,11 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     return {
       format: 2,
+      interviewAnswers: this.sql
+        .exec<Record<string, string | number | null>>(
+          `SELECT fact_id,document_id,question_id,question,quote,created_at FROM interview_answers`,
+        )
+        .toArray(),
       generationInputs: this.sql
         .exec<Record<string, string | number | null>>(
           `SELECT * FROM generation_inputs`,
@@ -3412,6 +3526,18 @@ function factView(f: FactRow): FactView {
     state: f.state as ReviewState,
     quote: f.quote,
     sourceId: f.source_id,
+    interview:
+      f.interview_document_id &&
+      f.interview_question_id &&
+      f.interview_question &&
+      f.interview_quote
+        ? {
+            documentId: f.interview_document_id,
+            questionId: f.interview_question_id,
+            question: f.interview_question,
+            quote: f.interview_quote,
+          }
+        : null,
     evidenceOrigin: f.evidence_origin,
     confidence: f.confidence ?? null,
     reviewReasons: f.review_reasons ? JSON.parse(f.review_reasons) : [],

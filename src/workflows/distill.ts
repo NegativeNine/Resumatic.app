@@ -7,7 +7,8 @@ import { runModels } from "./models";
 import { extractFacts } from "../pipeline/distill";
 import { extractorById } from "../pipeline/extract";
 import { validateTranscriptionInput } from "../ai/transcribe";
-import { linkedInMarkdown } from "../pipeline/linkedin";
+import { extractLinkedIn } from "../pipeline/linkedin-extract";
+import { linkedInDocument, linkedInMarkdown } from "../pipeline/linkedin";
 import { AppError, errorCode } from "../shared/errors";
 import { vault } from "../shared/stubs";
 import { MODEL_STEP, STEP, once, userMessage } from "./steps";
@@ -85,17 +86,45 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
           const markdown = await v.sourceText(sourceId);
           const info = await v.sourceInfo(sourceId);
           const extractor = extractorById(progress.extractor);
-          const { extraction, dropped } = await extractFacts(
-            runModels(this.env, vaultId, event.instanceId, "extract"),
-            markdown,
-            {
+          const m = runModels(this.env, vaultId, event.instanceId, "extract");
+          const referenceDate = new Date(info.createdAt)
+            .toISOString()
+            .slice(0, 10);
+          let result;
+          if (
+            info.origin !== "ocr" &&
+            info.filename.toLowerCase().endsWith(".zip")
+          ) {
+            const object = await this.env.FILES.get(info.r2Key);
+            if (!object)
+              throw new AppError(
+                "not_found",
+                "the uploaded file is missing; upload it again",
+              );
+            const bytes = new Uint8Array(await object.arrayBuffer());
+            let document = linkedInDocument(bytes);
+            // Older uploads have an immutable source with the original CSV column order.
+            if (document.markdown !== markdown)
+              document = linkedInDocument(bytes, "legacy");
+            if (document.markdown !== markdown)
+              throw new AppError(
+                "conflict",
+                "the import source changed; upload it again",
+              );
+            result = await extractLinkedIn(
+              document,
+              extractor,
+              m,
+              referenceDate,
+              info.filename,
+            );
+          } else
+            result = await extractFacts(m, markdown, {
               extractor,
               filename: info.filename,
-              referenceDate: new Date(info.createdAt)
-                .toISOString()
-                .slice(0, 10),
-            },
-          );
+              referenceDate,
+            });
+          const { extraction, dropped } = result;
           const saved = await v.saveExtraction(
             sourceId,
             extraction,

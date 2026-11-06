@@ -2,10 +2,29 @@ import type { ResumeSection } from "../shared/api";
 import type { RenderData } from "../shared/types";
 
 function esc(text: string): string {
-  return text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+  return text.replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ]!,
+  );
 }
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
 
 /** "2021-03" becomes "Mar 2021"; other values print as given. */
 export function formatDate(value: string | null): string {
@@ -22,7 +41,10 @@ function dates(s: ResumeSection): string {
 }
 
 function section(s: ResumeSection): string {
-  const heading = [s.title, s.org].filter(Boolean).map((t) => esc(t!)).join(", ");
+  const heading = [s.title, s.org]
+    .filter(Boolean)
+    .map((t) => esc(t!))
+    .join(", ");
   const lines = s.lines.map((l) => `<li>${esc(l.text)}</li>`).join("");
   return `<section class="role"><div class="role-head"><h3>${heading}</h3><span class="dates">${esc(dates(s))}</span></div>${
     lines ? `<ul>${lines}</ul>` : ""
@@ -30,12 +52,20 @@ function section(s: ResumeSection): string {
 }
 
 /**
- * One single-column layout that applicant tracking systems parse cleanly. Headers come from the
+ * A single-column layout intended for text extraction. Validate it with ATS parsers before release. Headers come from the
  * vault's role rows and lines only from the verified body, so the PDF can say nothing the resume view does not.
  */
 export function renderResumeHtml(data: RenderData): string {
   const { profile, body } = data;
-  const contact = [profile.email, profile.phone, profile.location, ...profile.links].filter(Boolean).map(esc).join(" · ");
+  const contact = [
+    profile.email,
+    profile.phone,
+    profile.location,
+    ...profile.links,
+  ]
+    .filter(Boolean)
+    .map(esc)
+    .join(" · ");
   const experience = body.sections.filter((s) => s.kind !== "education");
   const education = body.sections.filter((s) => s.kind === "education");
   return `<!doctype html>

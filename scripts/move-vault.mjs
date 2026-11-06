@@ -18,6 +18,7 @@ const TABLES = new Set([
   "resume_versions",
   "documents",
   "document_versions",
+  "interview_answers",
 ]);
 const vaultId = (value) =>
   typeof value === "string" && /^[a-f0-9]{64}$/i.test(value);

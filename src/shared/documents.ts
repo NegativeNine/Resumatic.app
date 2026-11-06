@@ -27,6 +27,7 @@ export interface DocumentView {
       status?: string;
     }[];
     questions: {
+      id: string;
       requirement: string;
       question: string;
       roleId?: string | null;

@@ -22,7 +22,8 @@
     "test:scripts": "node --test scripts/*.test.mjs",
     "models:record": "node scripts/record-models.mjs",
     "check:release": "node scripts/check-release.mjs",
-    "audit:deletion": "node scripts/audit-deletion.mjs"
+    "audit:deletion": "node scripts/audit-deletion.mjs",
+    "check:ats": "node scripts/ats-smoke.mjs"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "1.2.4",

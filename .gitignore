@@ -46,3 +46,6 @@ deletion-manifest.json
 deletion-audit.json
 dependency-audit.json
 release-report.json
+
+# Synthetic ATS extraction report
+ats-smoke-report.json

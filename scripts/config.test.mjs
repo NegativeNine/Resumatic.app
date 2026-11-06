@@ -165,6 +165,7 @@ test("release gates require passing evidence for the exact candidate commit", as
       "googleSignin",
       "extraction",
       "grounding",
+      "ats",
       "stagingE2e",
       "billing",
       "security",
@@ -191,6 +192,12 @@ test("release gates require passing evidence for the exact candidate commit", as
   Object.assign(evidence.grounding, {
     unsupportedClaims: 0,
     evaluatedLines: 100,
+  });
+  Object.assign(evidence.ats, {
+    syntheticPdfPassed: true,
+    syntheticDocxPassed: true,
+    externalParsersTested: 2,
+    unresolvedFailures: 0,
   });
   Object.assign(evidence.latency, { p95Seconds: 70, sampleSize: 100 });
   Object.assign(evidence.security, { openHighFindings: 0 });
@@ -230,6 +237,19 @@ test("release gates require passing evidence for the exact candidate commit", as
       }).status,
       2,
     );
+    for (const ats of [
+      { ...evidence.ats, syntheticPdfPassed: false },
+      { ...evidence.ats, syntheticDocxPassed: false },
+      { ...evidence.ats, externalParsersTested: 1 },
+      { ...evidence.ats, externalParsersTested: 2.5 },
+      { ...evidence.ats, unresolvedFailures: 1 },
+    ]) {
+      assert.equal(run({ ...evidence, ats }).status, 2);
+      const result = JSON.parse(
+        await readFile(join(directory, "release-report.json"), "utf8"),
+      );
+      assert.ok(result.missing.includes("ATS_VALIDATION"));
+    }
     for (const extraction of [
       { ...evidence.extraction, factRecall: 0.849 },
       { ...evidence.extraction, factPrecision: 0.949 },

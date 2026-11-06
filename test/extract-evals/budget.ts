@@ -26,7 +26,8 @@ export class EvalBudget {
       if (
         !Array.isArray(price) ||
         price.length !== 2 ||
-        price.some((p) => !Number.isFinite(p) || p < 0)
+        price.some((p) => !Number.isFinite(p) || p < 0) ||
+        price.every((p) => p === 0)
       )
         throw new Error("live_eval_price_invalid");
   }
@@ -44,6 +45,7 @@ export class EvalBudget {
       ((inputBound * price[0] + maxOutputTokens * price[1]) * passes) /
       1_000_000;
     if (
+      cost <= 0 ||
       this.calls >= this.config.maxCalls ||
       this.reservedUsd + cost > this.config.usd
     )
@@ -54,14 +56,13 @@ export class EvalBudget {
   observe(usage: Usage): Usage {
     const price = this.prices[usage.model];
     const costUsd =
-      usage.costUsd ??
-      (price &&
+      price &&
       usage.inputTokens !== null &&
       (usage.outputTokens !== null || price[1] === 0)
         ? (usage.inputTokens * price[0] +
             (usage.outputTokens ?? 0) * price[1]) /
           1_000_000
-        : null);
+        : usage.costUsd;
     if (costUsd === null) this.unpricedCalls += 1;
     else this.measuredUsd += costUsd;
     return { ...usage, costUsd };

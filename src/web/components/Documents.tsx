@@ -235,7 +235,7 @@ function DocumentCard({ doc, reload }: { doc: DocumentView; reload: Reload }) {
 function DocumentContent({ doc }: { doc: DocumentView }) {
   const result = doc.result!;
   if (doc.kind === "questions")
-    return <GapQuestions questions={result.questions} />;
+    return <GapQuestions documentId={doc.id} questions={result.questions} />;
   const groups = [...new Set(result.units.map((unit) => unit.group))].sort(
     (a, b) => a - b,
   );
@@ -372,8 +372,10 @@ function DocumentDownload({ doc }: { doc: DocumentView }) {
 }
 
 function GapQuestions({
+  documentId,
   questions,
 }: {
+  documentId: string;
   questions: NonNullable<DocumentView["result"]>["questions"];
 }) {
   const roles = useResource(api.roles);
@@ -395,6 +397,8 @@ function GapQuestions({
       {questions.map((question, index) => (
         <GapAnswer
           key={`${index}-${question.requirement}`}
+          documentId={documentId}
+          questionId={question.id}
           question={question.question}
           roles={roles.data?.roles ?? []}
         />
@@ -404,9 +408,13 @@ function GapQuestions({
 }
 
 function GapAnswer({
+  documentId,
+  questionId,
   question,
   roles,
 }: {
+  documentId: string;
+  questionId: string;
   question: string;
   roles: RoleView[];
 }) {
@@ -421,11 +429,9 @@ function GapAnswer({
       onSubmit={(event) => {
         event.preventDefault();
         void action.run(async () => {
-          await api.addFact({
+          await api.answerInterview(documentId, questionId, {
             roleId: roleId || null,
-            kind: "accomplishment",
-            text: answer.trim(),
-            level: null,
+            answer: answer.trim(),
           });
           setSaved(true);
         });

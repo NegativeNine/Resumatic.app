@@ -109,6 +109,30 @@ describe("maintenance replacement lifecycle", () => {
     const savedVersions = await user.json(`/api/resumes/${resumeId}/versions`);
     expect(initialQuota.used).toBe(1);
 
+    const questionStart = await user.send(
+      "POST",
+      `/api/applications/${applicationId}/documents`,
+      { kind: "questions" },
+    );
+    const { documentId } = (await questionStart.json()) as {
+      documentId: string;
+    };
+    const interview = await eventually(async () => {
+      const doc = await user.json(`/api/documents/${documentId}`);
+      return doc.state === "ready" ? doc : null;
+    }, "questions for transfer");
+    const question = interview.result.questions[0];
+    const answerResponse = await user.send(
+      "POST",
+      `/api/documents/${documentId}/questions/${question.id}/answer`,
+      { roleId: null, answer: "I used Go for internal services." },
+    );
+    expect(answerResponse.status).toBe(201);
+    const { factId: answerId } = (await answerResponse.json()) as {
+      factId: string;
+    };
+    expect((await user.json("/api/me")).quota).toEqual(initialQuota);
+
     const op = crypto.randomUUID();
     const { targetVaultId } = await directory(env).prepareReplacement(
       oldSession.vid,
@@ -234,7 +258,18 @@ describe("maintenance replacement lifecycle", () => {
       (await replacement.json("/api/facts")).facts
         .map((fact: { id: string }) => fact.id)
         .sort(),
-    ).toEqual(facts.map((fact: { id: string }) => fact.id).sort());
+    ).toEqual(
+      [...facts.map((fact: { id: string }) => fact.id), answerId].sort(),
+    );
+    const answerFact = (await replacement.json("/api/facts")).facts.find(
+      (fact: { id: string }) => fact.id === answerId,
+    );
+    expect(answerFact.interview).toMatchObject({
+      documentId,
+      questionId: question.id,
+      question: question.question,
+      quote: "I used Go for internal services.",
+    });
   });
 
   it("refuses publication when a source object is missing and keeps the original account pointer", async () => {

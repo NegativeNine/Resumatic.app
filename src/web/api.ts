@@ -146,6 +146,15 @@ export const api = {
       "GET",
       state ? `/api/facts?state=${state}` : "/api/facts",
     ),
+  answerInterview: (
+    documentId: string,
+    questionId: string,
+    body: import("../shared/interview").InterviewAnswer,
+  ) =>
+    generate<{ factId: string }>(
+      `/api/documents/${encodeURIComponent(documentId)}/questions/${encodeURIComponent(questionId)}/answer`,
+      body,
+    ),
   addFact: (fact: NewFact) =>
     request<{ factId: string }>("POST", "/api/facts", fact),
   editFact: (id: string, patch: FactPatch) =>

@@ -1,21 +1,22 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { extractPrompt } from "../../src/ai/prompts";
 import type { Usage } from "../../src/ai/usage";
 import { extractorById } from "../../src/pipeline/extract";
-import {
-  ACCOMPLISHMENTS,
-  OUTLINE,
-  ROLE,
-} from "../../src/pipeline/extract/clairic";
 import { judgeFacts } from "../../src/pipeline/extract/judge";
 import { verifyExtraction } from "../../src/pipeline/extract/verify";
 import { credentials, restModels, wranglerVars } from "../evals/rest-models";
 import { evalBudgetFromEnv } from "./budget";
 import { CASES, oraclePrediction } from "./cases";
 import { scoreCase } from "./score";
+import type { VerifiedExtraction } from "../../src/pipeline/extract/types";
+import {
+  createPrivateSnapshot,
+  loadPrivateDataset,
+} from "./private-dataset.mjs";
+import { candidateKey } from "./promotion.mjs";
+import { extractionConfiguration } from "./configuration.mjs";
 
 const live = process.env.EXTRACT_LIVE === "1";
 const split = process.env.EXTRACT_SPLIT || "dev";
@@ -31,19 +32,63 @@ if (
   throw new Error("extract_eval_arguments");
 const creds = credentials();
 const vars = live ? wranglerVars(process.env.EVAL_ENV || "staging") : {};
-const records: Record<string, unknown>[] = [];
+type Candidate = {
+  key: string;
+  caseId: string;
+  strategy: string;
+  roleKey: string | null;
+  kind: "accomplishment" | "skill" | "credential";
+  span: [number, number];
+  text: string;
+  quote: string;
+  judge: "supported" | "unsupported" | null;
+};
+type RunRecord = {
+  caseId: string;
+  strategy: string;
+  repeat: number;
+  outcome: "ok" | "failed";
+  ms: number;
+  usage: Usage[];
+  candidateKeys: string[];
+  score?: ReturnType<typeof scoreCase>;
+  unsupportedClaims?: number | null;
+  dropped?: number;
+  prediction?: VerifiedExtraction;
+  judgeVerdicts?: ("supported" | "unsupported")[];
+};
+const records: RunRecord[] = [];
+const candidates: Candidate[] = [];
+const privateDataset = process.env.EXTRACT_DATASET_DIR
+  ? loadPrivateDataset(process.env.EXTRACT_DATASET_DIR)
+  : null;
+const cases = privateDataset?.cases ?? CASES;
+const runId = randomUUID();
 const budget = live ? evalBudgetFromEnv() : null;
 if (live && !creds) throw new Error("live_eval_credentials_required");
 const hash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
-const configurationHash = hash({
-  extract: extractPrompt("<fixture>"),
-  outline: OUTLINE,
-  role: ROLE,
-  accomplishments: ACCOMPLISHMENTS,
-});
+const environment = process.env.EVAL_ENV || "staging";
+const configuration = extractionConfiguration(strategyIds, environment);
+const configurationHash = configuration.hash;
 
 afterAll(() => {
+  const privateSnapshot =
+    privateDataset && live
+      ? createPrivateSnapshot(privateDataset.root, {
+          version: 1,
+          runId,
+          mode: "live",
+          split,
+          environment,
+          manifestHash: privateDataset.manifestHash,
+          configurationHash,
+          strategies: strategyIds,
+          repeats,
+          records: records.map(({ dropped: _dropped, ...row }) => row),
+          candidates,
+        })
+      : null;
   const report = {
     generatedAt: new Date().toISOString(),
     mode: live ? "live" : "harness-self-check",
@@ -57,16 +102,20 @@ afterAll(() => {
         ),
       ),
     ),
-    datasetHash: hash(
-      CASES.map((c) => ({ id: c.id, markdown: c.markdown, gold: c.gold })),
-    ),
+    datasetHash:
+      privateDataset?.manifestHash ??
+      hash(
+        CASES.map((c) => ({ id: c.id, markdown: c.markdown, gold: c.gold })),
+      ),
+    privateSnapshot,
     models: Object.fromEntries(
       Object.entries(vars).filter(([key]) => key.startsWith("MODEL_")),
     ),
     promotionEligible: false,
     pending: [
-      "consented-real-cases",
-      "PDF-DOCX-conversion-fixtures",
+      ...(privateDataset
+        ? []
+        : ["consented-real-cases", "PDF-DOCX-conversion-fixtures"]),
       "human-entailment-audit",
       ...(live ? [] : ["live-model-evaluation"]),
     ],
@@ -78,7 +127,14 @@ afterAll(() => {
           unpricedCalls: budget.unpricedCalls,
         }
       : null,
-    cases: records,
+    cases: records.map(
+      ({
+        candidateKeys: _keys,
+        prediction: _prediction,
+        judgeVerdicts: _verdicts,
+        ...row
+      }) => row,
+    ),
   };
   writeFileSync("extract-report.json", JSON.stringify(report, null, 2));
   writeFileSync(
@@ -90,7 +146,7 @@ afterAll(() => {
 describe.sequential("extraction evaluation", () => {
   for (const strategyId of strategyIds)
     for (let repeat = 0; repeat < repeats; repeat++) {
-      it.each(CASES.filter((c) => c.split === split))(
+      it.each(cases.filter((c) => c.split === split))(
         `${strategyId} run ${repeat + 1}: $id`,
         async (testCase) => {
           const usage: Usage[] = [];
@@ -109,31 +165,107 @@ describe.sequential("extraction evaluation", () => {
               ? await extractorById(strategyId).extract(
                   {
                     markdown: testCase.markdown,
-                    filename: `${testCase.id}.md`,
+                    filename: `${testCase.id}.${"format" in testCase.meta ? testCase.meta.format : "md"}`,
                     referenceDate: testCase.referenceDate,
                   },
                   models,
                 )
-              : oraclePrediction(testCase);
+              : privateDataset
+                ? {
+                    roles: testCase.gold.roles.map((r) => ({
+                      key: r.id,
+                      kind: r.kind,
+                      org: r.org,
+                      title: r.title,
+                      startDate: r.start,
+                      endDate: r.end,
+                      quote: testCase.markdown.slice(...r.header),
+                      span: r.header,
+                    })),
+                    facts: testCase.gold.facts.map((f) => ({
+                      roleKey: f.role,
+                      kind: f.kind,
+                      text: testCase.markdown.slice(...f.span),
+                      quote: testCase.markdown.slice(...f.span),
+                      span: f.span,
+                      level: f.level,
+                    })),
+                  }
+                : oraclePrediction(testCase as (typeof CASES)[number]);
             const { extraction, dropped } = verifyExtraction(
               testCase.markdown,
               raw,
             );
             const score = scoreCase(extraction, testCase.gold);
+            const verdicts = models
+              ? await judgeFacts(models, extraction.facts)
+              : [];
             const unsupported = models
-              ? (await judgeFacts(models, extraction.facts)).filter(
-                  (v) => v === "unsupported",
-                ).length
+              ? verdicts.filter((v) => v === "unsupported").length
               : null;
+            const caseCandidates = extraction.facts.map((fact, index) => {
+              const candidate = {
+                caseId: testCase.id,
+                strategy: strategyId,
+                roleKey: fact.roleKey,
+                kind: fact.kind,
+                span: fact.span,
+                text: fact.text,
+                quote: fact.quote,
+                judge: verdicts[index] ?? null,
+              };
+              return { ...candidate, key: candidateKey(candidate) };
+            });
+            if (privateDataset && live) candidates.push(...caseCandidates);
             records.push({
               caseId: testCase.id,
               strategy: live ? strategyId : "oracle-self-check",
               repeat,
               score,
+              ...(privateDataset && live
+                ? {
+                    prediction: {
+                      roles: extraction.roles.map(
+                        ({
+                          key,
+                          kind,
+                          org,
+                          title,
+                          startDate,
+                          endDate,
+                          quote,
+                          span,
+                        }) => ({
+                          key,
+                          kind,
+                          org,
+                          title,
+                          startDate,
+                          endDate,
+                          quote,
+                          span,
+                        }),
+                      ),
+                      facts: extraction.facts.map(
+                        ({ roleKey, kind, text, level, quote, span }) => ({
+                          roleKey,
+                          kind,
+                          text,
+                          level,
+                          quote,
+                          span,
+                        }),
+                      ),
+                    },
+                    judgeVerdicts: verdicts,
+                  }
+                : {}),
               dropped: dropped.length,
               unsupportedClaims: unsupported,
               ms: Date.now() - started,
               usage,
+              candidateKeys:
+                privateDataset && live ? caseCandidates.map((c) => c.key) : [],
               outcome: "ok",
             });
             recorded = true;
@@ -149,6 +281,7 @@ describe.sequential("extraction evaluation", () => {
                 outcome: "failed",
                 ms: Date.now() - started,
                 usage,
+                candidateKeys: [],
               });
             // No raw input, provider error bodies or candidate output in test failure logs.
             throw new Error("extract_eval_case_failed");

@@ -16,6 +16,7 @@ export const TRANSFER_TABLES = [
   "resume_versions",
   "documents",
   "document_versions",
+  "interview_answers",
 ] as const;
 export type TransferTable = (typeof TRANSFER_TABLES)[number];
 export type TransferValue = string | number | null | { binary: string };

@@ -7,6 +7,7 @@ const required = [
   "googleSignin",
   "extraction",
   "grounding",
+  "ats",
   "stagingE2e",
   "billing",
   "security",
@@ -71,6 +72,15 @@ try {
     !(evidence.latency?.sampleSize > 0)
   )
     report.missing.push("LATENCY_MEASUREMENTS");
+  // Local text extraction is necessary, but separate independent ATS parser checks remain required.
+  if (
+    evidence.ats?.syntheticPdfPassed !== true ||
+    evidence.ats?.syntheticDocxPassed !== true ||
+    !Number.isSafeInteger(evidence.ats?.externalParsersTested) ||
+    evidence.ats.externalParsersTested < 2 ||
+    evidence.ats?.unresolvedFailures !== 0
+  )
+    report.missing.push("ATS_VALIDATION");
   if (evidence.security?.openHighFindings !== 0)
     report.missing.push("SECURITY_FINDINGS");
   if (!(evidence.betaOperations?.quietDays >= 14))

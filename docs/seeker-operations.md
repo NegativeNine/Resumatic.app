@@ -67,7 +67,7 @@ npm run e2e:staging
 node scripts/audit-deletion.mjs --manifest deletion-manifest.json --report deletion-audit.json
 ```
 
-The staging E2E requires `STAGING_URL`, `TEST_SIGNIN_KEY`, and explicit positive `EVAL_BUDGET_USD` and `EVAL_MAX_CALLS`. Before model calls it freezes those lifetime limits in the synthetic test Vault; the independently configured daily cap also applies. The run fails closed if the test-only budget endpoint is unavailable. The E2E records the Vault run ledger before deletion and distinguishes account access revocation from storage erasure. The audit additionally needs Access service-token credentials. Its Workflow probe checks every supplied ledger ID, including superseded attempts, but cannot independently prove that the captured inventory is complete. Therefore, even all-zero counters remain pending until an independent complete-inventory attestation exists; missing counters, an unavailable endpoint, or an incomplete retention review also remain pending.
+The staging E2E requires `STAGING_URL`, `TEST_SIGNIN_KEY`, and explicit positive `EVAL_BUDGET_USD` and `EVAL_MAX_CALLS`. Before model calls it freezes those lifetime limits in the synthetic test Vault; the independently configured daily cap also applies. The run fails closed if the test-only budget endpoint is unavailable. The E2E records the Vault run ledger before deletion and distinguishes account access revocation from storage erasure. An upload whose acknowledged R2 put finishes after Vault closure is deleted when the Vault authoritatively rejects completion as gone; ambiguous RPC failures retain the key to protect already-committed sources. This cleanup is best effort: a Worker crash or unknown R2 outcome can leave a late write, so it does not prove quiescence. The audit additionally needs Access service-token credentials. Its Workflow probe checks every supplied ledger ID, including superseded attempts, but cannot independently prove that the captured inventory is complete. Therefore, even all-zero counters remain pending until an independent complete-inventory attestation exists; missing counters, an unavailable endpoint, or an incomplete retention review also remain pending.
 
 ## Metrics, alerts and abuse limits
 
@@ -79,11 +79,15 @@ To enable the fifteen-minute alert job, set `ALERTS_ENABLED=true`, `CF_ANALYTICS
 
 Queries weight rows by `_sample_interval`; these are sampled operational measurements, not a billing ledger. Quota and spend reservations in the Vault remain authoritative. The profile, role, and fact reads retry at most twice on transient retryable Durable Object errors, recreating the stub each time; overloaded errors are never retried. The `AUTH_LIMIT` and `WRITE_LIMIT` bindings limit bursts per Cloudflare location. Authenticated writes use the user ID; guest authentication/OAuth requests use an HMAC of the IP address. Shared networks can still hit a guest limit. Missing optional bindings skip burst protection, so configure them before public launch.
 
+## Interview answer provenance
+
+Answers to generated experience questions are saved as confirmed user-authored facts, without consuming an output credit. The vault also retains the originating question and the exact original answer as history. Editing the fact changes the claim used for generation; the original answer remains visible as history and is never used to override the correction. Interview provenance is included in the owner's data export and fenced replacement transfer, excluded from coach shares and MCP tools, and removed with the vault.
+
 ## Release evidence
 
 CI runs local type checks, tests, build and dependency auditing. `LIVE_EVALS_ENABLED` and `STAGING_DEPLOY_ENABLED` opt in the respective GitHub jobs. Missing live evidence cannot pass production promotion.
 
-The manual production workflow reads `RELEASE_EVIDENCE_JSON` from the protected production environment. Each required check has `status: "passed"`, the exact candidate commit SHA, and an HTTPS `reportUrl`: `models`, `googleSignin`, `extraction`, `grounding`, `stagingE2e`, `billing`, `security`, `deletion`, `latency`, `betaOperations`. Additional measurements are required:
+The manual production workflow reads `RELEASE_EVIDENCE_JSON` from the protected production environment. Each required check has `status: "passed"`, the exact candidate commit SHA, and an HTTPS `reportUrl`: `models`, `googleSignin`, `extraction`, `grounding`, `ats`, `stagingE2e`, `billing`, `security`, `deletion`, `latency`, `betaOperations`. Additional measurements are required:
 
 | Check | Required measurements |
 | --- | --- |
@@ -92,6 +96,8 @@ The manual production workflow reads `RELEASE_EVIDENCE_JSON` from the protected 
 | Latency | positive `p95Seconds < 90`, positive `sampleSize` |
 | Security | `openHighFindings: 0` |
 | Beta operations | `quietDays >= 14` |
+
+`ats` evidence also includes `syntheticPdfPassed: true`, `syntheticDocxPassed: true`, `externalParsersTested` (at least two), and `unresolvedFailures: 0`. Run `node scripts/ats-smoke.mjs --pdf synthetic-resume.pdf --docx synthetic-resume.docx --markers synthetic-markers.json --report ats-smoke-report.json` on actual synthetic exports. The markers JSON must contain nonempty `name`, `email`, `employer`, `title`, `accomplishment`, and `skill` strings. The smoke report contains only field names and booleans; it confirms text presence, not accurate reading order or ATS interpretation. Inspect both exports in at least two independent ATS parsers, record their results, and link that report separately before marking the `ats` check passed.
 
 `node scripts/check-release.mjs` validates the evidence envelope; it does not manufacture or independently certify the linked reports. The reviewer must inspect those reports, the sample adequacy and the retention conclusions. Production deployment also rejects a staging test secret and an active maintenance fence.
 

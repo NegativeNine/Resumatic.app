@@ -4,6 +4,7 @@ import { getCookie } from "hono/cookie";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { durableReadResult } from "./rpc-read";
+import { completeReservedUpload } from "./upload-cleanup";
 import { unwrapResult } from "../shared/result";
 import { rateLimitRequest, httpRoute } from "./limits";
 import { OcrImagesSchema, validateTranscriptionInput } from "../ai/transcribe";
@@ -399,7 +400,12 @@ api.post("/sources", UPLOAD_LIMIT, async (c) => {
   await c.env.FILES.put(descriptor.r2Key, bytes, {
     httpMetadata: { contentType },
   });
-  return c.json(await myVault(c).completeUpload(c.get("who"), descriptor), 201);
+  return c.json(
+    await completeReservedUpload(c.env.FILES, descriptor.r2Key, () =>
+      myVault(c).completeUpload(c.get("who"), descriptor),
+    ),
+    201,
+  );
 });
 
 api.get("/sources/:id/text", async (c) =>
@@ -454,7 +460,9 @@ api.post(
       httpMetadata: { contentType: "application/json" },
     });
     return c.json(
-      await myVault(c).completeUpload(c.get("who"), descriptor),
+      await completeReservedUpload(c.env.FILES, descriptor.r2Key, () =>
+        myVault(c).completeUpload(c.get("who"), descriptor),
+      ),
       202,
     );
   },
@@ -796,6 +804,31 @@ api.post("/applications/:id/documents", JSON_LIMIT, async (c) => {
     202,
   );
 });
+api.post(
+  "/documents/:id/questions/:questionId/answer",
+  JSON_LIMIT,
+  async (c) => {
+    const body = await jsonBody(
+      c,
+      z
+        .object({
+          roleId: z.string().max(100).nullable(),
+          answer: z.string().trim().min(1).max(MAX_FACT_CHARS),
+        })
+        .strict(),
+    );
+    return c.json(
+      await myVault(c).answerInterview(
+        c.get("who"),
+        c.req.param("id"),
+        c.req.param("questionId"),
+        body,
+        requestKey(c),
+      ),
+      201,
+    );
+  },
+);
 api.get("/documents/:id", async (c) =>
   c.json(await myVault(c).getDocument(c.get("who"), c.req.param("id"))),
 );

@@ -57,8 +57,26 @@ export function parseCsv(text: string): string[][] {
   return rows;
 }
 
-/** Only the four career-data CSVs are accepted; private messages and unrelated archive entries are ignored. */
-export function linkedInMarkdown(bytes: Uint8Array): string {
+export interface LinkedInCell {
+  name: string;
+  value: string;
+  span: [number, number];
+  line: [number, number];
+}
+export interface LinkedInRow {
+  file: string;
+  cells: LinkedInCell[];
+}
+export interface LinkedInDocument {
+  markdown: string;
+  rows: LinkedInRow[];
+}
+
+/** Convert supported career files to one immutable source and retain each original cell's offsets. */
+export function linkedInDocument(
+  bytes: Uint8Array,
+  order: "metadata-first" | "legacy" = "metadata-first",
+): LinkedInDocument {
   let expanded = 0;
   let entries = 0;
   const names = new Set<string>();
@@ -91,24 +109,80 @@ export function linkedInMarkdown(bytes: Uint8Array): string {
     if (error instanceof AppError) throw error;
     throw new AppError("invalid", "the ZIP export could not be read");
   }
-  const parts = ["# LinkedIn data export"];
+  let markdown = "";
+  const mapped: LinkedInRow[] = [];
+  const append = (text: string): [number, number] => {
+    if (markdown) markdown += "\n\n";
+    const start = markdown.length;
+    markdown += text;
+    return [start, markdown.length];
+  };
+  append("# LinkedIn data export");
+  const preferred: Record<string, string[]> = {
+    "positions.csv": [
+      "company name",
+      "company",
+      "organization name",
+      "title",
+      "position",
+      "started on",
+      "start date",
+      "finished on",
+      "end date",
+    ],
+    "education.csv": [
+      "school name",
+      "school",
+      "degree name",
+      "degree",
+      "start date",
+      "started on",
+      "end date",
+      "finished on",
+    ],
+  };
   for (const [path, data] of Object.entries(files)) {
     if (data.length > 5 * 1024 * 1024)
       throw new AppError("too_large", "the expanded archive is too large");
     const rows = parseCsv(strFromU8(data));
     const header = rows.shift();
     if (!header) continue;
-    parts.push(`## ${path.split("/").at(-1)}`);
+    const normalized = header.map((name) => name.trim().toLowerCase());
+    if (new Set(normalized).size !== normalized.length)
+      throw new AppError("invalid", "CSV headings must be unique");
+    const file = path.split("/").at(-1)!.toLowerCase();
+    append(`## ${path.split("/").at(-1)}`);
     rows.forEach((row, index) => {
       if (row.length !== header.length)
         throw new AppError("invalid", "CSV row does not match its headings");
-      parts.push(`### Row ${index + 1}`);
-      row.forEach((cell, i) => {
-        if (cell.trim()) parts.push(`${header[i]}: ${cell}`);
-      });
+      append(`### Row ${index + 1}`);
+      const indexes = row.map((_, i) => i);
+      const keys = preferred[file] ?? [];
+      if (order === "metadata-first")
+        indexes.sort((a, b) => {
+          const rank = (i: number) => {
+            const n = keys.indexOf(normalized[i]!);
+            return n < 0 ? keys.length + i : n;
+          };
+          return rank(a) - rank(b);
+        });
+      const cells: LinkedInCell[] = [];
+      for (const i of indexes) {
+        const name = header[i]!;
+        const value = row[i]!;
+        if (!value.trim()) continue;
+        const line = append(`${name}: ${value}`);
+        const start = line[0] + name.length + 2;
+        cells.push({
+          name: normalized[i]!,
+          value,
+          line,
+          span: [start, start + value.length],
+        });
+      }
+      mapped.push({ file, cells });
     });
   }
-  const markdown = parts.join("\n\n");
   if (!names.size)
     throw new AppError(
       "invalid",
@@ -119,5 +193,10 @@ export function linkedInMarkdown(bytes: Uint8Array): string {
       "too_large",
       "the career export is too long; import fewer records",
     );
-  return markdown;
+  return { markdown, rows: mapped };
+}
+
+/** Only the four career-data CSVs are accepted; unrelated archive entries are ignored. */
+export function linkedInMarkdown(bytes: Uint8Array): string {
+  return linkedInDocument(bytes).markdown;
 }
