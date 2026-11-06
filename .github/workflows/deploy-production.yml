@@ -51,7 +51,7 @@ jobs:
       - name: Verify production secret names do not shadow evaluated configuration
         run: |
           npx wrangler secret list > production-secret-names.json
-          node --input-type=module -e 'import fs from "node:fs"; import {validProductionSecretNames} from "./scripts/lib/release-secret-names.mjs"; const secrets=JSON.parse(fs.readFileSync("production-secret-names.json","utf8")); if (!validProductionSecretNames(secrets)) process.exit(1);'
+          node --input-type=module -e 'import fs from "node:fs"; import {readConfig} from "./scripts/lib/config.mjs"; import {validProductionSecretNames} from "./scripts/lib/release-secret-names.mjs"; const secrets=JSON.parse(fs.readFileSync("production-secret-names.json","utf8")); const {config}=await readConfig("production"); if (!validProductionSecretNames(secrets,config.vars)) process.exit(1);'
       # Production uses the top-level Wrangler configuration, not env.production.
       - run: npm run build
       - run: npx wrangler deploy

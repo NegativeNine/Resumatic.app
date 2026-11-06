@@ -1280,6 +1280,20 @@ export class Vault extends DurableObject<Env> {
             "experience changed; refresh and review again",
           );
       }
+      // A confirmed fact is unusable while its role is rejected. Require an
+      // explicit role confirmation instead of silently accepting a fact that
+      // cannot participate in tailoring. Check the whole request first so a
+      // conflicting batch leaves every review decision unchanged.
+      const confirming = new Set(r.confirm);
+      const rejecting = new Set(r.reject);
+      for (const id of r.confirm) {
+        const role = this.sql.exec<{ id: string; state: ReviewState }>(
+          `SELECT r.id, r.state FROM facts f JOIN roles r ON r.id = f.role_id WHERE f.id = ?`,
+          id,
+        ).toArray()[0];
+        if (role && (rejecting.has(role.id) || (role.state === "rejected" && !confirming.has(role.id))))
+          throw new AppError("conflict", "confirm the role before confirming its facts");
+      }
       for (const id of r.confirm) {
         this.extractionFeedbackStore.review(id, "confirmed", Date.now());
         this.sql.exec(

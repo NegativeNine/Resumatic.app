@@ -231,6 +231,32 @@ describe("Distill", () => {
 });
 
 describe("review", () => {
+  it("requires explicit role confirmation before restoring a fact from a rejected role", async () => {
+    const user = await signIn();
+    await waitForSource(user, await uploadResume(user));
+    const { roles } = await user.json("/api/roles");
+    const { facts } = await user.json("/api/facts");
+    const role = roles.find((r: { org: string }) => r.org === "Acme Corp");
+    const fact = facts.find((f: { roleId: string }) => f.roleId === role.id);
+    const other = facts.find((f: { roleId: string | null }) => f.roleId !== role.id);
+
+    expect((await user.send("POST", "/api/review", { confirm: [], reject: [role.id] })).status).toBe(204);
+    // A failed mixed batch must not confirm an unrelated fact either.
+    const blocked = await user.send("POST", "/api/review", { confirm: [other.id, fact.id], reject: [] });
+    expect(blocked.status).toBe(409);
+    const afterBlocked = (await user.json("/api/facts")).facts;
+    expect(afterBlocked.find((f: { id: string }) => f.id === fact.id).state).toBe("rejected");
+    expect(afterBlocked.find((f: { id: string }) => f.id === other.id).state).toBe("proposed");
+
+    // Batch recovery is allowed even if the fact appears before its role.
+    expect((await user.send("POST", "/api/review", { confirm: [fact.id, role.id], reject: [] })).status).toBe(204);
+    expect((await user.json("/api/roles")).roles.find((r: { id: string }) => r.id === role.id).state).toBe("confirmed");
+    expect((await user.json("/api/facts")).facts.find((f: { id: string }) => f.id === fact.id).state).toBe("confirmed");
+
+    expect((await user.send("POST", "/api/review", { confirm: [fact.id], reject: [role.id] })).status).toBe(409);
+    expect((await user.json("/api/roles")).roles.find((r: { id: string }) => r.id === role.id).state).toBe("confirmed");
+  });
+
   it("confirms facts with their roles, and rejecting a role rejects its proposed facts", async () => {
     const user = await signIn();
     await waitForSource(user, await uploadResume(user));

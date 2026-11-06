@@ -49,6 +49,8 @@ function FactItem({
   const ref = useRef<HTMLLIElement>(null);
   const review = useReview(fact.id, reload, ref, fact.revision ?? 1);
   const textId = useId();
+  const role = roles.find((item) => item.id === fact.roleId);
+  const roleRejected = role?.state === "rejected";
 
   function closeEditor() {
     setEditing(false);
@@ -101,6 +103,12 @@ function FactItem({
       {fact.levelNeedsReview && (
         <p className="hint">The earlier ownership level{fact.previousLevel ? ` (${LEVEL_LABEL[fact.previousLevel]})` : ""} needs your confirmation before it is used.</p>
       )}
+      {roleRejected && (
+        <p className="hint">This fact can't be used while its role is rejected. Confirm the role to use it.</p>
+      )}
+      {role?.state === "proposed" && fact.state === "confirmed" && (
+        <p className="hint">This fact can't be used until its role is confirmed.</p>
+      )}
       {fact.reviewReasons?.includes("strategy_disagreement") && (
         <p className="hint">
           This passage was interpreted differently on a second reading. Check
@@ -113,6 +121,7 @@ function FactItem({
           state={fact.state}
           describedBy={textId}
           review={review}
+          confirmDisabled={roleRejected}
           onEdit={
             fact.state === "rejected" ? undefined : () => setEditing(true)
           }

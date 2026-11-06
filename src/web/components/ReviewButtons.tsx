@@ -68,6 +68,7 @@ interface Props {
   describedBy: string;
   review: ReviewControl;
   onEdit?: () => void;
+  confirmDisabled?: boolean;
 }
 
 export function ReviewButtons({
@@ -76,6 +77,7 @@ export function ReviewButtons({
   describedBy,
   review,
   onEdit,
+  confirmDisabled = false,
 }: Props) {
   const busy = review.deciding !== null;
   const suffix = noun ? ` ${noun}` : "";
@@ -87,7 +89,7 @@ export function ReviewButtons({
           type="button"
           className="primary small"
           aria-describedby={describedBy}
-          disabled={busy}
+          disabled={busy || confirmDisabled}
           onClick={() => void review.decide("confirm")}
         >
           {review.deciding === "confirm" ? "Confirming…" : `Confirm${suffix}`}

@@ -11,20 +11,25 @@ import { extractionConfiguration } from "../test/extract-evals/configuration.mjs
 import { configuredExtractors } from "./lib/extractor-routes.mjs";
 import { validEvaluationSecretNames, validProductionSecretNames } from "./lib/release-secret-names.mjs";
 
-test("production secrets cannot shadow the evaluated extractor or model configuration", () => {
-  assert.equal(validProductionSecretNames([{ name: "SESSION_KEY" }, { name: "CF_AI_TOKEN" }]), true);
+test("production secrets cannot shadow reviewed variables or activate guarded settings", () => {
+  const vars = { DAILY_SPEND_CAP_USD: "1", ACCESS_AUD: "configured", FUTURE_SETTING: "reviewed" };
+  assert.equal(validProductionSecretNames([{ name: "SESSION_KEY" }, { name: "CF_AI_TOKEN" }], vars), true);
+  for (const name of ["SESSION_KEY", "OIDC_CLIENT_SECRET", "CF_AI_TOKEN", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "ALERT_WEBHOOK_URL", "CF_ANALYTICS_TOKEN"]) {
+    assert.equal(validProductionSecretNames([{ name }], vars), true, name);
+    assert.equal(validProductionSecretNames([{ name }], { ...vars, [name]: "reviewed" }), false, `shadowed ${name}`);
+  }
   for (const name of ["TEST_SIGNIN_KEY", "MODEL_EXTRACT", "MODEL_JUDGE", "EXTRACTOR", "EXTRACTOR_BY_FORMAT", "EXTRACTOR_EXPERIMENT", "ROLE_UNKNOWN_END_ENABLED"]) {
-    assert.equal(validProductionSecretNames([{ name }]), false);
+    assert.equal(validProductionSecretNames([{ name }], vars), false);
     if (name !== "TEST_SIGNIN_KEY") assert.equal(validEvaluationSecretNames([{ name }]), false);
   }
   assert.equal(validEvaluationSecretNames([{ name: "TEST_SIGNIN_KEY" }]), true);
-  assert.equal(validProductionSecretNames([{ name: "R2_CACHE_FENCE_ENABLED" }]), false);
-  assert.equal(validProductionSecretNames([{ name: "PLACEMENT_FENCE_ENABLED" }]), false);
-  // Secret values cannot be inspected, so even a secret containing "1" could
-  // later be replaced with "16" and bypass the reviewed configuration.
-  assert.equal(validProductionSecretNames([{ name: "DIRECTORY_SHARDS" }]), false);
-  assert.equal(validProductionSecretNames({}), false);
-  assert.equal(validProductionSecretNames([{}]), false);
+  for (const name of ["DAILY_SPEND_CAP_USD", "ACCESS_AUD", "FUTURE_SETTING", "ALLOW_TEST_SIGNIN", "RESTORE_FENCE_IDS", "R2_CACHE_FENCE_ENABLED", "PLACEMENT_FENCE_ENABLED", "DIRECTORY_SHARDS", "MCP_ENABLED", "APP_ORIGIN", "PILOT_SHARED_BUDGET", "MODEL_PRICES_JSON", "UNKNOWN_SECRET"]) {
+    assert.equal(validProductionSecretNames([{ name }], vars), false, name);
+  }
+  assert.equal(validProductionSecretNames({}, vars), false);
+  assert.equal(validProductionSecretNames([{}], vars), false);
+  assert.equal(validProductionSecretNames([], undefined), false);
+  assert.equal(validProductionSecretNames([], []), false);
 });
 
 test("experimental cache-write fencing cannot be enabled in production configuration", async () => {
