@@ -250,7 +250,7 @@ function LineEditor({
         rows={3}
         value={text}
         onChange={(e) => setText(e.target.value)}
-        disabled={!!documentId}
+        disabled={pending || !!documentId}
         aria-describedby={`${id}-note ${id}-count`}
         autoFocus
       />

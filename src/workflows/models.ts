@@ -44,7 +44,10 @@ export function runModels(
       // chat-shaped request does not establish their billing or retry bounds.
       if (pilot && (!PILOT_CHAT_ROUTES.has(attempt.route) || attempt.model.startsWith("@") || !price))
         throw new AppError("unavailable", "this model route is not bounded for the shared pilot");
-      if (price && (price[0] <= 0 || (attempt.maxOutputTokens > 0 && price[1] <= 0)))
+      if (price && (price[0] <= 0 ||
+          (attempt.maxOutputTokens > 0 && price[1] <= 0) ||
+          // A zero output-token bound does not bound a positive output price.
+          (attempt.maxOutputTokens === 0 && price[1] > 0)))
         throw new AppError(
           "unavailable",
           "this model has no configured cost bound",
@@ -90,9 +93,10 @@ export function runModels(
               usage.inputTokens * price[0] +
                 (usage.outputTokens ?? 0) * price[1],
             )
-          : usage.costUsd !== null
-            ? Math.ceil(usage.costUsd * 1_000_000)
-            : null;
+          // reportUsage's cost is derived from built-in prices, which may
+          // differ from this Worker's configured override. Missing usage must
+          // retain the reservation instead of settling at an unrelated rate.
+          : null;
       const shared = pilot ? await pilot.settle(usage.attemptId, cost) : null;
       await v.settleModelAttempt(
         usage.attemptId,

@@ -17,9 +17,9 @@ if (!browser?.startsWith("/")) {
   process.exitCode = 2;
 } else {
   const temp = await mkdtemp(join(tmpdir(), "resumatic-browser-smoke-"));
-  let vite, server, chrome, ws;
+  let vite, server, chrome, ws, releaseManualFact, releaseManualRole, releaseAnswer;
   let stage = "setup";
-  const state = { signedIn: false, source: false, sourceRunning: false, sourceCancel: false, sourceFailed: false, sourceRetryKeys: [], documentRetryKeys: [], roleState: "proposed", factState: "proposed", manualFact: null, manualFactKeys: [], uploadKeys: [], applications: [], documents: [], tailored: false, resumeRunning: false, resumeCancel: false, resumeUncited: false, resumeLegacy: false, resumeNeedsGroundingReview: false, legacyChecked: false, legacyHeadersReady: false, legacyFinalized: false, legacyExtraLine: false, resumeText: "Built 12 payment services", resumeVersion: 1, manualEdits: [], manualDocument: null };
+  const state = { signedIn: false, source: false, sourceRunning: false, sourceCancel: false, sourceFailed: false, sourceRetryKeys: [], documentRetryKeys: [], roleState: "proposed", factState: "proposed", manualFact: null, manualFactKeys: [], manualRoles: [], uploadKeys: [], applications: [], documents: [], tailored: false, resumeRunning: false, resumeCancel: false, resumeUncited: false, resumeLegacy: false, resumeNeedsGroundingReview: false, legacyChecked: false, legacyHeadersReady: false, legacyFinalized: false, legacyExtraLine: false, resumeText: "Built 12 payment services", resumeVersion: 1, manualEdits: [], manualDocument: null };
   const role = { id: "role-1", kind: "job", org: "Acme Example", title: "Engineer", startDate: "2021", endDate: null, state: "proposed", quote: "Acme Example — Engineer", sourceId: "source-1", revision: 1 };
   const fact = { id: "fact-1", roleId: "role-1", kind: "accomplishment", text: "Built 12 payment services", level: null, levelNeedsReview: true, previousLevel: "led", origin: "user", state: "proposed", quote: "Built 12 payment services", sourceId: "source-1", revision: 1 };
   const me = { userId: "synthetic-user", profile: { name: "Avery Example", email: "avery@example.test", phone: "", location: "", links: [] }, quota: { used: 0, limit: 3, month: "2026-11" } };
@@ -35,7 +35,14 @@ if (!browser?.startsWith("/")) {
     if (path === "/api/sources" && req.method === "GET") return send(res, 200, { sources: state.source ? [{ id: "source-1", filename: "synthetic.pdf", state: state.sourceRunning ? "queued" : state.sourceFailed ? "failed" : "ready", retryRunId: state.sourceFailed ? "run-1" : undefined, dispatchUncertain: state.sourceRunning, cancellationPending: state.sourceCancel, error: null, createdAt: 1, proposed: 2 }, { id: "source-ocr", filename: "synthetic.pdf (image transcription)", state: "ready", origin: "ocr", parentSourceId: "source-1", error: null, createdAt: 2, proposed: 0 }] : [] });
     if (path === "/api/sources/source-1/cancel" && req.method === "POST") { state.sourceCancel = true; res.writeHead(202); res.end(); return; }
     if (path === "/api/runs/run-1/retry" && req.method === "POST") { const key = req.headers["idempotency-key"]; if (typeof key !== "string" || !key) return send(res, 400, { error: "invalid" }); state.sourceRetryKeys.push(key); if (state.sourceRetryKeys.length === 1) return send(res, 503, { error: "unavailable" }); state.sourceFailed = false; return send(res, 202, { runId: "run-2", targetId: "source-1" }); }
-    if (path === "/api/roles" && req.method === "GET") return send(res, 200, { roles: state.source ? [{ ...role, state: state.roleState }] : [] });
+    if (path === "/api/roles" && req.method === "GET") return send(res, 200, { roles: [...(state.source ? [{ ...role, state: state.roleState }] : []), ...state.manualRoles] });
+    if (path === "/api/roles" && req.method === "POST") {
+      const body = JSON.parse((await read(req)).toString("utf8"));
+      if (body.org !== "Synthetic Volunteer Group") return send(res, 400, { error: "invalid" });
+      await new Promise((resolve) => { releaseManualRole = resolve; });
+      state.manualRoles.push({ id: "manual-role", ...body, state: "confirmed", quote: null, sourceId: null, revision: 1 });
+      return send(res, 201, { roleId: "manual-role" });
+    }
     if (path === "/api/facts" && req.method === "GET") return send(res, 200, { facts: [...(state.source ? [{ ...fact, state: state.factState }] : []), ...(state.manualFact ? [state.manualFact] : [])] });
     if (path === "/api/v2/facts" && req.method === "POST") {
       const body = JSON.parse((await read(req)).toString("utf8"));
@@ -45,6 +52,7 @@ if (!browser?.startsWith("/")) {
       if (!state.manualFact) {
         state.manualFact = { id: "manual-fact", roleId: null, kind: "accomplishment", text: body.text, level: null, origin: "user", state: "confirmed", quote: null, sourceId: null, revision: 1 };
         // The server committed the fact but the client received an error.
+        await new Promise((resolve) => { releaseManualFact = resolve; });
         return send(res, 503, { error: "unavailable" });
       }
       if (key !== state.manualFactKeys[0]) return send(res, 409, { error: "conflict" });
@@ -119,6 +127,11 @@ if (!browser?.startsWith("/")) {
       return send(res, 202, { runId: "document-retry", targetId: "document-retry" });
     }
     if (path === "/api/applications/application-1/documents" && req.method === "GET") return send(res, 200, { documents: state.documents });
+    if (path === "/api/documents/question-doc/questions/question-1/answer" && req.method === "POST") {
+      state.answer = JSON.parse((await read(req)).toString("utf8"));
+      await new Promise((resolve) => { releaseAnswer = resolve; });
+      return send(res, 201, { factId: "answer-fact" });
+    }
     if (path === "/api/documents/manual-edit" && req.method === "GET") return send(res, 200, state.manualDocument);
     if (path === "/api/applications/application-1/documents" && req.method === "POST") {
       const body = JSON.parse((await read(req)).toString("utf8"));
@@ -174,6 +187,7 @@ if (!browser?.startsWith("/")) {
     const call = (method, params = {}) => new Promise((resolve, reject) => { const id = ++next; const timer = setTimeout(() => { pending.delete(id); reject(new Error("CDP_TIMEOUT")); }, 5000); pending.set(id, { resolve, reject, timer }); try { ws.send(JSON.stringify({ id, method, params })); } catch { clearTimeout(timer); pending.delete(id); reject(new Error("CDP_CLOSED")); } });
     const evalPage = async (expression) => { const r = await call("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }); if (r.exceptionDetails) throw new Error("BROWSER_SCRIPT_FAILED"); return r.result.value; };
     const wait = async (expression) => { for (let i = 0; i < 100; i++) { if (await evalPage(expression)) return; await delay(100); } throw new Error("BROWSER_WAIT_TIMEOUT"); };
+    const waitForRelease = async (get) => { for (let i = 0; i < 100; i++) { const release = get(); if (release) return release; await delay(100); } throw new Error("API_GATE_TIMEOUT"); };
     const clickText = (selector, text) => evalPage(`(() => { const e = [...document.querySelectorAll(${JSON.stringify(selector)})].find(x => x.textContent.trim() === ${JSON.stringify(text)}); if (!e) return false; e.click(); return true; })()`);
     await call("Page.enable"); await call("Runtime.enable"); await call("Fetch.enable", { patterns: [{ urlPattern: "*" }] }); await call("Page.navigate", { url: origin });
     stage = "sign_in"; await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Sign in with Google')`); await clickText("a", "Sign in with Google"); await wait(`document.body?.innerText.includes('Sources & facts') && !!document.querySelector('input[type=file]')`);
@@ -207,10 +221,29 @@ if (!browser?.startsWith("/")) {
     await evalPage(`document.querySelector('.add-fact-form textarea').focus()`);
     await call("Input.insertText", { text: "Built an accessible application" });
     await clickText(".add-fact-form button", "Add fact");
+    const finishManualFact = await waitForRelease(() => releaseManualFact);
+    await wait(`!![...document.querySelectorAll('.add-fact-form button')].find(x => x.textContent.trim() === 'Adding…')`);
+    if (!await evalPage(`(() => { const f = document.querySelector('form.add-fact-form'); return !!f && [...f.querySelectorAll('textarea, select')].every(e => e.disabled) && [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Add a fact yourself')?.disabled; })()`)) throw new Error("MANUAL_FACT_FIELDS_NOT_LOCKED");
+    finishManualFact();
     await wait(`!!document.querySelector('.add-fact-form [role="alert"]')`);
+    if (!await evalPage(`(() => { const f = document.querySelector('form.add-fact-form'); return f?.querySelector('textarea')?.value === 'Built an accessible application' && [...f.querySelectorAll('textarea, select')].every(e => !e.disabled); })()`)) throw new Error("MANUAL_FACT_RETRY_INPUT_LOST");
     await clickText(".add-fact-form button", "Add fact");
     await wait(`document.body?.innerText.includes('Fact added.')`);
     if (state.manualFactKeys.length !== 2 || state.manualFactKeys[0] !== state.manualFactKeys[1]) throw new Error("MANUAL_FACT_RETRY_KEY_MISMATCH");
+    await clickText(".add-fact-form button", "Close");
+    await wait(`document.activeElement?.textContent.trim() === 'Add a fact yourself'`);
+    stage = "manual_role_submission_lock";
+    await clickText("button", "Add a role");
+    await wait(`!!document.querySelector('form[aria-label="Add a role"] input[type="text"]')`);
+    await evalPage(`document.querySelector('form[aria-label="Add a role"] input[type="text"]').focus()`);
+    await call("Input.insertText", { text: "Synthetic Volunteer Group" });
+    await clickText('form[aria-label="Add a role"] button', "Add role");
+    const finishManualRole = await waitForRelease(() => releaseManualRole);
+    await wait(`!![...document.querySelectorAll('form[aria-label="Add a role"] button')].find(x => x.textContent.trim() === 'Saving…')`);
+    if (!await evalPage(`(() => { const f = document.querySelector('form[aria-label="Add a role"]'); return !!f && [...f.querySelectorAll('input, select')].every(e => e.disabled) && [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Add a role')?.disabled; })()`)) throw new Error("MANUAL_ROLE_FIELDS_NOT_LOCKED");
+    finishManualRole();
+    await wait(`!document.querySelector('form[aria-label="Add a role"]') && document.activeElement?.textContent.trim() === 'Add a role'`);
+    if (state.manualRoles.length !== 1) throw new Error("MANUAL_ROLE_NOT_SAVED");
     stage = "application"; await clickText("nav a", "Applications"); await wait(`!!document.querySelector('textarea')`); await evalPage(`document.querySelector('textarea').focus()`); await call("Input.insertText", { text: "Synthetic platform engineer position requiring experience building reliable payment services and APIs." }); await clickText("button", "Save job"); await wait(`document.body?.innerText.includes('Synthetic platform engineer job')`);
     stage = "tracking"; await clickText("button", "Track & prepare"); await wait(`!!document.querySelector('.application-workspace select')`); await evalPage(`(() => { const e = document.querySelector('.application-workspace select'); e.value = 'applied'; e.dispatchEvent(new Event('change', { bubbles: true })); })()`); await evalPage(`document.querySelector('.application-workspace textarea').focus()`); await call("Input.insertText", { text: "Synthetic follow-up note" }); await clickText("button", "Save tracking details"); await wait(`document.querySelector('.application-workspace')?.innerText.includes('Saved.')`); if (state.applications[0]?.status !== "applied" || state.applications[0]?.notes !== "Synthetic follow-up note") throw new Error("TRACKING_NOT_SAVED");
     stage = "cover_letter"; await clickText("button", "Create cover letter"); await wait(`!![...document.querySelectorAll('summary')].find(x => x.textContent.trim() === 'Read cover letter')`); await clickText("summary", "Read cover letter"); await wait(`document.body?.innerText.includes('I built 12 payment services.')`);
@@ -223,6 +256,16 @@ if (!browser?.startsWith("/")) {
     await wait(`!![...document.querySelectorAll('summary')].find(x => x.textContent.trim() === 'Read experience questions')`);
     await clickText("summary", "Read experience questions");
     await wait(`document.body?.innerText.includes('You previously saved an answer to this question.')`);
+    stage = "answer_submission_lock";
+    await evalPage(`document.querySelector('.gap-answer textarea').focus()`);
+    await call("Input.insertText", { text: "Improved reliability with monitoring" });
+    await clickText(".gap-answer button", "Save my answer as a fact");
+    const finishAnswer = await waitForRelease(() => releaseAnswer);
+    await wait(`!![...document.querySelectorAll('.gap-answer button')].find(x => x.textContent.trim() === 'Saving…')`);
+    if (!await evalPage(`(() => { const f = document.querySelector('.gap-answer'); return f?.querySelector('textarea')?.disabled && f?.querySelector('select')?.disabled; })()`)) throw new Error("INTERVIEW_FIELDS_NOT_LOCKED");
+    finishAnswer();
+    await wait(`document.body?.innerText.includes('Saved to your vault')`);
+    if (state.answer?.answer !== "Improved reliability with monitoring" || !await evalPage(`document.querySelector('.gap-answer textarea')?.value === 'Improved reliability with monitoring'`)) throw new Error("INTERVIEW_ANSWER_CHANGED_WHILE_SAVING");
     stage = "uncertain_document_cancellation";
     state.documents.push({ id: "document-2", applicationId: "application-1", kind: "prep", state: "running", dispatchUncertain: true, createdAt: 2, result: null, facts: {} });
     await clickText("button", "Close workspace"); await clickText("button", "Track & prepare");
@@ -300,7 +343,7 @@ if (!browser?.startsWith("/")) {
     if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Revoke link')`)) throw new Error("SHARE_REVOKE_MISSING");
     if (!await evalPage(`!!document.querySelector('a[href="/api/export/archive"]')`)) throw new Error("ARCHIVE_LINK_MISSING");
     if (!await evalPage(`!!document.querySelector('a[href="/api/export"]') && [...document.querySelectorAll('a[href="#/sources"]')].some(x => x.textContent.includes('Sources & facts'))`)) throw new Error("EXPORT_DOWNLOAD_LINKS_MISSING");
-    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, factLevelReview: true, manualFactRetryKey: true, applicationCreation: true, applicationTracking: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true } }));
+    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, factLevelReview: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, editorFocusReturn: true, applicationCreation: true, applicationTracking: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true } }));
   } catch {
     console.log(JSON.stringify({ status: "failed", reason: "BROWSER_SMOKE_FAILED", stage, promotionEligible: false })); process.exitCode = 1;
   } finally {

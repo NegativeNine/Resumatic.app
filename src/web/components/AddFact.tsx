@@ -2,7 +2,7 @@ import { useId, useRef, useState } from "react";
 import { FACT_KINDS, LEVELS, MAX_FACT_CHARS, type FactKind, type Level, type RoleView } from "../../shared/api";
 import { api } from "../api";
 import { FACT_KIND_LABEL, LEVEL_LABEL } from "../format";
-import { useAction } from "../hooks";
+import { useAction, type Action } from "../hooks";
 import { roleLabel } from "../vault";
 import { ActionError, CharCount, Field } from "./ui";
 
@@ -15,6 +15,7 @@ export function AddFact({ roles, onAdded }: Props) {
   const [open, setOpen] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
   const formId = useId();
+  const action = useAction();
 
   function close() {
     setOpen(false);
@@ -23,21 +24,21 @@ export function AddFact({ roles, onAdded }: Props) {
 
   return (
     <div className="add-fact">
-      <button ref={toggle} type="button" aria-expanded={open} aria-controls={formId} onClick={() => setOpen(!open)}>
+      <button ref={toggle} type="button" aria-expanded={open} aria-controls={formId} disabled={action.pending} onClick={() => setOpen(!open)}>
         Add a fact yourself
       </button>
-      {open && <AddFactForm id={formId} roles={roles} onAdded={onAdded} onClose={close} />}
+      {open && <AddFactForm id={formId} roles={roles} onAdded={onAdded} onClose={close} action={action} />}
     </div>
   );
 }
 
-function AddFactForm({ id, roles, onAdded, onClose }: Props & { id: string; onClose: () => void }) {
+function AddFactForm({ id, roles, onAdded, onClose, action }: Props & { id: string; onClose: () => void; action: Action }) {
   const [roleId, setRoleId] = useState("");
   const [kind, setKind] = useState<FactKind>("accomplishment");
   const [level, setLevel] = useState<Level | "">("");
   const [text, setText] = useState("");
   const [added, setAdded] = useState(false);
-  const { run, pending, error } = useAction();
+  const { run, pending, error } = action;
   const trimmed = text.trim();
   const choices = roles.filter((r) => r.state !== "rejected");
 
@@ -66,7 +67,7 @@ function AddFactForm({ id, roles, onAdded, onClose }: Props & { id: string; onCl
       </p>
       <div className="field-grid">
         <Field id={`${id}-role`} label="Role">
-          <select id={`${id}-role`} value={roleId} onChange={(e) => setRoleId(e.target.value)} autoFocus>
+          <select id={`${id}-role`} value={roleId} onChange={(e) => setRoleId(e.target.value)} disabled={pending} autoFocus>
             <option value="">No role (a general skill or credential)</option>
             {choices.map((r) => (
               <option key={r.id} value={r.id}>
@@ -76,7 +77,7 @@ function AddFactForm({ id, roles, onAdded, onClose }: Props & { id: string; onCl
           </select>
         </Field>
         <Field id={`${id}-kind`} label="Kind">
-          <select id={`${id}-kind`} value={kind} onChange={(e) => setKind(e.target.value as FactKind)}>
+          <select id={`${id}-kind`} value={kind} onChange={(e) => setKind(e.target.value as FactKind)} disabled={pending}>
             {FACT_KINDS.map((k) => (
               <option key={k} value={k}>
                 {FACT_KIND_LABEL[k]}
@@ -88,6 +89,7 @@ function AddFactForm({ id, roles, onAdded, onClose }: Props & { id: string; onCl
           <select
             id={`${id}-level`}
             value={level}
+            disabled={pending}
             onChange={(e) => setLevel(e.target.value as Level | "")}
             aria-describedby={`${id}-level-hint`}
           >
@@ -105,6 +107,7 @@ function AddFactForm({ id, roles, onAdded, onClose }: Props & { id: string; onCl
           id={`${id}-text`}
           rows={3}
           value={text}
+          disabled={pending}
           placeholder="Write it as you'd want it on a resume."
           onChange={(e) => {
             setText(e.target.value);

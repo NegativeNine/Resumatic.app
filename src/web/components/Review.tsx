@@ -1,7 +1,7 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FactView, ReviewState, RoleView } from "../../shared/api";
 import { STATE_LABEL } from "../format";
-import type { Reload } from "../hooks";
+import { useAction, type Reload } from "../hooks";
 import { href } from "../router";
 import { countByState, groupByRole, isReading, type Vault } from "../vault";
 import { AddFact } from "./AddFact";
@@ -74,18 +74,27 @@ export function Review({ vault, reload }: { vault: Vault; reload: () => Promise<
 function AddRole({ reload, onAdded }: { reload: Reload; onAdded: () => void }) {
   const [open, setOpen] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef(false);
+  const action = useAction();
+
+  useEffect(() => {
+    if (!open && !action.pending && returnFocus.current) {
+      returnFocus.current = false;
+      toggle.current?.focus();
+    }
+  }, [open, action.pending]);
 
   function close() {
+    returnFocus.current = true;
     setOpen(false);
-    toggle.current?.focus();
   }
 
   return (
     <div className="add-fact">
-      <button ref={toggle} type="button" aria-expanded={open} onClick={() => setOpen(!open)}>
+      <button ref={toggle} type="button" aria-expanded={open} disabled={action.pending} onClick={() => setOpen(!open)}>
         Add a role
       </button>
-      {open && <RoleForm reload={reload} onClose={close} onAdded={onAdded} />}
+      {open && <RoleForm reload={reload} onClose={close} onAdded={onAdded} action={action} />}
     </div>
   );
 }

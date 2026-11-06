@@ -2,7 +2,7 @@ import { useId, useState } from "react";
 import { ROLE_KINDS, type RoleKind, type RoleView } from "../../shared/api";
 import { api } from "../api";
 import { ROLE_KIND_LABEL } from "../format";
-import { useAction, type Reload } from "../hooks";
+import { useAction, type Action, type Reload } from "../hooks";
 import { useSession } from "../session";
 import { ActionError, Field } from "./ui";
 
@@ -13,9 +13,10 @@ interface Props {
   onClose: () => void;
   /** Called with the new role's ID after an add. */
   onAdded?: (roleId: string) => void;
+  action?: Action;
 }
 
-export function RoleForm({ role, reload, onClose, onAdded }: Props) {
+export function RoleForm({ role, reload, onClose, onAdded, action }: Props) {
   const { me } = useSession();
   const allowUnknownEnd = me.capabilities?.roleDateUnknownEnd === true;
   const datesLocked = Boolean(role?.unknownEndStartDate && !allowUnknownEnd);
@@ -26,7 +27,8 @@ export function RoleForm({ role, reload, onClose, onAdded }: Props) {
   const [end, setEnd] = useState(role?.endDate ?? "");
   const [unknownEnd, setUnknownEnd] = useState(Boolean(role?.unknownEndStartDate));
   const [baseRevision] = useState(role?.revision ?? 1);
-  const { run, pending, error, setError } = useAction();
+  const localAction = useAction();
+  const { run, pending, error, setError } = action ?? localAction;
   const id = useId();
 
   async function save() {
@@ -90,6 +92,7 @@ export function RoleForm({ role, reload, onClose, onAdded }: Props) {
             id={`${id}-org`}
             type="text"
             value={org}
+            disabled={pending}
             onChange={(e) => setOrg(e.target.value)}
             required
             autoFocus
@@ -100,6 +103,7 @@ export function RoleForm({ role, reload, onClose, onAdded }: Props) {
             id={`${id}-title`}
             type="text"
             value={title}
+            disabled={pending}
             onChange={(e) => setTitle(e.target.value)}
           />
         </Field>
@@ -107,6 +111,7 @@ export function RoleForm({ role, reload, onClose, onAdded }: Props) {
           <select
             id={`${id}-kind`}
             value={kind}
+            disabled={pending}
             onChange={(e) => setKind(e.target.value as RoleKind)}
           >
             {ROLE_KINDS.map((k) => (
@@ -123,7 +128,7 @@ export function RoleForm({ role, reload, onClose, onAdded }: Props) {
             value={start}
             placeholder="2021-03"
             onChange={(e) => setStart(e.target.value)}
-            disabled={datesLocked}
+            disabled={pending || datesLocked}
             aria-describedby={`${id}-dates`}
           />
         </Field>
@@ -134,14 +139,14 @@ export function RoleForm({ role, reload, onClose, onAdded }: Props) {
             value={end}
             placeholder="Empty if current"
             onChange={(e) => setEnd(e.target.value)}
-            disabled={datesLocked || (allowUnknownEnd && unknownEnd)}
+            disabled={pending || datesLocked || (allowUnknownEnd && unknownEnd)}
             aria-describedby={`${id}-dates`}
           />
         </Field>
       </div>
       {allowUnknownEnd && (
         <label>
-          <input type="checkbox" checked={unknownEnd} onChange={(e) => setUnknownEnd(e.target.checked)} />
+          <input type="checkbox" checked={unknownEnd} disabled={pending} onChange={(e) => setUnknownEnd(e.target.checked)} />
           End date is unknown
         </label>
       )}

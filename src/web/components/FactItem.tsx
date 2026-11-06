@@ -221,6 +221,7 @@ function FactEditor(props: {
         id={id}
         rows={3}
         value={text}
+        disabled={pending}
         onChange={(e) => setText(e.target.value)}
         aria-describedby={`${id}-note ${id}-count`}
         autoFocus
@@ -234,6 +235,7 @@ function FactEditor(props: {
       <select
         id={`${id}-role`}
         value={roleId}
+        disabled={pending}
         onChange={(e) => setRoleId(e.target.value)}
       >
         <option value="">No role</option>
@@ -244,7 +246,7 @@ function FactEditor(props: {
         ))}
       </select>
       <label htmlFor={`${id}-level`}>Ownership level (optional)</label>
-      <select id={`${id}-level`} value={level} onChange={(e) => {
+      <select id={`${id}-level`} value={level} disabled={pending} onChange={(e) => {
         setLevel(e.target.value as Level | "");
         setLevelTouched(true);
       }}>
@@ -253,7 +255,7 @@ function FactEditor(props: {
       </select>
       {trimmed !== fact.text && level && (
         <label>
-          <input type="checkbox" checked={levelTouched} onChange={(e) => setLevelTouched(e.target.checked)} />{" "}
+          <input type="checkbox" checked={levelTouched} disabled={pending} onChange={(e) => setLevelTouched(e.target.checked)} />{" "}
           Use this level for the updated wording
         </label>
       )}

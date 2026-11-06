@@ -495,7 +495,7 @@ function GapAnswer({
           rows={3}
           maxLength={MAX_FACT_CHARS}
           value={answer}
-          disabled={saved}
+          disabled={action.pending || saved}
           onChange={(event) => setAnswer(event.target.value)}
           aria-describedby={`${id}-count`}
         />
@@ -509,7 +509,7 @@ function GapAnswer({
         <select
           id={`${id}-role`}
           value={roleId}
-          disabled={saved}
+          disabled={action.pending || saved}
           onChange={(event) => setRoleId(event.target.value)}
         >
           <option value="">General experience</option>

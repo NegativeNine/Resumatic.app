@@ -69,6 +69,47 @@ describe("workflow model spending bounds", () => {
     expect(settle).toHaveBeenCalledWith(expect.any(String), cost, 3, null);
   });
 
+  it("refuses an unbounded output price on an input-only model call", async () => {
+    const modelId = "@cf/baai/bge-m3";
+    const reserve = vi.fn();
+    const settle = vi.fn();
+    const run = vi.fn().mockResolvedValue({ data: [[0.1, 0.2]], usage: { input_tokens: 3 } });
+    const env = {
+      DAILY_SPEND_CAP_USD: "10",
+      // The default output price is zero; this override is not.
+      MODEL_PRICES_JSON: JSON.stringify({ [modelId]: [100, 50] }),
+      AI: { run },
+      VAULT: { idFromString: () => "id", get: () => ({ reserveModelAttempt: reserve, settleModelAttempt: settle, embeddingModel: () => modelId }) },
+    } as unknown as Env;
+    await expect(runModels(env, "id", "run", "step").embed(["source"]))
+      .rejects.toThrow("this model has no configured cost bound");
+    expect(reserve).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+    expect(settle).not.toHaveBeenCalled();
+  });
+
+  it("does not settle missing usage with the built-in price when an override differs", async () => {
+    const modelId = "@cf/baai/bge-m3"; // Built-in output price is zero.
+    const reserve = vi.fn();
+    const settle = vi.fn();
+    const fetcher = vi.fn().mockResolvedValue(Response.json({
+      usage: { input_tokens: 3 },
+      choices: [{ message: { content: '{"answer":42}' } }],
+    }));
+    vi.stubGlobal("fetch", fetcher);
+    const env = {
+      DAILY_SPEND_CAP_USD: "10",
+      MODEL_PRICES_JSON: JSON.stringify({ [modelId]: [100, 50] }),
+      MODEL_JUDGE: modelId,
+      VAULT: { idFromString: () => "id", get: () => ({ reserveModelAttempt: reserve, settleModelAttempt: settle }) },
+    } as unknown as Env;
+    await expect(runModels(env, "id", "run", "step").complete("judge", [], z.object({ answer: z.number() })))
+      .resolves.toEqual({ answer: 42 });
+    expect(reserve).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(settle).toHaveBeenCalledWith(expect.any(String), null, 3, null);
+  });
+
   it("reserves a configured flat bound for an unknown model", async () => {
     const reserve = vi.fn();
     const settle = vi.fn();

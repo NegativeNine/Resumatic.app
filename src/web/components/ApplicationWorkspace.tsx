@@ -77,6 +77,7 @@ export function ApplicationWorkspace({
             <select
               id={`${id}-status`}
               value={status}
+              disabled={action.pending}
               onChange={(event) => {
                 setStatus(event.target.value as ApplicationStatus);
                 setSaved(false);
@@ -94,6 +95,7 @@ export function ApplicationWorkspace({
               id={`${id}-applied`}
               type="date"
               value={appliedAt}
+              disabled={action.pending}
               onChange={(event) => {
                 setAppliedAt(event.target.value);
                 setSaved(false);
@@ -107,6 +109,7 @@ export function ApplicationWorkspace({
             rows={3}
             maxLength={10000}
             value={notes}
+            disabled={action.pending}
             onChange={(event) => {
               setNotes(event.target.value);
               setSaved(false);
