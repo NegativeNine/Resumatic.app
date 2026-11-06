@@ -199,8 +199,8 @@ try {
   // that the deletion audit itself does not implement.
   if (workflowInventoryAuditCapability().complete !== true)
     report.missing.push("DELETION_INVENTORY_AUDIT_UNAVAILABLE");
-  // Exact new edits are checked, but full legacy remediation, shared-evidence
-  // handling and historic share/refinement guarantees remain incomplete.
+  // Exact new edits and shared evidence are checked, but full legacy
+  // remediation and historic share guarantees remain incomplete.
   // Operator evidence cannot replace the missing implementation or live tests.
   report.missing.push("MANUAL_RESUME_EDIT_GROUNDING_UNAVAILABLE");
   if (!count(evidence.betaOperations?.quietDays, 14))

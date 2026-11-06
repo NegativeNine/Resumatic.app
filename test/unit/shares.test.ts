@@ -205,7 +205,7 @@ describe("coach share snapshots", () => {
       db.prepare(`UPDATE share_grants SET snapshot = ? WHERE id = ?`).run(JSON.stringify(old), grant.id);
       expect(() => shares.read({ grantId: grant.id, epoch: grant.epoch }, now)).toThrow("unavailable");
       expect(shares.export(who)[0]!.snapshot!.resumes[0]!.summary!.text).toBe("Unverified historical edit");
-      expect(shares.list(who)[0]!.revokedAt).toBeNull();
+      expect(shares.list(who, now)[0]).toMatchObject({ revokedAt: null, available: false });
     } finally { db.close(); }
   });
   it("enforces owner auth, immutable reads, immediate revocation and epoch changes", () => {

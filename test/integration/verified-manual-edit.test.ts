@@ -46,7 +46,60 @@ async function done(user: User, id: string) {
   }, "manual edit");
 }
 
+/** Add an identical already-verified line sharing the target fact, as a historical fixture. */
+async function sharedEvidenceFixture(
+  user: User, resumeId: string, version: number, lineId: string,
+  mode: "matching" | "changed" | "missing",
+) {
+  const payload = user.cookie.slice("__Host-session=".length).split(".")[0]!;
+  const session = JSON.parse(new TextDecoder().decode(fromBase64url(payload))) as { vid: string };
+  await runInDurableObject(vault(env, session.vid), (_instance, state) => {
+    const row = state.storage.sql.exec<{ data: string }>(
+      "SELECT data FROM resume_versions WHERE resume_id=? AND version=?", resumeId, version,
+    ).one();
+    const saved = JSON.parse(row.data);
+    const section = saved.render.body.sections.find((s: { lines: { id: string }[] }) => s.lines.some((l) => l.id === lineId));
+    const original = section.lines.find((line: { id: string }) => line.id === lineId);
+    section.lines.push({ ...original, id: "historical-duplicate", factIds: [...original.factIds] });
+    if (mode === "missing") delete saved.evidence;
+    if (mode === "changed") saved.evidence[original.factIds[0]].revision += 1;
+    state.storage.sql.exec("UPDATE resume_versions SET data=? WHERE resume_id=? AND version=?", JSON.stringify(saved), resumeId, version);
+    state.storage.sql.exec("UPDATE resumes SET body=? WHERE id=?", JSON.stringify(saved.render.body), resumeId);
+  });
+}
+
 describe("verified manual resume editing", () => {
+  it("allows a shared fact when its complete historical evidence matches", async () => {
+    const { user, applicationId, resumeId, resume, line } = await readyResume();
+    await sharedEvidenceFixture(user, resumeId, resume.version, line.id, "matching");
+    const id = await begin(user, applicationId, resumeId, resume.version, line.id, `${line.text}.`);
+    expect(await done(user, id)).toMatchObject({ state: "ready" });
+    const result = await user.json<ResumeView>(`/api/resumes/${resumeId}`);
+    expect(result.version).toBe(resume.version + 1);
+    const lines = result.body!.sections.flatMap((section) => section.lines);
+    expect(lines.find((item) => item.id === line.id)).toMatchObject({ text: `${line.text}.`, factIds: line.factIds });
+    expect(lines.find((item) => item.id === "historical-duplicate")).toMatchObject({ text: line.text, factIds: line.factIds });
+    expect((await user.fetch(`/api/resumes/${resumeId}/preview`)).status).toBe(200);
+    const payload = user.cookie.slice("__Host-session=".length).split(".")[0]!;
+    const session = JSON.parse(new TextDecoder().decode(fromBase64url(payload))) as { vid: string };
+    await runInDurableObject(vault(env, session.vid), (_instance, state) => {
+      const rows = state.storage.sql.exec<{ version: number; data: string }>(
+        "SELECT version,data FROM resume_versions WHERE resume_id=? ORDER BY version", resumeId,
+      ).toArray();
+      const original = JSON.parse(rows.find((row) => row.version === resume.version)!.data);
+      const next = JSON.parse(rows.find((row) => row.version === result.version)!.data);
+      expect(next.evidence[line.factIds[0]!]).toEqual(original.evidence[line.factIds[0]!]);
+    });
+  });
+
+  it.each(["changed", "missing"] as const)("rejects shared evidence when historical metadata is %s", async (mode) => {
+    const { user, applicationId, resumeId, resume, line } = await readyResume();
+    await sharedEvidenceFixture(user, resumeId, resume.version, line.id, mode);
+    const id = await begin(user, applicationId, resumeId, resume.version, line.id, `${line.text}.`);
+    expect(await done(user, id)).toMatchObject({ state: "failed", error: "conflict" });
+    expect((await user.json<ResumeView>(`/api/resumes/${resumeId}`)).version).toBe(resume.version);
+  });
+
   it("leaves the original version unchanged when the independent judge rejects the exact edit", async () => {
     const { user, applicationId, resumeId, resume, line } = await readyResume();
     const text = line.text.endsWith(".") ? line.text.slice(0, -1) : `${line.text}.`;

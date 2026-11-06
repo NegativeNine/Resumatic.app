@@ -241,14 +241,24 @@ export class ShareStore {
     return grant;
   }
 
-  list(who: Who): ShareGrant[] {
+  list(who: Who, now = Date.now()): ShareGrant[] {
     this.auth.authorizeOwner(who);
     return this.sql
       .exec<GrantRow>(
         `SELECT id, epoch, created_at, expires_at, revoked_at, fact_count, resume_count FROM share_grants ORDER BY created_at DESC LIMIT 200`,
       )
       .toArray()
-      .map(grantView);
+      .map((row) => {
+        const grant = grantView(row);
+        if (row.revoked_at !== null || row.expires_at <= now) return grant;
+        try {
+          this.read({ grantId: row.id, epoch: row.epoch }, now);
+          return { ...grant, available: true };
+        } catch {
+          // Preserve the snapshot and expose no content or internal error details.
+          return { ...grant, available: false };
+        }
+      });
   }
 
   export(who: Who): (ShareGrant & { snapshot: ShareSnapshot | null })[] {

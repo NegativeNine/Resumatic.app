@@ -31,6 +31,7 @@ describe("historical share grounding", () => {
     expect(exchange.status).toBe(204);
     const cookie = cookieFrom(exchange, "__Host-share")!;
     expect((await call("/share/snapshot", { cookie })).status).toBe(200);
+    expect((await user.json<{ grants: { id: string; available?: boolean }[] }>("/api/shares")).grants.find((item) => item.id === grant.id)?.available).toBe(true);
     const payload = user.cookie.slice("__Host-session=".length).split(".")[0]!;
     const { vid } = JSON.parse(new TextDecoder().decode(fromBase64url(payload))) as { vid: string };
     await runInDurableObject(vault(env, vid), (_instance, state) => {
@@ -43,6 +44,7 @@ describe("historical share grounding", () => {
       state.storage.sql.exec(`UPDATE share_grants SET snapshot = ? WHERE id = ?`, JSON.stringify(snapshot), grant.id);
     });
     expect((await call("/share/snapshot", { cookie })).status).toBe(410);
+    expect((await user.json<{ grants: { id: string; available?: boolean }[] }>("/api/shares")).grants.find((item) => item.id === grant.id)?.available).toBe(false);
     const exported = await user.json<{ shares: { snapshot: unknown }[] }>("/api/export");
     expect(JSON.stringify(exported.shares)).toContain("Unverified old edit");
   }, 30_000);

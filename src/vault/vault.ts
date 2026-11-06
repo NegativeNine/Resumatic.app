@@ -63,7 +63,8 @@ import {
 } from "../shared/operations";
 import { vault as vaultStub } from "../shared/stubs";
 import { createSchema, hasSchema, migrate, SCHEMA_VERSION } from "./schema";
-import { assertGroundedResume, SnapshotStore, type ResumeVersion } from "./snapshots";
+import { assertGroundedResume, evidenceForFacts, SnapshotStore, type ResumeVersion } from "./snapshots";
+import { mergeRefinementEvidence } from "./refinement-evidence";
 import { RunStore } from "./runs";
 import { ShareStore } from "./shares";
 import { billingConfig } from "../shared/billing";
@@ -1816,11 +1817,8 @@ export class Vault extends DurableObject<Env> {
       if (patch.state === "ready" && patch.body) {
         this.snapshots.assertCurrent(id, patch.body);
         const input = this.snapshots.metadata(id)!;
-        const facts = Object.fromEntries(
-          this.snapshots
-            .items<FactRecord>(id, "fact")
-            .map((f) => [f.id, { text: f.text, quote: f.quote }]),
-        );
+        const capturedFacts = this.snapshots.items<FactRecord>(id, "fact");
+        const facts = Object.fromEntries(capturedFacts.map((f) => [f.id, { text: f.text, quote: f.quote }]));
         const analysis =
           parseOrNull<Analysis>(row.run_analysis) ?? input.analysis;
         this.snapshots.save(resumeId, row.version, {
@@ -1833,6 +1831,7 @@ export class Vault extends DurableObject<Env> {
           },
           report: patch.report ?? null,
           facts,
+          evidence: evidenceForFacts(capturedFacts),
           provenance: "snapshot",
         });
       }
@@ -2239,12 +2238,12 @@ export class Vault extends DurableObject<Env> {
         )
         .one().options,
     ) as NewDocument & { base?: ResumeBody };
-    if (options.manualText !== undefined) {
+    if (options.kind === "refine") {
       const verified = this.sql.exec<{ result: string | null }>(
         `SELECT result FROM document_requests WHERE run_id = ?`, runId,
       ).one().result;
       if (!verified || verified !== JSON.stringify(result))
-        throw new AppError("conflict", "the verified edit changed");
+        throw new AppError("conflict", "the verified refinement changed");
     }
     const cachedInput =
       options.kind === "refine" ? await this.documentInput(runId) : null;
@@ -2285,11 +2284,8 @@ export class Vault extends DurableObject<Env> {
             };
         }
         this.snapshots.assertCurrent(runId, checkBody);
-        const facts = Object.fromEntries(
-          this.snapshots
-            .items<FactRecord>(runId, "fact")
-            .map((f) => [f.id, { text: f.text, quote: f.quote }]),
-        );
+        const capturedFacts = this.snapshots.items<FactRecord>(runId, "fact");
+        const facts = Object.fromEntries(capturedFacts.map((f) => [f.id, { text: f.text, quote: f.quote }]));
         if (
           options.kind === "refine" &&
           result.body &&
@@ -2303,37 +2299,13 @@ export class Vault extends DurableObject<Env> {
               "the resume changed while refining; try again",
             );
           const base = this.resumeVersion(row);
-          let savedFacts = facts;
-          if (options.manualText !== undefined) {
-            const targetId = options.lineIds?.[0];
-            const allLines = [
-              ...(base.render.body.summary ? [base.render.body.summary] : []),
-              ...base.render.body.sections.flatMap((section) => section.lines),
-            ];
-            const target = [
-              ...(result.body.summary ? [result.body.summary] : []),
-              ...result.body.sections.flatMap((section) => section.lines),
-            ].find((line) => line.id === targetId);
-            if (!target || !target.factIds.length)
-              throw new AppError("conflict", "the verified edit is missing its evidence");
-            const otherIds = new Set(allLines.filter((line) => line.id !== targetId).flatMap((line) => line.factIds));
-            const skillIds = new Set(this.snapshots.items<FactRecord>(runId, "fact")
-              .filter((fact) => fact.kind === "skill" && base.render.body.skills.includes(fact.text))
-              .map((fact) => fact.id));
-            if (target.factIds.some((id) => otherIds.has(id) || skillIds.has(id)))
-              throw new AppError("conflict", "this evidence is shared with another line; generate a new resume to update it safely");
-            savedFacts = { ...base.facts };
-            for (const id of target.factIds) {
-              if (!facts[id]) throw new AppError("conflict", "the selected evidence is no longer available");
-              savedFacts[id] = facts[id]!;
-            }
-          }
+          const savedEvidence = mergeRefinementEvidence(base, result.body, capturedFacts, roles);
           const version = row.version + 1;
           this.snapshots.save(row.id, version, {
             ...base,
             render: { ...base.render, body: result.body, version },
             report: result.report,
-            facts: savedFacts,
+            ...savedEvidence,
             provenance: options.manualText !== undefined ? base.provenance : "snapshot",
           });
           this.sql.exec(

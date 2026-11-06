@@ -20,7 +20,40 @@ export interface ResumeVersion {
   render: RenderData;
   report: ResumeReport | null;
   facts: Record<string, { text: string; quote: string | null }>;
+  /** Full immutable generation evidence. Missing on versions created before this field existed. */
+  evidence?: Record<string, FactRecord>;
   provenance: "snapshot" | "legacy";
+}
+
+/** Metadata is usable for rebinding only when every verification-relevant field was captured. */
+function completeEvidence(value: FactRecord | undefined): value is FactRecord {
+  return !!value && typeof value.id === "string" && value.id.length > 0 &&
+    Number.isSafeInteger(value.revision) && (value.revision ?? 0) > 0 &&
+    (value.origin === "extracted" || value.origin === "user") &&
+    (value.roleId === null || (typeof value.roleId === "string" && value.roleId.length > 0)) &&
+    ["accomplishment", "skill", "credential"].includes(value.kind) &&
+    typeof value.text === "string" && value.text.trim().length > 0 &&
+    (value.level === null || ["contributed", "implemented", "led", "owned", "founded"].includes(value.level)) &&
+    (value.quote === null || typeof value.quote === "string");
+}
+
+/** Preserve the full captured inputs, not a reconstruction from mutable current rows. */
+export function evidenceForFacts(facts: FactRecord[]): Record<string, FactRecord> {
+  const ids = new Set<string>();
+  return Object.fromEntries(facts.map((fact) => {
+    if (!completeEvidence(fact) || ids.has(fact.id))
+      throw new AppError("conflict", "fact evidence is incomplete; generate the resume again");
+    ids.add(fact.id);
+    return [fact.id, { ...fact }];
+  }));
+}
+
+/** Evidence without full metadata cannot prove that an older claim used the same inputs. */
+export function sameEvidence(a: FactRecord | undefined, b: FactRecord | undefined): boolean {
+  return completeEvidence(a) && completeEvidence(b) &&
+    a.id === b.id && a.revision === b.revision && a.origin === b.origin &&
+    a.roleId === b.roleId && a.kind === b.kind && a.text === b.text &&
+    a.level === b.level && a.quote === b.quote;
 }
 
 /** A historical version is printable only if its stored evidence remains attached. */

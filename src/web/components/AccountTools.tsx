@@ -251,6 +251,13 @@ export function CoachSharingTools() {
                     Created {formatDateTime(grant.createdAt)} · expires{" "}
                     {formatDateTime(grant.expiresAt)}
                   </p>
+                  {active && grant.available === false && (
+                    <p className="notice" role="status">
+                      This link is currently unavailable. If it includes a resume,
+                      review that version before creating a new link. You can revoke
+                      this link below.
+                    </p>
+                  )}
                 </div>
                 {active ? (
                   <button

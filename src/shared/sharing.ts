@@ -46,6 +46,8 @@ export interface ShareGrant {
   revokedAt: number | null;
   factCount: number;
   resumeCount: number;
+  /** Whether an unexpired, unrevoked snapshot can currently be delivered. */
+  available?: boolean;
 }
 export interface SharedView {
   grantId: string;
