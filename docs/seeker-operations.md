@@ -67,6 +67,8 @@ Conversion-quality warnings are heuristics, not a determination that a file was 
 
 Use the extraction CLI's offline mode for harness development; it is not a model-quality result. Keep real consenting-user fixtures outside Git. Promotion reports must name model IDs, prompt hashes, split and repetition count. Held-out promotion results cannot be replaced by development results or hand-picked examples.
 
+Extraction retains the full source line for non-skill facts and merges proposals on the same line and role. Skills require a complete item under a same-line or immediately preceding `Skills` or `Technical skills` heading and no detected qualifier on the relevant nearby lines. LinkedIn skills use parser-identified CSV cells. These conservative rules can miss skills in other layouts and merge distinct facts; their English qualifier checks do not prove meaning or cover all languages or multiline context. Measure their effect and audit unsupported claims on the held-out dataset before promotion.
+
 `MODEL_TRANSCRIBE` is optional. Configuring a model does not accept its license. For example, the Workers AI Llama vision model requires an operator to accept its terms before its first image request. Keep OCR unavailable until that step and a budgeted image check are complete. Image-derived proposals have weaker evidence and must retain that label.
 
 ```sh

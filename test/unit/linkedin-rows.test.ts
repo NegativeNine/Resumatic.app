@@ -45,6 +45,15 @@ const extractor: Extractor = {
 const models = {} as Models;
 
 describe("structured LinkedIn extraction", () => {
+  it("rejects qualified and multiline skill cells instead of converting them into positive skills", async () => {
+    const bytes = zipSync({
+      "Skills.csv": strToU8('Name\n"No experience with Java"\n"Python, no experience"\n"Java\nnot experienced"'),
+    });
+    const document = linkedInDocument(bytes);
+    const { extraction, dropped } = await extractLinkedIn(document, extractor, models, "2026-11-06");
+    expect(extraction.facts).toEqual([]);
+    expect(dropped).toBe(3);
+  });
   it("maps roles from their own cells and verifies each description under its owning row", async () => {
     calls = active = maxActive = 0;
     const document = linkedInDocument(file());

@@ -12,7 +12,7 @@ describe("extractFacts", () => {
     expect(dropped).toBe(3);
     expect(extraction.roles.map((r) => r.org)).toEqual(["Acme Corp", "Globex", "State University"]);
     const texts = extraction.facts.map((f) => f.text);
-    expect(texts).toHaveLength(9);
+    expect(texts).toHaveLength(8);
     expect(texts).not.toContain("Built a Go service that processes 5 million events per day");
     expect(texts).not.toContain("Won the Globex innovation award");
     expect(extraction.facts.find((f) => f.text.startsWith("Helped design"))?.level).toBe("contributed");
@@ -172,7 +172,7 @@ describe("verifyDraft", () => {
 
 describe("composeBody", () => {
   it("orders roles by recency, prints headers and skills from the record, and keeps education", async () => {
-    const { body } = await pipeline({ summary: { text: "Led the migration of 40 services to Kubernetes", cites: ["Led the migration of 40 services to Kubernetes"] } });
+    const { body } = await pipeline({ summary: { text: "Led the migration of 40 services to Kubernetes", cites: ["Led the migration of 40 services to Kubernetes, cutting deploy time by 60%"] } });
     expect(body.summary?.text).toBe("Led the migration of 40 services to Kubernetes");
     expect(body.sections.map((s) => [s.org, s.title])).toEqual([
       ["Acme Corp", "Senior Software Engineer"],

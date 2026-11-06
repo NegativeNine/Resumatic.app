@@ -71,7 +71,7 @@ describe("extraction commit integrity", () => {
       "the extraction commit before its lost acknowledgement",
     );
     const { facts } = await user.json<{ facts: FactView[] }>("/api/facts");
-    expect(facts).toHaveLength(9);
+    expect(facts).toHaveLength(8);
     const reviewed = facts[0]!;
     expect(
       (
@@ -84,7 +84,7 @@ describe("extraction commit integrity", () => {
     ).toBe(204);
     expect(await waitForSource(user, sourceId)).toMatchObject({
       state: "ready",
-      proposed: 8,
+      proposed: 7,
     });
     const after = (await user.json<{ facts: FactView[] }>("/api/facts")).facts;
     expect(after.map((fact) => fact.id).sort()).toEqual(
@@ -103,7 +103,7 @@ describe("extraction commit integrity", () => {
       sourceId,
     );
     expect(progress.convertedChars).toBe(RESUME.length);
-    expect(progress.extraction).toMatchObject({ roles: 3, facts: 9 });
+    expect(progress.extraction).toMatchObject({ roles: 3, facts: 8 });
     expect(progress.extraction!.dropped).toBeGreaterThan(0);
     expect(progress.extractor).toBe(`llm:${env.MODEL_EXTRACT}`);
   }, 25_000);
@@ -199,7 +199,7 @@ describe("extraction commit integrity", () => {
     const facts = (
       await user.json<{ facts: FactView[] }>("/api/facts")
     ).facts.filter((fact) => fact.sourceId === sourceId);
-    expect(facts).toHaveLength(9);
+    expect(facts).toHaveLength(8);
     for (const fact of facts) {
       expect(fact.evidenceOrigin).toBe("ocr");
       expect(RESUME.slice(...fact.span!)).toBe(fact.quote);

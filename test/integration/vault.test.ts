@@ -142,7 +142,7 @@ describe("Distill", () => {
     const user = await signIn();
     const sourceId = await uploadResume(user);
     const source = await waitForSource(user, sourceId);
-    expect(source).toMatchObject({ state: "ready", error: null, proposed: 9 });
+    expect(source).toMatchObject({ state: "ready", error: null, proposed: 8 });
 
     const { roles } = await user.json("/api/roles");
     expect(roles.map((r: { org: string }) => r.org).sort()).toEqual([
@@ -159,7 +159,7 @@ describe("Distill", () => {
 
     const { facts } = await user.json("/api/facts?state=proposed");
     const texts = facts.map((f: { text: string }) => f.text);
-    expect(texts).toHaveLength(9);
+    expect(texts).toHaveLength(8);
     expect(texts).not.toContain(
       "Built a Go service that processes 5 million events per day",
     );
@@ -197,7 +197,7 @@ describe("Distill", () => {
       sourceId,
       extraction,
     );
-    expect((await user.json("/api/facts")).facts).toHaveLength(9);
+    expect((await user.json("/api/facts")).facts).toHaveLength(8);
     expect((await user.json("/api/roles")).roles).toHaveLength(3);
   });
 
@@ -484,7 +484,7 @@ describe("export", () => {
     expect(data.sources).toHaveLength(1);
     expect(data.sources[0].markdown).toBe(RESUME);
     expect(data.roles).toHaveLength(3);
-    expect(data.facts).toHaveLength(9);
+    expect(data.facts).toHaveLength(8);
 
     // The export links to the original upload, which downloads as it was sent.
     const original = await user.fetch(data.sources[0].file);

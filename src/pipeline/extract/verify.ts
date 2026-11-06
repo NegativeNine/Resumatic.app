@@ -74,21 +74,30 @@ function supportsDate(quote: string, date: string | null): boolean {
   return writtenDates.some((written) => sourceDate(written) === date);
 }
 
-/** A skill must be a complete literal item, never a fragment inside another word. */
-function literalSkill(quote: string, skill: string): boolean {
-  const escaped = skill.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(
-    `(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`,
-    "iu",
-  ).test(quote);
-}
+const SKILL_QUALIFIER =
+  /\b(?:no|not|never|without|lack(?:s|ed|ing)?|unfamiliar|inexperienced|learning|beginner|novice|limited)\b/i;
 
-/** Keep a literal prefix only; a later substring could omit an earlier negation. */
-function literalPrefix(quote: string, text: string): boolean {
-  const source = quote.trimStart().replace(/^(?:[-*+•]\s+)/u, "");
-  if (!source.startsWith(text)) return false;
-  const next = source.slice(text.length, text.length + 2);
-  return !next || !/^[\p{L}\p{N}]/u.test(next);
+/** A skill must appear as a complete item in a structured skills line. */
+function literalSkill(
+  quote: string,
+  skill: string,
+  precedingLine: string,
+  beforeHeading: string,
+): boolean {
+  // A qualifier can apply to a whole list, even if a particular item is a
+  // literal match (e.g. "No experience with Python, Java"). Be conservative.
+  if (SKILL_QUALIFIER.test(quote) || SKILL_QUALIFIER.test(precedingLine))
+    return false;
+  const normalize = (s: string) =>
+    s.trim().replace(/^[\s#*`_•-]+|[\s*`_]+$/gu, "").toLocaleLowerCase();
+  const text = quote.trim().replace(/^\s*(?:[-*+•]\s+|#{1,6}\s+)/u, "");
+  // An isolated item may belong to a preceding negative heading. Require a
+  // positive heading on the same line; other formats need user confirmation.
+  const list = text.match(/^(?:technical\s+)?skills?\s*:\s*(.+)$/iu);
+  const hasHeading = /^\s*#{0,6}\s*(?:technical\s+)?skills?\s*:?\s*$/iu.test(precedingLine);
+  if (!list && (!hasHeading || SKILL_QUALIFIER.test(beforeHeading))) return false;
+  const items = (list?.[1] ?? text).split(/[,;|\t•]/u);
+  return items.some((item) => normalize(item) === normalize(skill));
 }
 
 const ProvenanceSchema = z.object({
@@ -104,6 +113,7 @@ const ProvenanceSchema = z.object({
 export function verifyExtraction(
   markdown: string,
   raw: RawExtraction,
+  opts: { structuredSkillSpans?: ReadonlySet<string> } = {},
 ): ExtractionVerification {
   if (markdown.length > MAX_MARKDOWN_CHARS)
     throw new AppError(
@@ -167,13 +177,21 @@ export function verifyExtraction(
     });
   }
   const roleKeys = new Set(result.extraction.roles.map((r) => r.key));
+  const seenFactLines = new Set<string>();
   for (const fact of raw.facts) {
-    const span = evidence(markdown, fact, fact.kind === "skill");
-    if (!span) {
+    const matchedSpan = evidence(markdown, fact, fact.kind === "skill");
+    if (!matchedSpan) {
       drop("fact", fact.span ? "invalid_span" : "invalid_quote");
       continue;
     }
+    // A model can quote only the start or end of a line, omitting a qualifier
+    // or negation. Keep its complete line as source evidence and text.
+    const span = lineContext(markdown, matchedSpan);
     const quote = markdown.slice(...span);
+    if (quote.length > 800) {
+      drop("fact", "invalid_quote");
+      continue;
+    }
     if (isInstruction(quote) || isInstruction(fact.text)) {
       drop("fact", "instruction");
       continue;
@@ -184,21 +202,34 @@ export function verifyExtraction(
     }
     // Deterministic number/name/scope checks do not prove semantic entailment:
     // e.g. "increased churn" passes against "reduced churn". Retain the user's
-    // original wording, or a literal prefix that retains preceding context.
+    // entire source line rather than a prefix that may omit a qualifier.
     // Skills are individual literal items from a sometimes wider evidence line.
-    if (fact.kind === "skill" && !literalSkill(quote, fact.text.trim())) {
+    const before = markdown.slice(0, span[0]).split("\n").filter((s) => s.trim());
+    const precedingLine = before.at(-1) ?? "";
+    const beforeHeading = before.at(-2) ?? "";
+    // LinkedIn skill cells are chosen by the CSV parser, not by the model.
+    // Require the exact cell value and still reject obvious qualifiers.
+    const structuredSkill = fact.span && opts.structuredSkillSpans?.has(JSON.stringify(fact.span)) &&
+      markdown.slice(...fact.span).trim() === fact.text.trim() &&
+      !SKILL_QUALIFIER.test(fact.text);
+    if (
+      fact.kind === "skill" &&
+      !structuredSkill &&
+      !literalSkill(quote, fact.text.trim(), precedingLine, beforeHeading)
+    ) {
       drop("fact", "unsupported_claim");
       continue;
     }
     const proposed = fact.text.trim();
-    const text =
-      fact.kind === "skill" || literalPrefix(quote, proposed)
-        ? proposed
-        : quote.trim();
+    const text = fact.kind === "skill" ? proposed : quote.trim().replace(/^(?:[-*+•▪●–]\s+|\d+[.)]\s+)/u, "");
     if (text.length > MAX_FACT_CHARS) {
       drop("fact", "unsupported_claim");
       continue;
     }
+    const resolvedRoleKey =
+      fact.roleKey && roleKeys.has(fact.roleKey) ? fact.roleKey : null;
+    const factLineKey = JSON.stringify([resolvedRoleKey, ...span]);
+    if (fact.kind !== "skill" && seenFactLines.has(factLineKey)) continue;
     const supportedRank = scopeRank(quote) || DEFAULT_RANK;
     const level =
       fact.level && rankOf(fact.level) > supportedRank
@@ -210,8 +241,9 @@ export function verifyExtraction(
       quote,
       span,
       level: fact.kind === "accomplishment" ? level : null,
-      roleKey: fact.roleKey && roleKeys.has(fact.roleKey) ? fact.roleKey : null,
+      roleKey: resolvedRoleKey,
     });
+    if (fact.kind !== "skill") seenFactLines.add(factLineKey);
   }
   return result;
 }

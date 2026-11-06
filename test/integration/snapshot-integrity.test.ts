@@ -68,7 +68,7 @@ describe("generation snapshots and concurrent review", () => {
       "the analysis call after snapshot capture",
     );
     const fact = facts.find(
-      (item) => item.text === "Led the migration of 40 services to Kubernetes",
+      (item) => item.text === "Led the migration of 40 services to Kubernetes, cutting deploy time by 60%",
     )!;
     try {
       expect(

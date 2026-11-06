@@ -81,7 +81,7 @@ describe("Tailor", () => {
     options.summary = {
       text: "Led the migration of 40 services to Kubernetes and built a Go service",
       cites: [
-        "Led the migration of 40 services to Kubernetes",
+        "Led the migration of 40 services to Kubernetes, cutting deploy time by 60%",
         "Built a Go service that processes 2 million events per day",
       ],
     };
@@ -101,13 +101,13 @@ describe("Tailor", () => {
     options.extraLines = [
       // Cites a fact from another role: cannot be repaired or replaced, so it is dropped.
       {
-        under: "Led the migration of 40 services to Kubernetes",
+        under: "Led the migration of 40 services to Kubernetes, cutting deploy time by 60%",
         text: "Mentored 2 junior engineers on Kubernetes",
         cites: ["Mentored 2 junior engineers"],
       },
       // Cites a fact that does not exist: discarded before verification.
       {
-        under: "Led the migration of 40 services to Kubernetes",
+        under: "Led the migration of 40 services to Kubernetes, cutting deploy time by 60%",
         text: "Won three industry awards",
         cites: ["Nothing like this"],
       },
@@ -119,7 +119,7 @@ describe("Tailor", () => {
 
     expect(resume.state, resume.error).toBe("ready");
     expect(resume.report).toEqual({
-      kept: 5,
+      kept: 4,
       repaired: 1,
       replaced: 1,
       dropped: 1,
@@ -141,7 +141,6 @@ describe("Tailor", () => {
     );
     expect(acme.sort()).toEqual([
       "kept: Helped design the billing API used by 3 product teams",
-      "kept: Led the migration of 40 services to Kubernetes",
       "repaired: Cut deploy time by 60% by moving services to Kubernetes",
       "replaced: Built a Go service that processes 2 million events per day",
     ]);

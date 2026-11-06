@@ -129,6 +129,7 @@ export async function extractLinkedIn(
       if (
         !cell ||
         !cell.value.trim() ||
+        /[\r\n]/.test(cell.value) ||
         cell.value.trim().length > MAX_FACT_CHARS
       ) {
         dropped++;
@@ -147,15 +148,24 @@ export async function extractLinkedIn(
     }
   }
   // Role metadata and direct cell claims use exactly the same checks as every other strategy.
-  const checked = verifyExtraction(document.markdown, {
-    roles: rawRoles,
-    facts: directFacts.slice(0, 300),
-  });
+  const checked = verifyExtraction(
+    document.markdown,
+    { roles: rawRoles, facts: directFacts.slice(0, 300) },
+    { structuredSkillSpans: new Set(directFacts.filter((f) => f.kind === "skill").map((f) => JSON.stringify(f.span))) },
+  );
   dropped += checked.dropped.length + Math.max(0, directFacts.length - 300);
   const acceptedRoles = new Set(
     checked.extraction.roles.map((role) => role.key),
   );
-  const facts = [...checked.extraction.facts];
+  const facts = checked.extraction.facts.map((fact) => {
+    // The source line includes the CSV column label (for example "Name:").
+    // It is not part of the cell value, which the parser selected directly.
+    const cell = fact.kind === "credential" && directFacts.find((item) =>
+      item.kind === "credential" && item.span &&
+      item.span[0] >= fact.span[0] && item.span[1] <= fact.span[1],
+    );
+    return cell ? { ...fact, text: cell.text } : fact;
+  });
   const pending = tasks.filter((task) => acceptedRoles.has(task.role.key));
   for (let i = 0; i < pending.length; i += 3) {
     const results = await Promise.all(
