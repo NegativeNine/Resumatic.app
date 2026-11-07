@@ -370,7 +370,16 @@ describe("private extraction evaluation evidence", () => {
     Object.assign(evidence.latency, { p95Seconds: 1, sampleSize: 1 });
     Object.assign(evidence.security, { openHighFindings: 0 });
     Object.assign(evidence.billing, { testModePassed: true, livePaymentPassed: true, liveCancellationPassed: true });
-    Object.assign(evidence.betaOperations, { quietDays: 14 });
+    Object.assign(evidence.betaOperations, {
+      quietDays: 14, unexplainedAlerts: 0,
+      reportedFabrications: 0, fabricationReportsWithPassingTests: 0,
+      uploadCostSamples: 1, resumeCostSamples: 1,
+      meanUploadCostUsd: 0.01, meanResumeCostUsd: 0.02,
+      extractionArms: [
+        { strategy: "llm:default", sources: 1, proposed: 1, confirmed: 1, edited: 0, windowComplete: true },
+        { strategy: "clairic", sources: 1, proposed: 1, confirmed: 1, edited: 0, windowComplete: true },
+      ],
+    });
     const check = spawnSync(process.execPath, [resolve("scripts/check-release.mjs")], { cwd: root, env: { ...process.env, GITHUB_SHA: commit, RELEASE_EVIDENCE_JSON: JSON.stringify(evidence) }, encoding: "utf8" });
     expect(check.status, check.stderr || check.stdout).toBe(2);
     // Extraction evidence is accepted; release remains blocked on deletion

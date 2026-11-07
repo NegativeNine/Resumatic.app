@@ -21,6 +21,18 @@ async function bindSyntheticUser(stub: ReturnType<typeof directory>, userId: str
   });
 }
 
+/** The synthetic receipt owner has no user row. Reconcile that deliberately
+ * dangling binding before expecting the global revocation inventory to pass. */
+async function revokeAfterSyntheticBindingCleanup(stub: ReturnType<typeof directory>, userId: string, email: string) {
+  const operation = crypto.randomUUID();
+  await runInDurableObject(stub, async (instance, state) => {
+    await expect((instance as Directory).revokeInviteV3(email, operation)).rejects.toThrow("account invitation requires review");
+    expect(state.storage.sql.exec(`SELECT user_id FROM account_invite_bindings WHERE user_id=?`, userId).toArray()).toHaveLength(1);
+    state.storage.sql.exec(`DELETE FROM account_invite_bindings WHERE user_id=?`, userId);
+  });
+  expect(await stub.revokeInviteV3(email, operation)).toMatchObject({ state: "complete" });
+}
+
 it("preserves the shared invitation when one of two global accounts is deleted", async () => {
   const global = directory(env), id = crypto.randomUUID();
   const email = `shared-${id}@example.test`;
@@ -114,7 +126,7 @@ it("does not skip a malformed row following a known shared user", async () => {
     } finally { state.storage.sql.exec(`DELETE FROM users WHERE user_id IN (?,?)`, `first-${id}`, `last-${id}`); }
   });
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(true);
-  expect(await global.revokeInviteV3(email, crypto.randomUUID())).toMatchObject({ state: "complete" });
+  await revokeAfterSyntheticBindingCleanup(global, user, email);
 });
 
 it("holds a same-email user whose state is unknown", async () => {
@@ -133,7 +145,7 @@ it("holds a same-email user whose state is unknown", async () => {
     } finally { state.storage.sql.exec(`DELETE FROM users WHERE user_id=?`, `unknown-${id}`); }
   });
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(true);
-  expect(await global.revokeInviteV3(email, crypto.randomUUID())).toMatchObject({ state: "complete" });
+  await revokeAfterSyntheticBindingCleanup(global, user, email);
 });
 
 it("holds an oversized local inventory and can retry after it is reduced", async () => {
@@ -157,7 +169,7 @@ it("holds an oversized local inventory and can retry after it is reduced", async
     const scan = instance as unknown as { hasOtherLocalInviteUser(userId: string, email: string, includeDeleting: boolean): boolean };
     expect(scan.hasOtherLocalInviteUser(user, email, true)).toBe(false);
   });
-  expect(await global.revokeInviteV3(email, crypto.randomUUID())).toMatchObject({ state: "complete" });
+  await revokeAfterSyntheticBindingCleanup(global, user, email);
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(false);
 }, 30_000);
 
@@ -180,5 +192,5 @@ it("holds an ambiguous malformed local email and retries without deleting a reis
   });
   await global.addInvite(email);
   expect((await global.listInvites()).some((invite) => invite.email === email)).toBe(true);
-  expect(await global.revokeInviteV3(email, crypto.randomUUID())).toMatchObject({ state: "complete" });
+  await revokeAfterSyntheticBindingCleanup(global, user, email);
 });

@@ -63,12 +63,16 @@ describe("sharded account invitation claims", () => {
     expect(account.shardInviteClaim).toEqual(initial.input.shardInviteClaim);
     await global.bindIdentityHomeV3(p.provider, p.subject, account.userId, p.authEpoch, undefined, false, account.shardInviteClaim ?? null);
     expect((await global.revokeInviteV3(p.email, crypto.randomUUID())).state).toBe("complete");
-    const returning = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "1" }, p);
+    await runInDurableObject(global, async (instance) => {
+      await expect((instance as Directory).bindIdentityHomeV3(p.provider, p.subject, account.userId, p.authEpoch, undefined, true, account.shardInviteClaim ?? null)).rejects.toThrow("sign-in is stale");
+    });
+    const freshEpoch = await global.googleAuthEpoch();
+    const returning = await directoryForSignIn({ ...env, DIRECTORY_SHARDS: "1" }, { ...p, authEpoch: freshEpoch });
     const recovered = await returning.directory.signInWithInviteClaimV2({ ...returning.input, reportCreation: true });
     expect(recovered.userId).toBe(account.userId);
     expect(recovered.vaultId).toBe(account.vaultId);
     expect(recovered.shardInviteClaim).toEqual(account.shardInviteClaim);
-    await global.bindIdentityHomeV3(p.provider, p.subject, recovered.userId, p.authEpoch, undefined, true, recovered.shardInviteClaim ?? null);
+    await global.bindIdentityHomeV3(p.provider, p.subject, recovered.userId, freshEpoch, undefined, true, recovered.shardInviteClaim ?? null);
   }, 30_000);
 
   it("preserves open registration and test sign-ins without an email argument", async () => {
