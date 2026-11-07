@@ -18,6 +18,15 @@ export type ShardClaimSeal =
   | { state: "created"; userId: string; vaultId: string }
   | { state: "closed" };
 
+/** Point-in-time directory metadata; it does not prove Vault ownership or quiescence. */
+export interface ShardClaimObservation {
+  userId: string;
+  vaultId: string;
+  userState: "active" | "deleting";
+  vaultState: "creating" | "active" | "deleting" | "swept";
+  initializationMarkerPresent: boolean;
+}
+
 /**
  * Token tombstones survive receipt closure, so an old target RPC cannot
  * create an account after the revocation coordinator has stopped waiting.
@@ -98,6 +107,55 @@ export class ShardClaimRevocation {
     if (typeof token !== "string" || !uuid.test(token)) throw new AppError("invalid", "invalid shard invitation claim");
     if (this.sql.exec(`SELECT token FROM shard_revoked_invite_claims WHERE token=?`, token).toArray().length)
       throw new AppError("forbidden", "this invitation claim is no longer available");
+  }
+
+  /** Inspect only a previously created tombstone; never create or change one. */
+  async inspect(input: RevokedShardClaim): Promise<ShardClaimObservation> {
+    const claim = checked(input);
+    if (!this.mayTarget(claim.shard)) throw new AppError("invalid", "invalid shard invitation target");
+    const digest = await contentDigest(["shard-claim-revocation-v1", claim.operationId, claim.provider,
+      claim.subject, claim.shard, claim.token, claim.email, claim.generation]);
+    return this.transaction(() => {
+      const receipt = this.sql.exec<Row>(`SELECT operation_id,tuple_digest,state,user_id,vault_id FROM shard_revoked_invite_claims WHERE token=?`, claim.token).toArray();
+      if (receipt.length !== 1 || receipt[0]!.operation_id !== claim.operationId || receipt[0]!.tuple_digest !== digest ||
+          receipt[0]!.state !== "created" || typeof receipt[0]!.user_id !== "string" ||
+          !this.mayTarget(claim.shard, receipt[0]!.user_id) || typeof receipt[0]!.vault_id !== "string" ||
+          !/^[a-f0-9]{64}$/i.test(receipt[0]!.vault_id))
+        throw new AppError("unavailable", "shard invitation claim requires review");
+      if (this.sql.exec(`SELECT 1 FROM shard_invite_create_marker WHERE token=? OR (provider=? AND subject=?) LIMIT 1`,
+        claim.token, claim.provider, claim.subject).toArray().length)
+        throw new AppError("unavailable", "shard invitation claim requires review");
+      for (const table of ["shard_invite_account_bindings", "shard_identity_claim_tokens"]) {
+        if (this.sql.exec(`SELECT 1 FROM ${table} WHERE token=? OR (provider=? AND subject=?) LIMIT 2`,
+          claim.token, claim.provider, claim.subject).toArray().length !== 1)
+          throw new AppError("unavailable", "shard invitation claim requires review");
+      }
+      const rows = this.sql.exec<{ user_id: string; email: string; user_state: string; vault_id: string; vault_state: string;
+        binding_user: string; binding_provider: string; binding_subject: string; binding_token: string; binding_email: string; binding_generation: string | null;
+        token_user: string; token_provider: string; token_subject: string; token: string }>(
+        `SELECT i.user_id,u.email,u.state AS user_state,v.vault_id,v.state AS vault_state,
+                b.user_id AS binding_user,b.provider AS binding_provider,b.subject AS binding_subject,b.token AS binding_token,b.email AS binding_email,b.generation AS binding_generation,
+                t.user_id AS token_user,t.provider AS token_provider,t.subject AS token_subject,t.token
+         FROM identities i JOIN users u ON u.user_id=i.user_id JOIN vaults v ON v.user_id=u.user_id
+         JOIN shard_invite_account_bindings b ON b.provider=i.provider AND b.subject=i.subject
+         JOIN shard_identity_claim_tokens t ON t.provider=i.provider AND t.subject=i.subject
+         WHERE i.provider=? AND i.subject=? LIMIT 2`, claim.provider, claim.subject,
+      ).toArray();
+      const row = rows[0];
+      if (rows.length !== 1 || !row || row.user_id !== receipt[0]!.user_id || row.vault_id !== receipt[0]!.vault_id ||
+          row.email !== claim.email || !["active", "deleting"].includes(row.user_state) ||
+          !["creating", "active", "deleting", "swept"].includes(row.vault_state) ||
+          row.binding_user !== row.user_id || row.binding_provider !== claim.provider || row.binding_subject !== claim.subject ||
+          row.binding_token !== claim.token || row.binding_email !== claim.email || row.binding_generation !== claim.generation ||
+          row.token_user !== row.user_id || row.token_provider !== claim.provider || row.token_subject !== claim.subject || row.token !== claim.token)
+        throw new AppError("unavailable", "shard invitation claim requires review");
+      return {
+        userId: row.user_id, vaultId: row.vault_id,
+        userState: row.user_state as ShardClaimObservation["userState"],
+        vaultState: row.vault_state as ShardClaimObservation["vaultState"],
+        initializationMarkerPresent: this.sql.exec(`SELECT vault_id FROM vault_initializations WHERE vault_id=? LIMIT 1`, row.vault_id).toArray().length > 0,
+      };
+    });
   }
 
   async seal(input: RevokedShardClaim): Promise<ShardClaimSeal> {

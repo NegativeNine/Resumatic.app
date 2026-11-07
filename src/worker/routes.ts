@@ -1378,6 +1378,17 @@ admin.get("/invites/revocations", async (c) => {
   return c.json(await directory(c.env).listInviteRevocations(afterValues?.[0] ?? null, rawLimit === undefined ? 25 : Number(rawLimit)));
 });
 
+admin.get("/invites/revocations/:operation/accounts", async (c) => {
+  const afterValues = c.req.queries("after");
+  const limitValues = c.req.queries("limit");
+  if ((afterValues?.length ?? 0) > 1 || (limitValues?.length ?? 0) > 1)
+    throw new AppError("invalid", "invalid invitation account page");
+  const rawLimit = limitValues?.[0];
+  if (rawLimit !== undefined && !/^(?:[1-9]|1\d|2[0-5])$/.test(rawLimit))
+    throw new AppError("invalid", "invalid invitation account page");
+  return c.json(await directory(c.env).inspectInviteRevocationAccountsV1(c.req.param("operation"), afterValues?.[0] ?? null, rawLimit === undefined ? 25 : Number(rawLimit)));
+});
+
 admin.get("/invites/revocations/:operation", async (c) => {
   const result = await directory(c.env).inviteRevocationStatus(c.req.param("operation"));
   if (result.state === "unknown") throw new AppError("not_found", "invitation revocation not found");

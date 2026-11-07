@@ -16,8 +16,9 @@ import type { InviteTarget } from "./invite-target-seal";
 import { InviteCoordinator, type InventoryIdentity } from "./invite-coordinator";
 import { validShardInviteClaim, type ShardInviteClaim } from "./shard-invite-binding";
 import { boundShardInviteClaim } from "./shard-invite-owner";
-import { ShardClaimRevocation, type RevokedShardClaim, type ShardClaimSeal } from "./shard-claim-revocation";
+import { ShardClaimRevocation, type RevokedShardClaim, type ShardClaimSeal, type ShardClaimObservation } from "./shard-claim-revocation";
 import { InviteRevocation, type InviteRevocationStatus } from "./invite-revocation";
+import { InviteOrphanInspection } from "./invite-orphan-inspection";
 
 /** How soon a failed deletion is retried. */
 const RETRY_MS = 60_000;
@@ -137,13 +138,7 @@ export class Directory extends DurableObject<Env> {
       sql: this.sql,
       storage: this.ctx.storage,
       transaction: (fn) => this.ctx.storage.transactionSync(fn),
-      fingerprint: async (operation, email) => {
-        if (!this.env.SESSION_KEY) throw new AppError("unavailable", "invitation revocation requires review");
-        const encoder = new TextEncoder();
-        const key = await crypto.subtle.importKey("raw", encoder.encode(this.env.SESSION_KEY), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-        const mac = await crypto.subtle.sign("HMAC", key, encoder.encode(JSON.stringify(["invite-revocation-v1", operation, email])));
-        return Array.from(new Uint8Array(mac), (b) => b.toString(16).padStart(2, "0")).join("");
-      },
+      fingerprint: (operation, email) => this.inviteFingerprint(operation, email),
       verifyRollout: () => {
         if (!this.isGlobal || !this.inviteInventoryEnabled() ||
             (this.env as Env & { INVITE_REVOCATION_DRAIN_VERIFIED?: string }).INVITE_REVOCATION_DRAIN_VERIFIED !== "verified-v2")
@@ -153,6 +148,14 @@ export class Directory extends DurableObject<Env> {
       close: (claim) => directoryByName(this.env, `directory-${claim.shard}`).closeShardInviteClaimV2(claim),
       removeInvite: (email, generation) => this.deleteInvite(email, generation),
     });
+  }
+
+  private async inviteFingerprint(operation: string, email: string): Promise<string> {
+    if (!this.env.SESSION_KEY) throw new AppError("unavailable", "invitation revocation requires review");
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey("raw", encoder.encode(this.env.SESSION_KEY), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const mac = await crypto.subtle.sign("HMAC", key, encoder.encode(JSON.stringify(["invite-revocation-v1", operation, email])));
+    return Array.from(new Uint8Array(mac), (b) => b.toString(16).padStart(2, "0")).join("");
   }
 
   async revokeInviteV3(email: string, operation: string): Promise<InviteRevocationStatus> {
@@ -173,6 +176,19 @@ export class Directory extends DurableObject<Env> {
     return this.inviteRevocation.listPending(after, limit);
   }
 
+  /** Versioned, read-only view of accounts in one pending revocation. */
+  async inspectInviteRevocationAccountsV1(operation: string, after: string | null = null, limit = 25) {
+    if (!this.isGlobal) throw new AppError("invalid", "invitation revocation requires the coordinator");
+    return new InviteOrphanInspection({
+      sql: this.sql,
+      transaction: (fn) => this.ctx.storage.transactionSync(fn),
+      status: (id) => this.inviteRevocation.status(id),
+      fingerprint: (id, email) => this.inviteFingerprint(id, email),
+      validVault: (id) => { try { return this.env.VAULT.idFromString(id).toString() === id; } catch { return false; } },
+      inspectShard: (claim) => directoryByName(this.env, `directory-${claim.shard}`).inspectShardInviteClaimV3(claim),
+    }).inspect(operation, after, limit);
+  }
+
   private get shardClaimRevocation(): ShardClaimRevocation {
     return new ShardClaimRevocation(this.sql, (fn) => this.ctx.storage.transactionSync(fn),
       (shard, userId) => this.ctx.id.equals(this.env.DIRECTORY.idFromName(`directory-${shard}`)) &&
@@ -182,6 +198,12 @@ export class Directory extends DurableObject<Env> {
   async sealShardInviteClaimV2(claim: RevokedShardClaim): Promise<ShardClaimSeal> {
     if (!this.isShard) throw new AppError("invalid", "invitation claim requires a shard");
     return this.shardClaimRevocation.seal(claim);
+  }
+
+  /** Versioned read: older shards cannot pretend to verify the full tuple. */
+  async inspectShardInviteClaimV3(claim: RevokedShardClaim): Promise<ShardClaimObservation> {
+    if (!this.isShard) throw new AppError("invalid", "invitation claim requires a shard");
+    return this.shardClaimRevocation.inspect(claim);
   }
 
   async closeShardInviteClaimV2(claim: RevokedShardClaim): Promise<void> {

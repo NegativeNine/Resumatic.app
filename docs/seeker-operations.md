@@ -175,7 +175,7 @@ The manual production workflow reads `RELEASE_EVIDENCE_JSON` from the protected 
 | Extraction | `trapLeaks: 0`, `unsupportedClaims: 0`, `failureRate < 0.01`, at least 15 held-out `evaluatedUploads`, `factRecall >= 0.85`, `factPrecision >= 0.95` (rates between 0 and 1), and the complete full-corpus `promotion` aggregate described below |
 | Grounding | `unsupportedClaims: 0`, positive `evaluatedLines`, and complete live seeded measurements bound to the candidate |
 | Latency | positive `p95Seconds < 90`, positive `sampleSize` |
-| Security | `openHighFindings: 0` |
+| Security | `openHighFindings: 0` and `openCriticalFindings: 0`, with each severity reported separately |
 | Billing | `testModePassed: true`, `livePaymentPassed: true`, `liveCancellationPassed: true` |
 | Beta operations | `quietDays >= 14`, `unexplainedAlerts: 0`, matching `reportedFabrications` and `fabricationReportsWithPassingTests`, measured upload and resume costs, and completed review counts for at least two distinct extraction strategies |
 
@@ -304,3 +304,5 @@ When every target outcome is known but at least one unbound account already exis
 After upgrading, inherited active revocations and quarantines require a bounded local identity rescan before they can progress. The rescan requires the new assertion, verifies each stored operation/email fingerprint and preserves existing shard claims. Identity and attribution writes can be held while scans remain; malformed or ambiguous legacy records may also delay unrelated creation or deletion until reviewed. Rotating `SESSION_KEY` before resolving these operations can prevent their fingerprints from validating. Do not clear a pending scan or quarantine to force progress. Local global accounts that were never bound, including some legacy accounts whose history is ambiguous, remain quarantined; neither adoption nor erasure is automatic. A previously completed legacy revocation cannot be linked back to an email from its redacted receipt alone.
 
 Operators can list pending revocations with `GET /admin/invites/revocations?limit=25` and pass the returned `nextCursor` as `after` for the next page. This Access-protected, read-only view contains operation IDs, phases and aggregate counts; it does not include account content or resolve a quarantine. Pagination is not a snapshot, so restart from the first page to see operations inserted before an earlier cursor.
+
+For a pending operation, the [account inspection procedure](invite-revocation-inspection.md) lists verified Directory observations when all claim outcomes are known. It does not establish Vault ownership or quiescence and cannot resolve the quarantine.
