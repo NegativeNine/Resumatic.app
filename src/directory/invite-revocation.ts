@@ -180,6 +180,104 @@ export const INVITE_QUARANTINE_MIGRATIONS: string[] = [
   }),
 ];
 
+/** A local creation may have committed before its first global-home bind. */
+export const INVITE_GLOBAL_ORPHAN_MIGRATIONS: string[] = [
+  `CREATE TABLE invite_revocation_legacy_operations (operation_id TEXT PRIMARY KEY)`,
+  `INSERT INTO invite_revocation_legacy_operations(operation_id)
+     SELECT operation_id FROM invite_revocation_barrier UNION SELECT operation_id FROM invite_revocation_quarantines`,
+  `CREATE TABLE invite_revocation_legacy_epoch_check (ok INTEGER CHECK(ok=1))`,
+  `INSERT INTO invite_revocation_legacy_epoch_check(ok) SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM invite_revocation_legacy_operations) OR EXISTS(
+     SELECT 1 FROM meta WHERE key='global_auth_epoch' AND value=CAST(CAST(value AS INTEGER) AS TEXT)
+       AND CAST(value AS INTEGER) BETWEEN 0 AND 9007199254740990) THEN 1 ELSE 0 END`,
+  `UPDATE meta SET value=CAST(CAST(value AS INTEGER)+1 AS TEXT)
+     WHERE key='global_auth_epoch' AND EXISTS(SELECT 1 FROM invite_revocation_legacy_operations)`,
+  `DROP TABLE invite_revocation_legacy_epoch_check`,
+  `CREATE TABLE invite_revocation_legacy_marker (slot INTEGER PRIMARY KEY CHECK(slot=1), operation_id TEXT NOT NULL)`,
+  `CREATE TABLE invite_revocation_legacy_proofs (operation_id TEXT PRIMARY KEY, local_orphans INTEGER NOT NULL CHECK(local_orphans>=0), scanned_at INTEGER NOT NULL)`,
+  `CREATE TRIGGER invite_revocation_legacy_proof_insert BEFORE INSERT ON invite_revocation_legacy_proofs
+   WHEN NOT EXISTS(SELECT 1 FROM invite_revocation_legacy_operations l JOIN invite_revocation_legacy_marker m ON m.operation_id=l.operation_id
+      WHERE l.operation_id=NEW.operation_id AND NEW.local_orphans=(SELECT count(*) FROM invite_revocation_global_orphans o WHERE o.operation_id=l.operation_id))
+   BEGIN SELECT RAISE(ABORT, 'invite_legacy_proof_invalid'); END`,
+  `CREATE TRIGGER invite_revocation_legacy_proof_update BEFORE UPDATE ON invite_revocation_legacy_proofs
+   BEGIN SELECT RAISE(ABORT, 'invite_legacy_proof_immutable'); END`,
+  `CREATE TRIGGER invite_revocation_legacy_proof_delete BEFORE DELETE ON invite_revocation_legacy_proofs
+   BEGIN SELECT RAISE(ABORT, 'invite_legacy_proof_immutable'); END`,
+  `CREATE TRIGGER invite_revocation_legacy_update BEFORE UPDATE ON invite_revocation_legacy_operations
+   BEGIN SELECT RAISE(ABORT, 'invite_legacy_inventory_required'); END`,
+  `CREATE TRIGGER invite_revocation_legacy_delete BEFORE DELETE ON invite_revocation_legacy_operations
+   WHEN NOT EXISTS(SELECT 1 FROM invite_revocation_legacy_marker m JOIN invite_revocation_legacy_proofs p ON p.operation_id=m.operation_id WHERE m.operation_id=OLD.operation_id)
+   BEGIN SELECT RAISE(ABORT, 'invite_legacy_inventory_required'); END`,
+  `CREATE TRIGGER invite_legacy_barrier_update BEFORE UPDATE ON invite_revocation_barrier
+   WHEN EXISTS(SELECT 1 FROM invite_revocation_legacy_operations WHERE operation_id=OLD.operation_id)
+   BEGIN SELECT RAISE(ABORT, 'invite_legacy_inventory_required'); END`,
+  `CREATE TRIGGER invite_legacy_barrier_delete BEFORE DELETE ON invite_revocation_barrier
+   WHEN EXISTS(SELECT 1 FROM invite_revocation_legacy_operations WHERE operation_id=OLD.operation_id)
+   BEGIN SELECT RAISE(ABORT, 'invite_legacy_inventory_required'); END`,
+  `CREATE TRIGGER invite_legacy_quarantine_delete BEFORE DELETE ON invite_revocation_quarantines
+   WHEN EXISTS(SELECT 1 FROM invite_revocation_legacy_operations WHERE operation_id=OLD.operation_id)
+   BEGIN SELECT RAISE(ABORT, 'invite_legacy_inventory_required'); END`,
+  ...["identity_homes", "identities", "users", "account_invite_bindings"].flatMap((table) => ["INSERT", "UPDATE", "DELETE"].map((action) =>
+    `CREATE TRIGGER invite_legacy_${table}_${action.toLowerCase()} BEFORE ${action} ON ${table}
+     WHEN EXISTS(SELECT 1 FROM invite_revocation_legacy_operations)
+     BEGIN SELECT RAISE(ABORT, 'invite_legacy_inventory_required'); END`)),
+  `CREATE TABLE invite_revocation_global_orphans (
+    operation_id TEXT NOT NULL, provider TEXT NOT NULL CHECK(provider='google'), subject TEXT NOT NULL,
+    user_id TEXT NOT NULL, vault_id TEXT NOT NULL, PRIMARY KEY(operation_id,provider,subject)
+  )`,
+  `CREATE TRIGGER invite_global_orphan_insert BEFORE INSERT ON invite_revocation_global_orphans
+   WHEN NOT EXISTS(SELECT 1 FROM invite_revocation_fences r
+      JOIN identities i ON i.provider=NEW.provider AND i.subject=NEW.subject AND i.user_id=NEW.user_id
+      JOIN users u ON u.user_id=i.user_id AND u.email=r.email
+      LEFT JOIN identity_homes h ON h.provider=i.provider AND h.subject=i.subject
+      LEFT JOIN account_invite_bindings b ON b.user_id=u.user_id
+      JOIN vaults v ON v.user_id=u.user_id AND v.vault_id=NEW.vault_id
+      WHERE r.operation_id=NEW.operation_id AND (h.provider IS NULL OR (h.shard IS NULL AND h.user_id IS NULL))
+        AND (b.user_id IS NULL OR b.email=r.email))
+   BEGIN SELECT RAISE(ABORT, 'invite_global_orphan_invalid'); END`,
+  `CREATE TRIGGER invite_global_orphan_update BEFORE UPDATE ON invite_revocation_global_orphans
+   BEGIN SELECT RAISE(ABORT, 'invite_global_orphan_immutable'); END`,
+  `CREATE TRIGGER invite_global_orphan_delete BEFORE DELETE ON invite_revocation_global_orphans
+   WHEN NOT EXISTS(SELECT 1 FROM invite_quarantine_marker WHERE operation_id=OLD.operation_id)
+   BEGIN SELECT RAISE(ABORT, 'invite_global_orphan_immutable'); END`,
+  ...["INSERT", "UPDATE", "DELETE"].map((action) => {
+    const rows = action === "INSERT" ? ["NEW"] : action === "DELETE" ? ["OLD"] : ["OLD", "NEW"];
+    const affected = rows.map((row) => `(o.provider=${row}.provider AND o.subject=${row}.subject)`).join(" OR ");
+    return `CREATE TRIGGER invite_global_orphan_identity_${action.toLowerCase()} BEFORE ${action} ON identities
+      WHEN EXISTS(SELECT 1 FROM invite_revocation_global_orphans o WHERE ${affected})
+      BEGIN SELECT RAISE(ABORT, 'invite_global_orphan_pending'); END`;
+  }),
+  // The marker exists only inside a single authorized global first-bind
+  // transaction; the address comes from the persisted identity and binding.
+  `CREATE TABLE invite_global_bind_marker (
+    slot INTEGER PRIMARY KEY CHECK(slot=1), provider TEXT NOT NULL, subject TEXT NOT NULL, user_id TEXT NOT NULL, email TEXT NOT NULL
+  )`,
+  `CREATE TRIGGER invite_global_bind_marker_insert BEFORE INSERT ON invite_global_bind_marker
+   WHEN NOT EXISTS(SELECT 1 FROM identity_homes h
+      JOIN identities i ON i.provider=h.provider AND i.subject=h.subject AND i.user_id=NEW.user_id
+      JOIN users u ON u.user_id=i.user_id AND u.email=NEW.email AND u.state='active'
+      JOIN account_invite_bindings b ON b.user_id=u.user_id AND b.email=u.email
+      WHERE h.provider=NEW.provider AND h.subject=NEW.subject AND h.shard IS NULL AND h.user_id IS NULL
+        AND NOT EXISTS(SELECT 1 FROM invite_revocation_fences f WHERE f.email=u.email))
+   BEGIN SELECT RAISE(ABORT, 'invite_global_bind_marker_invalid'); END`,
+  `CREATE TRIGGER invite_global_bind_marker_update BEFORE UPDATE ON invite_global_bind_marker
+   BEGIN SELECT RAISE(ABORT, 'invite_global_bind_marker_immutable'); END`,
+  `DROP TRIGGER invite_revocation_home_update`,
+  `CREATE TRIGGER invite_revocation_home_update BEFORE UPDATE ON identity_homes
+   WHEN EXISTS(SELECT 1 FROM invite_revocation_fences b WHERE (
+     EXISTS(SELECT 1 FROM shard_home_invite_claims c WHERE c.provider=OLD.provider AND c.subject=OLD.subject AND c.email=b.email)
+     OR NEW.provider IS NOT OLD.provider OR NEW.subject IS NOT OLD.subject
+     OR (OLD.user_id IS NOT NULL AND NEW.user_id IS NOT NULL AND NEW.user_id IS NOT OLD.user_id)
+     OR ((OLD.user_id IS NULL OR NEW.user_id IS NULL)
+       AND NOT EXISTS(SELECT 1 FROM shard_home_invite_claims c WHERE c.provider=OLD.provider AND c.subject=OLD.subject)
+       AND NOT EXISTS(SELECT 1 FROM invite_global_bind_marker m
+         WHERE m.provider=OLD.provider AND m.subject=OLD.subject AND m.user_id=NEW.user_id
+           AND OLD.shard IS NULL AND NEW.shard IS OLD.shard AND OLD.user_id IS NULL
+           AND NEW.provider IS OLD.provider AND NEW.subject IS OLD.subject
+           AND NEW.generation IS OLD.generation AND NEW.placement_state IS OLD.placement_state)))
+     AND NOT EXISTS(SELECT 1 FROM invite_revocation_mutation_marker m WHERE m.operation_id=b.operation_id))
+   BEGIN SELECT RAISE(ABORT, 'invite_revocation_active'); END`,
+];
+
 type Barrier = { operation_id: string; email: string; email_fingerprint: string; generation: string | null };
 type ClaimRow = RevokedShardClaim & { state: "pending" | "absent" | "created" | "closed"; user_id: string | null; vault_id: string | null } & Record<string, SqlStorageValue>;
 type Deps = {
@@ -196,7 +294,7 @@ type Deps = {
   removeInvite: (email: string, generation: string) => void;
   waitMs?: number;
 };
-export type InviteRevocationStatus = { state: "pending"; remaining: number; orphans: number } | { state: "complete" } | { state: "unknown" };
+export type InviteRevocationStatus = { state: "pending"; remaining: number; orphans: number; inventoryPending?: true } | { state: "complete" } | { state: "unknown" };
 
 // Canonical lowercase prevents replaying the same UUID with different casing.
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -212,23 +310,124 @@ export class InviteRevocation {
   }
   active(): boolean { return !!this.row(); }
   activeOperation(operation: string): boolean { return this.row()?.operation_id === operation; }
+  hasLegacy(): boolean { return this.d.sql.exec(`SELECT operation_id FROM invite_revocation_legacy_operations LIMIT 1`).toArray().length > 0; }
+
+  /** Bounded, idempotent scan of pre-migration operations, with atomic proof. */
+  async rescanLegacyBatch(): Promise<void> {
+    if (!this.hasLegacy()) return;
+    this.d.verifyRollout();
+    const operations = this.d.sql.exec<{ operation_id: string }>(`SELECT operation_id FROM invite_revocation_legacy_operations ORDER BY operation_id LIMIT 4`).toArray();
+    for (const { operation_id: operation } of operations) {
+      const readFence = () => this.d.sql.exec<{ operation_id: string; email: string; email_fingerprint: string; generation: string | null }>(
+        `SELECT operation_id,email,email_fingerprint,generation FROM invite_revocation_fences WHERE operation_id=? LIMIT 2`, operation,
+      ).toArray();
+      const prior = readFence(), f = prior[0];
+      if (prior.length !== 1 || !f || !uuid.test(operation) || typeof f.email !== "string" || !f.email || f.email.length > 320 ||
+          f.email !== f.email.trim().toLowerCase() || !/^[a-f0-9]{64}$/.test(f.email_fingerprint) ||
+          (f.generation !== null && !/^[a-f0-9]{32}$/.test(f.generation)))
+        throw new AppError("unavailable", "invitation inventory requires review");
+      const fingerprint = await this.d.fingerprint(operation, f.email);
+      if (fingerprint !== f.email_fingerprint) throw new AppError("unavailable", "invitation inventory requires review");
+      this.d.transaction(() => {
+        this.d.verifyRollout();
+        if (!this.d.sql.exec(`SELECT operation_id FROM invite_revocation_legacy_operations WHERE operation_id=?`, operation).toArray().length) return;
+        const current = readFence(), c = current[0];
+        if (current.length !== 1 || !c || c.operation_id !== f.operation_id || c.email !== f.email ||
+            c.email_fingerprint !== f.email_fingerprint || c.generation !== f.generation)
+          throw new AppError("unavailable", "invitation inventory requires review");
+        this.snapshotLocal(operation, f.email);
+        const count = this.d.sql.exec<{ n: number }>(`SELECT count(*) AS n FROM invite_revocation_global_orphans WHERE operation_id=?`, operation).one().n;
+        this.d.sql.exec(`INSERT INTO invite_revocation_legacy_marker(slot,operation_id) VALUES (1,?)`, operation);
+        try {
+          this.d.sql.exec(`INSERT INTO invite_revocation_legacy_proofs(operation_id,local_orphans,scanned_at) VALUES (?,?,?)`, operation, count, Date.now());
+          this.d.sql.exec(`DELETE FROM invite_revocation_legacy_operations WHERE operation_id=?`, operation);
+        } finally { this.d.sql.exec(`DELETE FROM invite_revocation_legacy_marker WHERE slot=1`); }
+      });
+    }
+  }
   private validateOperation(operation: string): void {
     if (typeof operation !== "string" || !uuid.test(operation)) throw new AppError("invalid", "invalid invitation revocation");
   }
 
   status(operation: string): InviteRevocationStatus {
     this.validateOperation(operation);
+    if (this.d.sql.exec(`SELECT operation_id FROM invite_revocation_legacy_operations WHERE operation_id=?`, operation).toArray().length)
+      return { state: "pending", remaining: 1, orphans: 0, inventoryPending: true };
     const active = this.row();
     const row = active?.operation_id === operation ? active : this.d.sql.exec<Barrier>(`SELECT operation_id,email,email_fingerprint,generation FROM invite_revocation_quarantines WHERE operation_id=?`, operation).toArray()[0];
     if (row?.operation_id === operation) {
       const counts = this.d.sql.exec<{ remaining: number; orphans: number }>(`SELECT count(*) AS remaining,
         coalesce(sum(CASE WHEN state='created' THEN 1 ELSE 0 END),0) AS orphans
         FROM invite_revocation_claims WHERE operation_id=? AND state<>'closed'`, operation).one();
-      return { state: "pending", remaining: counts.remaining, orphans: counts.orphans };
+      const local = this.d.sql.exec<{ n: number }>(
+        `SELECT count(*) AS n FROM invite_revocation_global_orphans WHERE operation_id=?`, operation,
+      ).one().n;
+      return { state: "pending", remaining: counts.remaining + local, orphans: counts.orphans + local };
     }
     if (this.d.sql.exec(`SELECT operation_id FROM invite_revocation_receipts WHERE operation_id=?`, operation).toArray().length)
       return { state: "complete" };
     return { state: "unknown" };
+  }
+
+  private snapshotLocal(operation: string, email: string): void {
+    // A local account can exist while its first bind is still waiting on
+    // Vault.init. Preserve and report it: neither deletion nor adoption is
+    // authorized merely by revoking its invitation.
+    const local = this.d.sql.exec<{ provider: string; subject: string; user_id: string; vault_id: string | null;
+      owner_id: string | null; email: string | null; binding_email: string | null; binding_user: string | null;
+      generation: string | null; state: string | null; home_provider: string | null; home_shard: number | null;
+      home_user: string | null; placement_state: string | null; home_generation: string | null }>(
+      `SELECT i.provider,i.subject,i.user_id,v.vault_id,u.user_id AS owner_id,u.email,b.email AS binding_email,
+              b.user_id AS binding_user,b.generation,u.state,h.provider AS home_provider,h.shard AS home_shard,
+              h.user_id AS home_user,h.placement_state,h.generation AS home_generation
+       FROM identities i LEFT JOIN users u ON u.user_id=i.user_id
+       LEFT JOIN identity_homes h ON h.provider=i.provider AND h.subject=i.subject
+       LEFT JOIN account_invite_bindings b ON b.user_id=i.user_id
+       LEFT JOIN vaults v ON v.user_id=i.user_id
+       WHERE i.provider='google' LIMIT 10001`,
+    );
+    let localScanned = 0, localSelected = 0;
+    const normalize = (value: unknown): string | null => {
+      if (typeof value !== "string" || !value.trim() || value.length > 320) return null;
+      const normalized = value.trim().toLowerCase();
+      return normalized.length <= 320 ? normalized : null;
+    };
+    const unidentified = this.d.sql.exec<{ email: string | null }>(`SELECT u.email FROM users u
+      LEFT JOIN identities i ON i.user_id=u.user_id WHERE i.user_id IS NULL LIMIT 10001`);
+    let unidentifiedScanned = 0;
+    for (const row of unidentified) {
+      if (++unidentifiedScanned > MAX_ROWS) throw new AppError("unavailable", "invitation claim inventory requires review");
+      const candidate = normalize(row.email);
+      if (!candidate || candidate === email) throw new AppError("unavailable", "account invitation requires review");
+    }
+    const danglingBindings = this.d.sql.exec<{ email: string | null }>(`SELECT b.email FROM account_invite_bindings b
+      LEFT JOIN users u ON u.user_id=b.user_id WHERE u.user_id IS NULL LIMIT 10001`);
+    let danglingScanned = 0;
+    for (const row of danglingBindings) {
+      if (++danglingScanned > MAX_ROWS) throw new AppError("unavailable", "invitation claim inventory requires review");
+      const candidate = normalize(row.email);
+      if (!candidate || candidate === email) throw new AppError("unavailable", "account invitation requires review");
+    }
+    for (const row of local) {
+      if (++localScanned > MAX_ROWS) throw new AppError("unavailable", "invitation claim inventory requires review");
+      const ownerEmail = normalize(row.email), bindingEmail = row.binding_user === null ? null : normalize(row.binding_email);
+      // Unknown attribution cannot prove that an identity belongs elsewhere.
+      if (!row.owner_id || !ownerEmail || (row.binding_user !== null && !bindingEmail))
+        throw new AppError("unavailable", "account invitation requires review");
+      if (ownerEmail !== email && bindingEmail !== email) continue;
+      if (++localSelected > MAX_CLAIMS || row.provider !== "google" || typeof row.subject !== "string" || !row.subject || row.subject.length > 1024 ||
+          typeof row.user_id !== "string" || !row.user_id || row.owner_id !== row.user_id || directoryNameForUser(row.user_id) !== "global" ||
+          typeof row.vault_id !== "string" || !/^[a-f0-9]{64}$/i.test(row.vault_id) || row.email !== email ||
+          (row.binding_user !== null && (row.binding_user !== row.user_id || row.binding_email !== email)) ||
+          (row.generation !== null && !/^[a-f0-9]{32}$/.test(row.generation)) ||
+          !row.state || !["active", "deleting"].includes(row.state) ||
+          (row.home_provider !== null && (row.home_shard !== null || row.placement_state !== "open" || row.home_generation !== null ||
+            (row.home_user !== null && row.home_user !== row.user_id))))
+        throw new AppError("unavailable", "account invitation requires review");
+      if (row.home_provider !== null && row.home_user === row.user_id) continue;
+      this.d.sql.exec(`INSERT INTO invite_revocation_global_orphans(operation_id,provider,subject,user_id,vault_id) VALUES (?,?,?,?,?)`,
+        operation, row.provider, row.subject, row.user_id, row.vault_id);
+    }
   }
 
   /** Snapshot every unbound matching-email claim, including older generations. */
@@ -244,6 +443,7 @@ export class InviteRevocation {
         ON c.provider=h.provider AND c.subject=h.subject
         WHERE h.provider='google' AND h.shard IS NOT NULL AND h.user_id IS NULL AND c.provider IS NULL LIMIT 1`).toArray().length)
       throw new AppError("unavailable", "legacy account placement requires review");
+    this.snapshotLocal(operation, email);
     let scanned = 0, selected = 0;
     const rows = this.d.sql.exec<{
       provider: SqlStorageValue; subject: SqlStorageValue; token: SqlStorageValue; email: SqlStorageValue; generation: SqlStorageValue; user_id: SqlStorageValue;
@@ -272,6 +472,8 @@ export class InviteRevocation {
   /** Persist the barrier, snapshot and recovery alarm atomically before RPCs. */
   async begin(emailInput: string, operation: string): Promise<InviteRevocationStatus> {
     this.validateOperation(operation);
+    await this.rescanLegacyBatch();
+    if (this.hasLegacy()) throw new AppError("unavailable", "invitation inventory requires review");
     if (typeof emailInput !== "string" || !emailInput.trim() || emailInput.length > 320)
       throw new AppError("invalid", "invalid invitation revocation");
     const email = emailInput.trim().toLowerCase();
@@ -305,6 +507,14 @@ export class InviteRevocation {
         this.d.verifyRollout();
         if (this.d.sql.exec(`SELECT slot FROM invite_inventory_barrier LIMIT 1`).toArray().length)
           throw new AppError("unavailable", "invitation inventory is busy");
+        // A global-home request has no shard claim to seal. Invalidate all
+        // previously issued Google authorizations in the same transaction as
+        // the barrier, so an old callback cannot spend a later reissued grant.
+        const rawEpoch = this.d.sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='global_auth_epoch'`).toArray()[0]?.value;
+        if (typeof rawEpoch !== "string" || !/^(?:0|[1-9]\d*)$/.test(rawEpoch) ||
+            !Number.isSafeInteger(Number(rawEpoch)) || Number(rawEpoch) >= Number.MAX_SAFE_INTEGER)
+          throw new AppError("unavailable", "invitation revocation requires review");
+        this.d.sql.exec(`UPDATE meta SET value=? WHERE key='global_auth_epoch'`, String(Number(rawEpoch) + 1));
         const grant = this.d.sql.exec<{ generation: string | null }>(`SELECT generation FROM invites WHERE email=?`, email).toArray()[0];
         if (grant && (typeof grant.generation !== "string" || !/^[a-f0-9]{32}$/.test(grant.generation)))
           throw new AppError("unavailable", "invitation requires review");
@@ -325,6 +535,8 @@ export class InviteRevocation {
 
   /** Resume from persisted receipts. Created accounts remain quarantined/pending. */
   async resume(): Promise<void> {
+    await this.rescanLegacyBatch();
+    if (this.hasLegacy()) throw new AppError("unavailable", "invitation inventory requires review");
     const barrier = this.row();
     if (!barrier) return;
     this.d.verifyRollout();
@@ -368,7 +580,10 @@ export class InviteRevocation {
       const unsettled = this.d.sql.exec<{ state: string; user_id: string | null; vault_id: string | null }>(
         `SELECT state,user_id,vault_id FROM invite_revocation_claims WHERE operation_id=? AND state<>'closed'`, operation,
       ).toArray();
-      if (unsettled.length) {
+      const localOrphans = this.d.sql.exec<{ n: number }>(
+        `SELECT count(*) AS n FROM invite_revocation_global_orphans WHERE operation_id=?`, operation,
+      ).one().n;
+      if (unsettled.length || localOrphans) {
         // Unknown and absent-but-not-yet-closed dispatches stay active. A
         // discovered account stays quarantined; neither its data nor its
         // permanent shard token tombstone is removed here.

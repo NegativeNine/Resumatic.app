@@ -6,7 +6,7 @@ import { INVITE_COORDINATOR_MIGRATIONS, INVITE_COORDINATOR_TARGET_MIGRATIONS } f
 import { SHARD_INVITE_BINDING_MIGRATIONS } from "./shard-invite-binding";
 import { INVITE_TARGET_SEAL_MIGRATIONS } from "./invite-target-seal";
 import { SHARD_CLAIM_REVOCATION_MIGRATIONS } from "./shard-claim-revocation";
-import { INVITE_REVOCATION_MIGRATIONS, INVITE_QUARANTINE_MIGRATIONS } from "./invite-revocation";
+import { INVITE_REVOCATION_MIGRATIONS, INVITE_QUARANTINE_MIGRATIONS, INVITE_GLOBAL_ORPHAN_MIGRATIONS } from "./invite-revocation";
 // Directory tables. Holds identities and the vault directory; never career data.
 
 export const DIRECTORY_MIGRATIONS: readonly string[][] = [
@@ -213,6 +213,7 @@ export const DIRECTORY_MIGRATIONS: readonly string[][] = [
   SHARD_CLAIM_REVOCATION_MIGRATIONS,
   INVITE_REVOCATION_MIGRATIONS,
   INVITE_QUARANTINE_MIGRATIONS,
+  INVITE_GLOBAL_ORPHAN_MIGRATIONS,
 ];
 
 export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) => T, global = false, shard = false): void {

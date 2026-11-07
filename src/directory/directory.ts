@@ -145,7 +145,8 @@ export class Directory extends DurableObject<Env> {
         return Array.from(new Uint8Array(mac), (b) => b.toString(16).padStart(2, "0")).join("");
       },
       verifyRollout: () => {
-        if (!this.isGlobal || !this.inviteInventoryEnabled())
+        if (!this.isGlobal || !this.inviteInventoryEnabled() ||
+            (this.env as Env & { INVITE_REVOCATION_DRAIN_VERIFIED?: string }).INVITE_REVOCATION_DRAIN_VERIFIED !== "verified-v2")
           throw new AppError("unavailable", "invitation revocation rollout requires verification");
       },
       seal: (claim) => directoryByName(this.env, `directory-${claim.shard}`).sealShardInviteClaimV2(claim),
@@ -193,6 +194,9 @@ export class Directory extends DurableObject<Env> {
   async googleAuthEpoch(): Promise<number> {
     if (!this.isGlobal) throw new AppError("invalid", "sign-in coordinator is invalid");
     if (this.inviteCoordinator.active()) throw new AppError("unavailable", "sign-in is temporarily unavailable");
+    // Progress bounded recovery opportunistically. An unresolved scan still
+    // fences new or unbound identities while existing bound users may sign in.
+    try { await this.inviteRevocation.rescanLegacyBatch(); } catch { /* Pending operator review. */ }
     return this.readGoogleAuthEpoch();
   }
 
@@ -418,8 +422,22 @@ export class Directory extends DurableObject<Env> {
       : this.isShard && this.sql.exec(`SELECT key FROM meta WHERE key='shard_invite_epoch_guard' AND value='1'`).toArray().length > 0;
     if ((this.isGlobal || this.isShard) && (p.provider === "google" || inventoryEpochRequired))
       this.googleWrite(p.provider, p.authEpoch, () => {});
+    const assertGlobalOrphanOpen = (): void => {
+      if (this.isGlobal && p.provider === "google" && this.sql.exec(`SELECT user_id FROM invite_revocation_global_orphans
+          WHERE provider=? AND subject=?`, p.provider, p.subject).toArray().length)
+        throw new AppError("unavailable", "account invitation requires review");
+    };
+    assertGlobalOrphanOpen();
     const email = p.email.trim().toLowerCase();
     let row = this.findAccount(p.provider, p.subject);
+    const assertLegacyBound = (userId?: string): void => {
+      if (!this.isGlobal || p.provider !== "google" || !this.inviteRevocation.hasLegacy()) return;
+      const bound = userId && this.sql.exec(`SELECT user_id FROM identity_homes
+        WHERE provider=? AND subject=? AND shard IS NULL AND user_id=? AND placement_state='open' AND generation IS NULL`,
+        p.provider, p.subject, userId).toArray().length;
+      if (!bound) throw new AppError("unavailable", "invitation inventory requires review");
+    };
+    assertLegacyBound(row?.user_id);
     let created = false;
     const storedShardClaim = (userId: string) => this.sql.exec<{ token: string }>(
       `SELECT token FROM shard_identity_claim_tokens WHERE provider=? AND subject=? AND user_id=?`, p.provider, p.subject, userId,
@@ -557,6 +575,8 @@ export class Directory extends DurableObject<Env> {
     if (row.vault_state === "creating") {
       // Only the first get() of an object honours a location hint, so the vault is placed near the user now.
       await this.initializeVault(row.vault_id, row.user_id, row.hint);
+      assertLegacyBound(row.user_id);
+      assertGlobalOrphanOpen();
       // A token may be sealed during the cross-object call. Do not publish an
       // active shard mapping when the account is already quarantined.
       assertStoredShardClaimOpen(row.user_id);
@@ -581,6 +601,8 @@ export class Directory extends DurableObject<Env> {
     )
       throw new AppError("forbidden", "this account is being deleted");
     if (p.authExpiryMs !== undefined) requireFreshAuth(p.authExpiryMs);
+    assertLegacyBound(row.user_id);
+    assertGlobalOrphanOpen();
     const shardClaimToken = storedShardClaim(row.user_id);
     // The seal may have arrived while initialization was in flight. Older
     // RPCs omit the claim input, so check the persisted token again for all
@@ -872,6 +894,9 @@ export class Directory extends DurableObject<Env> {
         `SELECT shard,user_id,generation,placement_state FROM identity_homes WHERE provider=? AND subject=?`, provider, subject,
       ).toArray()[0];
       const shard = /^s(\d+):/i.exec(userId);
+      if (this.isGlobal && provider === "google" && this.inviteRevocation.hasLegacy() &&
+          (!home || home.shard !== null || home.user_id !== userId))
+        throw new AppError("unavailable", "invitation inventory requires review");
       // A global account can predate placement tracking. A sharded account,
       // however, must have its coordinator claim before a session is issued:
       // an absent home can also mean that the shard has an orphan identity
@@ -879,10 +904,54 @@ export class Directory extends DurableObject<Env> {
       if (!home) {
         if (directoryNameForUser(userId) !== "global")
           throw new AppError("unavailable", "sharded account placement requires review");
+        // A missing legacy home does not prove this account was established
+        // before revocation. An inventoried identity stays pending for review.
+        if (provider === "google" && this.sql.exec(`SELECT user_id FROM invite_revocation_global_orphans
+          WHERE provider=? AND subject=?`, provider, subject).toArray().length)
+          throw new AppError("unavailable", "account invitation requires review");
+        if (!this.sql.exec(`SELECT i.user_id FROM identities i JOIN users u ON u.user_id=i.user_id
+          JOIN vaults v ON v.user_id=u.user_id WHERE i.provider=? AND i.subject=? AND i.user_id=?
+            AND u.state='active' AND v.state='active'`, provider, subject, userId).toArray().length)
+          throw new AppError("conflict", "account placement changed; retry sign-in");
+        if (provider === "google" && this.env.INVITE_ONLY !== "false") {
+          const binding = this.sql.exec<{ email: string; generation: string | null }>(
+            `SELECT email,generation FROM account_invite_bindings WHERE user_id=?`, userId,
+          ).toArray()[0];
+          if (binding) {
+            const owner = this.sql.exec<{ email: string }>(`SELECT email FROM users WHERE user_id=?`, userId).one();
+            const grant = this.sql.exec<{ generation: string | null }>(`SELECT generation FROM invites WHERE email=?`, binding.email).toArray()[0];
+            if (owner.email !== binding.email || !binding.generation || !grant || grant.generation !== binding.generation)
+              throw new AppError("unavailable", "account invitation requires review");
+          }
+        }
         return;
       }
       if (home.generation && home.user_id === null)
         throw new AppError("unavailable", "registered placement must be settled before binding");
+      let globalBindEmail: string | null = null;
+      if (this.isGlobal && provider === "google" && home.shard === null && home.user_id === null) {
+        if (this.sql.exec(`SELECT user_id FROM invite_revocation_global_orphans WHERE provider=? AND subject=?`,
+          provider, subject).toArray().length)
+          throw new AppError("unavailable", "account invitation requires review");
+        // Accounts created by current code capture their original grant. Until
+        // the home is bound, a revoked or later reissued grant cannot authorize
+        // the first session. Older accounts with no binding remain compatible.
+        const binding = this.sql.exec<{ email: string; generation: string | null }>(
+          `SELECT email,generation FROM account_invite_bindings WHERE user_id=?`, userId,
+        ).toArray()[0];
+        if (binding) {
+          const owner = this.sql.exec<{ email: string }>(`SELECT u.email FROM users u JOIN identities i ON i.user_id=u.user_id
+            WHERE u.user_id=? AND u.state='active' AND i.provider=? AND i.subject=?`, userId, provider, subject).toArray()[0];
+          if (!owner || owner.email !== binding.email)
+            throw new AppError("unavailable", "account invitation requires review");
+          globalBindEmail = binding.email;
+          if (this.env.INVITE_ONLY !== "false") {
+            const grant = this.sql.exec<{ generation: string | null }>(`SELECT generation FROM invites WHERE email=?`, binding.email).toArray()[0];
+            if (!grant || !binding.generation || grant.generation !== binding.generation)
+              throw new AppError("forbidden", "this invitation changed; sign-in requires review");
+          }
+        }
+      }
       let verifiedClaim = false;
       if (home.shard !== null) {
         const stored = this.sql.exec<{ token: string }>(`SELECT token FROM shard_home_claim_tokens WHERE provider=? AND subject=?`, provider, subject).toArray()[0]?.token ?? null;
@@ -901,9 +970,15 @@ export class Directory extends DurableObject<Env> {
       if (home.placement_state !== "open" || (shard ? Number(shard[1]) : null) !== home.shard ||
           (home.user_id !== null && home.user_id !== userId))
         throw new AppError("conflict", "account placement changed; retry sign-in");
+      // A bound mapping needs no write and remains usable during a pending
+      // legacy rescan; all consistency checks above have already run.
+      if (home.user_id === userId) return;
       if (verifiedClaim && home.user_id === null)
         this.sql.exec(`INSERT INTO shard_home_bind_claim_marker(provider,subject,token) VALUES (?,?,?)`, provider, subject, shardClaimToken!);
       try {
+        if (globalBindEmail !== null)
+          this.sql.exec(`INSERT INTO invite_global_bind_marker(slot,provider,subject,user_id,email) VALUES (1,?,?,?,?)`,
+            provider, subject, userId, globalBindEmail);
         this.sql.exec(
           `UPDATE identity_homes SET user_id=? WHERE provider=? AND subject=? AND (user_id IS NULL OR user_id=?)`,
           userId,
@@ -912,6 +987,7 @@ export class Directory extends DurableObject<Env> {
           userId,
         );
       } finally {
+        if (globalBindEmail !== null) this.sql.exec(`DELETE FROM invite_global_bind_marker WHERE slot=1`);
         if (verifiedClaim && home.user_id === null)
           this.sql.exec(`DELETE FROM shard_home_bind_claim_marker WHERE provider=? AND subject=?`, provider, subject);
       }
@@ -992,6 +1068,7 @@ export class Directory extends DurableObject<Env> {
       "shard_invite_target_seals",
       "shard_revoked_invite_claims",
       "invite_revocation_claims",
+      "invite_revocation_global_orphans",
       "invite_inventory_barrier",
       "identity_homes",
       "placement_finalizations",
@@ -1025,11 +1102,13 @@ export class Directory extends DurableObject<Env> {
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM shard_invite_bind_marker`).one().n;
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM shard_invite_target_close_marker`).one().n;
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM shard_invite_create_marker`).one().n;
-    for (const table of ["invite_revocation_barrier", "invite_revocation_quarantines", "invite_quarantine_marker", "invite_revocation_mutation_marker", "invite_registration_marker", "invite_delete_authorizations_v4"]) {
+    for (const table of ["invite_revocation_barrier", "invite_revocation_quarantines", "invite_quarantine_marker", "invite_global_bind_marker", "invite_revocation_legacy_operations", "invite_revocation_legacy_marker", "invite_revocation_mutation_marker", "invite_registration_marker", "invite_delete_authorizations_v4"]) {
       count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`).one().n;
     }
     count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invite_revocation_claims
       WHERE (state='created' AND (user_id IS NULL OR vault_id IS NULL)) OR (vault_id=? AND (user_id IS NULL OR user_id<>?))`, vaultId, userId).one().n;
+    count += this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invite_revocation_global_orphans
+      WHERE vault_id=? AND user_id<>?`, vaultId, userId).one().n;
     count += this.sql.exec<{ n: number }>(
       `SELECT COUNT(*) AS n FROM shard_invite_target_seals WHERE vault_id=? AND user_id<>?`, vaultId, userId,
     ).one().n;

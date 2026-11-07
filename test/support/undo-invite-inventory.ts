@@ -1,7 +1,30 @@
-import { INVITE_REVOCATION_MIGRATIONS } from "../../src/directory/invite-revocation";
+import { INVITE_QUARANTINE_MIGRATIONS, INVITE_REVOCATION_MIGRATIONS } from "../../src/directory/invite-revocation";
+
+export function undoInviteGlobalOrphansMigration(sql: SqlStorage): void {
+  for (const table of ["identity_homes", "identities", "users", "account_invite_bindings"]) for (const action of ["insert", "update", "delete"])
+    sql.exec(`DROP TRIGGER IF EXISTS invite_legacy_${table}_${action}`);
+  sql.exec(`DROP TRIGGER IF EXISTS invite_legacy_barrier_update`);
+  sql.exec(`DROP TRIGGER IF EXISTS invite_legacy_barrier_delete`);
+  sql.exec(`DROP TRIGGER IF EXISTS invite_legacy_quarantine_delete`);
+  sql.exec(`DROP TABLE IF EXISTS invite_revocation_legacy_marker`);
+  sql.exec(`DROP TABLE IF EXISTS invite_revocation_legacy_proofs`);
+  sql.exec(`DROP TABLE IF EXISTS invite_revocation_legacy_operations`);
+  for (const action of ["insert", "update", "delete"])
+    sql.exec(`DROP TRIGGER IF EXISTS invite_global_orphan_identity_${action}`);
+  const marker = sql.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='invite_global_bind_marker'`).toArray();
+  if (marker.length) {
+    sql.exec(`DROP TRIGGER IF EXISTS invite_revocation_home_update`);
+    sql.exec(`DROP TABLE invite_global_bind_marker`);
+    const previous = INVITE_QUARANTINE_MIGRATIONS.find((statement) => /^CREATE TRIGGER invite_revocation_home_update/.test(statement));
+    if (!previous) throw new Error("missing prior home-update guard");
+    sql.exec(previous);
+  }
+  sql.exec(`DROP TABLE IF EXISTS invite_revocation_global_orphans`);
+}
 
 /** Restore the prior one-barrier trigger set before removing quarantine. */
 export function undoInviteQuarantineMigration(sql: SqlStorage): void {
+  undoInviteGlobalOrphansMigration(sql);
   if (!sql.exec(`SELECT name FROM sqlite_master WHERE type='view' AND name='invite_revocation_fences'`).toArray().length) return;
   for (const trigger of ["inventory_guard", "registration_guard", "home_insert", ...["invites", "claim", "token"].flatMap((t) => ["insert", "update", "delete"].map((a) => `${t}_${a}`)), "user_insert", "user_email", "home_update", "home_delete"])
     sql.exec(`DROP TRIGGER IF EXISTS invite_revocation_${trigger}`);

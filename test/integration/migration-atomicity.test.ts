@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { DIRECTORY_MIGRATIONS, migrateDirectory } from "../../src/directory/schema";
 import { MIGRATIONS, migrate, SCHEMA_VERSION } from "../../src/vault/schema";
-import { undoInviteQuarantineMigration, undoInviteCoordinatorMigration, undoInviteCoordinatorTargetMigration, undoInviteInventoryMigrations, undoInviteRevocationMigration, undoInviteTargetSealMigration, undoShardInviteBindingMigration, undoShardClaimRevocationMigration } from "../support/undo-invite-inventory";
+import { undoInviteGlobalOrphansMigration, undoInviteQuarantineMigration, undoInviteCoordinatorMigration, undoInviteCoordinatorTargetMigration, undoInviteInventoryMigrations, undoInviteRevocationMigration, undoInviteTargetSealMigration, undoShardInviteBindingMigration, undoShardClaimRevocationMigration } from "../support/undo-invite-inventory";
 
 /** Interrupt a migration after its first DDL statement has executed. */
 function failAtTrigger(sql: SqlStorage, trigger: string): SqlStorage {
@@ -129,6 +129,7 @@ describe("atomic schema migrations", () => {
     { table: "shard_invite_target_seals", trigger: "shard_invite_target_insert_guard", undo: undoInviteTargetSealMigration },
     { table: "shard_revoked_invite_claims", trigger: "shard_invite_create_marker_open", undo: undoShardClaimRevocationMigration },
     { table: "invite_revocation_barrier", trigger: "invite_revocation_home_insert", undo: undoInviteRevocationMigration },
+    { table: "invite_revocation_global_orphans", trigger: "invite_global_orphan_update", undo: undoInviteGlobalOrphansMigration },
     { table: "invite_revocation_quarantines", trigger: "invite_quarantine_update", undo: undoInviteQuarantineMigration },
   ])("rolls back the $table migration and its guards together", async ({ table, trigger, undo }) => {
     const stub = env.DIRECTORY.getByName(`inventory-migration-${crypto.randomUUID()}`);

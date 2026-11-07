@@ -20,11 +20,12 @@ it("fences a delayed shard create across revocation and a later reissue", async 
     await expect((instance as Directory).signInWithInviteClaimV2(input)).rejects.toThrow("no longer available");
   });
   await global.addInvite(email);
-  const fresh = (await global.claimIdentityHomeV3("google", subject, shard, email, undefined, epoch)).shardInviteClaim!;
+  const freshEpoch = await global.googleAuthEpoch();
+  const fresh = (await global.claimIdentityHomeV3("google", subject, shard, email, undefined, freshEpoch)).shardInviteClaim!;
   expect(fresh.token).not.toBe(claim!.token);
   expect(fresh.generation).not.toBe(claim!.generation);
-  const created = await target.signInWithInviteClaimV2({ ...input, shardClaimToken: fresh.token, shardInviteClaim: fresh });
-  await global.bindIdentityHomeV3("google", subject, created.userId, epoch, undefined, false, fresh);
+  const created = await target.signInWithInviteClaimV2({ ...input, authEpoch: freshEpoch, shardClaimToken: fresh.token, shardInviteClaim: fresh });
+  await global.bindIdentityHomeV3("google", subject, created.userId, freshEpoch, undefined, false, fresh);
   await runInDurableObject(target, async (instance) => {
     await expect((instance as Directory).signInWithInviteClaimV2(input)).rejects.toThrow("no longer available");
   });

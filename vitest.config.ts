@@ -60,6 +60,7 @@ export default defineConfig({
                 // Local-only assertion for exercising the complete inventory
                 // protocol; it is not evidence that a real rollout is drained.
                 INVITE_INVENTORY_DRAIN_VERIFIED: "verified-v1",
+                INVITE_REVOCATION_DRAIN_VERIFIED: "verified-v2",
                 RATE_LIMITS_ENABLED: "false",
                 TAILOR_MONTHLY_LIMIT: "3",
               },
