@@ -33,6 +33,11 @@
   display: none;
 }
 
+/* A quote sits a little apart from the fact or role it backs. */
+:where(.card, .fact, .group, .evidence, .evidence-item, .document-content, .source-evidence) .rs-quote {
+  margin-top: var(--space-3);
+}
+
 /* Footer */
 
 .app-footer-nav {
