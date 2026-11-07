@@ -1089,6 +1089,14 @@ api.post("/runs/:id/retry", async (c) =>
     202,
   ),
 );
+// A distinct route and RPC name ensure an older Worker or Vault cannot
+// silently turn an explicit extractor change into an ordinary retry.
+api.post("/runs/:id/retry-current-extractor", async (c) =>
+  c.json(
+    await myVault(c).retryRunCurrentExtractorV1(c.get("who"), c.req.param("id"), requestKey(c), currentDefaultExtractor(c.env)),
+    202,
+  ),
+);
 api.post("/runs/:id/cancel", async (c) => {
   await myVault(c).cancelRun(c.get("who"), c.req.param("id"));
   return c.body(null, 202);
@@ -1338,6 +1346,16 @@ admin.post("/vaults/:id/runs/:run/retry", async (c) =>
     202,
   ),
 );
+admin.post("/vaults/:id/runs/:run/retry-current-extractor", async (c) =>
+  c.json(
+    await vault(c.env, c.req.param("id")).adminRetryCurrentExtractorV1(
+      c.req.param("run"),
+      requestKey(c),
+      currentDefaultExtractor(c.env),
+    ),
+    202,
+  ),
+);
 
 admin.get("/vaults/:id/extraction-feedback", async (c) =>
   c.json({
@@ -1437,6 +1455,14 @@ function fileName(text: string): string {
       .replace(/\s+/g, "-")
       .slice(0, 80) || "resume"
   );
+}
+
+/** This recovery route targets the Worker's configured default LLM only. */
+function currentDefaultExtractor(env: Env): string {
+  const model = env.MODEL_EXTRACT;
+  if (typeof model !== "string" || !model || model !== model.trim() || model.length > 196)
+    throw new AppError("unavailable", "extraction configuration is not available");
+  return `llm:${model}`;
 }
 
 function requestKey(c: C): string {

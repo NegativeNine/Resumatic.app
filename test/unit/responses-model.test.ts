@@ -41,7 +41,7 @@ describe("Responses-only model adapter", () => {
     expect(calls).toHaveLength(1);
     const [{ url, init, body }] = calls;
     expect(url).toBe("https://api.cloudflare.com/client/v4/accounts/acct/ai/v1/responses");
-    expect(init.redirect).toBe("error");
+    expect(init.redirect).toBe("manual");
     const headers = new Headers(init.headers);
     expect(headers.get("authorization")).toBe("Bearer token");
     expect(headers.get("cf-aig-gateway-id")).toBe("gateway");

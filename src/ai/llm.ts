@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { modelAttempt, type ModelAttempt, type ModelObservers } from "./usage";
+import { AppError } from "../shared/errors";
+import { modelHttpFailureDetail } from "../shared/model-failures";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -27,6 +29,15 @@ export interface ChatConfig extends ModelObservers {
 
 type Fetcher = (input: string, init: RequestInit) => Promise<Response>;
 
+// Request bodies and provider errors may contain career text. Emit only a
+// reviewed event, a bounded route code and the numeric HTTP status (0 for a
+// network failure); never log an exception or provider response.
+function logRequestFailure(route: string, status: number): void {
+  const safeRoute = ["extract", "analyze", "write", "repair", "judge"].includes(route) ? route : "other";
+  const safeStatus = Number.isInteger(status) && status >= 100 && status <= 599 ? status : 0;
+  console.error(JSON.stringify({ event: "model_request_failed", route: safeRoute, status: safeStatus }));
+}
+
 /**
  * One structured completion through AI Gateway's OpenAI-compatible REST endpoints.
  * Third-party models are paid through Unified Billing, so only a Cloudflare token is needed.
@@ -49,12 +60,14 @@ export async function chatComplete<T>(
   ];
   let conversation = withSchema;
   let lastError = "";
+  let lastModeError: JsonModeError | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     let raw: string;
     try {
       raw = await callOnce(cfg, conversation, z.toJSONSchema(schema), fetcher);
     } catch (error) {
       if (!(error instanceof JsonModeError)) throw error;
+      lastModeError = error;
       conversation = [
         ...withSchema,
         {
@@ -66,6 +79,7 @@ export async function chatComplete<T>(
       continue;
     }
     const parsed = parseJson(raw);
+    lastModeError = null;
     const result = parsed.ok ? schema.safeParse(parsed.value) : null;
     if (result?.success) return result.data;
     lastError = parsed.ok ? z.prettifyError(result!.error) : parsed.error;
@@ -78,13 +92,17 @@ export async function chatComplete<T>(
       },
     ];
   }
+  // An unavailable error remains retryable and exposes only a fixed status code.
+  if (lastModeError) throw lastModeError;
   // A plain error, so the Workflow step retries the call; the message holds no model output.
   throw new Error(
     `model output for ${cfg.route} did not match its schema twice`,
   );
 }
 
-class JsonModeError extends Error {}
+class JsonModeError extends AppError {
+  constructor(status: number) { super("unavailable", modelHttpFailureDetail(status)); }
+}
 
 async function callOnce(
   cfg: ChatConfig,
@@ -147,7 +165,8 @@ async function callOnce(
         `https://api.cloudflare.com/client/v4/accounts/${cfg.accountId}/ai/v1/${responses ? "responses" : "chat/completions"}`,
         {
           method: "POST",
-          redirect: "error",
+          // Workers supports manual redirects; never forward credentials or career text.
+          redirect: "manual",
           headers: {
             authorization: `Bearer ${cfg.token}`,
             "content-type": "application/json",
@@ -162,16 +181,19 @@ async function callOnce(
           body: bodyText,
         },
       ).catch(() => {
-        throw new Error(`model call for ${cfg.route} failed`);
+        logRequestFailure(cfg.route, 0);
+        throw new AppError("unavailable", "model provider network failure");
       });
       if (!res.ok) {
+        logRequestFailure(cfg.route, res.status);
+        // A redirect is a hard failure, even if its body resembles a JSON Mode error.
+        if (res.status >= 300 && res.status < 400)
+          throw new AppError("unavailable", modelHttpFailureDetail(res.status));
         const errorText = await res.text();
         if (/JSON Mode (?:couldn't|could not) be met/i.test(errorText))
-          throw new JsonModeError("json_mode_failed");
-        // Thrown as a plain error so the Workflow step retries it.
-        throw new Error(
-          `model call for ${cfg.route} failed with HTTP ${res.status}`,
-        );
+          throw new JsonModeError(res.status);
+        // Unavailable failures stay retryable and carry only an allowlisted status.
+        throw new AppError("unavailable", modelHttpFailureDetail(res.status));
       }
       const value = await res.json().catch(() => {
         throw new Error(`model response for ${cfg.route} was not JSON`);

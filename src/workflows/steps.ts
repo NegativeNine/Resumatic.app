@@ -1,6 +1,7 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import type { WorkflowStepConfig } from "cloudflare:workers";
 import { errorCode, errorDetail, type ErrorCode } from "../shared/errors";
+import { MODEL_FAILURE_DETAILS } from "../shared/model-failures";
 
 /** Quick steps that touch the vault or R2. */
 export const STEP: WorkflowStepConfig = {
@@ -29,6 +30,7 @@ const FINAL = new Set([
 // they happen to begin with an AppError-like code. Only exact, reviewed
 // messages may be retained or returned to the user.
 const SAFE_DETAILS = new Set([
+  ...MODEL_FAILURE_DETAILS,
   "confirm some facts before tailoring a resume",
   "none of your confirmed facts match this job yet",
   "the uploaded file is missing; upload it again",

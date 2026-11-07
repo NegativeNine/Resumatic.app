@@ -4385,10 +4385,34 @@ export class Vault extends DurableObject<Env> {
     id: string,
     key: string,
   ): Promise<{ runId: string; targetId: string }> {
+    return this.retryRunInternal(who, id, key, null);
+  }
+
+  /** Distinct RPC name prevents an older Vault silently ignoring this option. */
+  async retryRunCurrentExtractorV1(
+    who: Who,
+    id: string,
+    key: string,
+    expectedExtractor: string,
+  ): Promise<{ runId: string; targetId: string }> {
+    if (typeof expectedExtractor !== "string" || !expectedExtractor.startsWith("llm:") || expectedExtractor.length <= 4 || expectedExtractor.length > 200)
+      throw new AppError("invalid", "invalid extractor expectation");
+    return this.retryRunInternal(who, id, key, expectedExtractor);
+  }
+
+  private async retryRunInternal(
+    who: Who,
+    id: string,
+    key: string,
+    expectedExtractor: string | null,
+  ): Promise<{ runId: string; targetId: string }> {
     this.requireOwner(who);
+    const reselect = expectedExtractor !== null;
     const run = this.runs.get(id);
     if (!run || !["failed", "cancelled"].includes(run.state))
       throw new AppError("conflict", "only stopped work can be retried");
+    if (reselect && (run.kind !== "distill" || run.state !== "failed"))
+      throw new AppError("invalid", "extractor selection requires a failed upload");
     if (run.kind === "tailor") {
       const result = await this.tailor(
         who,
@@ -4427,11 +4451,29 @@ export class Vault extends DurableObject<Env> {
         "start a new maintenance operation instead",
       );
     const requestKey = `retry:${id}:${key}`;
+    const inputDigest = reselect ? `reselect:${id}:${expectedExtractor}` : id;
     const prior = this.runs.findRequest(requestKey);
-    if (prior) return { runId: prior.id, targetId: prior.targetId };
+    if (prior) {
+      if (prior.inputDigest !== inputDigest)
+        throw new AppError("conflict", "retry options changed");
+      return { runId: prior.id, targetId: prior.targetId };
+    }
     const source = this.sourceRow(run.targetId);
     if (source.run_id !== id)
       throw new AppError("conflict", "this source already has a newer run");
+    if (reselect && this.sql.exec(
+      `SELECT 1 FROM extraction_commits WHERE source_id=?
+       UNION ALL SELECT 1 FROM roles WHERE source_id=?
+       UNION ALL SELECT 1 FROM facts WHERE source_id=?
+       UNION ALL SELECT 1 FROM evidence WHERE source_id=? LIMIT 1`,
+      source.id, source.id, source.id, source.id,
+    ).toArray().length)
+      // Legacy extractions may predate extraction_commits; their rows still
+      // bind the source to the old extractor and must not be replaced.
+      throw new AppError("conflict", "extraction is already committed for this source");
+    const extractor = reselect ? this.extractionStrategy(source.origin, source.filename) : source.extractor;
+    if (reselect && extractor !== expectedExtractor)
+      throw new AppError("unavailable", "extraction configuration is not consistent");
     if (
       this.sql
         .exec<{ n: number }>(
@@ -4447,13 +4489,14 @@ export class Vault extends DurableObject<Env> {
         kind: "distill",
         targetId: source.id,
         requestKey,
-        inputDigest: id,
+        inputDigest,
         steps: ["convert", "extract", "embed"],
       },
       () => {
         this.sql.exec(
-          `UPDATE sources SET state='queued',error=NULL,run_id=? WHERE id=?`,
+          `UPDATE sources SET state='queued',error=NULL,run_id=?,extractor=? WHERE id=?`,
           next,
+          extractor,
           source.id,
         );
       },
@@ -4471,6 +4514,21 @@ export class Vault extends DurableObject<Env> {
       },
       id,
       key,
+    );
+  }
+
+  /** Versioned separately so mixed-version Vaults cannot run an ordinary retry. */
+  async adminRetryCurrentExtractorV1(id: string, key: string, expectedExtractor: string) {
+    this.requireOpen();
+    return this.retryRunCurrentExtractorV1(
+      {
+        userId: this.meta("user_id")!,
+        gen: Number(this.meta("session_gen")),
+        epoch: this.meta("security_epoch") ?? "legacy",
+      },
+      id,
+      key,
+      expectedExtractor,
     );
   }
 

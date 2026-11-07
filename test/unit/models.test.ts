@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { chatComplete } from "../../src/ai/llm";
 import { renderResumeHtml, formatDate } from "../../src/render/template";
@@ -27,6 +27,32 @@ function replies(...bodies: (string | Response)[]) {
 }
 
 describe("chatComplete", () => {
+  it("logs only an approved route and numeric status for provider and network failures", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const secret = "private synthetic resume text";
+      await expect(chatComplete(
+        { ...cfg, route: "extract", token: secret },
+        [{ role: "user", content: secret }],
+        Schema,
+        async () => new Response(secret, { status: 403 }),
+      )).rejects.toThrow(/HTTP 403/);
+      await expect(chatComplete(
+        { ...cfg, route: secret },
+        [{ role: "user", content: secret }],
+        Schema,
+        async () => { throw new Error(secret); },
+      )).rejects.toThrow();
+      expect(log.mock.calls).toEqual([
+        [JSON.stringify({ event: "model_request_failed", route: "extract", status: 403 })],
+        [JSON.stringify({ event: "model_request_failed", route: "other", status: 0 })],
+      ]);
+      expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("calls the gateway with logging off and the schema attached", async () => {
     const { fetcher, requests } = replies('```json\n{"answer": 42}\n```');
     expect(
@@ -38,7 +64,7 @@ describe("chatComplete", () => {
       ),
     ).toEqual({ answer: 42 });
     const [req] = requests;
-    expect(req!.init.redirect).toBe("error");
+    expect(req!.init.redirect).toBe("manual");
     expect(req!.url).toBe(
       "https://api.cloudflare.com/client/v4/accounts/acct/ai/v1/chat/completions",
     );
@@ -103,7 +129,7 @@ describe("chatComplete", () => {
     );
   });
 
-  it("throws a plain, retryable error when the gateway fails", async () => {
+  it("throws a retryable unavailable error with a safe status when the gateway fails", async () => {
     const { fetcher } = replies(new Response("busy", { status: 529 }));
     const error = await chatComplete(
       cfg,
@@ -112,14 +138,44 @@ describe("chatComplete", () => {
       fetcher,
     ).catch((e) => e);
     expect(error).toBeInstanceOf(Error);
-    expect(errorCode(error)).toBeNull();
+    expect(errorCode(error)).toBe("unavailable");
+    expect(error.message).toBe("unavailable: model provider HTTP 529");
+  });
+
+  it("keeps only the safe HTTP code if JSON Mode fails twice", async () => {
+    const secret = "private synthetic resume text";
+    const { fetcher, requests } = replies(
+      new Response(`JSON Mode couldn't be met ${secret}`, { status: 400 }),
+      new Response(`JSON Mode couldn't be met ${secret}`, { status: 400 }),
+    );
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const error = await chatComplete(cfg, [{ role: "user", content: secret }], Schema, fetcher).catch((e: Error) => e);
+      expect(error).toBeInstanceOf(Error);
+      if (!(error instanceof Error)) throw new Error("expected model call to fail");
+      expect(error.message).toBe("unavailable: model provider HTTP 400");
+      expect(error.message).not.toContain(secret);
+      expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
+      expect(requests).toHaveLength(2);
+    } finally { log.mockRestore(); }
+  });
+
+  it("maps unreviewed provider status codes to a fixed generic detail", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const error = await chatComplete(cfg, [], Schema, async () => new Response("private response", { status: 418 })).catch((e: Error) => e);
+      expect(error).toBeInstanceOf(Error);
+      if (!(error instanceof Error)) throw new Error("expected model call to fail");
+      expect(error.message).toBe("unavailable: model provider HTTP error");
+      expect(error.message).not.toContain("private response");
+    } finally { log.mockRestore(); }
   });
 
   it("does not follow or replay redirected model requests", async () => {
-    const { fetcher, requests } = replies(new Response(null, { status: 307, headers: { location: "https://other.example/model" } }));
+    const { fetcher, requests } = replies(new Response("JSON Mode couldn't be met: private response", { status: 307, headers: { location: "https://other.example/model" } }));
     await expect(chatComplete(cfg, [], Schema, fetcher)).rejects.toThrow(/HTTP 307/);
     expect(requests).toHaveLength(1);
-    expect(requests[0]!.init.redirect).toBe("error");
+    expect(requests[0]!.init.redirect).toBe("manual");
   });
 });
 

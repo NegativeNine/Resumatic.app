@@ -1,5 +1,7 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import { chatComplete } from "../../src/ai/llm";
 import { AppError, errorCode } from "../../src/shared/errors";
 import { once, retrySafely, sourceFailureMessage, userMessage } from "../../src/workflows/steps";
 import { runFleet, type FleetServices } from "../../src/workflows/fleet";
@@ -16,6 +18,31 @@ async function caught(fn: () => Promise<unknown>): Promise<Error> {
 }
 
 describe("Workflow error privacy", () => {
+  it("constructs model requests with a redirect mode supported by Workers", async () => {
+    const result = await chatComplete(
+      { accountId: "acct", token: "test", gatewayId: "gw", model: "example/model", temperature: 0, route: "extract" },
+      [],
+      z.object({ answer: z.number() }),
+      async (url, init) => {
+        const request = new Request(url, init);
+        expect(request.redirect).toBe("manual");
+        return Response.json({ choices: [{ message: { content: '{"answer":42}' } }] });
+      },
+    );
+    expect(result).toEqual({ answer: 42 });
+  });
+
+  it("persists only reviewed model status and network categories", async () => {
+    for (const detail of ["model provider HTTP 401", "model provider HTTP 403", "model provider HTTP 503", "model provider network failure", "model provider HTTP error"]) {
+      const error = await caught(once(async () => { throw new AppError("unavailable", detail); }));
+      expect(error.message).toBe(`unavailable: ${detail}`);
+    }
+    const privateDetail = `model provider HTTP 403 ${privateText}`;
+    const forged = await caught(once(async () => { throw new AppError("unavailable", privateDetail); }));
+    expect(forged.message).toBe("unavailable: the service is temporarily unavailable");
+    expect(forged.message).not.toContain(privateText);
+  });
+
   it("keeps unexpected and AppError-shaped provider messages out of step failures", async () => {
     const unexpected = await caught(once(async () => { throw new Error(privateText); }));
     expect(unexpected.message).toBe("workflow step failed");
