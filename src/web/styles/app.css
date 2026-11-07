@@ -202,6 +202,212 @@
   }
 }
 
+/* Resume page: the sheet and its margin */
+
+.resume-view .toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.app-check-strip {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+  padding: var(--space-4) var(--space-5);
+}
+
+.app-check-strip__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+}
+
+.app-legend summary {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ballpoint);
+  cursor: pointer;
+}
+
+.resume-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--layout-margin);
+  gap: var(--space-8);
+  align-items: start;
+}
+
+/*
+ * The sheet is a scaled Letter page. At full size it is the PDF's 816px with 14px (10.5pt) text;
+ * in a narrower frame every measure shrinks together, so lines break close to where the PDF
+ * breaks them. Measures are the template's points over 10.5pt (src/render/template.ts).
+ */
+.app-sheet-frame {
+  container-type: inline-size;
+  min-width: 0;
+}
+
+.app-sheet-frame .rs-sheet {
+  width: 100%;
+  max-width: 816px;
+  padding: 4.114em 4.8em;
+  font-size: min(14px, 100cqw * 14 / 816);
+}
+
+.app-sheet-frame .rs-sheet h1 {
+  margin: 0 0 0.1em;
+  font-size: 1.905em;
+}
+
+.app-sheet-frame .rs-sheet__contact {
+  margin: 0 0 0.952em;
+}
+
+.app-sheet-frame .rs-sheet__summary {
+  margin: 0 0 0.381em;
+}
+
+.app-sheet-frame .rs-sheet h2 {
+  margin: 1.091em 0 0.545em;
+  padding-bottom: 0.182em;
+  font-size: 1.048em;
+}
+
+.app-sheet-frame .rs-sheet__role {
+  margin-bottom: 0.762em;
+}
+
+.app-sheet-frame .rs-sheet__role-head {
+  gap: 1.143em;
+}
+
+.app-sheet-frame .rs-sheet h3 {
+  font-size: 1em;
+}
+
+.app-sheet-frame .rs-sheet ul {
+  margin: 0.286em 0 0 1.333em;
+}
+
+.app-sheet-frame .rs-sheet li {
+  margin: 0 0 0.19em;
+}
+
+/* Notes sit level with their lines; margin-layout.ts sets each one's top. */
+.app-notes {
+  position: relative;
+}
+
+.app-notes > .rs-note {
+  position: absolute;
+  right: 0;
+  left: 0;
+  padding-bottom: 0;
+}
+
+.app-notes > .rs-note.is-open {
+  z-index: 2;
+}
+
+.app-notes > .rs-note.is-open .rs-note__evidence {
+  box-shadow: var(--shadow-pop);
+}
+
+/* A note repeats its line only where the notes follow the sheet as a list. */
+.rs-note__line {
+  display: none;
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.app-margin-end {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-6);
+}
+
+.app-tool-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-tool-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: 14px;
+}
+
+.app-gaps-note {
+  margin-top: var(--space-3);
+}
+
+.app-gap-answer {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.app-step-count {
+  margin: var(--space-4) 0 var(--space-2);
+  font-weight: 600;
+}
+
+/* When the page watched the resume finish, the margin's marks tick in, once. */
+@keyframes app-tick-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.resume-page.is-fresh .rs-note__head .rs-mark {
+  animation: app-tick-in 0.32s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .resume-page.is-fresh .rs-note__head .rs-mark {
+    animation: none;
+  }
+}
+
+/* Narrow screens: the margin goes, and the notes follow the sheet as a list, each with its line. */
+@media (max-width: 1000px) {
+  .resume-page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-notes {
+    position: static;
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .app-notes > .rs-note {
+    position: static;
+    padding: var(--space-3) 0;
+    border-top: 1px solid var(--rule);
+  }
+
+  .app-notes > .rs-note::before {
+    display: none;
+  }
+
+  .rs-note__line {
+    display: block;
+  }
+}
+
 /* Footer */
 
 .app-footer-nav {

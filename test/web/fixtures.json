@@ -6,9 +6,15 @@
       "email": "sam.rivera@example.com",
       "phone": "",
       "location": "Waterloo, ON",
-      "links": ["linkedin.com/in/samrivera"]
+      "links": [
+        "linkedin.com/in/samrivera"
+      ]
     },
-    "quota": { "used": 12, "limit": 20, "month": "2026-11" }
+    "quota": {
+      "used": 12,
+      "limit": 20,
+      "month": "2026-11"
+    }
   },
   "sources": [
     {
@@ -205,8 +211,16 @@
       "excerpt": "Platform Engineer, Litware. We're hiring a platform engineer to run our Kubernetes fleet and build the…",
       "createdAt": 1793960100000,
       "resumes": [
-        { "id": "res-ready", "state": "ready", "createdAt": 1794044520000 },
-        { "id": "res-first", "state": "ready", "createdAt": 1793983320000 }
+        {
+          "id": "res-ready",
+          "state": "ready",
+          "createdAt": 1794044520000
+        },
+        {
+          "id": "res-first",
+          "state": "ready",
+          "createdAt": 1793983320000
+        }
       ]
     },
     {
@@ -215,7 +229,13 @@
       "title": "Senior Data Engineer",
       "excerpt": "Senior Data Engineer, Tailspin Toys. Own the pipelines that move order data from our stores to the…",
       "createdAt": 1793888400000,
-      "resumes": [{ "id": "res-failed", "state": "failed", "createdAt": 1793888400000 }]
+      "resumes": [
+        {
+          "id": "res-failed",
+          "state": "failed",
+          "createdAt": 1793888400000
+        }
+      ]
     },
     {
       "id": "app-unnamed",
@@ -239,7 +259,10 @@
         "summary": {
           "id": "line-summary",
           "text": "Backend engineer who builds data pipelines and moves services to Kubernetes.",
-          "factIds": ["fact-migration", "fact-pipeline"],
+          "factIds": [
+            "fact-migration",
+            "fact-pipeline"
+          ],
           "status": "kept"
         },
         "sections": [
@@ -254,19 +277,25 @@
               {
                 "id": "line-migration",
                 "text": "Led the migration of 40 services from Heroku to Kubernetes.",
-                "factIds": ["fact-migration"],
+                "factIds": [
+                  "fact-migration"
+                ],
                 "status": "kept"
               },
               {
                 "id": "line-latency",
                 "text": "Reduced p95 API latency from 900 ms to 210 ms by moving hot paths to Redis.",
-                "factIds": ["fact-latency"],
+                "factIds": [
+                  "fact-latency"
+                ],
                 "status": "repaired"
               },
               {
                 "id": "line-mentoring",
                 "text": "Mentored four engineers through their first on-call rotations.",
-                "factIds": ["fact-mentoring"],
+                "factIds": [
+                  "fact-mentoring"
+                ],
                 "status": "replaced"
               }
             ]
@@ -282,14 +311,18 @@
               {
                 "id": "line-pipeline",
                 "text": "Built the claims-intake pipeline in Python and Apache Airflow, processing 2 million claims a month.",
-                "factIds": ["fact-pipeline"],
+                "factIds": [
+                  "fact-pipeline"
+                ],
                 "status": "kept"
               },
               {
                 "id": "line-audit",
                 "text": "Shipped audit logging that passed the 2020 HIPAA review.",
-                "factIds": ["fact-audit"],
-                "status": "edited"
+                "factIds": [
+                  "fact-audit"
+                ],
+                "status": "kept"
               }
             ]
           },
@@ -304,7 +337,9 @@
               {
                 "id": "line-dashboard",
                 "text": "Built a public dashboard of bus arrival times used by 3,000 riders a week.",
-                "factIds": ["fact-dashboard"],
+                "factIds": [
+                  "fact-dashboard"
+                ],
                 "status": "kept"
               }
             ]
@@ -319,23 +354,71 @@
             "lines": []
           }
         ],
-        "skills": ["Python", "Apache Airflow", "Redis", "PostgreSQL", "Kubernetes"]
+        "skills": [
+          "Python",
+          "Apache Airflow",
+          "Redis",
+          "PostgreSQL",
+          "Kubernetes"
+        ]
       },
       "report": {
         "kept": 4,
         "repaired": 1,
         "replaced": 1,
         "dropped": 1,
-        "gaps": ["Terraform", "Experience running Kafka in production"]
+        "gaps": [
+          "Terraform",
+          "Experience running Kafka in production"
+        ]
       },
       "facts": {
-        "fact-migration": { "text": "Led the migration of 40 services from Heroku to Kubernetes.", "quote": "Led migration of 40 services from Heroku to Kubernetes" },
-        "fact-latency": { "text": "Reduced p95 API latency from 900 ms to 210 ms by moving hot paths to Redis.", "quote": "Cut p95 API latency from 900ms to 210ms by moving hot paths to Redis" },
-        "fact-mentoring": { "text": "Mentored four engineers through their first on-call rotations.", "quote": "Mentored 4 engineers through first on-call rotations" },
-        "fact-pipeline": { "text": "Built the claims-intake pipeline in Python and Apache Airflow, processing 2 million claims a month.", "quote": "Built claims intake pipeline (Python, Airflow) processing 2M claims/month" },
-        "fact-audit": { "text": "Shipped audit logging that passed the 2020 HIPAA review.", "quote": null },
-        "fact-dashboard": { "text": "Built a public dashboard of bus arrival times used by 3,000 riders a week.", "quote": "Built public bus-arrival dashboard (3,000 weekly riders)" }
-      }
+        "fact-migration": {
+          "text": "Led the migration of 40 services from Heroku to Kubernetes.",
+          "quote": "Led migration of 40 services from Heroku to Kubernetes"
+        },
+        "fact-latency": {
+          "text": "Reduced p95 API latency from 900 ms to 210 ms by moving hot paths to Redis.",
+          "quote": "Cut p95 API latency from 900ms to 210ms by moving hot paths to Redis"
+        },
+        "fact-mentoring": {
+          "text": "Mentored four engineers through their first on-call rotations.",
+          "quote": "Mentored 4 engineers through first on-call rotations"
+        },
+        "fact-pipeline": {
+          "text": "Built the claims-intake pipeline in Python and Apache Airflow, processing 2 million claims a month.",
+          "quote": "Built claims intake pipeline (Python, Airflow) processing 2M claims/month"
+        },
+        "fact-audit": {
+          "text": "Shipped audit logging that passed the 2020 HIPAA review.",
+          "quote": null
+        },
+        "fact-dashboard": {
+          "text": "Built a public dashboard of bus arrival times used by 3,000 riders a week.",
+          "quote": "Built public bus-arrival dashboard (3,000 weekly riders)"
+        },
+        "fact-skill-python": {
+          "text": "Python",
+          "quote": "Skills: Python, Apache Airflow, Redis, PostgreSQL, Kubernetes"
+        },
+        "fact-skill-apache-airflow": {
+          "text": "Apache Airflow",
+          "quote": "Skills: Python, Apache Airflow, Redis, PostgreSQL, Kubernetes"
+        },
+        "fact-skill-redis": {
+          "text": "Redis",
+          "quote": "Skills: Python, Apache Airflow, Redis, PostgreSQL, Kubernetes"
+        },
+        "fact-skill-postgresql": {
+          "text": "PostgreSQL",
+          "quote": "Skills: Python, Apache Airflow, Redis, PostgreSQL, Kubernetes"
+        },
+        "fact-skill-kubernetes": {
+          "text": "Kubernetes",
+          "quote": "Skills: Python, Apache Airflow, Redis, PostgreSQL, Kubernetes"
+        }
+      },
+      "provenance": "snapshot"
     },
     "res-running": {
       "id": "res-running",

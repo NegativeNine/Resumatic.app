@@ -2106,6 +2106,8 @@ export class Vault extends DurableObject<Env> {
       body: saved?.render.body ?? null,
       report: saved?.report ?? null,
       facts: saved?.facts ?? {},
+      // The sheet in the app prints the same contact details as this version's PDF.
+      ...(saved ? { profile: saved.render.profile } : {}),
       provenance: saved?.provenance,
       ...(needsGroundingReview ? { needsGroundingReview: true } : {}),
       ...(saved?.provenance === "legacy" ? { legacyReview: legacyReview(saved, this.usableFacts(), this.confirmedRoles()) } : {}),

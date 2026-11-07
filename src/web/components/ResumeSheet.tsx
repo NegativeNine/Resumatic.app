@@ -1,30 +1,16 @@
-import { useCallback, useMemo, useState } from "react";
-import type {
-  ResumeBody,
-  ResumeLine,
-  ResumeSection,
-  ResumeView,
-  RoleKind,
-} from "../../shared/api";
+import { useCallback, useMemo, useRef, useState } from "react";
+import type { ResumeBody, ResumeView } from "../../shared/api";
+import { sheetModel } from "../../shared/sheet";
 import { api } from "../api";
-import { formatDateRange, SECTION_HEADING } from "../format";
 import { useAction, type Reload } from "../hooks";
 import { href } from "../router";
+import { useSession } from "../session";
 import { useTailor } from "../tailor";
 import { LineItem } from "./LineItem";
+import { useMarginLayout } from "./margin-layout";
 import { GapsCard, ReportCard } from "./ResumeReport";
+import { ResumePaper } from "./ResumePaper";
 import { ActionError } from "./ui";
-
-/** Sections grouped by kind, in the order each kind first appears. */
-function groupSections(sections: ResumeSection[]) {
-  const groups: { kind: RoleKind; sections: { section: ResumeSection; index: number }[] }[] = [];
-  for (const [index, section] of sections.entries()) {
-    const group = groups.find((g) => g.kind === section.kind);
-    if (group) group.sections.push({ section, index });
-    else groups.push({ kind: section.kind, sections: [{ section, index }] });
-  }
-  return groups;
-}
 
 export function ResumeSheet({
   resume,
@@ -33,6 +19,7 @@ export function ResumeSheet({
   readOnly = false,
   onLineEditingChange,
   editingOutdated = false,
+  fresh = false,
 }: {
   resume: ResumeView;
   body: ResumeBody;
@@ -40,7 +27,14 @@ export function ResumeSheet({
   readOnly?: boolean;
   onLineEditingChange?: (id: string, active: boolean) => void;
   editingOutdated?: boolean;
+  /** The page watched this resume finish, so the margin's marks tick in once. */
+  fresh?: boolean;
 }) {
+  const { me } = useSession();
+  const page = useRef<HTMLDivElement>(null);
+  // The sheet prints the contact details captured with this version, as its PDF does.
+  const profile = resume.profile ?? me.profile;
+  const model = useMemo(() => sheetModel(profile, body), [profile, body]);
   const lineIds = useMemo(
     () => [
       ...(body.summary ? [body.summary.id] : []),
@@ -79,46 +73,33 @@ export function ResumeSheet({
     [],
   );
 
-  const line = (l: ResumeLine, roleId: string | null) => (
-    <LineItem
-      key={l.id}
-      resumeId={resume.id}
-      applicationId={resume.applicationId}
-      roleId={roleId}
-      line={l}
-      facts={resume.facts}
-      legacyReview={resume.provenance === "legacy" ? (verified.has(l.id) ? "verified" : "pending") : undefined}
-      expanded={open.has(l.id)}
-      onToggle={toggle}
-      reload={reload}
-      expectedVersion={resume.version}
-      readOnly={readOnly}
-      canRemove={!needsEvidence}
-      onEditingChange={onLineEditingChange}
-      editingOutdated={editingOutdated}
-    />
-  );
+  const notes = [
+    ...(body.summary ? [{ line: body.summary, roleId: null }] : []),
+    ...body.sections.flatMap((section) => section.lines.map((line) => ({ line, roleId: section.roleId }))),
+  ];
+  useMarginLayout(page);
+  const skillTools = !readOnly && (review || !needsEvidence) && body.skills.length > 0;
+  const sectionTools = !readOnly && !!review && body.sections.length > 0;
 
   return (
-    <div className="resume-layout">
-      <div>
+    <div className="resume-view">
         <div className="toolbar">
           {!needsEvidence && <><a
-            className="button primary"
+            className="rs-btn rs-btn--primary"
             href={api.pdfUrl(resume.id, resume.version)}
             download={`resume-v${resume.version}.pdf`}
           >
             Download PDF
           </a>
           <a
-            className="button"
+            className="rs-btn"
             href={api.docxUrl(resume.id, resume.version)}
             download={`resume-v${resume.version}.docx`}
           >
             Download Word
           </a>
           <a
-            className="button"
+            className="rs-btn"
             href={api.previewUrl(resume.id, resume.version)}
             target="_blank"
             rel="noopener"
@@ -186,84 +167,107 @@ export function ResumeSheet({
             <ActionError message={finalization.error} />
           </section>
         )}
-        <article className="paper" aria-label="Resume preview">
-          {isEmpty && (
-            <p className="meta">
-              This resume has no lines. Confirm more facts, then tailor a new
-              version.
-            </p>
-          )}
-          {body.summary && (
-            <section className="paper-section">
-              <h2>Summary</h2>
-              <ul className="plain-list lines summary">{line(body.summary, null)}</ul>
-            </section>
-          )}
-          {groupSections(body.sections).map(({ kind, sections }) => (
-            <section className="paper-section" key={kind}>
-              <h2>{SECTION_HEADING[kind]}</h2>
-              {sections.map(({ section: s, index }) => (
-                <div className="entry" key={index}>
-                  <div className="entry-head">
-                    <div>
-                      <p className="entry-org">{s.org}</p>
-                      {s.title && <p className="entry-title">{s.title}</p>}
-                    </div>
-                    <p className="entry-dates">
-                      {formatDateRange(s.startDate, s.endDate, s.unknownEndStartDate)}
-                    </p>
-                  </div>
-                  {s.lines.length > 0 && (
-                    <ul className="plain-list lines">{s.lines.map((item) => line(item, s.roleId))}</ul>
-                  )}
-                  {!readOnly && review && (
-                    <button type="button" disabled={finalization.pending} aria-label={`Remove section ${s.org}`}
-                      onClick={() => void finalization.run(async () => {
-                        await api.removeLegacySection(resume.id, index, resume.version);
-                        await reload();
-                      })}>
-                      Remove section
-                    </button>
-                  )}
-                </div>
+        {resume.report && <ReportCard report={resume.report} />}
+        <div className={fresh ? "resume-page is-fresh" : "resume-page"} ref={page}>
+          <div className="app-sheet-frame">
+            {isEmpty ? (
+              <p className="rs-empty">This resume has no lines. Confirm more facts, then tailor a new version.</p>
+            ) : (
+              <ResumePaper model={model} open={open} onToggleLine={toggle} />
+            )}
+          </div>
+          <aside className="rs-margin app-margin" aria-label="How each line was checked">
+            <div className="app-notes">
+              {notes.map(({ line, roleId }) => (
+                <LineItem
+                  key={line.id}
+                  resumeId={resume.id}
+                  applicationId={resume.applicationId}
+                  roleId={roleId}
+                  line={line}
+                  facts={resume.facts}
+                  legacyReview={resume.provenance === "legacy" ? (verified.has(line.id) ? "verified" : "pending") : undefined}
+                  expanded={open.has(line.id)}
+                  onToggle={toggle}
+                  reload={reload}
+                  expectedVersion={resume.version}
+                  readOnly={readOnly}
+                  canRemove={!needsEvidence}
+                  onEditingChange={onLineEditingChange}
+                  editingOutdated={editingOutdated}
+                />
               ))}
-            </section>
-          ))}
-          {body.skills.length > 0 && (
-            <section className="paper-section">
-              <h2>Skills</h2>
-              {!readOnly && (review || !needsEvidence) ? (
-                <ul className="plain-list">
-                  {body.skills.map((skill, index) => (
-                    <li key={index}>
-                      <span>{skill}</span>{" "}
-                      <button type="button" className="small" disabled={finalization.pending} aria-label={`Remove skill ${skill}`}
-                        onClick={() => void finalization.run(async () => {
-                          if (review) await api.removeLegacySkill(resume.id, index, resume.version);
-                          else await api.removeResumeSkill(resume.id, index, resume.version);
-                          await reload();
-                        })}>
-                        Remove
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : <p>{body.skills.join(" · ")}</p>}
-              {!readOnly && !review && !needsEvidence && <ActionError message={finalization.error} />}
-            </section>
-          )}
-        </article>
-      </div>
-      <aside className="resume-aside" aria-label="How this resume was checked">
-        {resume.report ? (
-          <>
-            <ReportCard report={resume.report} />
-            <GapsCard gaps={resume.report.gaps} />
-          </>
-        ) : (
-          <p className="meta">No report is available for this resume.</p>
-        )}
-      </aside>
+            </div>
+            <div className="app-margin-end">
+              {!profile.name && !readOnly && (
+                <p className="rs-meta">
+                  Add your name and contact details on <a href={href.account}>Account</a>. They print at the top of
+                  every resume.
+                </p>
+              )}
+              {(sectionTools || skillTools) && (
+                <section className="rs-panel app-sheet-tools" aria-labelledby="sheet-tools-heading">
+                  <h2 id="sheet-tools-heading" className="rs-h3">
+                    Change this version
+                  </h2>
+                  {sectionTools && (
+                    <ul className="app-tool-list">
+                      {body.sections.map((section, index) => (
+                        <li key={index}>
+                          <span>{[section.title, section.org].filter(Boolean).join(", ")}</span>
+                          <button
+                            type="button"
+                            className="rs-btn rs-btn--sm"
+                            disabled={finalization.pending}
+                            aria-label={`Remove section ${section.org}`}
+                            onClick={() =>
+                              void finalization.run(async () => {
+                                await api.removeLegacySection(resume.id, index, resume.version);
+                                await reload();
+                              })
+                            }
+                          >
+                            Remove section
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {skillTools && (
+                    <ul className="app-tool-list">
+                      {body.skills.map((skill, index) => (
+                        <li key={index}>
+                          <span>{skill}</span>
+                          <button
+                            type="button"
+                            className="rs-btn rs-btn--sm"
+                            disabled={finalization.pending}
+                            aria-label={`Remove skill ${skill}`}
+                            onClick={() =>
+                              void finalization.run(async () => {
+                                if (review) await api.removeLegacySkill(resume.id, index, resume.version);
+                                else await api.removeResumeSkill(resume.id, index, resume.version);
+                                await reload();
+                              })
+                            }
+                          >
+                            Remove
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {!review && <ActionError message={finalization.error} />}
+                </section>
+              )}
+              {resume.report ? (
+                <GapsCard gaps={resume.report.gaps} applicationId={resume.applicationId} readOnly={readOnly} />
+              ) : (
+                <p className="rs-meta">No report is available for this resume.</p>
+              )}
+            </div>
+          </aside>
+        </div>
     </div>
   );
 }
