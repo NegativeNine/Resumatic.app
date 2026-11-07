@@ -4,6 +4,18 @@ import { api } from "../../src/web/api";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("generation request keys", () => {
+  it("sends the same input that was fingerprinted if the caller mutates its object", async () => {
+    const sent: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_path: RequestInfo | URL, init?: RequestInit) => {
+      sent.push(JSON.parse(String(init?.body)));
+      return Response.json({ documentId: "doc", runId: "run" });
+    }));
+    const options = { kind: "refine" as const, instruction: "original" };
+    const pending = api.startDocument(crypto.randomUUID(), options);
+    options.instruction = "changed";
+    await pending;
+    expect(sent).toEqual([{ kind: "refine", instruction: "original" }]);
+  });
   it.each([
     ["empty response", () => new Response(null, { status: 204 })],
     ["non-JSON response", () => new Response("upstream error", { status: 200 })],

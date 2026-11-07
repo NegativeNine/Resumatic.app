@@ -1,3 +1,4 @@
+import { GenerationKeys } from "./generation-keys";
 import type {
   ApiErrorBody,
   ApplicationView,
@@ -104,8 +105,8 @@ async function request<T>(
 }
 
 // An uncertain network response reuses the same key if the person retries the same action.
-// Keys live only for the current page session; successful requests clear them.
-const generationKeys = new Map<string, string>();
+// When session storage is available, keys also survive a reload of this tab.
+const generationKeys = new GenerationKeys();
 function requireResponseFields<T>(result: T, fields: readonly (keyof T)[]): T {
   if (
     !result || typeof result !== "object" ||
@@ -119,14 +120,15 @@ function requireResponseFields<T>(result: T, fields: readonly (keyof T)[]): T {
 }
 
 async function generate<T>(path: string, body: unknown, fields: readonly (keyof T)[]): Promise<T> {
-  const fingerprint = JSON.stringify([path, body]);
-  const key = generationKeys.get(fingerprint) ?? crypto.randomUUID();
-  generationKeys.set(fingerprint, key);
+  // Hash and send the same snapshot even if the caller changes its object while
+  // the asynchronous digest is being computed.
+  const captured = body === undefined ? undefined : JSON.parse(JSON.stringify(body));
+  const { fingerprint, key } = await generationKeys.acquire(path, captured);
   // A later rejection does not establish whether an earlier request reached
   // the server. Keep the original key across every failure until a response
   // confirms the result, including a 4xx received while another attempt runs.
-  const result = requireResponseFields(await request<T>("POST", path, body, key), fields);
-  if (generationKeys.get(fingerprint) === key) generationKeys.delete(fingerprint);
+  const result = requireResponseFields(await request<T>("POST", path, captured, key), fields);
+  generationKeys.acknowledge(fingerprint, key);
   return result;
 }
 

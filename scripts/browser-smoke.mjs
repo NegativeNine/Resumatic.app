@@ -468,11 +468,17 @@ if (!browser?.startsWith("/")) {
     finishJob();
     await wait(`!!document.querySelector('form.card [role="alert"]') && !document.querySelector('form.card textarea')?.readOnly`);
     if (!await evalPage(`document.querySelector('form.card textarea')?.value === ${JSON.stringify(jobText)} && document.activeElement === document.querySelector('form.card textarea')`)) throw new Error("JOB_FAILURE_DRAFT_OR_FOCUS_LOST");
+    stage = "job_retry_after_reload";
+    await evalPage(`window.__beforeJobRetryReload = true`);
+    await call("Page.reload");
+    await wait(`window.__beforeJobRetryReload !== true && !!document.querySelector('form.card textarea')`);
+    await evalPage(`document.querySelector('form.card textarea').focus()`);
+    await call("Input.insertText", { text: jobText });
     await clickText("button", "Save job");
     finishJob = await waitForRelease(() => releaseJob); releaseJob = undefined;
     await wait(`document.querySelector('form.card textarea')?.readOnly`);
     finishJob();
-    await wait(`document.body?.innerText.includes('Synthetic platform engineer job')`);
+    await wait(`document.querySelector('form.card textarea')?.value === '' && !document.querySelector('form.card textarea')?.readOnly && document.body?.innerText.includes('Synthetic platform engineer job')`);
     if (state.jobRequests.length !== 2 || state.jobKeys.length !== 2 || state.jobKeys[0] !== state.jobKeys[1] || state.applications.length !== 1 || state.jobRequests.some((body) => body.jdText !== jobText) || !await evalPage(`document.querySelector('form.card textarea')?.value === '' && !document.querySelector('form.card textarea')?.readOnly && document.activeElement === document.querySelector('form.card textarea')`)) throw new Error("JOB_SAVE_RESULT_WRONG");
     stage = "document_initial_read";
     state.deferDocumentRead = true;
