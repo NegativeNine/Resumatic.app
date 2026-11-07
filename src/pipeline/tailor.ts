@@ -17,7 +17,7 @@ import {
 } from "../grounding/verdict";
 import { isInstruction } from "./extract/verify";
 import { cleanExtractedText } from "../shared/clean";
-import type { ResumeBody, ResumeLine, ResumeSection } from "../shared/api";
+import type { LineFinding, ResumeBody, ResumeLine, ResumeSection } from "../shared/api";
 import type {
   Analysis,
   Candidate,
@@ -215,6 +215,12 @@ export async function writeDraft(
   return { lines };
 }
 
+/** A line passed in for checking may carry a finding about earlier wording; a fresh verdict replaces it. */
+function withoutFinding(line: DraftLine): DraftLine {
+  const { finding: _earlier, ...rest } = line;
+  return rest;
+}
+
 /**
  * Verification fails closed. Each line passes the deterministic checks and then the judge, or it
  * is repaired once and checked again, or it is replaced by the first fact it cites, or dropped.
@@ -229,23 +235,34 @@ export async function verifyDraft(
   const selected = new Set([...selection.factIds, ...selection.skillIds]);
   const kept: DraftLine[] = [];
   const failed: { line: DraftLine; reason: string }[] = [];
+  // Why each line failed round 1, typed. A line that ends up repaired or replaced carries it, so
+  // the interface can say what the check changed. The judge's reason is model text written with
+  // the job description in view, so a rejection by the judge is only ever "unsupported".
+  const findings = new Map<string, LineFinding>();
+  const UNSUPPORTED: LineFinding = { kind: "unsupported" };
 
   // Round 1: deterministic checks, then the judge on what survives.
   const passing = draft.lines.filter((line) => {
     if (isInstruction(line.text)) {
       failed.push({ line, reason: "contains an instruction" });
+      findings.set(line.id, UNSUPPORTED);
       return false;
     }
     const result = checkLine(line, byId, selected);
-    if (!result.ok) failed.push({ line, reason: result.problems.join("; ") });
+    if (!result.ok) {
+      failed.push({ line, reason: result.problems.join("; ") });
+      findings.set(line.id, result.findings[0] ?? UNSUPPORTED);
+    }
     return result.ok;
   });
   const verdicts = await judge(models, passing, byId);
   for (const line of passing) {
     const v = verdicts.get(line.id);
-    if (v?.ok) kept.push({ ...line, status: "kept" });
-    else
+    if (v?.ok) kept.push({ ...withoutFinding(line), status: "kept" });
+    else {
       failed.push({ line, reason: v?.reason ?? "the judge gave no verdict" });
+      findings.set(line.id, UNSUPPORTED);
+    }
   }
 
   // Round 2: one repair per failed line, then the same checks and the judge again.
@@ -269,7 +286,7 @@ export async function verifyDraft(
         text = null;
       }
     }
-    const candidate = text ? { ...line, text } : null;
+    const candidate = text ? { ...withoutFinding(line), text } : null;
     if (candidate && !isInstruction(candidate.text) && checkLine(candidate, byId, selected).ok)
       repaired.push(candidate);
     else stillFailing.push(line);
@@ -278,7 +295,7 @@ export async function verifyDraft(
   const repairedOk: DraftLine[] = [];
   for (const line of repaired) {
     if (verdicts2.get(line.id)?.ok)
-      repairedOk.push({ ...line, status: "repaired" });
+      repairedOk.push({ ...line, status: "repaired", finding: findings.get(line.id) ?? UNSUPPORTED });
     else stillFailing.push(line);
   }
 
@@ -297,6 +314,7 @@ export async function verifyDraft(
         text: fact.text,
         factIds: [fact.id],
         status: "replaced",
+        finding: findings.get(line.id) ?? UNSUPPORTED,
       });
     else dropped += 1;
   }
@@ -390,6 +408,7 @@ export function composeBody(
     text: l.text,
     factIds: l.factIds,
     status: l.status ?? "kept",
+    ...(l.finding && (l.status === "repaired" || l.status === "replaced") ? { finding: l.finding } : {}),
   });
   const summary = verified.lines.find((l) => l.roleId === null);
   const sections: ResumeSection[] = [];

@@ -1,4 +1,4 @@
-import type { Level } from "../shared/api";
+import type { Level, LineFinding } from "../shared/api";
 import { scaledNumbers } from "./scaled-numbers";
 import { numberQualifier } from "./number-qualifier";
 import { numberRanges } from "./number-ranges";
@@ -744,28 +744,48 @@ export interface Evidence {
 
 export interface CheckResult {
   ok: boolean;
+  /** Plain descriptions, which feed the repair prompt. */
   problems: string[];
+  /** The same problems, typed, so the interface can say in its own words why a line changed. */
+  findings: LineFinding[];
 }
+
+/** A finding's values come from the draft, so only a few short ones are kept. */
+const FINDING_VALUES = 3;
+const FINDING_VALUE_CHARS = 40;
+const findingValues = (values: string[]) =>
+  values.slice(0, FINDING_VALUES).map((value) => value.trim().slice(0, FINDING_VALUE_CHARS));
 
 /** Checks one claim against its evidence: numbers, names and scope. */
 export function checkClaim(claim: string, evidence: Evidence[], options: { detectDirection?: boolean } = {}): CheckResult {
   const corpus = evidence.map((e) => [e.text, e.quote ?? ""].join("\n")).join("\n");
   const problems: string[] = [];
+  const findings: LineFinding[] = [];
+  const unsupported = (problem: string) => {
+    problems.push(problem);
+    if (!findings.some((finding) => finding.kind === "unsupported")) findings.push({ kind: "unsupported" });
+  };
   const numbers = unsupportedNumbers(claim, corpus);
-  if (numbers.length) problems.push(`numbers not in the evidence: ${numbers.join(", ")}`);
+  if (numbers.length) {
+    problems.push(`numbers not in the evidence: ${numbers.join(", ")}`);
+    findings.push({ kind: "numbers", values: findingValues(numbers) });
+  }
   const names = unsupportedNames(claim, corpus);
-  if (names.length) problems.push(`names not in the evidence: ${names.join(", ")}`);
+  if (names.length) {
+    problems.push(`names not in the evidence: ${names.join(", ")}`);
+    findings.push({ kind: "names", values: findingValues(names) });
+  }
   const denied = contradictedActions(claim, evidence);
-  if (denied.length) problems.push(`actions contradicted by the evidence: ${denied.join(", ")}`);
+  if (denied.length) unsupported(`actions contradicted by the evidence: ${denied.join(", ")}`);
   const deniedObjects = contradictedActionObjects(claim, evidence);
-  if (deniedObjects.length) problems.push(`actions contradicted by the evidence: ${deniedObjects.join(", ")}`);
+  if (deniedObjects.length) unsupported(`actions contradicted by the evidence: ${deniedObjects.join(", ")}`);
   const planned = plannedOnlyActions(claim, evidence);
-  if (planned.length) problems.push(`completed actions stated only as plans: ${planned.join(", ")}`);
+  if (planned.length) unsupported(`completed actions stated only as plans: ${planned.join(", ")}`);
   if (options.detectDirection !== false) {
     const reversed = contradictedDirections(claim, evidence.flatMap((item) => [item.text, item.quote ?? ""]));
-    if (reversed.length) problems.push(`outcome direction contradicted by the evidence: ${reversed.join(", ")}`);
+    if (reversed.length) unsupported(`outcome direction contradicted by the evidence: ${reversed.join(", ")}`);
     const swapped = swappedOutcomePercentages(claim, evidence.flatMap((item) => [item.text, item.quote ?? ""]));
-    if (swapped.length) problems.push(`outcome percentage assigned to a different metric: ${swapped.join(", ")}`);
+    if (swapped.length) unsupported(`outcome percentage assigned to a different metric: ${swapped.join(", ")}`);
   }
   const claimed = scopeRank(claim);
   const supported = Math.max(
@@ -773,6 +793,9 @@ export function checkClaim(claim: string, evidence: Evidence[], options: { detec
     0,
   );
   const allowed = supported > 0 ? supported : DEFAULT_RANK;
-  if (claimed > allowed) problems.push(`claims more scope (${levelOfRank(claimed)}) than the evidence (${levelOfRank(allowed)})`);
-  return { ok: problems.length === 0, problems };
+  if (claimed > allowed) {
+    problems.push(`claims more scope (${levelOfRank(claimed)}) than the evidence (${levelOfRank(allowed)})`);
+    findings.push({ kind: "scope", claimed: levelOfRank(claimed), allowed: levelOfRank(allowed) });
+  }
+  return { ok: problems.length === 0, problems, findings };
 }

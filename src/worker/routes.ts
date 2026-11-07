@@ -10,7 +10,7 @@ import { unwrapResult } from "../shared/result";
 import { rateLimitRequest, httpRoute } from "./limits";
 import { OcrImagesSchema, validateTranscriptionInput } from "../ai/transcribe";
 import { revokeOAuthGrant } from "./mcp";
-import { uploadDescriptorDigest } from "../vault/uploads";
+import { uploadBodyDigest, uploadDescriptorDigest } from "../vault/uploads";
 import { renderPdf } from "../render/pdf";
 import { PILOT_IDENTITY_PATHS, PILOT_MAX_CALLS, PILOT_MAX_MICROS } from "./pilot/ledger";
 import { stagingPilotBudget } from "./pilot/access";
@@ -551,6 +551,7 @@ api.post("/sources", UPLOAD_LIMIT, async (c) => {
     contentType,
     byteLength: file.size,
     r2Key: sourceKey(c.get("session").vid, `${request}-${digest}`),
+    sha256: await uploadBodyDigest(bytes),
   };
   const reserved = await myVault(c).reserveUpload(c.get("who"), descriptor);
   if (reserved.intent.state === "complete")

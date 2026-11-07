@@ -230,6 +230,12 @@ export const MIGRATIONS: readonly string[][] = [
     `CREATE TRIGGER evidence_incarnation_id BEFORE UPDATE OF id ON evidence WHEN NEW.id IS NOT OLD.id BEGIN SELECT RAISE(ABORT, 'record_id_immutable'); END`,
     `ALTER TABLE generation_input_items ADD COLUMN incarnation INTEGER`,
   ],
+  [
+    // SHA-256 of an uploaded file's bytes, so a second copy of the same file can be refused.
+    // Sources uploaded before this have none, so they never block a new upload.
+    `ALTER TABLE sources ADD COLUMN sha256 TEXT`,
+    `CREATE INDEX sources_sha256 ON sources (sha256)`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

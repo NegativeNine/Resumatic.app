@@ -288,7 +288,13 @@
                 "factIds": [
                   "fact-latency"
                 ],
-                "status": "repaired"
+                "status": "repaired",
+                "finding": {
+                  "kind": "numbers",
+                  "values": [
+                    "85%"
+                  ]
+                }
               },
               {
                 "id": "line-mentoring",
@@ -296,7 +302,12 @@
                 "factIds": [
                   "fact-mentoring"
                 ],
-                "status": "replaced"
+                "status": "replaced",
+                "finding": {
+                  "kind": "scope",
+                  "claimed": "led",
+                  "allowed": "contributed"
+                }
               }
             ]
           },

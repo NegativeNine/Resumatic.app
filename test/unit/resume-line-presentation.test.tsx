@@ -24,7 +24,7 @@ describe("resume line presentation", () => {
       },
     }, lineItem));
     expect(html).toContain("Used your fact");
-    expect(html).toContain("The draft wording could not be verified");
+    expect(html).toContain("be verified, so this line uses the wording of a confirmed fact");
     expect(html).toContain(">Built a service for customers</p>");
     expect(html).toContain("• Built a service\n  for customers"); // The source quote is unchanged.
     expect(line.text).toBe("• Built a service\n  for customers");
@@ -35,7 +35,7 @@ describe("resume line presentation", () => {
       report: { kept: 0, repaired: 0, replaced: 1, dropped: 0, gaps: [] },
     }));
     expect(html).toContain("Used your fact");
-    expect(html).toContain("The draft wording could not be verified");
+    expect(html).toContain("be verified, so this line uses the wording of a confirmed fact");
     expect(html).not.toContain(">Replaced<");
   });
 });

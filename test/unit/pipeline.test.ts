@@ -291,6 +291,12 @@ describe("verifyDraft", () => {
       ["2", "repaired", "Helped migrate 40 services to Kubernetes clusters"],
       ["4", "replaced", "Mentored 2 engineers"],
     ]);
+    // Each changed line says why, in types the interface words. A judge's rejection carries no text.
+    expect(verified.lines.map((l) => [l.id, l.finding])).toEqual([
+      ["1", undefined],
+      ["2", { kind: "scope", claimed: "led", allowed: "contributed" }],
+      ["4", { kind: "unsupported" }],
+    ]);
     // Line 3 repeats line 1; line 5 cites another role and cannot be replaced.
     expect(verified.report).toEqual({ kept: 1, repaired: 1, replaced: 1, dropped: 2, gaps: [] });
   });
@@ -385,6 +391,26 @@ describe("verifyDraft", () => {
 });
 
 describe("composeBody", () => {
+  it("keeps a finding only on a repaired or replaced line", () => {
+    const roles: RoleRecord[] = [{ id: "r1", kind: "job", org: "Acme", title: "Engineer", startDate: "2020", endDate: null }];
+    const scope = { kind: "scope", claimed: "led", allowed: "contributed" } as const;
+    const body = composeBody(
+      {
+        lines: [
+          { id: "1", roleId: "r1", text: "Built the billing API", factIds: ["a"], status: "kept", finding: { kind: "unsupported" } },
+          { id: "2", roleId: "r1", text: "Helped migrate 40 services", factIds: ["b"], status: "repaired", finding: scope },
+          { id: "3", roleId: "r1", text: "Mentored 2 engineers", factIds: ["c"], status: "replaced", finding: { kind: "unsupported" } },
+        ],
+        report: { kept: 1, repaired: 1, replaced: 1, dropped: 0, gaps: [] },
+      },
+      roles,
+      [],
+      { factIds: ["a", "b", "c"], skillIds: [], gaps: [] },
+    );
+    expect(body.sections[0]!.lines.map((line) => line.finding)).toEqual([undefined, scope, { kind: "unsupported" }]);
+    expect("finding" in body.sections[0]!.lines[0]!).toBe(false);
+  });
+
   it("sorts roles with unknown dates after dated roles", () => {
     const roles: RoleRecord[] = [
       { id: "unknown", kind: "education", org: "Unknown", title: null, startDate: null, endDate: null },

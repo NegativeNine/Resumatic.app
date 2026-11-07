@@ -56,7 +56,7 @@ export function checkLine(
     }
     cited.push(authoritativeFact(fact));
   }
-  if (problems.length) return { ok: false, problems };
+  if (problems.length) return { ok: false, problems, findings: [{ kind: "citation" }] };
   return checkClaim(
     line.text,
     cited.map((f) => ({ text: f.text, quote: f.quote, level: f.level })),

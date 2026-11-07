@@ -36,8 +36,8 @@ async function vaultIdOf(user: User): Promise<string> {
   ).vid;
 }
 
-async function uploadResume(user: User): Promise<string> {
-  const res = await user.upload("jane-doe.pdf", RESUME);
+async function uploadResume(user: User, content = RESUME): Promise<string> {
+  const res = await user.upload("jane-doe.pdf", content);
   expect(res.status, await res.clone().text()).toBe(201);
   const { sourceId } = (await res.json()) as { sourceId: string };
   return sourceId;
@@ -130,9 +130,11 @@ describe("uploads", () => {
     options.holdConvert = new Promise<void>((r) => (release = r));
     const user = await signIn();
     const ids = [];
-    for (let i = 0; i < 3; i++) ids.push(await uploadResume(user));
+    // Different files each time: a second copy of the same file is refused for another reason.
+    for (let i = 0; i < 3; i++) ids.push(await uploadResume(user, `${RESUME}\nVersion ${i + 1}`));
     const fourth = await user.upload("one-more.pdf", RESUME);
     expect(fourth.status).toBe(409);
+    expect(((await fourth.json()) as { message: string }).message).toMatch(/^Resumatic is still reading your other sources\./);
     expect(
       (await env.FILES.list({ prefix: vaultPrefix(await vaultIdOf(user)) }))
         .objects,

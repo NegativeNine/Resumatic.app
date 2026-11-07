@@ -1,3 +1,4 @@
+import { withoutFindings } from "../shared/sheet";
 import type { InterviewAnswer } from "../shared/interview";
 import { reviewViewStream } from "./review-stream";
 import { exportJsonChunks, exportJsonStream } from "./export-stream";
@@ -258,6 +259,14 @@ export function monthOf(ms: number): string {
 }
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** An upload's body digest, if it has a well-formed one. OCR page images are never compared. */
+function uploadSha256(input: UploadDescriptor): string | null {
+  if ((input.origin ?? "upload") !== "upload" || input.sha256 === undefined) return null;
+  if (typeof input.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(input.sha256))
+    throw new AppError("invalid", "invalid upload digest");
+  return input.sha256;
+}
 
 /** A quota month as the interface writes it, such as "Nov 2026" for "2026-11". */
 export function monthLabel(month: string): string {
@@ -727,6 +736,8 @@ export class Vault extends DurableObject<Env> {
     // write. Completed retries remain available under a later bad deployment.
     if (store.get(input.requestKey)?.state !== "complete")
       this.extractionStrategy(input.origin, input.filename);
+    // A retry of the same request replays its reservation; only a new one is checked.
+    if (!store.get(input.requestKey)) this.refuseSecondCopy(input);
     const reservation = store.reserve(input);
     const next = store.nextAlarm();
     if (next !== null) await this.scheduleRunAlarm(next);
@@ -737,6 +748,27 @@ export class Vault extends DurableObject<Env> {
     // its current durable state so the Worker neither writes an expired key
     // nor repeats a put after another retry already committed the source.
     return { ...reservation, intent: store.reserve(input).intent };
+  }
+  /**
+   * A second copy of a file the person already uploaded would only propose the same roles and
+   * facts again. A source that failed to read doesn't count, because its message says to try again.
+   */
+  private refuseSecondCopy(input: UploadDescriptor): void {
+    const sha256 = uploadSha256(input);
+    if (!sha256) return;
+    const copy = this.sql
+      .exec<{ filename: string }>(
+        `SELECT filename FROM sources WHERE sha256 = ? AND state != 'failed' ORDER BY created_at LIMIT 1`,
+        sha256,
+      )
+      .toArray()[0];
+    if (copy)
+      throw new AppError(
+        "conflict",
+        copy.filename === input.filename
+          ? `You've already uploaded ${copy.filename}.`
+          : `You've already uploaded this file as ${copy.filename}.`,
+      );
   }
   /** Fence one R2 put, including a retry for the same upload request. */
   beginSourceWrite(who: Who, input: UploadDescriptor, attemptId: string, keyDigest: string): { sourceId?: string } {
@@ -868,7 +900,7 @@ export class Vault extends DurableObject<Env> {
         },
         () => {
           this.sql.exec(
-            `INSERT INTO sources (id,filename,r2_key,state,run_id,created_at,origin,parent_source_id,extractor) VALUES (?,?,?,'queued',?,?,?,?,?)`,
+            `INSERT INTO sources (id,filename,r2_key,state,run_id,created_at,origin,parent_source_id,extractor,sha256) VALUES (?,?,?,'queued',?,?,?,?,?,?)`,
             id,
             intent.filename,
             intent.r2Key,
@@ -877,6 +909,7 @@ export class Vault extends DurableObject<Env> {
             intent.origin,
             intent.parentSourceId,
             extractor,
+            intent.origin === "upload" ? uploadSha256(input) : null,
           );
           this.extractionFeedbackStore.start(id, intent.createdAt);
         },
@@ -2683,7 +2716,7 @@ export class Vault extends DurableObject<Env> {
     return {
       id: resume.id,
       version: resume.version,
-      body: render.body,
+      body: withoutFindings(render.body),
       provenance: resume.provenance,
     };
   }
@@ -3085,6 +3118,7 @@ export class Vault extends DurableObject<Env> {
             targets[0]!.text = options.manualText;
             targets[0]!.factIds = [...options.manualFactIds];
             targets[0]!.status = "kept";
+            delete targets[0]!.finding;
             if (JSON.stringify(expected) !== JSON.stringify(result.body))
               throw new AppError("conflict", "the checked line changed");
           }

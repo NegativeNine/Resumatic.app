@@ -160,9 +160,18 @@ describe("Tailor", () => {
       for (const id of line.factIds)
         expect(resume.facts[id]?.quote).toBeTruthy();
     }
-    const text = JSON.stringify(body);
+    const printed = JSON.stringify([...lines.map((line: { text: string }) => line.text), body.skills]);
     for (const invented of ["75%", "synergy", "Won three", 'on Kubernetes"'])
-      expect(text).not.toContain(invented);
+      expect(printed).not.toContain(invented);
+    // A changed line says why in typed terms. Model text never enters the stored body: the judge's
+    // rejection is only "unsupported", and a number the draft invented appears only as the finding.
+    const acmeLines = body.sections[0].lines as { status: string; finding?: unknown }[];
+    expect(acmeLines.find((line) => line.status === "repaired")?.finding).toEqual({ kind: "numbers", values: ["75%"] });
+    expect(acmeLines.find((line) => line.status === "replaced")?.finding).toEqual({ kind: "unsupported" });
+    expect(acmeLines.find((line) => line.status === "kept")).not.toHaveProperty("finding");
+    const stored = JSON.stringify(body);
+    for (const invented of ["synergy", "Won three", 'on Kubernetes"'])
+      expect(stored).not.toContain(invented);
 
     // The view carries the contact details this version prints, so the sheet in the app matches its PDF.
     expect(resume.profile).toEqual(await user.json("/api/profile"));

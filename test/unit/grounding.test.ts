@@ -598,6 +598,26 @@ describe("scope", () => {
     expect(result.problems).toHaveLength(3);
   });
 
+  it("types each problem, so the interface can word it without model text", () => {
+    const result = checkClaim("Led a Rust rewrite that cut costs by 50%", [{ text: "Helped with a Go rewrite", level: "contributed" }]);
+    expect(result.findings).toEqual([
+      { kind: "numbers", values: ["50%"] },
+      { kind: "names", values: ["Rust"] },
+      { kind: "scope", claimed: "led", allowed: "contributed" },
+    ]);
+    expect(checkClaim("Built the billing API", [{ text: "Built the billing API" }]).findings).toEqual([]);
+  });
+
+  it("keeps at most three short values from the draft", () => {
+    const long = `Z${"z".repeat(60)}`;
+    const result = checkClaim(`Built Kafka, Flink, Spark, Pulsar and ${long} pipelines`, [{ text: "Built pipelines" }]);
+    const names = result.findings.find((finding) => finding.kind === "names");
+    expect(names).toBeDefined();
+    if (names?.kind !== "names") return;
+    expect(names.values.length).toBeLessThanOrEqual(3);
+    for (const value of names.values) expect(value.length).toBeLessThanOrEqual(40);
+  });
+
   it("rejects a multiplier or currency invented from an unrelated count", () => {
     expect(checkClaim("Improved throughput 5x", [{ text: "Processed 5 invoices" }]).ok).toBe(false);
     expect(checkClaim("Raised $5", [{ text: "Processed 5 invoices" }]).ok).toBe(false);
@@ -653,7 +673,11 @@ describe("checkLine", () => {
 
   it("does not attribute an unattached fact to a specific role, including fallback", () => {
     const line = { roleId: "r1", text: "Built an internal tool", factIds: ["loose"] };
-    expect(checkLine(line, facts, selected)).toEqual({ ok: false, problems: ["cites a fact not assigned to this role"] });
+    expect(checkLine(line, facts, selected)).toEqual({
+      ok: false,
+      problems: ["cites a fact not assigned to this role"],
+      findings: [{ kind: "citation" }],
+    });
     expect(fallbackFact(line, facts, selected)).toBeNull();
     expect(fallbackFact({ ...line, factIds: ["loose", "a"] }, facts, selected)?.id).toBe("a");
   });

@@ -3,6 +3,7 @@ import { MAX_UPLOAD_BYTES } from "../../shared/api";
 import { api } from "../api";
 import { formatBytes } from "../format";
 import { useAction, type Reload } from "../hooks";
+import { isTransientReadError } from "../polling";
 import { ActionError, Glyph, Loading } from "./ui";
 
 const DOCX_TYPE =
@@ -39,9 +40,17 @@ export function Uploader({ onUploaded, size = "rail" }: { onUploaded: Reload; si
       return;
     }
     setUploading(file.name);
+    // Retry upload resends with the same key, for when it isn't clear whether the file arrived.
+    // A refusal, such as a second copy of a file, would only be refused again.
+    let retryable = true;
     const ok = await run(
       async () => {
-        await api.uploadSource(file, key);
+        try {
+          await api.uploadSource(file, key);
+        } catch (e) {
+          retryable = isTransientReadError(e);
+          throw e;
+        }
         await onUploaded();
       },
       {
@@ -50,7 +59,7 @@ export function Uploader({ onUploaded, size = "rail" }: { onUploaded: Reload; si
     );
     setUploading(null);
     if (ok) setUploaded(file.name);
-    else setRetry({ file, key });
+    else if (retryable) setRetry({ file, key });
   }
 
   function drop(e: DragEvent<HTMLDivElement>) {

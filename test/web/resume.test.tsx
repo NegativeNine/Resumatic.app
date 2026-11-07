@@ -61,6 +61,21 @@ describe("the margin", () => {
     expect(screen.getByRole("button", { name: "Hide evidence" })).toHaveAttribute("aria-expanded", "true");
   });
 
+  it("says why a repaired or replaced line changed, in Resumatic's own words", async () => {
+    await openResume();
+    const note = (lineId: string) => document.querySelector<HTMLElement>(`[data-note-for="${lineId}"]`)!;
+    await userEvent.click(within(note("line-latency")).getByRole("button", { name: /^\d+ facts?$/ }));
+    expect(within(note("line-latency")).getByText(
+      "The draft said 85%. Your facts don't include that number. Resumatic rewrote it once to match its facts.",
+    )).toBeVisible();
+    await userEvent.click(within(note("line-mentoring")).getByRole("button", { name: /^\d+ facts?$/ }));
+    expect(within(note("line-mentoring")).getByText(
+      "The draft said you led it, which is more than your facts show. This line uses your fact's own words instead.",
+    )).toBeVisible();
+    // A kept line has nothing to explain.
+    expect(note("line-migration").textContent).not.toMatch(/The draft/);
+  });
+
   it("opens and closes every note with Show all evidence", async () => {
     await openResume();
     await userEvent.click(screen.getByRole("button", { name: "Show all evidence" }));
