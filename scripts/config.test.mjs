@@ -376,6 +376,50 @@ test("test-signin-only preflight waives Google only for explicitly enabled stagi
   }
 });
 
+test("smoke-only preflight requires a staging-only non-model configuration", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "resumatic-smoke-config-"));
+  const configPath = join(directory, "wrangler.jsonc");
+  const vars = {
+    CF_ACCOUNT_ID: "account", AI_GATEWAY_ID: "gateway", OIDC_CLIENT_ID: "",
+    ACCESS_TEAM_DOMAIN: "", ACCESS_AUD: "", ALLOW_TEST_SIGNIN: "true",
+    PILOT_SHARED_BUDGET: "true", DAILY_SPEND_CAP_USD: "0", INVITE_ONLY: "true",
+    BILLING_ENABLED: "false", MCP_ENABLED: "false",
+  };
+  const bindings = {
+    r2_buckets: [{ binding: "FILES" }],
+    workflows: ["DISTILL", "TAILOR", "DOCUMENTS", "REEMBED"].map((binding) => ({ binding })),
+    durable_objects: { bindings: [{ name: "PILOT_BUDGET", class_name: "PilotBudget" }] },
+  };
+  const config = { vars: { ...vars }, ...bindings, env: { staging: { vars, ...bindings } } };
+  const env = { CLOUDFLARE_API_TOKEN: "token", CLOUDFLARE_ACCOUNT_ID: "account" };
+  const check = (options = {}) => validate({ purpose: "deploy", env, configPath, ...options });
+  try {
+    await writeFile(configPath, JSON.stringify(config));
+    assert.equal((await check({ smokeOnly: true })).status, "ready");
+    assert.equal((await check()).status, "pending");
+    const production = await check({ environment: "production", smokeOnly: true });
+    assert.ok(production.missing.includes("SMOKE_ONLY_STAGING_DEPLOY_REQUIRED"));
+    assert.ok(production.missing.includes("vars.OIDC_CLIENT_ID"));
+    assert.ok((await check({ purpose: "e2e", smokeOnly: true })).missing.includes("SMOKE_ONLY_STAGING_DEPLOY_REQUIRED"));
+    for (const [name, bad] of Object.entries({
+      OIDC_CLIENT_ID: "client", ACCESS_TEAM_DOMAIN: "https://access.example.test", ACCESS_AUD: "aud",
+      ALLOW_TEST_SIGNIN: "false", PILOT_SHARED_BUDGET: "false", DAILY_SPEND_CAP_USD: "1",
+      INVITE_ONLY: "false", BILLING_ENABLED: "true", MCP_ENABLED: "true",
+    })) {
+      const old = vars[name];
+      vars[name] = bad;
+      await writeFile(configPath, JSON.stringify(config));
+      assert.equal((await check({ smokeOnly: true })).status, "pending", name);
+      vars[name] = old;
+    }
+    bindings.durable_objects.bindings = [];
+    await writeFile(configPath, JSON.stringify(config));
+    assert.ok((await check({ smokeOnly: true })).missing.includes("SMOKE_REQUIRES_PILOT_BUDGET_BINDING"));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("release gates require passing evidence for the exact candidate commit", async () => {
   const directory = await mkdtemp(join(tmpdir(), "resumatic-release-"));
   const commit = "a".repeat(40);

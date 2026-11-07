@@ -37,13 +37,17 @@ export async function validate({
   env = process.env,
   configPath = "wrangler.jsonc",
   testSigninOnly = false,
+  smokeOnly = false,
 } = {}) {
   if (!["deploy", "eval", "e2e"].includes(purpose))
     throw new Error("purpose must be deploy, eval or e2e");
   const missing = [];
   const stagingTestOnly = testSigninOnly === true && environment === "staging" && purpose === "deploy";
+  const stagingSmoke = smokeOnly === true && environment === "staging" && purpose === "deploy";
   if (testSigninOnly && !stagingTestOnly)
     missing.push("TEST_SIGNIN_ONLY_STAGING_DEPLOY_REQUIRED");
+  if (smokeOnly && !stagingSmoke)
+    missing.push("SMOKE_ONLY_STAGING_DEPLOY_REQUIRED");
   if (purpose !== "deploy") missing.push(...livePrerequisites(env, purpose));
   if (purpose === "e2e") {
     const { config } = await readConfig(environment, configPath);
@@ -56,17 +60,26 @@ export async function validate({
       missing.push("vars.DAILY_SPEND_CAP_USD");
   } else if (purpose === "deploy") {
     const { root, config } = await readConfig(environment, configPath);
-    for (const name of [
-      "CF_ACCOUNT_ID",
-      "ACCESS_TEAM_DOMAIN",
-      "ACCESS_AUD",
-      "AI_GATEWAY_ID",
-    ])
+    for (const name of ["CF_ACCOUNT_ID", "AI_GATEWAY_ID", ...(stagingSmoke ? [] : ["ACCESS_TEAM_DOMAIN", "ACCESS_AUD"])])
       if (!config.vars?.[name]?.trim()) missing.push(`vars.${name}`);
-    if (!stagingTestOnly && !config.vars?.OIDC_CLIENT_ID?.trim())
+    if (!stagingTestOnly && !stagingSmoke && !config.vars?.OIDC_CLIENT_ID?.trim())
       missing.push("vars.OIDC_CLIENT_ID");
-    if (stagingTestOnly && config.vars?.ALLOW_TEST_SIGNIN !== "true")
+    if ((stagingTestOnly || stagingSmoke) && config.vars?.ALLOW_TEST_SIGNIN !== "true")
       missing.push("vars.ALLOW_TEST_SIGNIN");
+    if (stagingSmoke) {
+      // These empty settings keep the public Google and admin entry points
+      // unavailable. Pilot mode blocks model attempts and Browser Run.
+      for (const name of ["OIDC_CLIENT_ID", "ACCESS_TEAM_DOMAIN", "ACCESS_AUD"])
+        if (config.vars?.[name] !== undefined && config.vars[name] !== "")
+          missing.push(`SMOKE_REQUIRES_EMPTY_${name}`);
+      for (const [name, value] of Object.entries({
+        PILOT_SHARED_BUDGET: "true", DAILY_SPEND_CAP_USD: "0", INVITE_ONLY: "true",
+        BILLING_ENABLED: "false", MCP_ENABLED: "false",
+      })) if (config.vars?.[name] !== value) missing.push(`SMOKE_REQUIRES_${name}`);
+      if (!config.durable_objects?.bindings?.some((binding) =>
+        binding.name === "PILOT_BUDGET" && binding.class_name === "PilotBudget"))
+        missing.push("SMOKE_REQUIRES_PILOT_BUDGET_BINDING");
+    }
     for (const name of ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"])
       if (!env[name]?.trim()) missing.push(name);
     if (
@@ -90,10 +103,10 @@ export async function validate({
     // invite-only mode does not settle stale calls or prove deletion safe.
     if (environment === "production" && config.vars?.INVITE_ONLY !== "true")
       missing.push("PUBLIC_REGISTRATION_ROLLOUT_UNVERIFIED");
-    if (
+    if (!stagingSmoke && (
       !(Number(config.vars?.DAILY_SPEND_CAP_USD) > 0) ||
       !Number.isFinite(Number(config.vars?.DAILY_SPEND_CAP_USD))
-    )
+    ))
       missing.push("vars.DAILY_SPEND_CAP_USD");
     if (environment === "production" && config.vars?.RESTORE_FENCE_IDS?.trim())
       missing.push("PRODUCTION_MAINTENANCE_FENCE_ACTIVE");
@@ -147,6 +160,7 @@ export async function validate({
     purpose,
     environment,
     ...(stagingTestOnly ? { testSigninOnly: true } : {}),
+    ...(stagingSmoke ? { smokeOnly: true } : {}),
     checkedAt: new Date().toISOString(),
     commit: env.GITHUB_SHA ?? null,
     missing,
@@ -168,6 +182,7 @@ if (
       environment: value("--environment", "staging"),
       purpose: value("--purpose", "deploy"),
       testSigninOnly: args.includes("--test-signin-only"),
+      smokeOnly: args.includes("--smoke-only"),
     });
     const serialized = JSON.stringify(report, null, 2) + "\n";
     if (value("--report"))
