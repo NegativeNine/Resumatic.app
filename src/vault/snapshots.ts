@@ -245,61 +245,103 @@ export class SnapshotStore {
   }
 
   assertCurrent(runId: string, body: ResumeBody): void {
-    const facts = new Map(
-      this.items<FactRecord>(runId, "fact").map((f) => [f.id, f]),
+    const invalidFact = () => new AppError(
+      "conflict",
+      "experience changed while this draft was being made; generate it again",
+    );
+    const invalidRole = () => new AppError(
+      "conflict",
+      "a role changed while this draft was being made; generate it again",
     );
     const ids = new Set([
       ...(body.summary ? body.summary.factIds : []),
       ...body.sections.flatMap((s) => s.lines.flatMap((l) => l.factIds)),
     ]);
-    // Skills print directly from confirmed facts and need the same revocation check.
-    for (const f of facts.values())
-      if (f.kind === "skill" && body.skills.includes(f.text)) ids.add(f.id);
-    for (const id of ids) {
+    const facts = new Map<string, FactRecord>();
+    for (const row of this.sql.exec<{ item_id: string; data: string }>(
+      `SELECT item_id, data FROM generation_input_items WHERE run_id = ? AND kind = 'fact'`, runId,
+    )) {
+      let fact: FactRecord;
+      try {
+        fact = JSON.parse(row.data) as FactRecord;
+        if (!fact || typeof fact !== "object" || Array.isArray(fact) || fact.id !== row.item_id)
+          throw invalidFact();
+      } catch {
+        if (ids.has(row.item_id)) throw invalidFact();
+        continue;
+      }
+      facts.set(row.item_id, fact);
+    }
+    const factMatches = (id: string): boolean => {
       const old = facts.get(id);
+      if (!old) return false;
       const current = this.sql
-        .exec<{ revision: number; state: string }>(
-          `SELECT revision, state FROM facts WHERE id = ?`,
+        .exec<{ id: string; revision: number; state: string; role_id: string | null; kind: string; text: string;
+          origin: string; level: string | null; level_revision: number | null; quote: string | null }>(
+          `SELECT f.id, f.revision, f.state, f.role_id, f.kind, f.text, f.origin, f.level, f.level_revision, e.quote
+           FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id WHERE f.id = ?`,
           id,
         )
         .toArray()[0];
-      if (
-        !old ||
-        !current ||
-        current.state !== "confirmed" ||
-        current.revision !== (old.revision ?? 1)
-      ) {
-        throw new AppError(
-          "conflict",
-          "experience changed while this draft was being made; generate it again",
-        );
-      }
-    }
+      if (!current || current.state !== "confirmed") return false;
+      const now: FactRecord = {
+        id: current.id, revision: current.revision, roleId: current.role_id,
+        kind: current.kind as FactRecord["kind"], text: current.text, origin: current.origin as FactRecord["origin"],
+        level: (current.origin === "user" && current.level_revision !== current.revision ? null : current.level) as FactRecord["level"],
+        ...(current.origin === "user" ? { levelExplicit: current.level !== null && current.level_revision === current.revision } : {}),
+        quote: current.origin === "user" ? null : current.quote,
+      };
+      // Older user snapshots without a level flag did not claim an explicit
+      // level when their captured effective level was null.
+      const captured = old.origin === "user" && old.level === null && old.levelExplicit === undefined
+        ? { ...old, levelExplicit: false } : old;
+      return sameEvidence(captured, now);
+    };
+    const roleRows = new Map(this.sql.exec<{ item_id: string; data: string }>(
+      `SELECT item_id, data FROM generation_input_items WHERE run_id = ? AND kind = 'role'`, runId,
+    ).toArray().map((row) => [row.item_id, row.data]));
+    const roleChecks = new Map<string, boolean>();
+    const roleMatches = (id: string): boolean => {
+      const cached = roleChecks.get(id);
+      if (cached !== undefined) return cached;
+      const data = roleRows.get(id);
+      if (data === undefined) return false;
+      let captured: RoleRecord;
+      try {
+        captured = JSON.parse(data) as RoleRecord;
+        if (!captured || captured.id !== id) return false;
+        evidenceForRoles([captured]);
+      } catch { return false; }
+      const current = this.sql
+        .exec<{ revision: number; state: string; kind: string; org: string; title: string | null;
+          start_date: string | null; end_date: string | null; unknown_end_start_date: string | null }>(
+          `SELECT revision, state, kind, org, title, start_date, end_date, unknown_end_start_date FROM roles WHERE id = ?`,
+          id,
+        )
+        .toArray()[0];
+      const valid = !!current && current.state === "confirmed" && current.revision === captured.revision &&
+        current.kind === captured.kind && current.org === captured.org && current.title === captured.title &&
+        current.start_date === captured.startDate && current.end_date === captured.endDate &&
+        current.unknown_end_start_date === (captured.unknownEndStartDate ?? null);
+      roleChecks.set(id, valid);
+      return valid;
+    };
     const roleIds = new Set(body.sections.map((s) => s.roleId));
     for (const id of ids) {
+      if (!factMatches(id)) throw invalidFact();
       const roleId = facts.get(id)?.roleId;
       if (roleId) roleIds.add(roleId);
     }
-    const roles = new Map(
-      this.items<RoleRecord>(runId, "role").map((r) => [r.id, r]),
-    );
-    for (const id of roleIds) {
-      const current = this.sql
-        .exec<{ revision: number; state: string }>(
-          `SELECT revision, state FROM roles WHERE id = ?`,
-          id,
-        )
-        .toArray()[0];
-      if (
-        !current ||
-        current.state !== "confirmed" ||
-        current.revision !== (roles.get(id)?.revision ?? 1)
-      ) {
-        throw new AppError(
-          "conflict",
-          "a role changed while this draft was being made; generate it again",
-        );
-      }
+    for (const id of roleIds) if (!roleMatches(id)) throw invalidRole();
+    // A skill has no output fact ID. One still-confirmed matching captured
+    // skill (including its role, if any) suffices; line citations above remain
+    // tied to their exact fact IDs.
+    for (const skill of body.skills) {
+      const supported = [...facts.values()].some((fact) =>
+        fact.kind === "skill" && fact.text === skill && factMatches(fact.id) &&
+        (!fact.roleId || roleMatches(fact.roleId)),
+      );
+      if (!supported) throw invalidFact();
     }
   }
 
