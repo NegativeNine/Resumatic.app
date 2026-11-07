@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { DIRECTORY_MIGRATIONS, migrateDirectory } from "../../src/directory/schema";
 import { MIGRATIONS, migrate, SCHEMA_VERSION } from "../../src/vault/schema";
+import { removeIncarnationMigration } from "../support/undo-vault-incarnation";
 import { undoInviteGlobalOrphansMigration, undoInviteQuarantineMigration, undoInviteCoordinatorMigration, undoInviteCoordinatorTargetMigration, undoInviteInventoryMigrations, undoInviteRevocationMigration, undoInviteTargetSealMigration, undoShardInviteBindingMigration, undoShardClaimRevocationMigration } from "../support/undo-invite-inventory";
 
 /** Interrupt a migration after its first DDL statement has executed. */
@@ -41,18 +42,6 @@ function priorVersion(fragment: string): number {
 }
 
 /** Restore the schema state before the later export-cache migration. */
-function removeIncarnationMigration(sql: SqlStorage): void {
-  for (const table of ["facts", "roles"])
-    for (const suffix of ["capacity", "insert", "delete", "id", "update_capacity", "update"])
-      sql.exec(`DROP TRIGGER IF EXISTS ${table}_incarnation_${suffix}`);
-  for (const suffix of ["insert_capacity", "insert", "update_capacity", "update", "delete_capacity", "delete", "id"])
-    sql.exec(`DROP TRIGGER IF EXISTS evidence_incarnation_${suffix}`);
-  sql.exec(`DROP TABLE IF EXISTS entity_incarnations`);
-  sql.exec(`DROP TABLE IF EXISTS entity_incarnation_guard`);
-  sql.exec(`DROP TABLE IF EXISTS entity_incarnation_clock`);
-  sql.exec(`ALTER TABLE generation_input_items DROP COLUMN incarnation`);
-}
-
 function removeExportCacheMigration(sql: SqlStorage): void {
   removeIncarnationMigration(sql);
   sql.exec(`DROP TRIGGER clear_source_write_link`);

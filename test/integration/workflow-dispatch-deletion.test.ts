@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { directory, vault } from "../../src/shared/stubs";
 import { MIGRATIONS } from "../../src/vault/schema";
+import { removeIncarnationMigration } from "../support/undo-vault-incarnation";
 import { uniqueEmail } from "./support";
 
 describe("deletion and Workflow dispatch", () => {
@@ -97,6 +98,7 @@ describe("deletion and Workflow dispatch", () => {
         state.storage.sql.exec(`INSERT INTO applications (id, jd_text, created_at) VALUES (?, 'old job', 1)`, appId);
         state.storage.sql.exec(`INSERT INTO resumes (id, application_id, state, run_id, created_at) VALUES (?, ?, 'ready', ?, 1)`, oldResume, appId, oldResume);
         // This fixture rewinds to the era before Workflow dispatch markers.
+        removeIncarnationMigration(state.storage.sql);
         state.storage.sql.exec(`DROP TRIGGER clear_source_write_link`);
         state.storage.sql.exec(`DROP TABLE source_write_links`);
         state.storage.sql.exec(`DROP TABLE export_cache_chunks`);

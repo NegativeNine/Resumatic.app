@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setModels } from "../../src/ai/models";
 import { checkLine } from "../../src/grounding/verdict";
 import { MIGRATIONS, migrate } from "../../src/vault/schema";
+import { removeIncarnationMigration } from "../support/undo-vault-incarnation";
 import { vault } from "../../src/shared/stubs";
 import type { FactRecord } from "../../src/shared/types";
 import { fakeModels, signIn, type User } from "./support";
@@ -62,7 +63,8 @@ describe("fact level provenance", () => {
     await runInDurableObject(stub, async (instance, state) => {
       const sql = state.storage.sql;
       // Restore the actual schema before this historic migration, including
-      // removing the later export-cache tables before replaying migrations.
+      // removing the later incarnation and export-cache changes.
+      removeIncarnationMigration(sql);
       sql.exec(`DROP TRIGGER clear_source_write_link`);
       sql.exec(`DROP TABLE source_write_links`);
       sql.exec(`DROP TABLE export_cache_chunks`);
