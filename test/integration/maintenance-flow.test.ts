@@ -230,6 +230,17 @@ describe("maintenance replacement lifecycle", () => {
     expect(await target.finishImport(op, oldSession.vid)).toMatchObject({
       state: "ready",
     });
+    // Imported records receive fresh local incarnations. In-flight generation
+    // snapshots are not transferred and new ones can bind the imported rows.
+    await runInDurableObject(target, (_instance, state) => {
+      const sql = state.storage.sql;
+      for (const [table, kind] of [["facts", "fact"], ["roles", "role"]] as const) {
+        const missing = sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table} t
+          LEFT JOIN entity_incarnations i ON i.kind=? AND i.item_id=t.id WHERE i.item_id IS NULL`, kind).one().n;
+        expect(missing).toBe(0);
+      }
+      expect(sql.exec(`SELECT run_id FROM generation_inputs`).toArray()).toHaveLength(0);
+    });
     expect(await target.billingCheckoutSessionsForDeletion()).toEqual(["cs_test_transfer"]);
     expect(await target.finishImport(op, oldSession.vid)).toMatchObject({
       state: "ready",
@@ -361,6 +372,10 @@ describe("maintenance replacement lifecycle", () => {
       question: question.question,
       quote: "I used Go for internal services.",
     });
+    const afterMove = await replacement.send("POST", `/api/applications/${applicationId}/resumes`);
+    expect(afterMove.status).toBe(202);
+    const { resumeId: newResume } = await afterMove.json() as { resumeId: string };
+    expect((await waitForResume(replacement, newResume)).state).toBe("ready");
   });
 
   it("refuses publication when a source object is missing and keeps the original account pointer", async () => {

@@ -6,6 +6,7 @@ import { operationalMetrics } from "./metrics";
 import { oauthUserGrantCount } from "./mcp";
 import { AppError } from "../shared/errors";
 import { correlateCacheWrites } from "./cache-correlation";
+import { deletionFenceReport } from "./deletion-fences";
 import { isMissingWorkflowInstance } from "../shared/workflow-errors";
 import { nextR2Cursor } from "../shared/r2";
 import {
@@ -214,6 +215,25 @@ maintenance.get("/vaults/:id/cache-write-correlation", async (c) => {
   })();
   c.header("cache-control", "private, no-store");
   return c.json(await correlateCacheWrites(c.env.FILES, vaultId, snapshot));
+});
+
+// Access-protected, owner-checked and read-only. A zero count never proves
+// erasure, provider quiescence, or the absence of older unregistered writes.
+maintenance.post("/vaults/:id/deletion-fences", bodyLimit({ maxSize: 2048 }), async (c) => {
+  const vaultId = id(c.req.param("id"));
+  let input: unknown;
+  try { input = await c.req.json(); } catch { throw new AppError("invalid", "expected a JSON body"); }
+  const parsed = z.object({
+    userId: z.string().regex(/^(?:s(?:[0-9]|1[0-5]):)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+  }).strict().safeParse(input);
+  if (!parsed.success) throw new AppError("invalid", "invalid diagnostic owner");
+  const locations = [...allDirectories(c.env)];
+  const report = await deletionFenceReport(
+    () => Promise.all(locations.map((d) => d.deletionFenceMapping(vaultId, parsed.data.userId))),
+    () => vault(c.env, vaultId).deletionFenceSummary(parsed.data.userId),
+  );
+  c.header("cache-control", "private, no-store");
+  return c.json(report);
 });
 
 maintenance.post("/deletion-audits/:id", async (c) => {

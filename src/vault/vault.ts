@@ -4340,6 +4340,46 @@ export class Vault extends DurableObject<Env> {
     return { status: "available", total, attempts };
   }
 
+  /** Metadata-only deletion hint. This snapshot never authorizes erasure or fence removal. */
+  deletionFenceSummary(userId: string) {
+    if (!this.initialised || this.gone || this.destroying || !hasSchema(this.sql))
+      return { status: "unavailable" as const };
+    if (this.meta("user_id") !== userId) throw new AppError("forbidden", "not this user's vault");
+    if (this.meta("state") !== "closing") throw new AppError("conflict", "vault is not closing");
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const ids = (table: "workflow_dispatches" | "workflow_redispatches") => {
+      const rows = this.sql.exec<{ run_id: SqlStorageValue }>(
+        `SELECT run_id FROM ${table} ORDER BY run_id LIMIT 65`,
+      ).toArray();
+      if (rows.some((row) => typeof row.run_id !== "string" || !uuid.test(row.run_id))) return null;
+      return { ids: rows.slice(0, 64).map((row) => row.run_id as string), truncated: rows.length > 64 };
+    };
+    const dispatches = ids("workflow_dispatches"), redispatches = ids("workflow_redispatches");
+    if (!dispatches || !redispatches) return { status: "unavailable" as const };
+    const count = (source: boolean) => {
+      const n = this.sql.exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM (SELECT 1 FROM r2_cache_dispatches WHERE ${source ? "kind = 'source'" : "kind <> 'source'"} LIMIT 1001)`,
+      ).one().n;
+      return { count: Math.min(n, 1000), truncated: n > 1000 };
+    };
+    const billingFlag = (key: string): "absent" | "present" | "invalid" => {
+      const raw = this.meta(key);
+      if (raw === null) return "absent";
+      if (!/^(?:0|[1-9]\d*)$/.test(raw)) return "invalid";
+      const n = Number(raw);
+      return !Number.isSafeInteger(n) ? "invalid" : n === 0 ? "absent" : "present";
+    };
+    return {
+      status: "available" as const,
+      workflow: { dispatches, redispatches },
+      r2: { sourceWrites: count(true), otherWrites: count(false) },
+      billing: {
+        customerCreation: billingFlag("billing_customer_dispatches"),
+        checkoutCreation: billingFlag("billing_checkout_dispatches"),
+      },
+    };
+  }
+
   async retryRun(
     who: Who,
     id: string,

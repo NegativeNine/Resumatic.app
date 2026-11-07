@@ -1337,6 +1337,43 @@ export class Directory extends DurableObject<Env> {
       )
       .toArray()[0];
   }
+
+  /** Read-only mapping for deletion diagnostics. The token is never a deletion authority. */
+  async deletionFenceMapping(vaultId: string, userId: string): Promise<
+    | { status: "absent" }
+    | { status: "unavailable" }
+    | { status: "matched"; token: string; initializationPending: boolean }
+  > {
+    const primary = this.sql.exec<{ user_id: string; state: string; user_state: string | null; operation_id: string | null }>(
+      `SELECT v.user_id,v.state,u.state AS user_state,i.operation_id
+       FROM vaults v LEFT JOIN users u ON u.user_id=v.user_id
+       LEFT JOIN account_invite_deletions i ON i.user_id=v.user_id AND i.vault_id=v.vault_id
+       WHERE v.vault_id=?`, vaultId,
+    ).toArray();
+    const retired = this.sql.exec<{ user_id: string; state: string; generation: string | null }>(
+      `SELECT user_id,state,generation FROM retired_vaults WHERE vault_id=?`, vaultId,
+    ).toArray();
+    if (primary.length + retired.length === 0) return { status: "absent" };
+    if (primary.length + retired.length !== 1) return { status: "unavailable" };
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    let token: string;
+    if (primary.length === 1) {
+      const row = primary[0]!;
+      if (row.user_id !== userId || row.user_state !== "deleting" ||
+          !["deleting", "swept"].includes(row.state) || !row.operation_id || !uuid.test(row.operation_id))
+        return { status: "unavailable" };
+      token = `account:${row.operation_id}:${row.state}`;
+    } else {
+      const row = retired[0]!;
+      if (row.user_id !== userId || !["deleting", "awaiting_final_sweep"].includes(row.state) ||
+          !row.generation || !uuid.test(row.generation)) return { status: "unavailable" };
+      token = `retired:${row.generation}:${row.state}`;
+    }
+    const initializationPending = this.sql.exec(
+      `SELECT vault_id FROM vault_initializations WHERE vault_id=? LIMIT 1`, vaultId,
+    ).toArray().length > 0;
+    return { status: "matched", token, initializationPending };
+  }
   async prepareReplacement(
     sourceId: string,
     operationId: string,
