@@ -201,8 +201,11 @@ describe("Directory placement in Durable Objects", () => {
   it("preserves legacy global accounts but rejects missing sharded homes", async () => {
     const p = await input();
     const global = directory(env);
-    await expect(global.bindIdentityHome(p.provider, p.subject, crypto.randomUUID(), p.authEpoch)).resolves.toBeUndefined();
+    await global.addInvite(p.email);
+    const account = await global.signIn(p);
+    await expect(global.bindIdentityHome(p.provider, p.subject, account.userId, p.authEpoch)).resolves.toBeUndefined();
     await runInDurableObject(global, async (instance) => {
+      await expect((instance as Directory).bindIdentityHome(p.provider, p.subject, crypto.randomUUID(), p.authEpoch)).rejects.toThrow("account placement changed");
       const uuid = crypto.randomUUID();
       for (const userId of [`s3:${uuid}`, `s03:${uuid}`, `S3:${uuid}`])
         await expect((instance as Directory).bindIdentityHome(p.provider, p.subject, userId, p.authEpoch)).rejects.toThrow("sharded account placement requires review");
