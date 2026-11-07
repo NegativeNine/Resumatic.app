@@ -412,9 +412,9 @@ One `wrangler.jsonc` declares the whole system: two Durable Object classes, two 
     "OIDC_CLIENT_ID": "<google-client-id>",
     "CF_ACCOUNT_ID": "<account-id>",
     "AI_GATEWAY_ID": "resumatic",
-    "MODEL_EXTRACT": "anthropic/claude-haiku-5-5",
-    "MODEL_ANALYZE": "anthropic/claude-haiku-5-5",
-    "MODEL_WRITE": "anthropic/claude-sonnet-5-5",
+    "MODEL_EXTRACT": "anthropic/claude-haiku-5.5",
+    "MODEL_ANALYZE": "anthropic/claude-haiku-5.5",
+    "MODEL_WRITE": "anthropic/claude-sonnet-5.5",
     "MODEL_JUDGE": "openai/gpt-5",             // a different family from the writer
     "ACCESS_TEAM_DOMAIN": "https://<team>.cloudflareaccess.com",
     "ACCESS_AUD": "<access-application-audience>"

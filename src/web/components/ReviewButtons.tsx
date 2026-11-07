@@ -17,7 +17,13 @@ export interface ReviewControl {
  * Confirms or rejects one role or fact. The item usually leaves the filtered list afterwards, so
  * focus goes to the item if it is still shown, otherwise to a neighbour or the review heading.
  */
-export function useReview(id: string, reload: Reload, item: RefObject<HTMLElement | null>): ReviewControl {
+export function useReview(
+  id: string,
+  reload: Reload,
+  item: RefObject<HTMLElement | null>,
+  revision = 1,
+  duplicates: { id: string; revision?: number }[] = [],
+): ReviewControl {
   const { run, error } = useAction();
   const [deciding, setDeciding] = useState<Decision | null>(null);
 
@@ -32,13 +38,32 @@ export function useReview(id: string, reload: Reload, item: RefObject<HTMLElemen
     ];
     setDeciding(decision);
     const ok = await run(async () => {
-      await api.review(decision === "confirm" ? { confirm: [id], reject: [] } : { confirm: [], reject: [id] });
+      const items = [{ id, revision }, ...duplicates];
+      const ids = items.map((item) => item.id);
+      try {
+        await api.review({
+          confirm: decision === "confirm" ? ids : [],
+          reject: decision === "reject" ? ids : [],
+          expectedRevisions: Object.fromEntries(items.map((item) => [item.id, item.revision ?? 1])),
+        });
+      } catch (error) {
+        // A lost response can follow an already committed transaction. Fetch
+        // the actual states before a retry; retain the original error if the
+        // refresh also fails.
+        try { await reload(); } catch { /* keep the decision error */ }
+        throw error;
+      }
       await reload();
     });
     setDeciding(null);
     if (ok) {
       candidates
-        .find((c): c is HTMLElement => c instanceof HTMLElement && c.isConnected && c.hasAttribute("tabindex"))
+        .find(
+          (c): c is HTMLElement =>
+            c instanceof HTMLElement &&
+            c.isConnected &&
+            c.hasAttribute("tabindex"),
+        )
         ?.focus();
     }
   }
@@ -54,10 +79,20 @@ interface Props {
   describedBy: string;
   review: ReviewControl;
   onEdit?: () => void;
+  confirmDisabled?: boolean;
+  disabled?: boolean;
 }
 
-export function ReviewButtons({ state, noun, describedBy, review, onEdit }: Props) {
-  const busy = review.deciding !== null;
+export function ReviewButtons({
+  state,
+  noun,
+  describedBy,
+  review,
+  onEdit,
+  confirmDisabled = false,
+  disabled = false,
+}: Props) {
+  const busy = review.deciding !== null || disabled;
   const suffix = noun ? ` ${noun}` : "";
 
   return (
@@ -67,7 +102,7 @@ export function ReviewButtons({ state, noun, describedBy, review, onEdit }: Prop
           type="button"
           className="primary small"
           aria-describedby={describedBy}
-          disabled={busy}
+          disabled={busy || confirmDisabled}
           onClick={() => void review.decide("confirm")}
         >
           {review.deciding === "confirm" ? "Confirming…" : `Confirm${suffix}`}
@@ -85,7 +120,13 @@ export function ReviewButtons({ state, noun, describedBy, review, onEdit }: Prop
         </button>
       )}
       {onEdit && (
-        <button type="button" className="small quiet" aria-describedby={describedBy} disabled={busy} onClick={onEdit}>
+        <button
+          type="button"
+          className="small quiet"
+          aria-describedby={describedBy}
+          disabled={busy}
+          onClick={onEdit}
+        >
           Edit{suffix}
         </button>
       )}

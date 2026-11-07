@@ -1,0 +1,156 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { api } from "../../src/web/api";
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("generation request keys", () => {
+  it("sends the same input that was fingerprinted if the caller mutates its object", async () => {
+    const sent: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_path: RequestInfo | URL, init?: RequestInit) => {
+      sent.push(JSON.parse(String(init?.body)));
+      return Response.json({ documentId: "doc", runId: "run" });
+    }));
+    const options = { kind: "refine" as const, instruction: "original" };
+    const pending = api.startDocument(crypto.randomUUID(), options);
+    options.instruction = "changed";
+    await pending;
+    expect(sent).toEqual([{ kind: "refine", instruction: "original" }]);
+  });
+  it.each([
+    ["empty response", () => new Response(null, { status: 204 })],
+    ["non-JSON response", () => new Response("upstream error", { status: 200 })],
+    ["missing ID", () => Response.json({})],
+    ["empty ID", () => Response.json({ factId: "" })],
+    ["wrong ID type", () => Response.json({ factId: 42 })],
+  ])("keeps the fact creation key after a successful HTTP status with %s", async (_name, invalidResponse) => {
+    const keys: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_path: RequestInfo | URL, init?: RequestInit) => {
+      keys.push((init?.headers as Record<string, string>)["idempotency-key"]!);
+      return keys.length === 1 ? invalidResponse() : Response.json({ factId: "saved-fact" });
+    }));
+    const fact = { roleId: null, kind: "accomplishment" as const, text: crypto.randomUUID(), level: null };
+    await expect(api.addFact(fact)).rejects.toThrow();
+    await expect(api.addFact(fact)).resolves.toEqual({ factId: "saved-fact" });
+    await expect(api.addFact(fact)).resolves.toEqual({ factId: "saved-fact" });
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
+  });
+
+  it("requires every document response identifier before clearing the key", async () => {
+    const keys: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_path: RequestInfo | URL, init?: RequestInit) => {
+      keys.push((init?.headers as Record<string, string>)["idempotency-key"]!);
+      return Response.json(keys.length === 1 ? { documentId: "doc" } : { documentId: "doc", runId: "run" });
+    }));
+    const application = crypto.randomUUID();
+    await expect(api.startDocument(application, { kind: "letter" })).rejects.toThrow();
+    await expect(api.startDocument(application, { kind: "letter" })).resolves.toEqual({ documentId: "doc", runId: "run" });
+    expect(keys[1]).toBe(keys[0]);
+  });
+  it("keeps an uncertain key through a rate-limited retry, then clears it on success", async () => {
+    const keys: string[] = [];
+    let call = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_path: RequestInfo | URL, init?: RequestInit) => {
+      keys.push((init?.headers as Record<string, string>)["idempotency-key"]!);
+      call++;
+      if (call === 1) throw new TypeError("connection lost");
+      if (call === 2) return Response.json({ error: "quota", message: "try again" }, { status: 429 });
+      return Response.json({ resumeId: "resume" });
+    }));
+    const application = crypto.randomUUID();
+    await expect(api.tailor(application)).rejects.toThrow("connection lost");
+    await expect(api.tailor(application)).rejects.toThrow("try again");
+    await expect(api.tailor(application)).resolves.toEqual({ resumeId: "resume" });
+    await expect(api.tailor(application)).resolves.toEqual({ resumeId: "resume" });
+    expect(keys[0]).toBeTruthy();
+    expect(keys.slice(0, 3)).toEqual([keys[0], keys[0], keys[0]]);
+    expect(keys[3]).not.toBe(keys[0]);
+  });
+
+  it("does not clear a key on a 4xx while another attempt is still unresolved", async () => {
+    const keys: string[] = [];
+    let rejectFirst!: (error: Error) => void;
+    let call = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_path: RequestInfo | URL, init?: RequestInit) => {
+      keys.push((init?.headers as Record<string, string>)["idempotency-key"]!);
+      call++;
+      if (call === 1) return await new Promise<Response>((_resolve, reject) => { rejectFirst = reject; });
+      if (call === 2) return Response.json({ error: "quota", message: "try again" }, { status: 429 });
+      return Response.json({ resumeId: "resume" });
+    }));
+    const application = crypto.randomUUID();
+    const first = api.tailor(application);
+    const firstFailure = expect(first).rejects.toThrow("connection lost");
+    await expect(api.tailor(application)).rejects.toThrow("try again");
+    rejectFirst(new TypeError("connection lost"));
+    await firstFailure;
+    await expect(api.tailor(application)).resolves.toEqual({ resumeId: "resume" });
+    expect(keys).toEqual([keys[0], keys[0], keys[0]]);
+  });
+
+  it("retains the action key after an initial client error", async () => {
+    const keys: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_path: RequestInfo | URL, init?: RequestInit) => {
+      keys.push((init?.headers as Record<string, string>)["idempotency-key"]!);
+      return keys.length === 1
+        ? Response.json({ error: "invalid", message: "invalid input" }, { status: 400 })
+        : Response.json({ resumeId: "resume" });
+    }));
+    const application = crypto.randomUUID();
+    await expect(api.tailor(application)).rejects.toThrow("invalid input");
+    await expect(api.tailor(application)).resolves.toEqual({ resumeId: "resume" });
+    expect(keys[1]).toBe(keys[0]);
+  });
+
+  it("reuses a manual fact key after a lost response and gives a new action a new key", async () => {
+    const keys: string[] = [], paths: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (path: RequestInfo | URL, init?: RequestInit) => {
+      paths.push(String(path));
+      keys.push((init?.headers as Record<string, string>)["idempotency-key"]!);
+      if (keys.length === 1) throw new TypeError("connection lost");
+      return Response.json({ factId: "fact" });
+    }));
+    const fact = { roleId: null, kind: "accomplishment" as const, text: "Built an accessible application", level: null };
+    await expect(api.addFact(fact)).rejects.toThrow("connection lost");
+    await expect(api.addFact(fact)).resolves.toEqual({ factId: "fact" });
+    await expect(api.addFact(fact)).resolves.toEqual({ factId: "fact" });
+    expect(paths).toEqual(["/api/v2/facts", "/api/v2/facts", "/api/v2/facts"]);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
+  });
+
+  it.each([false, true])("reuses a manual role key after a lost response (unknown-end capability %s)", async (unknownEnd) => {
+    const keys: string[] = [], paths: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (path: RequestInfo | URL, init?: RequestInit) => {
+      paths.push(String(path));
+      keys.push((init?.headers as Record<string, string>)["idempotency-key"]!);
+      if (keys.length === 1) throw new TypeError("connection lost");
+      return Response.json({ roleId: "role" });
+    }));
+    const role = { kind: "job" as const, org: crypto.randomUUID(), title: null, startDate: null, endDate: null,
+      ...(unknownEnd ? { unknownEndStartDate: "2020" } : {}) };
+    const add = unknownEnd ? api.addRoleV2 : api.addRole;
+    await expect(add(role)).rejects.toThrow("connection lost");
+    await expect(add(role)).resolves.toEqual({ roleId: "role" });
+    await expect(add(role)).resolves.toEqual({ roleId: "role" });
+    expect(paths).toEqual(["/api/v3/roles", "/api/v3/roles", "/api/v3/roles"]);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
+  });
+  it("reuses a job key after an uncertain response and makes a new key for the next action", async () => {
+    const keys: string[] = [], paths: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (path: RequestInfo | URL, init?: RequestInit) => {
+      paths.push(String(path));
+      keys.push((init?.headers as Record<string, string>)["idempotency-key"]!);
+      if (keys.length === 1) throw new TypeError("connection lost");
+      return Response.json({ applicationId: "job" });
+    }));
+    const job = `A detailed role description ${crypto.randomUUID()}`;
+    await expect(api.addApplication(job)).rejects.toThrow("connection lost");
+    await expect(api.addApplication(job)).resolves.toEqual({ applicationId: "job" });
+    await expect(api.addApplication(job)).resolves.toEqual({ applicationId: "job" });
+    expect(paths).toEqual(["/api/v2/applications", "/api/v2/applications", "/api/v2/applications"]);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
+  });
+});

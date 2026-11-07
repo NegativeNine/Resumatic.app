@@ -42,9 +42,31 @@ export class AppError extends Error {
 
 /** Recovers the code of an AppError, including one that crossed an RPC boundary. */
 export function errorCode(e: unknown): ErrorCode | null {
-  if (e instanceof AppError) return e.code;
-  const match = CODE_PREFIX.exec(messageOf(e));
-  return match ? (match[1] as ErrorCode) : null;
+  try {
+    if (e instanceof AppError) {
+      const code = e.code;
+      return typeof code === "string" && Object.hasOwn(STATUS, code)
+        ? code
+        : null;
+    }
+    const match = CODE_PREFIX.exec(messageOf(e));
+    return match ? (match[1] as ErrorCode) : null;
+  } catch {
+    // Error properties can be accessor-backed and need not be trustworthy.
+    return null;
+  }
+}
+
+/** A fixed vocabulary for logs, including when an Error's fields were mutated. */
+export function logErrorCode(e: unknown): ErrorCode | "unexpected" {
+  try {
+    const code = errorCode(e);
+    return typeof code === "string" && Object.hasOwn(STATUS, code)
+      ? code
+      : "unexpected";
+  } catch {
+    return "unexpected";
+  }
 }
 
 /** The human-readable part of an AppError's message. */
@@ -57,6 +79,13 @@ export function httpStatus(code: ErrorCode): number {
 }
 
 function messageOf(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  return typeof e === "string" ? e : "";
+  try {
+    if (e instanceof Error) {
+      const message = e.message;
+      return typeof message === "string" ? message : "";
+    }
+    return typeof e === "string" ? e : "";
+  } catch {
+    return "";
+  }
 }

@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -16,13 +19,30 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - run: node --test scripts/*.test.mjs
       - run: npm run build
 
-  # Every push to main deploys to staging, which must then serve the app and the API and pass the
-  # end-to-end check with the real models, Workflows and Browser Run.
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Audit dependencies
+        run: npm audit --audit-level=high --json > dependency-audit.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: dependency-audit
+          path: dependency-audit.json
+          if-no-files-found: error
+
   deploy-staging:
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, security-audit]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.STAGING_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: staging
     concurrency: staging
@@ -30,41 +50,31 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       TEST_SIGNIN_KEY: ${{ secrets.TEST_SIGNIN_KEY }}
+      STAGING_URL: ${{ vars.STAGING_URL }}
+      EVAL_BUDGET_USD: ${{ vars.EVAL_BUDGET_USD }}
+      EVAL_MAX_CALLS: ${{ vars.EVAL_MAX_CALLS }}
     steps:
-      - name: Check configuration
-        id: config
-        shell: bash
-        run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "::warning::Staging deploy skipped: set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in the staging environment (see the README)."
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          fi
-      - if: steps.config.outputs.ready == 'true'
-        uses: actions/checkout@v6
-      - if: steps.config.outputs.ready == 'true'
-        uses: actions/setup-node@v6
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
-      - if: steps.config.outputs.ready == 'true'
-        run: npm ci
-      - if: steps.config.outputs.ready == 'true'
-        run: npm run build:staging
-      - name: Deploy
-        if: steps.config.outputs.ready == 'true'
-        shell: bash
-        run: npx wrangler deploy 2>&1 | tee deploy.log
-      - name: Smoke test
-        if: steps.config.outputs.ready == 'true'
-        shell: bash
-        run: |
-          url=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | head -1)
-          test -n "$url" || { echo "no workers.dev URL in deploy output"; exit 1; }
-          curl --fail --silent --show-error --retry 5 --retry-delay 3 "$url/api/health"
-          curl --fail --silent --show-error --output /dev/null "$url/"
-          echo "STAGING_URL=$url" >> "$GITHUB_ENV"
-      - name: End-to-end check
-        if: steps.config.outputs.ready == 'true' && env.TEST_SIGNIN_KEY != ''
+      - run: npm ci
+      - run: node scripts/validate-config.mjs --environment staging --purpose deploy --report staging-preflight.json
+      - name: Reject secrets that shadow evaluated staging configuration
+        run: node scripts/check-evaluation-secrets.mjs
+      - run: npm run build:staging
+      - run: npx wrangler deploy
+      - name: Require shared accounting for paid CI work
+        run: node scripts/ci-paid-budget-guard.mjs
+      - name: Deployed lifecycle
         run: npm run e2e:staging
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: staging-evidence
+          path: |
+            staging-preflight.json
+            e2e-report.json
+            deletion-manifest.json
+          if-no-files-found: error

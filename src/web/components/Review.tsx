@@ -1,7 +1,7 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FactView, ReviewState, RoleView } from "../../shared/api";
 import { STATE_LABEL } from "../format";
-import type { Reload } from "../hooks";
+import { useAction, type Reload } from "../hooks";
 import { href } from "../router";
 import { countByState, groupByRole, isReading, type Vault } from "../vault";
 import { AddFact } from "./AddFact";
@@ -14,14 +14,44 @@ const FILTERS: readonly ReviewState[] = ["proposed", "confirmed", "rejected"];
 
 export function Review({ vault, reload }: { vault: Vault; reload: () => Promise<Vault | undefined> }) {
   const [filter, setFilter] = useState<ReviewState>("proposed");
-  const filenames = useMemo(() => new Map(vault.sources.map((s) => [s.id, s.filename] as const)), [vault.sources]);
-  const counts = countByState(vault);
-  const groups = groupByRole(vault, filter);
+  const [held, setHeld] = useState<Vault | null>(null);
+  const latest = useRef(vault);
+  latest.current = vault;
+  const editors = useRef(new Set<string>());
+  const deferredFilter = useRef<ReviewState | null>(null);
+  // A refresh can move or remove an item, unmounting its editor and losing its
+  // draft. Keep the displayed list stable until every open editor closes.
+  const editingChanged = useCallback((id: string, active: boolean) => {
+    if (active) {
+      if (editors.current.size === 0) setHeld(latest.current);
+      editors.current.add(id);
+    } else {
+      editors.current.delete(id);
+      if (editors.current.size === 0) {
+        setHeld(null);
+        if (deferredFilter.current) {
+          setFilter(deferredFilter.current);
+          deferredFilter.current = null;
+        }
+      }
+    }
+  }, []);
+  function showFilter(state: ReviewState) {
+    if (editors.current.size) deferredFilter.current = state;
+    else setFilter(state);
+  }
+  const displayed = held ?? vault;
+  const filenames = useMemo(() => new Map(displayed.sources.map((s) => [s.id, s.filename] as const)), [displayed.sources]);
+  const counts = countByState(displayed);
+  const groups = groupByRole(displayed, filter);
 
   async function showAdded(factId: string) {
     const next = await reload();
     const fact = next?.facts.find((f) => f.id === factId);
-    if (fact) setFilter(fact.state);
+    // A manual fact starts confirmed. If a refresh fails or a newer refresh
+    // supersedes this one, still show the tab where it was created. The
+    // refresh error remains visible and can be retried.
+    showFilter(fact?.state ?? "confirmed");
   }
 
   return (
@@ -35,9 +65,10 @@ export function Review({ vault, reload }: { vault: Vault; reload: () => Promise<
       </p>
       <div className="add-row">
         <AddFact roles={vault.roles} onAdded={showAdded} />
-        <AddRole reload={reload} onAdded={() => setFilter("confirmed")} />
+        <AddRole reload={reload} onAdded={() => showFilter("confirmed")} />
       </div>
-      <fieldset className="segmented">
+      {held && <p role="status" className="hint">The review list is paused while you edit. New changes appear when you close the editor. Your draft will be lost if you leave or reload this page.</p>}
+      <fieldset className="segmented" disabled={!!held}>
         <legend className="visually-hidden">Show</legend>
         {FILTERS.map((state) => (
           <label key={state}>
@@ -49,21 +80,24 @@ export function Review({ vault, reload }: { vault: Vault; reload: () => Promise<
         ))}
       </fieldset>
       {groups.length === 0 ? (
-        <EmptyReview filter={filter} vault={vault} />
+        <EmptyReview filter={filter} vault={displayed} />
       ) : (
         groups.map((group) =>
           group.role ? (
             <RoleGroup
               key={group.role.id}
               role={group.role}
-              roles={vault.roles}
+              duplicates={group.duplicates ?? []}
+              roles={displayed.roles}
               facts={group.facts}
               filter={filter}
               filenames={filenames}
               reload={reload}
+              reviewLocked={!!held}
+              onEditingChange={editingChanged}
             />
           ) : (
-            <LooseFacts key="loose" facts={group.facts} roles={vault.roles} filenames={filenames} reload={reload} />
+            <LooseFacts key="loose" facts={group.facts} roles={displayed.roles} filenames={filenames} reload={reload} reviewLocked={!!held} onEditingChange={editingChanged} />
           ),
         )
       )}
@@ -74,23 +108,32 @@ export function Review({ vault, reload }: { vault: Vault; reload: () => Promise<
 function AddRole({ reload, onAdded }: { reload: Reload; onAdded: () => void }) {
   const [open, setOpen] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef(false);
+  const action = useAction();
+
+  useEffect(() => {
+    if (!open && !action.pending && returnFocus.current) {
+      returnFocus.current = false;
+      toggle.current?.focus();
+    }
+  }, [open, action.pending]);
 
   function close() {
+    returnFocus.current = true;
     setOpen(false);
-    toggle.current?.focus();
   }
 
   return (
     <div className="add-fact">
-      <button ref={toggle} type="button" aria-expanded={open} onClick={() => setOpen(!open)}>
+      <button ref={toggle} type="button" aria-expanded={open} disabled={action.pending} onClick={() => setOpen(!open)}>
         Add a role
       </button>
-      {open && <RoleForm reload={reload} onClose={close} onAdded={onAdded} />}
+      {open && <RoleForm reload={reload} onClose={close} onAdded={onAdded} action={action} />}
     </div>
   );
 }
 
-function LooseFacts(props: { facts: FactView[]; roles: RoleView[]; filenames: ReadonlyMap<string, string>; reload: Reload }) {
+function LooseFacts(props: { facts: FactView[]; roles: RoleView[]; filenames: ReadonlyMap<string, string>; reload: Reload; reviewLocked: boolean; onEditingChange: (id: string, active: boolean) => void }) {
   return (
     <section className="card group" tabIndex={-1} aria-labelledby="loose-facts-heading">
       <h3 id="loose-facts-heading">Not tied to a role</h3>
