@@ -204,19 +204,24 @@
 .rs-footer { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-6); max-width: var(--layout-app); margin: 0 auto; padding: var(--space-8) var(--space-6) var(--space-10); font-size: 14px; line-height: 20px; color: var(--ink-muted); border-top: 1px solid var(--rule); }
 .rs-footer a { color: var(--ink-muted); }
 
-/* The resume sheet: exactly what the PDF prints (src/render/template.ts) */
-.rs-sheet { width: var(--layout-paper); max-width: 100%; padding: 51px 59px; font-family: var(--font-paper); font-size: 14px; line-height: 1.35; color: var(--sheet-ink); background: var(--sheet); border-radius: var(--radius-paper); box-shadow: var(--shadow-paper); }
-.rs-sheet h1 { margin: 0 0 2.67px; font-size: 26.67px; line-height: 1.2; font-weight: 700; }
-.rs-sheet__contact { margin: 0 0 13.33px; color: var(--sheet-ink-muted); }
-.rs-sheet__summary { margin: 0 0 5.33px; }
-.rs-sheet h2 { margin: 16px 0 8px; padding-bottom: 2.67px; font-size: 14.67px; line-height: 1.35; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid var(--sheet-rule); }
-.rs-sheet__role { margin-bottom: 10.67px; break-inside: avoid; }
-.rs-sheet__role-head { display: flex; justify-content: space-between; gap: 16px; }
-.rs-sheet h3 { margin: 0; font-size: 14px; font-weight: 700; }
+/* The resume sheet: exactly what the PDF prints (src/render/template.ts). It is a scaled Letter page:
+   at full size the PDF's 816px with 14px (10.5pt) text; in a narrower frame every measure shrinks
+   together, so lines break close to where the PDF breaks them. Measures are the template's points
+   over 10.5pt. Put the sheet in .rs-sheet-frame, the container it scales against. */
+.rs-sheet-frame { container-type: inline-size; min-width: 0; }
+.rs-sheet { width: 100%; max-width: 816px; padding: 4.114em 4.8em; font-family: var(--font-paper); font-size: min(14px, 100cqw * 14 / 816); line-height: 1.35; color: var(--sheet-ink); background: var(--sheet); border-radius: var(--radius-paper); box-shadow: var(--shadow-paper); }
+.rs-sheet h1 { margin: 0 0 0.1em; font-size: 1.905em; line-height: 1.2; font-weight: 700; }
+.rs-sheet__contact { margin: 0 0 0.952em; color: var(--sheet-ink-muted); }
+.rs-sheet__summary { margin: 0 0 0.381em; }
+.rs-sheet h2 { margin: 1.091em 0 0.545em; padding-bottom: 0.182em; font-size: 1.048em; line-height: 1.35; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid var(--sheet-rule); }
+.rs-sheet__role { margin-bottom: 0.762em; break-inside: avoid; }
+.rs-sheet__role-head { display: flex; justify-content: space-between; gap: 1.143em; }
+.rs-sheet h3 { margin: 0; font-size: 1em; font-weight: 700; }
 .rs-sheet__dates { color: var(--sheet-ink-muted); white-space: nowrap; }
-.rs-sheet ul { margin: 4px 0 0 18.67px; padding: 0; }
-.rs-sheet li { margin: 0 0 2.67px; }
-.rs-sheet p { margin: 0; }
+.rs-sheet ul { margin: 0.286em 0 0 1.333em; padding: 0; }
+.rs-sheet li { margin: 0 0 0.19em; }
+/* Zero specificity, so the contact line's and summary's margins above still apply. */
+:where(.rs-sheet p) { margin: 0; }
 /* In the app only, never in print: a line can be opened to show its evidence */
 .rs-sheet .rs-line { border-radius: 2px; cursor: pointer; transition: background-color 0.12s; }
 .rs-sheet .rs-line:hover { background: rgba(44, 75, 214, 0.07); }
@@ -292,6 +297,8 @@
 .rs-signin__fine { margin: var(--space-5) 0 0; font-size: 13px; line-height: 19px; color: var(--ink-muted); }
 .rs-signin .rs-msg { margin-top: var(--space-6); }
 .rs-google { display: inline-grid; place-items: center; width: 20px; height: 20px; font: 700 13px/1 var(--font-sans); color: var(--ink); background: var(--paper); border-radius: var(--radius-full); }
+/* The G is drawn here, so the button's text is exactly "Sign in with Google". */
+.rs-google::before { content: "G"; }
 
 /* Small screens and reduced motion */
 @media (max-width: 600px) {
@@ -299,7 +306,6 @@
   .rs-panel, .rs-job { padding: var(--space-5); }
   .rs-role__head { padding: var(--space-4) var(--space-5); }
   .rs-role__facts, .rs-role__empty { margin: 0 var(--space-5); }
-  .rs-sheet { padding: var(--space-8) var(--space-5); }
   .rs-signin { padding: var(--space-8) var(--space-6); }
   .rs-report__stats--wide { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rs-actions__keys { display: none; }

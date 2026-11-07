@@ -8,6 +8,21 @@ This plan brings the Resumatic design system into the web app (`src/web`), along
 - **Prototypes:** [Resumatic prototypes](https://claude.ai/artifact/8DZFVLVD5uindetU7MnDh1), a set of 12 artboards. Their markup is the reference for every screen below.
 - **Branches:** one per PR, `redesign/01-foundations` to `redesign/09-docs`, each stacked on the one before. Screenshots for the PR descriptions live on the `redesign-screenshots` branch, which is never merged.
 
+## Status
+
+All nine pull requests are open as a stack, each based on the one before: #3, #4, #5, #6, #7, #8, #9, #10 and #11. Merge them in that order. CI and the local browser smoke (`npm run check:browser-local`) pass on each.
+
+Where the build departed from this plan:
+
+- **Jobs (PR 6).** On wide screens the list view puts the form beside the jobs, as the artboard does; the board keeps the full width. A job's own tracking status is a neutral outline mark, List and Board are drawn as the segmented filter, and the page file is `JobsPage.tsx`.
+- **The browser smoke (PR 6).** It had stopped at sign-in since PR 2, because it waited for v1 labels and class names. PR 6 updated its selectors without changing any check, and PRs 7 and 8 kept it passing.
+- **Errors (PR 7).** Besides the table's messages, every message a person reaches on a normal path is a sentence, and the client shows any other server message as one (`src/shared/sentence.ts`). Two fixed messages joined the reviewed list in `workflows/steps.ts`: a file the converter can't read, and a file too long to read.
+- **Findings (PR 8).** The fifth kind is `unsupported`, which covers the judge and the deterministic checks with no specific sentence. Connected apps read resumes without findings.
+- **Duplicate uploads (PR 8).** The Vault checks the hash before the upload is reserved, so a refused copy never reaches R2. A copy under another name is refused too ("You've already uploaded this file as …"). Retry upload appears only when it isn't clear whether the file arrived.
+- **Sizes.** Client JS is 372.5 kB (113.8 kB gzipped), 9.6 kB gzipped over the baseline. Client CSS is 48.2 kB (9.8 kB gzipped), most of it the component bundle.
+
+Still open: the keyboard and screen reader passes with VoiceOver and NVDA, and a staging run once `STAGING_DEPLOY_ENABLED` is set.
+
 ## Summary
 
 The work ships as nine pull requests. Each one keeps CI green and deploys to staging when it merges.
@@ -537,7 +552,7 @@ Three tests assert on this wording and need updating: `test/integration/tailor.t
 - Facts and Resume work from the keyboard alone, and shortcuts never fire while someone is typing.
 - The sheet in the app and Print preview show the same content in the same order, and a profile edit changes the PDF.
 - No server message that reaches a person is a lowercase fragment.
-- Client JS stays within about 10 kB (gzipped) of the baseline's 85.0 kB, and fonts load only when they're used.
+- Client JS stays within about 10 kB (gzipped) of the baseline's 104.2 kB, and fonts load only when they're used.
 
 ## Deferred
 
