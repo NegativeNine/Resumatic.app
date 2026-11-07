@@ -155,6 +155,81 @@ export const MIGRATIONS: readonly string[][] = [
     `CREATE TRIGGER clear_source_write_link AFTER DELETE ON r2_cache_dispatches
        BEGIN DELETE FROM source_write_links WHERE attempt_id = OLD.attempt_id; END`,
   ],
+  [
+    // A revision can repeat after a record is deleted and recreated. Bind new
+    // generation snapshots to a separate, monotonically assigned incarnation.
+    // Existing rows receive zero; old snapshots have no captured incarnation
+    // and cannot publish after this migration.
+    `CREATE TABLE entity_incarnation_clock (slot INTEGER PRIMARY KEY CHECK(slot=1), value INTEGER NOT NULL CHECK(typeof(value)='integer' AND value BETWEEN 0 AND 9007199254740991))`,
+    `INSERT INTO entity_incarnation_clock(slot,value) VALUES (1,0)`,
+    `CREATE TRIGGER incarnation_clock_no_replace BEFORE INSERT ON entity_incarnation_clock WHEN EXISTS(SELECT 1 FROM entity_incarnation_clock WHERE slot=1) BEGIN SELECT RAISE(ABORT, 'incarnation_clock_required'); END`,
+    `CREATE TRIGGER incarnation_clock_no_delete BEFORE DELETE ON entity_incarnation_clock BEGIN SELECT RAISE(ABORT, 'incarnation_clock_required'); END`,
+    `CREATE TRIGGER incarnation_clock_monotone BEFORE UPDATE ON entity_incarnation_clock WHEN NEW.slot<>OLD.slot OR NEW.value<>OLD.value+1 BEGIN SELECT RAISE(ABORT, 'incarnation_clock_invalid'); END`,
+    `CREATE TABLE entity_incarnation_guard (slot INTEGER PRIMARY KEY CHECK(slot=1))`,
+    `CREATE TABLE entity_incarnations (kind TEXT NOT NULL CHECK(kind IN ('fact','role')), item_id TEXT NOT NULL, value INTEGER NOT NULL CHECK(typeof(value)='integer' AND value>=0), PRIMARY KEY(kind,item_id))`,
+    `INSERT INTO entity_incarnations(kind,item_id,value) SELECT 'fact',id,0 FROM facts`,
+    `INSERT INTO entity_incarnations(kind,item_id,value) SELECT 'role',id,0 FROM roles`,
+    ...["INSERT", "UPDATE", "DELETE"].map((action) =>
+      `CREATE TRIGGER entity_incarnations_guard_${action.toLowerCase()} BEFORE ${action} ON entity_incarnations WHEN NOT EXISTS(SELECT 1 FROM entity_incarnation_guard WHERE slot=1) BEGIN SELECT RAISE(ABORT, 'incarnation_guard_required'); END`),
+    ...([
+      ["facts", "fact", ["role_id", "kind", "text", "level", "level_revision", "evidence_id", "source_id", "origin", "state", "revision"]],
+      ["roles", "role", ["kind", "org", "title", "start_date", "end_date", "unknown_end_start_date", "evidence_id", "source_id", "state", "revision"]],
+    ] as const).flatMap(([table, kind, fields]) => [
+      `CREATE TRIGGER ${table}_incarnation_capacity BEFORE INSERT ON ${table} WHEN NOT EXISTS(SELECT 1 FROM entity_incarnation_clock WHERE slot=1 AND typeof(value)='integer' AND value<9007199254740991) BEGIN SELECT RAISE(ABORT, 'incarnation_clock_exhausted'); END`,
+      `CREATE TRIGGER ${table}_incarnation_insert AFTER INSERT ON ${table} BEGIN
+         INSERT INTO entity_incarnation_guard(slot) VALUES(1);
+         UPDATE entity_incarnation_clock SET value=value+1 WHERE slot=1;
+         INSERT INTO entity_incarnations(kind,item_id,value) SELECT '${kind}',NEW.id,value FROM entity_incarnation_clock WHERE slot=1 ON CONFLICT(kind,item_id) DO UPDATE SET value=excluded.value;
+         DELETE FROM entity_incarnation_guard WHERE slot=1;
+       END`,
+      `CREATE TRIGGER ${table}_incarnation_delete AFTER DELETE ON ${table} BEGIN
+         INSERT INTO entity_incarnation_guard(slot) VALUES(1);
+         DELETE FROM entity_incarnations WHERE kind='${kind}' AND item_id=OLD.id;
+         DELETE FROM entity_incarnation_guard WHERE slot=1;
+       END`,
+      `CREATE TRIGGER ${table}_incarnation_id BEFORE UPDATE OF id ON ${table} WHEN NEW.id IS NOT OLD.id BEGIN SELECT RAISE(ABORT, 'record_id_immutable'); END`,
+      `CREATE TRIGGER ${table}_incarnation_update_capacity BEFORE UPDATE OF ${fields.join(",")} ON ${table}
+       WHEN (${fields.map((field) => `NEW.${field} IS NOT OLD.${field}`).join(" OR ")}) AND
+         (NOT EXISTS(SELECT 1 FROM entity_incarnation_clock WHERE slot=1 AND typeof(value)='integer' AND value<9007199254740991)
+          OR NOT EXISTS(SELECT 1 FROM entity_incarnations WHERE kind='${kind}' AND item_id=OLD.id))
+       BEGIN SELECT RAISE(ABORT, 'incarnation_update_invalid'); END`,
+      `CREATE TRIGGER ${table}_incarnation_update AFTER UPDATE OF ${fields.join(",")} ON ${table}
+       WHEN ${fields.map((field) => `NEW.${field} IS NOT OLD.${field}`).join(" OR ")}
+       BEGIN
+         INSERT INTO entity_incarnation_guard(slot) VALUES(1);
+         UPDATE entity_incarnation_clock SET value=value+1 WHERE slot=1;
+         UPDATE entity_incarnations SET value=(SELECT value FROM entity_incarnation_clock WHERE slot=1) WHERE kind='${kind}' AND item_id=NEW.id;
+         DELETE FROM entity_incarnation_guard WHERE slot=1;
+       END`,
+    ]),
+    // Evidence can change independently of its fact or role. Rotate the
+    // referenced tokens when evidence is edited, deleted or replaced, even
+    // if its original contents are later restored.
+    ...(["INSERT", "UPDATE", "DELETE"] as const).flatMap((action) => {
+      const row = action === "DELETE" ? "OLD" : "NEW";
+      const changed = action === "UPDATE"
+        ? "(NEW.quote IS NOT OLD.quote OR NEW.source_id IS NOT OLD.source_id OR NEW.source_revision_id IS NOT OLD.source_revision_id OR NEW.start IS NOT OLD.start OR NEW.end IS NOT OLD.end) AND "
+        : "";
+      const referenced = `(EXISTS(SELECT 1 FROM facts WHERE evidence_id=${row}.id) OR EXISTS(SELECT 1 FROM roles WHERE evidence_id=${row}.id))`;
+      const missing = `(EXISTS(SELECT 1 FROM facts f LEFT JOIN entity_incarnations i ON i.kind='fact' AND i.item_id=f.id WHERE f.evidence_id=${row}.id AND i.item_id IS NULL)
+        OR EXISTS(SELECT 1 FROM roles r LEFT JOIN entity_incarnations i ON i.kind='role' AND i.item_id=r.id WHERE r.evidence_id=${row}.id AND i.item_id IS NULL))`;
+      return [
+        `CREATE TRIGGER evidence_incarnation_${action.toLowerCase()}_capacity BEFORE ${action} ON evidence WHEN ${changed}${referenced} AND
+          (${missing} OR NOT EXISTS(SELECT 1 FROM entity_incarnation_clock WHERE slot=1 AND typeof(value)='integer' AND value<9007199254740991))
+          BEGIN SELECT RAISE(ABORT, 'incarnation_update_invalid'); END`,
+        `CREATE TRIGGER evidence_incarnation_${action.toLowerCase()} AFTER ${action} ON evidence WHEN ${changed}${referenced} BEGIN
+          INSERT INTO entity_incarnation_guard(slot) VALUES(1);
+          UPDATE entity_incarnation_clock SET value=value+1 WHERE slot=1;
+          UPDATE entity_incarnations SET value=(SELECT value FROM entity_incarnation_clock WHERE slot=1)
+            WHERE (kind='fact' AND item_id IN (SELECT id FROM facts WHERE evidence_id=${row}.id))
+               OR (kind='role' AND item_id IN (SELECT id FROM roles WHERE evidence_id=${row}.id));
+          DELETE FROM entity_incarnation_guard WHERE slot=1;
+        END`,
+      ];
+    }),
+    `CREATE TRIGGER evidence_incarnation_id BEFORE UPDATE OF id ON evidence WHEN NEW.id IS NOT OLD.id BEGIN SELECT RAISE(ABORT, 'record_id_immutable'); END`,
+    `ALTER TABLE generation_input_items ADD COLUMN incarnation INTEGER`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

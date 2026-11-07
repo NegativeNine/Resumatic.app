@@ -178,6 +178,21 @@ export function assertGroundedResume(
 export class SnapshotStore {
   constructor(private readonly sql: SqlStorage) {}
 
+  /** An absent or malformed incarnation cannot authenticate a captured row. */
+  private incarnation(kind: "fact" | "role", id: string): number | null {
+    const row = this.sql.exec<{ value: number }>(
+      `SELECT i.value FROM entity_incarnations i JOIN entity_incarnation_clock c ON c.slot=1
+       WHERE i.kind=? AND i.item_id=? AND typeof(c.value)='integer' AND c.value BETWEEN 0 AND 9007199254740991 AND i.value<=c.value`,
+      kind, id,
+    ).toArray()[0];
+    return row && Number.isSafeInteger(row.value) && row.value >= 0 ? row.value : null;
+  }
+
+  private requireNoIncarnationWrite(): void {
+    if (this.sql.exec(`SELECT slot FROM entity_incarnation_guard LIMIT 1`).toArray().length)
+      throw new AppError("conflict", "experience requires review; generate the document again");
+  }
+
   capture(
     runId: string,
     metadata: InputMetadata,
@@ -186,28 +201,37 @@ export class SnapshotStore {
     vectors: ReadonlyMap<string, Float32Array>,
   ): void {
     if (this.metadata(runId)) return;
+    this.requireNoIncarnationWrite();
     this.sql.exec(
       `INSERT INTO generation_inputs (run_id, metadata) VALUES (?, ?)`,
       runId,
       JSON.stringify(metadata),
     );
-    for (const fact of facts)
+    for (const fact of facts) {
+      const incarnation = this.incarnation("fact", fact.id);
+      if (incarnation === null) throw new AppError("conflict", "experience requires review; generate the document again");
       this.sql.exec(
-        `INSERT INTO generation_input_items (run_id, kind, item_id, data, vector) VALUES (?, 'fact', ?, ?, ?)`,
+        `INSERT INTO generation_input_items (run_id, kind, item_id, data, vector, incarnation) VALUES (?, 'fact', ?, ?, ?, ?)`,
         runId,
         fact.id,
         JSON.stringify(fact),
         vectors.has(fact.id)
           ? packVector(Array.from(vectors.get(fact.id)!))
           : null,
+        incarnation,
       );
-    for (const role of roles)
+    }
+    for (const role of roles) {
+      const incarnation = this.incarnation("role", role.id);
+      if (incarnation === null) throw new AppError("conflict", "experience requires review; generate the document again");
       this.sql.exec(
-        `INSERT INTO generation_input_items (run_id, kind, item_id, data) VALUES (?, 'role', ?, ?)`,
+        `INSERT INTO generation_input_items (run_id, kind, item_id, data, incarnation) VALUES (?, 'role', ?, ?, ?)`,
         runId,
         role.id,
         JSON.stringify(role),
+        incarnation,
       );
+    }
   }
 
   metadata(runId: string): InputMetadata | null {
@@ -245,6 +269,7 @@ export class SnapshotStore {
   }
 
   assertCurrent(runId: string, body: ResumeBody): void {
+    this.requireNoIncarnationWrite();
     const invalidFact = () => new AppError(
       "conflict",
       "experience changed while this draft was being made; generate it again",
@@ -258,8 +283,9 @@ export class SnapshotStore {
       ...body.sections.flatMap((s) => s.lines.flatMap((l) => l.factIds)),
     ]);
     const facts = new Map<string, FactRecord>();
-    for (const row of this.sql.exec<{ item_id: string; data: string }>(
-      `SELECT item_id, data FROM generation_input_items WHERE run_id = ? AND kind = 'fact'`, runId,
+    const factIncarnations = new Map<string, number | null>();
+    for (const row of this.sql.exec<{ item_id: string; data: string; incarnation: number | null }>(
+      `SELECT item_id, data, incarnation FROM generation_input_items WHERE run_id = ? AND kind = 'fact'`, runId,
     )) {
       let fact: FactRecord;
       try {
@@ -271,10 +297,14 @@ export class SnapshotStore {
         continue;
       }
       facts.set(row.item_id, fact);
+      factIncarnations.set(row.item_id, row.incarnation);
     }
     const factMatches = (id: string): boolean => {
       const old = facts.get(id);
       if (!old) return false;
+      const capturedIncarnation = factIncarnations.get(id);
+      if (capturedIncarnation === null || capturedIncarnation === undefined || !Number.isSafeInteger(capturedIncarnation) ||
+          capturedIncarnation < 0 || this.incarnation("fact", id) !== capturedIncarnation) return false;
       const current = this.sql
         .exec<{ id: string; revision: number; state: string; role_id: string | null; kind: string; text: string;
           origin: string; level: string | null; level_revision: number | null; quote: string | null }>(
@@ -297,18 +327,19 @@ export class SnapshotStore {
         ? { ...old, levelExplicit: false } : old;
       return sameEvidence(captured, now);
     };
-    const roleRows = new Map(this.sql.exec<{ item_id: string; data: string }>(
-      `SELECT item_id, data FROM generation_input_items WHERE run_id = ? AND kind = 'role'`, runId,
-    ).toArray().map((row) => [row.item_id, row.data]));
+    const roleRows = new Map(this.sql.exec<{ item_id: string; data: string; incarnation: number | null }>(
+      `SELECT item_id, data, incarnation FROM generation_input_items WHERE run_id = ? AND kind = 'role'`, runId,
+    ).toArray().map((row) => [row.item_id, row]));
     const roleChecks = new Map<string, boolean>();
     const roleMatches = (id: string): boolean => {
       const cached = roleChecks.get(id);
       if (cached !== undefined) return cached;
-      const data = roleRows.get(id);
-      if (data === undefined) return false;
+      const row = roleRows.get(id);
+      if (!row || row.incarnation === null || !Number.isSafeInteger(row.incarnation) ||
+          row.incarnation < 0 || this.incarnation("role", id) !== row.incarnation) return false;
       let captured: RoleRecord;
       try {
-        captured = JSON.parse(data) as RoleRecord;
+        captured = JSON.parse(row.data) as RoleRecord;
         if (!captured || captured.id !== id) return false;
         evidenceForRoles([captured]);
       } catch { return false; }

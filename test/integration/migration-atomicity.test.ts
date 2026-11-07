@@ -41,7 +41,20 @@ function priorVersion(fragment: string): number {
 }
 
 /** Restore the schema state before the later export-cache migration. */
+function removeIncarnationMigration(sql: SqlStorage): void {
+  for (const table of ["facts", "roles"])
+    for (const suffix of ["capacity", "insert", "delete", "id", "update_capacity", "update"])
+      sql.exec(`DROP TRIGGER IF EXISTS ${table}_incarnation_${suffix}`);
+  for (const suffix of ["insert_capacity", "insert", "update_capacity", "update", "delete_capacity", "delete", "id"])
+    sql.exec(`DROP TRIGGER IF EXISTS evidence_incarnation_${suffix}`);
+  sql.exec(`DROP TABLE IF EXISTS entity_incarnations`);
+  sql.exec(`DROP TABLE IF EXISTS entity_incarnation_guard`);
+  sql.exec(`DROP TABLE IF EXISTS entity_incarnation_clock`);
+  sql.exec(`ALTER TABLE generation_input_items DROP COLUMN incarnation`);
+}
+
 function removeExportCacheMigration(sql: SqlStorage): void {
+  removeIncarnationMigration(sql);
   sql.exec(`DROP TRIGGER clear_source_write_link`);
   sql.exec(`DROP TABLE source_write_links`);
   sql.exec(`DROP TABLE export_cache_chunks`);
@@ -643,6 +656,7 @@ describe("atomic schema migrations", () => {
     const attempt = crypto.randomUUID();
     await runInDurableObject(stub, async (instance, state) => {
       const sql = state.storage.sql;
+      removeIncarnationMigration(sql);
       sql.exec(`INSERT INTO r2_cache_dispatches (attempt_id,kind,created_at,key_digest) VALUES (?,'source',?,?)`, attempt, Date.now(), "a".repeat(64));
       sql.exec(`DROP TRIGGER clear_source_write_link`);
       sql.exec(`DROP TABLE source_write_links`);
@@ -658,6 +672,30 @@ describe("atomic schema migrations", () => {
       expect(sql.exec(`SELECT name FROM sqlite_master WHERE name IN ('source_write_links','clear_source_write_link')`).toArray()).toHaveLength(2);
       expect(sql.exec(`SELECT attempt_id FROM source_write_links`).toArray()).toHaveLength(0);
       await expect(instance.close()).rejects.toThrow("source write is unresolved");
+    });
+  });
+
+  it("atomically adds incarnation fences and leaves earlier generation snapshots untrusted", async () => {
+    const stub = env.VAULT.get(env.VAULT.newUniqueId());
+    await stub.init("migration-owner");
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      removeIncarnationMigration(sql);
+      const previous = priorVersion("CREATE TABLE entity_incarnation_clock");
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      sql.exec(`INSERT INTO roles(id,kind,org,state) VALUES ('role','job','Example','confirmed')`);
+      sql.exec(`INSERT INTO facts(id,kind,text,origin,state,updated_at) VALUES ('fact','skill','Go','user','confirmed',1)`);
+      sql.exec(`INSERT INTO generation_input_items(run_id,kind,item_id,data) VALUES ('old','fact','fact','{}')`);
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrate(failAtTrigger(sql, "facts_incarnation_insert"), tx)).toThrow("synthetic migration interruption");
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE name='entity_incarnation_clock'`).toArray()).toHaveLength(0);
+      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(previous));
+      expect(sql.exec(`SELECT id FROM roles WHERE id='role'`).toArray()).toHaveLength(1);
+      migrate(sql, tx);
+      expect(sql.exec<{ value: number }>(`SELECT value FROM entity_incarnations WHERE kind='role' AND item_id='role'`).one().value).toBe(0);
+      expect(sql.exec<{ value: number }>(`SELECT value FROM entity_incarnations WHERE kind='fact' AND item_id='fact'`).one().value).toBe(0);
+      expect(sql.exec<{ incarnation: number | null }>(`SELECT incarnation FROM generation_input_items WHERE run_id='old'`).one().incarnation).toBeNull();
+      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(SCHEMA_VERSION));
     });
   });
 
