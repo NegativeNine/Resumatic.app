@@ -13,5 +13,7 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["./**/*.ts", "../worker-configuration.d.ts", "../src/env.d.ts"]
+  "include": ["./**/*.ts", "../worker-configuration.d.ts", "../src/env.d.ts"],
+  // The web tests run in jsdom with the DOM types, so they have their own config (web/tsconfig.json).
+  "exclude": ["./web/**"]
 }

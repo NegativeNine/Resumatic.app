@@ -1,0 +1,94 @@
+/*
+ * Resumatic design tokens: the custom properties from the design system's tokens.css.
+ * The type classes live in type.css, and the @font-face rules in fonts.css.
+ * Copied from the design system. Change a value there first, then here (see README.md).
+ */
+:root, [data-theme="light"] {
+  color-scheme: light;
+  --desk: #eceef1;
+  --paper: #ffffff;
+  --paper-sunken: #f5f6f8;
+  --paper-hover: #eef0f4;
+  --rule: #d9dce3;
+  --rule-strong: #7d8494;
+  --ink: #1b2238;
+  --ink-hover: #2b3554;
+  --ink-muted: #575e70;
+  --on-ink: #ffffff;
+  --pencil: #6b7183;
+  --ballpoint: #2c4bd6;
+  --ballpoint-soft: #e7ebff;
+  --highlight: #ffe45c;
+  --on-highlight: #1b2238;
+  --ledger: #1e6a49;
+  --ledger-soft: #e2f1e9;
+  --violet: #5f3fb3;
+  --violet-soft: #eeeafa;
+  --danger: #b42318;
+  --danger-soft: #fcebea;
+  --on-danger: #ffffff;
+  --focus: var(--ballpoint);
+  --sheet: #ffffff;
+  --sheet-ink: #111111;
+  --sheet-ink-muted: #333333;
+  --sheet-rule: #999999;
+  --shadow-paper: 0 1px 2px rgba(27, 34, 56, 0.08), 0 12px 32px rgba(27, 34, 56, 0.08);
+  --shadow-pop: 0 2px 6px rgba(27, 34, 56, 0.10), 0 20px 48px rgba(27, 34, 56, 0.16);
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --desk: #0f131d;
+  --paper: #171c29;
+  --paper-sunken: #131826;
+  --paper-hover: #1f2536;
+  --rule: #2a3142;
+  --rule-strong: #6b7389;
+  --ink: #e9ebf2;
+  --ink-hover: #ffffff;
+  --ink-muted: #a6acbb;
+  --on-ink: #0f131d;
+  --pencil: #8f96a8;
+  --ballpoint: #93a5ff;
+  --ballpoint-soft: #1f2753;
+  --highlight: #f4d94e;
+  --on-highlight: #1b2238;
+  --ledger: #72d1a3;
+  --ledger-soft: #15332a;
+  --violet: #bca6f6;
+  --violet-soft: #2a2344;
+  --danger: #ff8b7c;
+  --danger-soft: #3b1e1d;
+  --on-danger: #1a0c0b;
+  --focus: var(--ballpoint);
+  --sheet: #ffffff;
+  --sheet-ink: #111111;
+  --sheet-ink-muted: #333333;
+  --sheet-rule: #999999;
+  --shadow-paper: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-pop: 0 2px 6px rgba(0, 0, 0, 0.5), 0 20px 48px rgba(0, 0, 0, 0.55);
+}
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --radius-paper: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-full: 999px;
+  --layout-app: 1120px;
+  --layout-reading: 44rem;
+  --layout-paper: 720px;
+  --layout-margin: 320px;
+  --layout-rail: 300px;
+  --font-sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-quote: Newsreader, Georgia, "Times New Roman", serif;
+  --font-paper: "Helvetica Neue", Helvetica, Arial, sans-serif;
+}

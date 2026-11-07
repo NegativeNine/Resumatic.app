@@ -1,0 +1,559 @@
+# Resumatic v1: Redesign Plan
+
+Nov 7, 2026. Revised after PR #2 (the job seeker roadmap) merged, which changed 42 of the web app's files. The redesign is rebuilt on that `main` (`215a3e3`).
+
+This plan brings the Resumatic design system into the web app (`src/web`), along with the few server changes the design needs.
+
+- **Design system:** [Resumatic](https://claude.ai/artifact/3KaBCkca28Q5HiXbhPdzDN). It holds the brand, the UX principles, the components and the "Changes to the app" list.
+- **Prototypes:** [Resumatic prototypes](https://claude.ai/artifact/8DZFVLVD5uindetU7MnDh1), a set of 12 artboards. Their markup is the reference for every screen below.
+- **Branches:** one per PR, `redesign/01-foundations` to `redesign/09-docs`, each stacked on the one before. Screenshots for the PR descriptions live on the `redesign-screenshots` branch, which is never merged.
+
+## Summary
+
+The work ships as nine pull requests. Each one keeps CI green and deploys to staging when it merges.
+
+| # | Pull request | What lands | Size | Server change |
+| --- | --- | --- | --- | --- |
+| 1 | Foundations | Tokens, fonts, theme switch, favicon, a test project for the web app | M | none |
+| 2 | Shell and navigation | Lockup, Facts / Jobs / Account, QuotaMeter, route aliases | S | none |
+| 3 | Primitives | Mark, Tick, Quote, Field, Message, EmptyState, and the design's buttons and fields for every existing control | M | none |
+| 4 | Facts page | Sources rail, tick column, keyboard review queue, a warning before rejecting a role | L | none |
+| 5 | Resume page | Sheet built from a model the PDF template shares, margin notes, check strip, gap list | L | none |
+| 6 | Jobs, sign-in, account | Job cards with Latest, SignInCard, account panels, dark theme on | M | none |
+| 7 | Copy and errors | Error messages in the interface's voice, in the client and on the server | M | message text |
+| 8 | API additions | Why a line was repaired or replaced, duplicate upload check | M | yes |
+| 9 | Docs | Invite email, diagrams, corrections to the design system | S | none |
+
+PRs 1 to 6 depend on each other in order. PR 8, and the server half of PR 7, don't depend on the UI PRs. The client half of PR 7 is a final sweep, so it comes last. The sentence PR 8 adds to each margin note appears once PR 5 has landed.
+
+## Baseline
+
+These results were recorded on `main` at `215a3e3`, after PR #2 merged and before any redesign change:
+
+| Check | Result |
+| --- | --- |
+| `npm run typecheck` | Passes |
+| `npm test` | 1,555 tests in 206 files pass and 2 are skipped, in about 8 minutes |
+| `node --test scripts/*.test.mjs` | 130 tests pass |
+| `npm run build` | Passes. Client CSS is 18.1 kB (4.6 kB gzipped) and client JS is 345.6 kB (104.2 kB gzipped). |
+
+Before PR 1, the web app was tested only through a few server-rendered component tests in `test/unit`. `scripts/e2e-staging.mjs` calls the API only.
+
+## What the code review found
+
+I read the code against the design system's "Changes to the app". These are the things the plan has to handle. Some correct the design doc; some are existing problems the redesign would put on screen. PR #2 already settled two of the original ten.
+
+1. **Quote context already exists.** PR #2 stores each quote's `span` in its source and adds "See this quote in its source" (`SourceEvidence.tsx`), which shows the quote highlighted in the source text. So the design doc's quote context needs no API change; PR 3 and PR 4 restyle it, and the old PR 8b is dropped.
+2. **Server wording reaches people verbatim, and the client's wording never does.** `describeError` (`src/web/errors.ts`) prefers any 4xx JSON message to the `words` its caller passes. As a result, the quota and conflict sentences in `src/web/tailor.ts` never show. People see "you have used all 20 tailored resumes for this month; more on December 1" instead (PR 7).
+3. **Failure messages speak as a person.** The fallbacks say "We couldn't reach Resumatic" (`errors.ts`) and "We couldn't finish reading this file. Please try again later." (`source-error.ts`), and stored errors get no full stop (`src/workflows/steps.ts`) (PR 7).
+4. **The cached PDF now follows profile edits.** Settled by PR #2: the export cache key hashes the whole render input, profile included (`src/worker/vault-export-cache.ts`). PR 5 no longer changes the cache.
+5. **"FACT" comes from CSS.** The markup in `LineItem.tsx` already says "Fact". The rule `.evidence-label` in `styles.css` uppercases it, so the fix belongs in CSS, not in the text.
+6. **The duplicate upload check breaks a test as it's written.** The test "reads at most three uploads at a time" (`test/integration/vault.test.ts`) uploads the same bytes five times into one vault (PR 8).
+7. **The token file's type classes collide with the app's classes.** The design system's `tokens.css` defines `.quote` and `.lede`, and the app uses both names (`ui.tsx`). So PR 1 copies only the custom properties. The type ramp arrives in PR 3, together with the components that replace those classes.
+8. **The sheet can't wrap lines exactly as the PDF does.** The design's sheet is 720 px wide with 14 px text. The PDF is a Letter page, 816 px wide at 96 dpi, with 10.5 pt (14 px) text. It is printed by Browser Run, using whatever Helvetica or Arial substitute its Chromium has. So PR 5 scales the sheet in proportion and treats line breaks as approximate. Print preview stays the exact view.
+9. **The app has more screens than the design.** PR #2 added a job tracker board, cover letters and interview prep (`ApplicationWorkspace.tsx`, `Documents.tsx`), billing, sharing and connected apps on Account (`AccountTools.tsx`, `ConnectedApps.tsx`) and a public share page (`SharePage.tsx`). None has an artboard, so they take the design through the shared primitives and the same patterns: panels, marks, quotes and fields.
+10. **Controls are written as plain elements, about 70 of them.** Buttons, inputs and selects carry v1 class names (`primary`, `quiet`, `small`) across about 8,400 lines. Rewriting each call site would be a large, risky diff in code that guards revisions and retries. So PR 3 restyles those elements and class names to the design system's controls in one adapter stylesheet, and components rebuilt in later PRs use the rs- classes directly.
+11. **The security policy rules out an inline theme script.** `public/_headers` sets `script-src 'self'`. So a small script served from the same origin, `public/theme.js`, sets the theme. It loads in `<head>`, before the first paint.
+
+## Decisions
+
+The plan assumes the recommended option in each row unless you choose otherwise.
+
+| Decision | Recommended | Alternative |
+| --- | --- | --- |
+| Scope | All nine PRs, in order | The UI work (PRs 1–7) now, with the API additions later |
+| Dark theme | Turn it on in PR 6. It follows the operating system, and Account gets an Appearance setting. Until then, `theme.js` applies only an explicitly stored choice, so dark can be checked during PRs 1–5. | Light only for now |
+| Routes | Use `#/facts` and `#/jobs`. `#/sources` and `#/applications` stay as aliases that redirect to them. | Keep the old hashes and rename only the labels |
+| Keyboard shortcuts | C, E, R, J and K work only while focus is inside the review queue. That meets WCAG 2.1.4 without needing a setting. | Keys that work anywhere on the page, plus a setting on Account to turn them off |
+| Why a line changed | The deterministic checks return a typed `finding`, and the client words it. The judge model's free text never reaches the screen. | A `reason` sentence written on the server, as the design doc says |
+| Gap question | Show the requirement as written, then ask "Describe what you did, in your own words." | A template such as "Have you worked with Kafka?", which reads badly for a requirement like "5+ years of Go" |
+| Quote font file | Newsreader italic with the weight axis only (64.5 kB) | Weight and optical-size axes (146.9 kB), as in the design system |
+| Font source | Copy the woff2 files (latin and latin-ext) into the repo, with their OFL licences | Install the `@fontsource-variable` packages from npm |
+| Duplicate upload | Answer 409 with "You've already uploaded jane-doe.pdf." An earlier upload that failed doesn't count as a duplicate. | Accept duplicates, as v1 does today |
+| PR shape | One PR per phase, each stacked on the previous one | One large PR |
+
+## Ground rules for every PR
+
+- **CI passes:** `npm run typecheck`, `npm test` (unit, integration and, from PR 1, web) and `npm run build`.
+- **The design system is the source of truth.** Files copied from it live in `src/web/styles/`, with a note of where each one came from. A change to one copy is made in both. The same rule holds between the in-app sheet and `src/render/template.ts`.
+- **Copy follows the design system's "Voice and writing" guide.** Each PR fixes the copy in the components it touches, and PR 7 sweeps up whatever is left.
+- **No new security policy entries.** That means no inline scripts and no third-party origins. Numbers that drive layout, such as where a margin note sits, are set through the CSSOM (`element.style`), which `style-src 'self'` allows.
+- **Accessibility holds at every step:**
+  - The skip link stays the first focusable element, and focus moves to `main` when the route changes.
+  - After a review decision, focus moves the way `useReview` already moves it.
+  - Every control works from the keyboard.
+  - No state is shown by color alone.
+- **Screenshots in every PR.** Each PR description shows the screens it changes, at 1280 px and 390 px wide, next to the matching artboard. Light screens are shown from PR 1, and dark screens from PR 6.
+- **Old CSS goes when its last user goes.** By the end of PR 7, `src/web/styles.css` no longer exists.
+
+## Target structure
+
+```
+src/web/
+  styles/
+    README.md         where each file comes from, and the rule for keeping copies in sync
+    tokens.css        custom properties for light and dark (from the design system's tokens.css)
+    fonts.css         @font-face rules
+    type.css          the type ramp (PR 3)
+    components.css    the rs- component styles (from the design system's components/bundle.css)
+    controls.css      the design's buttons and fields for the app's existing elements and class names (PR 3)
+    app.css           page layout: header, rail, sheet and margin, breakpoints
+  fonts/              four woff2 files, two OFL licences, a README
+  components/
+    Lockup.tsx        inline SVG lockup and mark (PR 2)
+    QuotaMeter.tsx    (PR 2)
+  theme.ts            the stored choice, and following the OS (PR 1; Account uses it in PR 6)
+public/
+  favicon.svg         (PR 1)
+  theme.js            sets data-theme before the first paint (PR 1)
+src/shared/sheet.ts   the resume sheet model that both renderers use (PR 5)
+test/web/             React tests in jsdom (PR 1 onward)
+```
+
+## PR 1. Foundations
+
+**Goal.** The new palette and type everywhere, with no change to markup, plus a test project for the UI.
+
+| File | Change |
+| --- | --- |
+| `src/web/styles/tokens.css` | New. The custom properties from the design system's `tokens.css`: light and dark colors, spacing, radius, layout and font stacks. Each theme block also gets `color-scheme: light` or `color-scheme: dark`. The type classes are left out (finding 7). |
+| `src/web/styles/fonts.css`, `src/web/fonts/` | New. Schibsted Grotesk (weights 400–900) and Newsreader italic, each as a latin file and a latin-ext file, with fontsource's `unicode-range` values. That way names like Łukasz or Nguyễn render in one typeface. Fonts use `font-display: swap`, and the URLs are relative so Vite fingerprints the files. The folder also holds the OFL licences and a README naming `@fontsource-variable/*` 5.3.0 as the source. |
+| `src/web/styles.css` | Replace the `:root` block (lines 1–27) with a bridge from the old variable names to the new tokens. Details follow this table. |
+| `src/web/App.tsx` | Import `styles/tokens.css`, then `styles/fonts.css`, then `styles.css`. |
+| `index.html` | Add `<meta name="color-scheme" content="light dark">`, `<link rel="icon" href="/favicon.svg" type="image/svg+xml">` and `<script src="/theme.js"></script>` to `<head>`. Vite serves the script as is from `public/`. |
+| `public/favicon.svg` | New. Copied from the design system's `assets/Logos/resumatic-app-icon.svg`. |
+| `public/theme.js` | New, about ten lines. It reads `localStorage["resumatic:theme"]` inside `try`/`catch` and sets `document.documentElement.dataset.theme`. Until PR 6 it applies only an explicitly stored choice, and otherwise sets `light`. |
+| `src/web/theme.ts` | New. `getTheme()`, `setTheme("system" \| "light" \| "dark")`, and a `matchMedia` listener that follows the operating system while the choice is "system". The listener is switched on in PR 6. |
+| `public/_headers` | Optional. Add `Cache-Control: public, max-age=31536000, immutable` for `/assets/*`, since Vite fingerprints those files. |
+
+**The variable bridge in `src/web/styles.css`:**
+- Map the old names to the new tokens:
+  - `--bg` → `desk`
+  - `--surface` → `paper`
+  - `--surface-sunken` → `paper-sunken`
+  - `--text` → `ink`
+  - `--muted` → `ink-muted`
+  - `--border` → `rule`
+  - `--border-strong` → `rule-strong`
+  - `--focus` → `focus`
+  - `--success` → `ledger`
+  - `--danger` → `danger`
+  - `--font` → `--font-sans`
+  - `--font-quote` keeps its name
+- Split `--accent` by use. Its 18 uses (counting `--accent-strong` and `--accent-soft`) take `ink` (with `on-ink` text) for `.primary`, the nav underline and the selected filter. They take `ballpoint` for `a`, `.quiet` and `.link-button`.
+- Replace the 29 hard-coded colors with tokens, so dark mode holds together. Badge tones take their StatusMark colors:
+  - kept, confirmed and ready take `ledger` on `ledger-soft`
+  - repaired, queued and running take `ballpoint` on `ballpoint-soft`
+  - replaced takes `violet` on `violet-soft`
+  - edited and mine take `on-highlight` on `highlight`
+  - rejected and dropped take `ink-muted` on `paper-sunken`
+  - failed takes `danger` on `danger-soft`
+  - proposed takes `ink-muted` with a dashed `pencil` border, which retires the amber tone
+- Change the focus ring to 2 px, as the design system specifies.
+
+**Web test project:**
+- **`vitest.config.ts`:** a `web` project with `@vitejs/plugin-react`, `environment: "jsdom"`, `include: ["test/web/**/*.test.{ts,tsx}"]` and `setupFiles: ["test/web/setup.ts"]`.
+- **`test/web/setup.ts`:** loads `@testing-library/jest-dom/vitest`, cleans up after each test, and stubs `window.scrollTo` and `matchMedia`, which jsdom lacks.
+- **`test/web/api-fake.ts` and `test/web/fixtures.ts`:**
+  - An in-memory stand-in for the API, installed with `vi.stubGlobal("fetch", …)`.
+  - Fixtures for a vault, jobs and a ready resume.
+  - A `renderWithSession(ui, { me })` helper, because most components call `useSession()`.
+- **`test/web/tsconfig.json`:** DOM lib and `jsx: react-jsx`. Add it to the references in the root `tsconfig.json`, and exclude `web/**` from `test/tsconfig.json`, whose ES-only lib would reject DOM code.
+- **`package.json`:** add the dev dependencies `jsdom`, `@testing-library/dom`, `@testing-library/react`, `@testing-library/user-event` and `@testing-library/jest-dom`, and add `--project web` to `"test"`. (`@testing-library/dom` is a peer dependency, and `.npmrc` sets `legacy-peer-deps`, so it has to be listed.)
+
+**Tests:**
+- **`test/web/tokens.test.ts`:** parses `src/web/styles/tokens.css` and checks, in both themes, the contrast the design system promises:
+  - `ink` and `ink-muted` on `paper`, `paper-sunken` and `desk` at 4.5:1
+  - `on-ink` on `ink`
+  - `ballpoint` on `paper` and `desk`
+  - `on-highlight` on `highlight`
+  - `danger` on `paper` and on `danger-soft`
+  - `ledger` on `ledger-soft`
+  - `focus` against `paper` and `desk` at 3:1
+- **`test/web/router.test.ts`:** today's `parseRoute`, as a baseline for PR 2's aliases.
+- **`test/web/format.test.ts`:** `formatMonth`, `formatDateRange` and `count`.
+- **`test/web/theme.test.ts`:** `public/theme.js` and `src/web/theme.ts` agree on the stored choice.
+- **`test/web/app.test.tsx`:** the app signs in against the fake API and shows its first page.
+
+**Risks.**
+- Schibsted Grotesk sets wider than `system-ui`. Check that buttons and the nav don't wrap at 390 px.
+- Dark mode is only partly restyled until PR 6, which is why it stays behind the stored choice until then.
+
+**Done when.**
+- Every page shows the new colors and type, and nothing has moved.
+- The contrast test passes.
+
+## PR 2. Shell and navigation
+
+**Goal.** The header, nav and footer from the AppHeader component, under the new place names.
+
+| File | Change |
+| --- | --- |
+| `src/web/styles/components.css` | New. The design system's `components/bundle.css`, without its `body` rule, because the app's ground is `desk`, not `paper`. Import it after `fonts.css` and before `styles.css`. |
+| `src/web/router.ts` | The pages `facts` and `jobs` replace `sources` and `applications`, with `href.facts = "#/facts"` and `href.jobs = "#/jobs"`. `parseRoute` maps `sources` to `facts`, `applications` to `jobs`, and the empty hash to `facts`. An alias is rewritten to its canonical hash with `history.replaceState`, so the address bar and copied links show the new names. |
+| `src/web/App.tsx` | Titles become "Facts", "Jobs", "Tailored resume" and "Account". Update the page switch, and point the not-found copy to Facts and Jobs. |
+| `src/web/components/Lockup.tsx` | New. The lockup and the mark as inline SVG with `fill="currentColor"`, built from the design system's `resumatic-lockup-ink.svg` and `resumatic-mark-ink.svg`. Each has `role="img"` and `aria-label="Resumatic"`. |
+| `src/web/components/Shell.tsx` | AppHeader markup (`rs-header`, `rs-brand`, `rs-nav`). Details follow this table. |
+| `src/web/components/QuotaMeter.tsx` | New. Draws `limit` ticks, or ten ticks that each stand for a tenth when the limit is above 40, all `aria-hidden`. The words carry the meaning: "12 of 20 resumes used this month", or "20 of 20 used. More from 1 Dec" in `danger` once the limit is reached. |
+| `src/web/format.ts` | Add `formatDayMonthAfter("2026-11")`, which returns "1 Dec". |
+| `src/web/styles.css` | Delete the header, nav, quota and footer rules. |
+
+**What `Shell.tsx` gets:**
+- The lockup, linking to Facts, and the Private beta mark.
+- Nav labels Facts, Jobs and Account. Jobs stays current on a resume page.
+- QuotaMeter in place of `QuotaLine`.
+- Under 600 px, the lockup becomes the mark and the quota moves to the top of Jobs.
+- The footer as `rs-footer`.
+
+**Tests (web):**
+- The aliases resolve and redirect to the canonical hash.
+- `#/resumes/:id` still parses.
+- Jobs has `aria-current` on a resume page.
+- QuotaMeter shows the right words below and at the limit, and the right tick count above 40.
+- The skip link is the first focusable element.
+- A route change moves focus to `main`.
+
+**Reference.** The Facts, Jobs and Account artboards (header and footer).
+
+**Done when.**
+- Every signed-in page has the AppHeader header.
+- Old bookmarks still land on the right page.
+
+## PR 3. Primitives
+
+**Goal.** Rebuild `src/web/components/ui.tsx` on the rs- classes, so the page PRs only have to assemble parts.
+
+| Primitive | Replaces | Notes |
+| --- | --- | --- |
+| Buttons | About 70 `<button>` elements and `a.button` links, styled with `primary`, `quiet`, `danger`, `small`, `large` and `link-button` | `styles/controls.css` gives those elements and class names the design system's button styles (`rs-btn` and its variants), so every existing control changes without touching its call site (finding 10). |
+| `Mark` | `Badge`, wherever it's used | Each tone maps one to one onto an `rs-mark--*` class: proposed, confirmed, rejected, reading (was queued), ready, failed, running, kept, repaired, replaced, dropped, edited, mine and beta. |
+| `Tick` | Nothing (new) | The tick column. Proposed is a dashed pencil tick, confirmed a ledger tick, rejected a struck tick, and your own claim a pen. |
+| `Quote` | The `.quote` figure | `rs-quote`: Newsreader italic, the quoted span in `highlight`, ⊢ in the gutter and the caption below. `size="sm"` is for the margin. An optional `context` prop is filled in by PR 8. |
+| `Field`, `CharCount` and inputs | `label`, `.hint`, the inputs and `.char-count` | `Field` renders `rs-field`, `rs-label` and `rs-hint`. `styles/controls.css` styles every input, textarea and select as `rs-input`, `rs-textarea` and `rs-select`. |
+| `Message` | `.alert`, `.notice` and `.success` | Error, info and success, each keeping the `role="alert"` or `role="status"` it has today. `ErrorNote` and `ActionError` render it. |
+| `Loading`, `EmptyState`, `PageHeader`, `Glyph` | `.loading`, `.empty` and `.page-head` | `EmptyState` takes the next step as a link. `Glyph` draws an `rs-g` mask and is always `aria-hidden`. |
+
+This PR also adds `src/web/styles/type.css`, the type ramp, now that the app no longer uses `.quote` or `.lede`. It deletes the button, form, message, badge, quote, empty-state and loading rules from `styles.css`.
+
+**Tests (web):**
+- `Message` has the right role for each kind.
+- `Button` shows its disabled and busy labels.
+- `Quote` shows its caption and its highlight.
+- `CharCount` shows the right text under and over the limit.
+
+**Done when.**
+- Every control on every page, including the screens PR #2 added, has the design system's look.
+- `styles.css` has no button, form or badge rules left.
+
+## PR 4. Facts page
+
+**Goal.** The "Facts, first run" and "Facts, review queue" artboards, plus "Phone: review queue".
+
+| File | Change |
+| --- | --- |
+| `pages/SourcesPage.tsx` → `pages/FactsPage.tsx` | Title "Facts". The sources rail (Dropzone, then the source list, `layout-rail` wide) sits beside the review column. With no sources, roles or facts yet, the dropzone is centered instead. Under 860 px, the rail stacks above the column. |
+| `components/Uploader.tsx` | Dropzone markup. `problemWith` names the file without straight quotes around it, as the voice examples do. |
+| `components/SourceList.tsx` | SourceRow markup. Details follow this table. |
+| `components/Review.tsx` | SegmentedFilter (`rs-filter`) and the keyboard queue described below. The empty states use EmptyState, and "all caught up" links to Jobs. |
+| `components/RoleGroup.tsx` | RoleGroup with the tick column, and a warning before Reject role. Details follow this table. |
+| `components/FactItem.tsx` | FactItem with the tick column. The meta line becomes separate items (lines 48–57). The quote uses `Quote`, and rejected facts are muted. Escape cancels an edit and returns focus to the fact. |
+| `components/ReviewButtons.tsx` | Details follow this table. |
+| `components/AddFact.tsx`, `components/RoleForm.tsx` | Field grid and buttons. Escape closes the form. |
+| `src/web/vault.ts` | Add `proposedUnder(vault, roleId)`. |
+
+**`SourceList.tsx` (SourceRow):**
+- The file name, then "Uploaded 7 Nov 2026" and "Download original" as separate items, with no middle dot (line 35).
+- Marks: Reading…, Couldn't read, or Ready with "3 facts to review" or "All reviewed" beside it (line 65).
+- A failed source gets two sentences (line 42, finding 3). The first is the stored error made into a sentence, or "This file couldn't be read." if there is none. The second is the retry advice.
+- Confirm all keeps its warning and its count.
+
+**`RoleGroup.tsx`:**
+- The tick column.
+- The detail line becomes separate items divided by short rules, replacing " · " (line 28).
+- Reject role asks first whenever facts are still proposed under the role: "Reject Northwind Logistics and its 6 proposed facts? Rejected items are kept here and never used." The buttons are "Reject role and 6 facts" and Cancel.
+- The count comes from the whole vault (`proposedUnder`), not the filtered list, because `review` rejects every proposed fact under the role (`src/vault/vault.ts:486`).
+
+**`ReviewButtons.tsx`:**
+- The buttons go in the order Confirm, Edit, Reject, and all three are disabled while a decision is saving.
+- On click, the tick fills and holds for 160 ms before the item leaves. There's no hold under `prefers-reduced-motion`.
+- Keep `useReview`'s focus order. Replace `closest(".group")` (line 30) with a data attribute, so markup changes can't break it.
+
+**Keyboard queue.** In the design, the first proposed item is active, and it answers to C (confirm), E (edit), R (reject), J (next) and K (previous).
+
+- **Items.** Each item carries `data-queue-item`, and each already has `tabIndex={-1}`. J and K move to the next or previous item in DOM order and focus it. C, E and R call the active item's confirm, edit and reject, which each item registers through a small context.
+- **One handler.** A single `keydown` handler sits on the review section. It ignores:
+  - events from text fields, textareas, selects and contenteditable elements
+  - any event with Ctrl, Meta or Alt held
+  - key repeats
+
+  Because the keys work only while focus is inside the queue, they meet WCAG 2.1.4 without an off switch.
+- **Active item.** The active item follows focus, so Tab and click work too. The key hints (`rs-actions__keys`) show only on the active item, and only at 860 px and wider.
+- **Rejecting a role.** R on a role with proposed facts opens the warning. It never rejects straight away.
+
+**Tests (web):**
+- J and K move focus between items.
+- C on the active fact sends `POST /api/review` with its ID.
+- E opens the editor, and Escape closes it with focus back on the fact.
+- R on a role with proposed facts opens the warning, and nothing is sent until the person confirms.
+- Keys typed in a textarea do nothing, and neither do keys pressed with a modifier.
+- The buttons render in the order Confirm, Edit, Reject.
+- No meta line contains " · ".
+- Each sentence in a failed source's text ends with a full stop.
+- On first run, the dropzone is centered.
+
+**Risks.**
+- Focus regressions are the main risk. The existing focus order is the contract to keep.
+- Screen readers in browse mode may take single-letter keys for themselves. The buttons remain the main way to review.
+
+**Done when.**
+- The review queue works from start to finish with the keyboard alone.
+- The page matches the artboards at both widths.
+
+## PR 5. Resume page
+
+**Goal.** The "Tailored resume and its margin", "Tailoring", "Close a gap" and "Phone: a line's evidence" artboards, with a preview that matches the PDF.
+
+**One model, two renderers.** Today the sheet in the app and the PDF template differ in four ways:
+- The preview has no name or contact line.
+- It puts projects and volunteering under their own headings (`ResumeSheet.tsx:12`).
+- It puts the organization and the title on separate lines (`:85`).
+- It prints a "Summary" heading that the PDF doesn't have (`:74`).
+
+Instead of mirroring the template by hand, extract its structure into one model that both renderers use:
+
+- **`src/shared/sheet.ts` (new).** `sheetModel(profile, body)` returns:
+  - the name and the contact items
+  - the summary line
+  - the sections in the template's order: Experience (every role that isn't education), then Education
+  - for each role, its heading ("Title, Organization"), its dates ("Mar 2021 – Present", with the PDF's capital P) and its lines
+  - the skills
+- **A golden test first.** Add `test/unit/render.test.ts`, which holds a golden copy of `renderResumeHtml` output for a fixture covering every kind of role. Then rebuild `src/render/template.ts` on `sheetModel`. Its output must stay byte-identical.
+- **The app's sheet.** `ResumeSheet.tsx` renders the same model as `.rs-sheet`, with the profile from `useSession().me.profile`. The PDF also prints the current profile (`src/vault/vault.ts:657`).
+  - The contact line and the skills keep " · ", because that is how the PDF prints them.
+  - When the profile has no name, the margin says "Add your name and contact details on Account. They print at the top of every resume."
+
+**Sheet size.** Lay the sheet out as a scaled Letter page:
+- Make the frame a size container (`container-type: inline-size`).
+- Set every sheet dimension in `em`.
+- Set the base font size to `min(14px, 100cqw * 14 / 816)`.
+
+At full size the sheet is the PDF's 816 px and 14 px. In a narrower frame, text, padding and widths all shrink together, so lines break close to where the PDF breaks them.
+
+Exact line breaks can't be promised (finding 8). Before relying on them, print one PDF on staging, list its fonts with `pdffonts`, and adjust the font stack if Browser Run substitutes a wider face. The design system's `.rs-sheet` (720 px, fixed padding) changes to match; see PR 9.
+
+| File | Change |
+| --- | --- |
+| `components/ResumeSheet.tsx` | The page layout. Details follow this table. |
+| `components/LineItem.tsx` | Split in two: the line on the sheet and its note in the margin. Details follow this table. |
+| `components/useMarginLayout.ts` | New. Places each margin note level with its line. Details follow this table. |
+| `components/ResumeReport.tsx` | `CheckReport` (the strip, which becomes a two-by-two grid under 600 px) and `GapList`, with "Add a fact" on each gap. |
+| `components/AddFact.tsx` | A gap mode for adding a fact from a gap. Details follow this table. |
+| `components/TailorProgress.tsx` | Steps with ticks, and the copy "…the resume will be waiting under Jobs." |
+| `pages/ResumePage.tsx` | "Back to Jobs". The margin's tick-in animation plays once, when the page sees the resume go from running to ready. It doesn't play on later visits or under reduced motion. The failed state uses the wording from the voice guide's table. |
+
+**`ResumeSheet.tsx`:**
+- A toolbar: Download PDF, Print preview, Show all evidence, Tailor a new version.
+- The CheckReport strip above the sheet, with a link to the gaps ("3 requirements your facts don't cover").
+- The sheet and the margin side by side, with GapList at the end of the margin.
+- Under 860 px the margin goes away, and tapping a line opens its note as a well under the line.
+
+**`LineItem.tsx`:**
+- **The line** (`li.rs-line`) holds only the text that prints. Clicking it opens its note.
+- **The note** holds a leader rule, the status mark, a "⊢ 2 facts" toggle (with `aria-expanded` and `aria-controls`), the evidence, and Edit line.
+- Drop `text-transform` from the evidence label (finding 5).
+
+**`useMarginLayout.ts`:**
+- It measures the top of each line within the sheet, after `document.fonts.ready` and again on resize through `ResizeObserver`.
+- It places notes with `element.style.top`. A pure function, `placeNotes(tops, heights, gap)`, keeps each note level with its line and pushes it down only when it would overlap the note above.
+- One open note floats over the others (`shadow-pop`), so they don't move. Show all evidence opens every note, and the notes stack down the margin.
+
+**`AddFact.tsx` (gap mode):**
+- It shows the requirement as written, then the question "Describe what you did, in your own words."
+- The hint says "A yes on its own can't go on a resume. Write the claim the way you'd want it to read."
+- An answer can be saved only if it has at least three words and isn't a bare yes or no.
+- After "Fact added." it offers Tailor a new version.
+- The fact is saved with `POST /api/facts`, as the person's own claim.
+
+**Tests:**
+- **Unit:**
+  - `sheetModel` gets the order, the headings, "Present" and the contact and skills separators right, and gives the summary no heading.
+  - The template's output matches the golden copy.
+  - `placeNotes` keeps notes level and pushes them down only on overlap.
+- **Web:**
+  - The sheet shows the session's name and contact line.
+  - Every note toggle has `aria-expanded`.
+  - Show all evidence opens and closes every note.
+  - A bare "yes" can't be saved from a gap.
+
+**Risks.**
+- Notes can jitter while fonts load or in long resumes. Measure in one layout pass, and compare positions before writing them so `ResizeObserver` can't loop.
+- The template refactor touches the PDF. The golden test is the guard.
+
+**Done when.**
+- The page matches the artboards.
+- The sheet and Print preview show the same text in the same order.
+- Editing the profile changes both (the export cache already follows profile edits, finding 4).
+
+## PR 6. Jobs, sign-in and account
+
+**Goal.** The "Jobs", "Sign in" and "Account" artboards, and the edge states from "Edge states". Dark mode is switched on in this PR.
+
+| File | Change |
+| --- | --- |
+| `pages/ApplicationsPage.tsx` → `pages/JobsPage.tsx` | The page becomes Jobs. Details follow this table. |
+| `pages/SignedOut.tsx` | SignInCard. Details follow this table. |
+| `App.tsx` | The loading and unavailable states use the SignInCard frame. |
+| `pages/AccountPage.tsx` | Laid out as panels. Details follow this table. |
+| `public/theme.js`, `src/web/theme.ts` | When no choice is stored, follow the operating system. This switches dark mode on for everyone. |
+| `pages/LegalPage.tsx` | "Sources & facts" becomes "Facts" (line 89), and the headings are restyled. |
+
+**`JobsPage.tsx`:**
+- The title "Jobs", and a lede that points to Facts.
+- JobForm and JobCard.
+- "Added 7 Nov 2026" and the note on unnamed jobs become separate items (line 128).
+- Resume rows read "Resume tailored 7 Nov 2026, 9:42 AM", with state marks and Latest on the newest.
+- The list heading becomes "Your jobs".
+- The empty state reads "No jobs yet. Paste a job description above to start your first one."
+- When the quota is used up, the notice stays at the top and the buttons stay enabled (finding 9).
+- Under 600 px, the QuotaMeter words show at the top of the page.
+
+**`SignedOut.tsx` (SignInCard):**
+- The lockup.
+- The headline "Tailored resumes, built only from what you've done."
+- The current lede.
+- Notes and errors, placed above the button.
+- Sign in with Google, then the fine print.
+
+**`AccountPage.tsx` panels:**
+- Profile (a Field grid)
+- Appearance (Match system, Light or Dark, through `theme.ts`)
+- Signing out and Your data (SettingsRow)
+- Delete account (DangerZone)
+
+**Tests (web):**
+- Latest marks only the newest resume.
+- When the quota is used up, the notice shows and every Tailor button stays enabled.
+- Choosing Dark sets `data-theme="dark"` and the choice persists. Match system follows `matchMedia`.
+- Delete stays disabled until the confirmation phrase is typed.
+- The sign-in note and error appear above the button.
+
+**Done when.**
+- The three pages match their artboards in light and dark.
+
+## PR 7. Copy and errors
+
+**Client:**
+- **`src/web/errors.ts`.** A caller's `words` for an error code win over the server's message, and the server's message wins over the fallbacks (finding 2). Rewrite the fallbacks in the interface's voice:
+  - "Resumatic couldn't be reached. Check your connection, then try again."
+  - For not found: "This couldn't be found. It may have been removed."
+  - Drop "Please" and "on our side" throughout.
+- **`src/web/App.tsx:73`.** "Your account couldn't be loaded.", followed by the reason.
+- **A sweep for what earlier PRs left behind:**
+  - "we" outside the legal pages
+  - middle dots outside the sheet
+  - Title Case
+  - exclamation marks
+
+**Server.** A 4xx message is shown as written, so each one a person can reach becomes a sentence in the voice. Paths in this table are relative to `src/`:
+
+| Where | Today | Becomes |
+| --- | --- | --- |
+| `vault/vault.ts:266` | wait for your other uploads to finish reading | Resumatic is still reading 3 of your uploads. Wait for one to finish, then upload this file. |
+| `vault/vault.ts:267` | you can keep at most 50 uploads | You can keep up to 50 sources during the beta. Email support@resumatic.app if you need more. |
+| `vault/vault.ts:579` | a resume is already being tailored; wait for it to finish | Another resume is still being tailored, and Resumatic works on one at a time. Wait for it to finish, then try again. |
+| `vault/vault.ts:583` | you have used all 20 tailored resumes for this month; more on December 1 | You've used all 20 tailored resumes for Nov 2026. You can tailor more from 1 Dec 2026. |
+| `vault/vault.ts:638`, `:652` | the resume is not ready yet | This resume isn't ready yet. Wait for tailoring to finish, then try again. |
+| `vault/vault.ts:640` | a line must be 1 to 300 characters | A line can be up to 300 characters, and it can't be empty. |
+| `vault/vault.ts:834` | that role was rejected | That role was rejected. Choose another role for this fact. |
+| `worker/routes.ts:214` | upload a PDF or DOCX file | Upload a PDF or Word (.docx) file. |
+| `worker/routes.ts:215` | the file is empty | This file is empty. |
+| `worker/routes.ts:216` | files can be at most 10 MB | Files can be up to 10 MB. |
+| `worker/routes.ts:40` | the request body is too large | Give the upload limit its own handler, which says "Files can be up to 10 MB." |
+| `workflows/tailor.ts:36` | confirm some facts before tailoring a resume | Confirm some facts before tailoring a resume. |
+| `workflows/tailor.ts:48` | none of your confirmed facts match this job yet | None of your confirmed facts match this job yet. Add facts that cover its requirements, then tailor a new version. |
+| `workflows/distill.ts:25` | the uploaded file is missing; upload it again | The uploaded file is missing. Upload it again. |
+| `workflows/distill.ts:27` | no text could be read from this file | No text could be read from this file. |
+| `workflows/distill.ts:63` | We could not read this file. | This file couldn't be read. |
+| `pipeline/distill.ts:23` | this document is too long to read; upload a resume of a few pages | This file is too long to read. Upload a resume of a few pages. |
+| `ai/vectors.ts:43` | could not read *name*: *converter error* | This file couldn't be read. (Log the converter's error instead of storing it.) |
+
+`userMessage` (`workflows/steps.ts:27`) also ends every stored message with a full stop.
+
+Three tests assert on this wording and need updating: `test/integration/tailor.test.ts:128`, `test/integration/tailor.test.ts:155` and `test/integration/vault.test.ts:151`. Error codes are parsed from the code prefix, not from the wording, so nothing else depends on the text.
+
+## PR 8. API additions
+
+**8a. Why a line was repaired or replaced**
+
+- **`src/grounding/claims.ts`.** Return structured problems next to today's strings, which still feed the repair prompt:
+  - `{ kind: "numbers" | "names", values }`
+  - `{ kind: "scope", claimed, allowed }`
+  - `checkLine` adds `{ kind: "citation" }` for a line that cites no facts, a fact outside the selection, or a fact from another role.
+  - A rejection by the judge is `{ kind: "judge" }`, with no text.
+- **`src/pipeline/tailor.ts`.** When a line ends up repaired or replaced, carry the first finding from round 1 onto it. `toLine` (line 231) copies it.
+- **`src/shared/api.ts`.** Add `ResumeLine.finding?: LineFinding`. It's stored inside the `resumes.body` JSON, so no migration is needed. Older resumes have no finding.
+- **`src/vault/vault.ts`, `editLine`.** Clear `finding` when the person edits the line.
+- **`src/web/format.ts`.** `findingSentence(finding)` produces one of:
+  - "The draft said 40%. Your facts don't include that number."
+  - "The draft named Kafka. Your facts don't mention it."
+  - "The draft said Led. Your fact says Implemented."
+  - "The draft cited a fact it couldn't use for this line."
+  - "The check found wording its facts don't support."
+- **Why typed.** The judge's reason is model text about a draft that was written with the job description in view, and the job description is untrusted input. Keeping that text off the screen means every sentence in the margin is Resumatic's own.
+
+**8b. Quote context.** Dropped: PR #2's `SourceEvidence` already shows each quote in its source (finding 1).
+
+**8c. Duplicate uploads**
+
+- **Migration 2.** `ALTER TABLE sources ADD COLUMN sha256 TEXT`, plus an index.
+- **`src/worker/routes.ts` (`POST /api/sources`).** Hash the bytes the route already reads for R2 (`crypto.subtle.digest`). Ask the vault about the hash before writing to R2, then pass it to `addSource`.
+- **`vault.addSource`.** If a source with the same hash exists and didn't fail, answer `conflict` with "You've already uploaded jane-doe.pdf." A failed upload doesn't block a retry, because its failure message tells people to try again.
+- **Tests:**
+  - Vary the bytes per upload in `test/integration/vault.test.ts:70`.
+  - Add "refuses a second copy of the same file".
+  - Add "accepts a file again after it failed to read".
+  - Add a migration test that runs `migrate()` on a version-1 schema.
+
+## PR 9. Docs and outside the app
+
+- **`docs/beta/invite-email.md`.** Add the lockup, and send the email from the support address.
+- **`docs/diagrams/*.svg` (12 files).** Recolor them in `ink`, `rule` and `ballpoint`, if they're shown outside the team.
+- **The design system.** Correct "Changes to the app" with findings 1, 2, 6 and 8, and change `.rs-sheet` to the scaled Letter page from PR 5. This can happen at any point.
+
+## Checking the work
+
+- **Every PR:** typecheck, tests and build. The web tests cover behavior.
+- **Screens.** Check them in a headless browser against `vite dev`, with `/api/*` answered from the web test fixtures. Capture light and dark at 1280 px and 390 px. The screenshots go in the PR description next to the artboards. A committed script and a CI job can follow once the screens settle.
+- **Keyboard and screen reader passes** on Facts and Resume, with VoiceOver and NVDA. Every action must be reachable, and decisions and saves must be announced.
+- **Staging.** After each merge, staging deploys and `e2e:staging` runs, as it does today.
+- **Bundle size.** Each PR description reports bundle sizes against the baseline.
+
+## Definition of done
+
+- Every item in the design system's "Changes to the app" has shipped, or is listed under Deferred with a reason.
+- `src/web/styles.css` is gone. The app's styles are tokens, fonts, type, components and app layout.
+- CI is green, including the web project and the contrast test.
+- Every screen matches its artboard in light and dark, at 1280 px and 390 px.
+- Facts and Resume work from the keyboard alone, and shortcuts never fire while someone is typing.
+- The sheet in the app and Print preview show the same content in the same order, and a profile edit changes the PDF.
+- No server message that reaches a person is a lowercase fragment.
+- Client JS stays within about 10 kB (gzipped) of the baseline's 85.0 kB, and fonts load only when they're used.
+
+## Deferred
+
+- **The "Landing page" artboard.** The app has no public marketing page yet.
+- **Storing a gap question with its answer as an interview source.** The design doc's §5 marks this as later.
+- **Backfilling quote context** for evidence saved before PR 8.
+- **Visual regression tests in CI.**
+
+## Appendix: where copied files come from
+
+| Repo file | Source |
+| --- | --- |
+| `src/web/styles/tokens.css` | Design system, `project/tokens.css` (custom properties only) |
+| `src/web/styles/type.css` | Design system, `project/tokens.css` (type classes) |
+| `src/web/styles/components.css` | Design system, `project/components/bundle.css` |
+| `src/web/fonts/*.woff2` | `@fontsource-variable/schibsted-grotesk` 5.3.0 and `@fontsource-variable/newsreader` 5.3.0, latin and latin-ext |
+| `src/web/components/Lockup.tsx` | Design system, `project/assets/Logos/resumatic-lockup-ink.svg` and `resumatic-mark-ink.svg` |
+| `public/favicon.svg` | Design system, `project/assets/Logos/resumatic-app-icon.svg` |
+| Markup | The prototype artboards: Sign in; Facts, first run; Facts, review queue; Jobs; Tailoring; Tailored resume and its margin; Close a gap; Account; Edge states; Phone: review queue; Phone: a line's evidence |

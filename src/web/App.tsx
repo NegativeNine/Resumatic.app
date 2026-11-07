@@ -17,6 +17,8 @@ import {
   SessionContext,
   sessionEndNote,
 } from "./session";
+import "./styles/tokens.css";
+import "./styles/fonts.css";
 import "./styles.css";
 
 type Auth =
