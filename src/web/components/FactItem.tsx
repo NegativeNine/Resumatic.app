@@ -14,11 +14,14 @@ import { FACT_KIND_LABEL, LEVEL_LABEL } from "../format";
 import { useAction, type Reload } from "../hooks";
 import { groupFacts, roleLabel, sourceLabel } from "../vault";
 import { ReviewButtons, useReview } from "./ReviewButtons";
+import { useQueueItem } from "./ReviewQueue";
 import { SourceEvidence } from "./SourceEvidence";
-import { ActionError, Badge, CharCount, Quote } from "./ui";
+import { ActionError, Badge, CharCount, Quote, Tick, type TickState } from "./ui";
 
 interface Props {
   facts: FactView[];
+  /** rs-facts on its own, rs-role__facts under a role. */
+  className?: string;
   /** Every role, so a fact can be moved to another one. */
   roles: RoleView[];
   filenames: ReadonlyMap<string, string>;
@@ -28,9 +31,9 @@ interface Props {
   equivalentRoles?: ReadonlySet<string>;
 }
 
-export function FactList({ facts, roles, filenames, reload, reviewLocked, onEditingChange, equivalentRoles }: Props) {
+export function FactList({ facts, className = "rs-facts", roles, filenames, reload, reviewLocked, onEditingChange, equivalentRoles }: Props) {
   return (
-    <ul className="plain-list facts">
+    <ul className={className}>
       {groupFacts(facts, equivalentRoles).map(([fact, ...duplicates]) => fact && (
         <FactItem
           key={fact.id}
@@ -55,7 +58,7 @@ function FactItem({
   reload,
   reviewLocked,
   onEditingChange,
-}: { fact: FactView; duplicates: FactView[] } & Omit<Props, "facts">) {
+}: { fact: FactView; duplicates: FactView[] } & Omit<Props, "facts" | "className">) {
   const [editing, setEditing] = useState(false);
   const ref = useRef<HTMLLIElement>(null);
   const review = useReview(fact.id, reload, ref, fact.revision ?? 1, duplicates);
@@ -69,8 +72,32 @@ function FactItem({
     ref.current?.focus();
   }
 
+  function startEditing() {
+    onEditingChange(`fact:${fact.id}`, true);
+    setEditing(true);
+  }
+
+  const busy = review.deciding !== null || reviewLocked;
+  const active = useQueueItem(fact.id, {
+    confirm: fact.state !== "confirmed" && !roleRejected && !busy ? () => void review.decide("confirm") : undefined,
+    edit: fact.state !== "rejected" && !editing && !busy ? startEditing : undefined,
+    reject: fact.state !== "rejected" && !busy ? () => void review.decide("reject") : undefined,
+  });
+  // Pencil until someone confirms, ink once they do; a fact they wrote carries the pen.
+  const tick: TickState =
+    review.deciding === "confirm"
+      ? "confirmed"
+      : review.deciding === "reject"
+        ? "rejected"
+        : fact.state === "confirmed" && fact.origin === "user"
+          ? "mine"
+          : fact.state;
+  const classes = ["rs-fact", fact.state === "rejected" ? "rs-fact--rejected" : "", active ? "is-active" : ""];
+
   return (
-    <li className="fact" ref={ref} tabIndex={-1}>
+    <li className={classes.filter(Boolean).join(" ")} ref={ref} tabIndex={-1} data-queue-item={fact.id}>
+      <Tick state={tick} />
+      <div className="rs-fact__body">
       {editing ? (
         <FactEditor
           fact={fact}
@@ -79,31 +106,17 @@ function FactItem({
           onClose={closeEditor}
         />
       ) : (
-        <p className="fact-text" id={textId}>
+        <p className="rs-fact__text" id={textId}>
           {fact.origin === "extracted" ? cleanExtractedText(fact.text) : fact.text}
         </p>
       )}
-      <p className="meta">
-        {FACT_KIND_LABEL[fact.kind]}
-        {fact.level && ` · Level: ${LEVEL_LABEL[fact.level]}`}
-        {fact.origin === "user" && (
-          <>
-            {" · "}
-            <Badge tone="mine">Your own claim</Badge>
-          </>
-        )}
-        {fact.evidenceOrigin === "ocr" && (
-          <>
-            {" "}
-            · <Badge tone="queued">Read from an image</Badge>
-          </>
-        )}
-        {fact.reviewReasons?.length ||
-        (fact.confidence != null && fact.confidence < 0.8) ? (
-          <>
-            {" "}
-            · <Badge tone="proposed">Check closely</Badge>
-          </>
+      <p className="rs-fact__meta">
+        <span>{FACT_KIND_LABEL[fact.kind]}</span>
+        {fact.level && <span>Level: {LEVEL_LABEL[fact.level]}</span>}
+        {fact.origin === "user" && <Badge tone="mine">Your own claim</Badge>}
+        {fact.evidenceOrigin === "ocr" && <Badge tone="queued">Read from an image</Badge>}
+        {fact.reviewReasons?.length || (fact.confidence != null && fact.confidence < 0.8) ? (
+          <Badge tone="proposed">Check closely</Badge>
         ) : null}
       </p>
       {fact.evidenceOrigin === "ocr" && (
@@ -137,12 +150,12 @@ function FactItem({
           review={review}
           confirmDisabled={roleRejected}
           disabled={reviewLocked}
-          onEdit={
-            fact.state === "rejected" ? undefined : () => { onEditingChange(`fact:${fact.id}`, true); setEditing(true); }
-          }
+          onEdit={fact.state === "rejected" ? undefined : startEditing}
+          showKeys={active}
         />
       )}
       <ActionError message={review.error} />
+      </div>
     </li>
   );
 }
@@ -245,6 +258,14 @@ function FactEditor(props: {
       onSubmit={(e) => {
         e.preventDefault();
         void save();
+      }}
+      onKeyDown={(e) => {
+        // Escape cancels the edit; FactItem returns focus to the fact.
+        if (e.key === "Escape" && !pending) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
       }}
     >
       <label htmlFor={id}>Fact</label>

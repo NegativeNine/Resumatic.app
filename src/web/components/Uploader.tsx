@@ -3,7 +3,7 @@ import { MAX_UPLOAD_BYTES } from "../../shared/api";
 import { api } from "../api";
 import { formatBytes } from "../format";
 import { useAction, type Reload } from "../hooks";
-import { ActionError, Loading } from "./ui";
+import { ActionError, Glyph, Loading } from "./ui";
 
 const DOCX_TYPE =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -22,7 +22,7 @@ function problemWith(file: File): string | null {
   return null;
 }
 
-export function Uploader({ onUploaded }: { onUploaded: Reload }) {
+export function Uploader({ onUploaded, size = "rail" }: { onUploaded: Reload; size?: "rail" | "first-run" }) {
   const input = useRef<HTMLInputElement>(null);
   const { run, pending, error, setError } = useAction();
   const [uploading, setUploading] = useState<string | null>(null);
@@ -63,7 +63,7 @@ export function Uploader({ onUploaded }: { onUploaded: Reload }) {
   return (
     <div>
       <div
-        className={dragging ? "dropzone dragging" : "dropzone"}
+        className={["rs-drop", `app-drop--${size}`, dragging ? "is-dragging" : ""].filter(Boolean).join(" ")}
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
@@ -74,14 +74,14 @@ export function Uploader({ onUploaded }: { onUploaded: Reload }) {
         }}
         onDrop={drop}
       >
-        <p className="dropzone-title">Drop your resume or CV here</p>
-        <p className="meta">
-          PDF, Word (.docx), or LinkedIn data export (.zip), up to {LIMIT}, one
-          file at a time
+        <Glyph name="upload" />
+        <p className="rs-drop__title">{size === "first-run" ? "Drop your resume or CV here" : "Drop a resume or CV"}</p>
+        <p className="rs-meta">
+          PDF, Word (.docx), or LinkedIn data export (.zip), up to {LIMIT}, one file at a time
         </p>
         <button
           type="button"
-          className="primary"
+          className={size === "first-run" ? "rs-btn rs-btn--primary rs-btn--lg" : "rs-btn rs-btn--primary rs-btn--sm"}
           onClick={() => input.current?.click()}
           disabled={pending}
         >
@@ -102,8 +102,7 @@ export function Uploader({ onUploaded }: { onUploaded: Reload }) {
       {uploading && <Loading>Uploading {uploading}…</Loading>}
       {uploaded && (
         <p className="success" role="status">
-          Uploaded {uploaded}. Resumatic is reading it now, and its roles and
-          facts will appear below for you to review.
+          Uploaded {uploaded}. Resumatic is reading it now, and its roles and facts will appear for you to review.
         </p>
       )}
       <ActionError message={error} />

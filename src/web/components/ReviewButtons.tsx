@@ -5,6 +5,14 @@ import { useAction, type Reload } from "../hooks";
 
 export const REVIEW_HEADING_ID = "review-heading";
 
+/** How long a decided item's tick stays filled before the item leaves the list. */
+export const TICK_HOLD_MS = 160;
+
+function holdTick(): Promise<void> {
+  const reduced = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return reduced ? Promise.resolve() : new Promise((resolve) => window.setTimeout(resolve, TICK_HOLD_MS));
+}
+
 type Decision = "confirm" | "reject";
 
 export interface ReviewControl {
@@ -33,10 +41,11 @@ export function useReview(
       el,
       el?.nextElementSibling,
       el?.previousElementSibling,
-      el?.parentElement?.closest(".group"),
+      el?.parentElement?.closest("[data-review-group]"),
       document.getElementById(REVIEW_HEADING_ID),
     ];
     setDeciding(decision);
+    const hold = holdTick();
     const ok = await run(async () => {
       const items = [{ id, revision }, ...duplicates];
       const ids = items.map((item) => item.id);
@@ -53,6 +62,8 @@ export function useReview(
         try { await reload(); } catch { /* keep the decision error */ }
         throw error;
       }
+      // The filled tick shows the decision landed before the item leaves the list.
+      await hold;
       await reload();
     });
     setDeciding(null);
@@ -79,8 +90,14 @@ interface Props {
   describedBy: string;
   review: ReviewControl;
   onEdit?: () => void;
+  /** Replaces the plain rejection, for a role that asks first. */
+  onReject?: () => void;
+  /** Whether onReject has opened its question. */
+  rejectExpanded?: boolean;
   confirmDisabled?: boolean;
   disabled?: boolean;
+  /** Show the keyboard hints, on the active item of the review queue. */
+  showKeys?: boolean;
 }
 
 export function ReviewButtons({
@@ -89,46 +106,79 @@ export function ReviewButtons({
   describedBy,
   review,
   onEdit,
+  onReject,
+  rejectExpanded,
   confirmDisabled = false,
   disabled = false,
+  showKeys = false,
 }: Props) {
   const busy = review.deciding !== null || disabled;
   const suffix = noun ? ` ${noun}` : "";
 
   return (
-    <div className="actions">
+    <div className="rs-actions">
       {state !== "confirmed" && (
         <button
           type="button"
-          className="primary small"
+          className="rs-btn rs-btn--primary rs-btn--sm"
           aria-describedby={describedBy}
+          aria-keyshortcuts="C"
+          data-review-action="confirm"
           disabled={busy || confirmDisabled}
           onClick={() => void review.decide("confirm")}
         >
           {review.deciding === "confirm" ? "Confirming…" : `Confirm${suffix}`}
         </button>
       )}
-      {state !== "rejected" && (
-        <button
-          type="button"
-          className="small"
-          aria-describedby={describedBy}
-          disabled={busy}
-          onClick={() => void review.decide("reject")}
-        >
-          {review.deciding === "reject" ? "Rejecting…" : `Reject${suffix}`}
-        </button>
-      )}
       {onEdit && (
         <button
           type="button"
-          className="small quiet"
+          className="rs-btn rs-btn--sm"
           aria-describedby={describedBy}
+          aria-keyshortcuts="E"
+          data-review-action="edit"
           disabled={busy}
           onClick={onEdit}
         >
           Edit{suffix}
         </button>
+      )}
+      {state !== "rejected" && (
+        <button
+          type="button"
+          className="rs-btn rs-btn--sm"
+          aria-describedby={describedBy}
+          aria-keyshortcuts="R"
+          aria-expanded={onReject ? Boolean(rejectExpanded) : undefined}
+          data-review-action="reject"
+          disabled={busy}
+          onClick={() => (onReject ? onReject() : void review.decide("reject"))}
+        >
+          {review.deciding === "reject" ? "Rejecting…" : `Reject${suffix}`}
+        </button>
+      )}
+      {showKeys && (
+        <span className="rs-actions__keys" aria-hidden="true">
+          {state !== "confirmed" && (
+            <span>
+              <kbd className="rs-kbd">C</kbd> confirm
+            </span>
+          )}
+          {onEdit && (
+            <span>
+              <kbd className="rs-kbd">E</kbd> edit
+            </span>
+          )}
+          {state !== "rejected" && (
+            <span>
+              <kbd className="rs-kbd">R</kbd> reject
+            </span>
+          )}
+          <span>
+            <kbd className="rs-kbd">J</kbd>
+            <kbd className="rs-kbd">K</kbd> move
+          </span>
+        </span>
       )}
     </div>
   );
