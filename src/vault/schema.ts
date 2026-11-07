@@ -252,7 +252,14 @@ export function migrate(sql: SqlStorage, transaction: <T>(fn: () => T) => T): vo
       `SELECT value FROM meta WHERE key = 'schema_version'`,
     )
     .toArray()[0];
-  let version = row ? Number(row.value) : 0;
+  let version = row ? Number(row.value) : NaN;
+  // A worker that predates a schema migration cannot safely interpret its
+  // data or uphold the newer schema's invariants. Refuse such a rollback,
+  // and refuse malformed version markers instead of silently skipping all
+  // migrations (for example, because Number("invalid") is NaN).
+  if (!row || !/^[1-9][0-9]*$/.test(row.value) ||
+      !Number.isSafeInteger(version) || version > SCHEMA_VERSION)
+    throw new Error("unsupported vault schema version");
   while (version < MIGRATIONS.length) {
     const next = version + 1;
     transaction(() => {

@@ -225,6 +225,12 @@ export function migrateDirectory(sql: SqlStorage, transaction: <T>(fn: () => T) 
       `SELECT value FROM meta WHERE key = 'schema_version'`,
     )
     .toArray()[0];
+  // A newer or malformed schema must not be treated as already migrated.
+  // In particular, a rollback to this version cannot safely operate on a
+  // Directory whose newer code installed additional guards or invariants.
+  if (row && (typeof row.value !== "string" || !/^(?:0|[1-9]\d*)$/.test(row.value) ||
+      !Number.isSafeInteger(Number(row.value)) || Number(row.value) > DIRECTORY_MIGRATIONS.length))
+    throw new Error("directory schema requires a compatible version");
   let version = row ? Number(row.value) : 0;
   while (version < DIRECTORY_MIGRATIONS.length) {
     const next = version + 1;
