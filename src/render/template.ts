@@ -1,5 +1,6 @@
 import type { ResumeSection } from "../shared/api";
 import type { RenderData } from "../shared/types";
+import { presentResumeBullet } from "../shared/resume-presentation";
 
 function esc(text: string): string {
   return text.replace(
@@ -46,7 +47,7 @@ function section(s: ResumeSection): string {
     .filter(Boolean)
     .map((t) => esc(t!))
     .join(", ");
-  const lines = s.lines.map((l) => `<li>${esc(l.text)}</li>`).join("");
+  const lines = s.lines.map((l) => `<li>${esc(presentResumeBullet(l.text))}</li>`).join("");
   return `<section class="role"><div class="role-head"><h3>${heading}</h3><span class="dates">${esc(formatRoleDates(s.startDate, s.endDate, s.unknownEndStartDate))}</span></div>${
     lines ? `<ul>${lines}</ul>` : ""
   }</section>`;

@@ -16,6 +16,7 @@ import {
   fallbackFact,
 } from "../grounding/verdict";
 import { isInstruction } from "./extract/verify";
+import { cleanExtractedText } from "../shared/clean";
 import type { ResumeBody, ResumeLine, ResumeSection } from "../shared/api";
 import type {
   Analysis,
@@ -68,17 +69,36 @@ export async function selectFacts(
   search: Search,
   analysis: Analysis,
   facts: FactRecord[],
+  roles: RoleRecord[] = [],
 ): Promise<Selection> {
   const byId = new Map(facts.map((f) => [f.id, f]));
+  const roleKeys = new Map(roles.map((role) => [role.id,
+    role.org && role.title && role.startDate
+      ? JSON.stringify([role.kind, role.org.trim(), role.title.trim(), role.startDate, role.endDate, role.unknownEndStartDate ?? null])
+      : role.id]));
+  // Only collapse exact extracted claims. Keep user edits, different tenures,
+  // numbers and levels separate; each stored fact and quote remains intact.
+  const duplicateKey = (fact: FactRecord): string => {
+    if (fact.origin !== "extracted") return `id:${fact.id}`;
+    const role = fact.kind === "skill" ? "skill" : fact.roleId === null ? "loose" : (roleKeys.get(fact.roleId) ?? fact.roleId);
+    return JSON.stringify([role, fact.kind, cleanExtractedText(fact.text), fact.level]);
+  };
   const queries = await models.embed(analysis.requirements);
-  const candidates = await search(queries, TAILOR.perRequirement);
+  // Fetch extra neighbors so repeated uploads do not fill the entire candidate window.
+  const candidates = await search(queries, TAILOR.perRequirement * 4);
 
   const best = new Map<string, number>();
   const gaps: string[] = [];
   for (const [index, requirement] of analysis.requirements.entries()) {
-    const near = candidates.filter(
-      (c) => c.query === index && byId.has(c.factId),
-    );
+    const seen = new Set<string>();
+    const near = candidates.filter((c) => {
+      const fact = byId.get(c.factId);
+      if (c.query !== index || !fact) return false;
+      const key = duplicateKey(fact);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, TAILOR.perRequirement);
     if (
       near.length === 0 ||
       Math.max(...near.map((c) => c.score)) < TAILOR.gapCosine
@@ -102,16 +122,23 @@ export async function selectFacts(
   const perRole = new Map<string, number>();
   const factIds: string[] = [];
   const skillIds: string[] = [];
+  const selectedKeys = new Set<string>();
   for (const fact of ranked) {
+    const duplicate = duplicateKey(fact);
+    if (selectedKeys.has(duplicate)) continue;
     if (fact.kind === "skill") {
-      if (skillIds.length < TAILOR.maxSkills) skillIds.push(fact.id);
+      if (skillIds.length < TAILOR.maxSkills) {
+        skillIds.push(fact.id);
+        selectedKeys.add(duplicate);
+      }
       continue;
     }
     if (factIds.length >= TAILOR.maxFacts) continue;
-    const key = fact.roleId ?? "none";
+    const key = fact.roleId === null ? "none" : (roleKeys.get(fact.roleId) ?? fact.roleId);
     if ((perRole.get(key) ?? 0) >= TAILOR.maxPerRole) continue;
     perRole.set(key, (perRole.get(key) ?? 0) + 1);
     factIds.push(fact.id);
+    selectedKeys.add(duplicate);
   }
   return { factIds, skillIds, gaps };
 }

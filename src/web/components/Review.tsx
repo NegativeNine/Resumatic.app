@@ -87,6 +87,7 @@ export function Review({ vault, reload }: { vault: Vault; reload: () => Promise<
             <RoleGroup
               key={group.role.id}
               role={group.role}
+              duplicates={group.duplicates ?? []}
               roles={displayed.roles}
               facts={group.facts}
               filter={filter}

@@ -1,5 +1,6 @@
 import { strToU8, zipSync } from "fflate";
 import type { RenderData } from "../shared/types";
+import { presentResumeBullet } from "../shared/resume-presentation";
 import { formatRoleDates } from "./template";
 
 const esc = (s: string) =>
@@ -62,7 +63,7 @@ export function renderDocx(data: RenderData): Uint8Array<ArrayBuffer> {
           formatRoleDates(role.startDate, role.endDate, role.unknownEndStartDate),
         ),
       );
-      for (const line of role.lines) parts.push(paragraph(`• ${line.text}`));
+      for (const line of role.lines) parts.push(paragraph(`• ${presentResumeBullet(line.text)}`));
     }
   }
   if (body.skills.length)

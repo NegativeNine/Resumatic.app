@@ -11,6 +11,7 @@ import { ActionError, Badge, Quote } from "./ui";
 
 interface Props {
   role: RoleView;
+  duplicates: RoleView[];
   /** Every role, so a fact can be moved to another one. */
   roles: RoleView[];
   facts: FactView[];
@@ -23,6 +24,7 @@ interface Props {
 
 export function RoleGroup({
   role,
+  duplicates,
   roles,
   facts,
   filter,
@@ -33,7 +35,7 @@ export function RoleGroup({
 }: Props) {
   const [editing, setEditing] = useState(false);
   const ref = useRef<HTMLElement>(null);
-  const review = useReview(role.id, reload, ref, role.revision ?? 1);
+  const review = useReview(role.id, reload, ref, role.revision ?? 1, duplicates);
   const headingId = useId();
   const details = [
     role.title,
@@ -77,6 +79,13 @@ export function RoleGroup({
           span={role.span}
         />
       )}
+      {duplicates.length > 0 && <p className="meta">This role also appears in {duplicates.length} other {duplicates.length === 1 ? "record" : "records"}. Review applies to all shown copies; editing changes this copy only.</p>}
+      {duplicates.map((copy) => copy.quote && (
+        <div key={copy.id}>
+          <Quote text={copy.quote} caption={`From ${sourceLabel(filenames, copy.sourceId)}`} />
+          {copy.sourceId && copy.span && <SourceEvidence sourceId={copy.sourceId} quote={copy.quote} span={copy.span} />}
+        </div>
+      ))}
       {editing ? (
         <RoleForm role={role} reload={reload} onClose={closeEditor} />
       ) : (
@@ -100,6 +109,7 @@ export function RoleGroup({
           reload={reload}
           reviewLocked={reviewLocked}
           onEditingChange={onEditingChange}
+          equivalentRoles={new Set([role.id, ...duplicates.map((copy) => copy.id)])}
         />
       ) : (
         <p className="meta group-empty">

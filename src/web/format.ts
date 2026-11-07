@@ -89,13 +89,13 @@ export const RESUME_STATE_LABEL: Record<ResumeState, string> = {
 export const LINE_STATUS_LABEL: Record<LineStatus, string> = {
   kept: "Kept",
   repaired: "Repaired",
-  replaced: "Replaced",
+  replaced: "Used your fact",
   edited: "Edited",
 };
 
 export const LINE_STATUS_HINT: Record<LineStatus, string> = {
   kept: "Passed every check as written",
   repaired: "Fixed once so that it matches its facts",
-  replaced: "Swapped for the wording of a fact it cites",
+  replaced: "The draft wording could not be verified, so this line uses the wording of a confirmed fact",
   edited: "Changed by you",
 };

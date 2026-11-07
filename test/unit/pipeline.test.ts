@@ -68,6 +68,23 @@ async function pipeline(o: FakeModelOptions) {
 }
 
 describe("selectFacts", () => {
+  it("selects one copy of an extracted fact across matching roles without merging different claims", async () => {
+    const roles: RoleRecord[] = ["a", "b", "c"].map((id) => ({
+      id, kind: "job", org: "Acme", title: "Engineer", startDate: id === "c" ? "2020" : "2021", endDate: "2022",
+    }));
+    const base = { kind: "accomplishment" as const, origin: "extracted" as const, level: null, quote: "source" };
+    const facts: FactRecord[] = [
+      { ...base, id: "one", roleId: "a", text: "• Built 12 services\nfor customers" },
+      { ...base, id: "duplicate", roleId: "b", text: "Built 12 services for customers" },
+      { ...base, id: "different-number", roleId: "b", text: "Built 13 services for customers" },
+      { ...base, id: "different-tenure", roleId: "c", text: "Built 12 services for customers" },
+    ];
+    const models = { ...fakeModels(), embed: async () => [[1]], rerank: async (_q: string, texts: string[]) => texts.map(() => 1) };
+    const search = async (_q: number[][], _k: number): Promise<Candidate[]> => facts.map((f, i) => ({ factId: f.id, query: 0, score: 0.9 - i * 0.01 }));
+    const selected = await selectFacts(models, search, { company: null, title: null, requirements: ["services"] }, facts, roles);
+    expect(selected.factIds).toEqual(["one", "different-number", "different-tenure"]);
+  });
+
   it("records requirements no fact comes near as gaps, and keeps skills apart", async () => {
     const { selection, facts } = await pipeline({});
     expect(selection.gaps).toEqual(["Rust systems programming"]);

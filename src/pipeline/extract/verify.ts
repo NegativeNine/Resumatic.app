@@ -15,6 +15,7 @@ import {
 } from "../../grounding/offsets";
 import { MIN_QUOTE_CHARS, normalizeForQuote } from "../../grounding/quote";
 import { AppError } from "../../shared/errors";
+import { cleanExtractedText } from "../../shared/clean";
 import { MAX_FACT_CHARS } from "../../shared/api";
 import {
   MAX_MARKDOWN_CHARS,
@@ -274,7 +275,7 @@ export function verifyExtraction(
       drop("role", "invalid_quote");
       continue;
     }
-    if (isInstruction(quote)) {
+    if (isInstruction(quote) || isInstruction(cleanExtractedText(quote))) {
       drop("role", "instruction");
       continue;
     }
@@ -297,8 +298,8 @@ export function verifyExtraction(
       ? role.startDate : null;
     result.extraction.roles.push({
       ...role,
-      org: role.org.trim(),
-      title: role.title?.trim() || null,
+      org: cleanExtractedText(role.org),
+      title: role.title ? cleanExtractedText(role.title) || null : null,
       // A start without an end is rendered as ongoing. Do not turn an omitted
       // or missed end date into a claim of current employment.
       startDate:
@@ -360,9 +361,13 @@ export function verifyExtraction(
       drop("fact", "unsupported_claim");
       continue;
     }
-    const proposed = fact.text.trim();
-    const text = fact.kind === "skill" ? proposed : quote.trim().replace(/^(?:[-*+•▪●–]\s+|\d+[.)]\s+)/u, "");
-    if (text.length > MAX_FACT_CHARS) {
+    const text = cleanExtractedText(fact.kind === "skill" ? fact.text : quote);
+    // Removing presentation markers can also reveal a disguised instruction.
+    if (isInstruction(text)) {
+      drop("fact", "instruction");
+      continue;
+    }
+    if (!text || text.length > MAX_FACT_CHARS) {
       drop("fact", "unsupported_claim");
       continue;
     }

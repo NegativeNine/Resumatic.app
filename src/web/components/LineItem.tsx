@@ -5,6 +5,7 @@ import {
   type ResumeLine,
   type ResumeView,
 } from "../../shared/api";
+import { presentResumeBullet } from "../../shared/resume-presentation";
 import { api } from "../api";
 import { count, LINE_STATUS_HINT, LINE_STATUS_LABEL } from "../format";
 import { useAction, type Reload } from "../hooks";
@@ -79,7 +80,7 @@ export function LineItem({
         />
       ) : (
         <p className="line-text" id={`${id}-text`}>
-          {line.text}
+          {roleId === null ? line.text : presentResumeBullet(line.text)}
         </p>
       )}
       <div className="line-tools">
@@ -137,7 +138,7 @@ function Evidence({ facts }: { facts: CitedFact[] }) {
       {facts.map((fact) => (
         <li key={fact.id} className="evidence-item">
           <p className="evidence-label">Fact</p>
-          <p>{fact.text}</p>
+          <p>{presentResumeBullet(fact.text)}</p>
           {fact.quote ? (
             <Quote text={fact.quote} caption="The words it came from" />
           ) : (

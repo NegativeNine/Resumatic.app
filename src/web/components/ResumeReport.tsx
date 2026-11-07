@@ -1,4 +1,5 @@
 import type { ResumeReport } from "../../shared/api";
+import { LINE_STATUS_HINT, LINE_STATUS_LABEL } from "../format";
 import { href } from "../router";
 import { Badge } from "./ui";
 
@@ -6,7 +7,7 @@ export function ReportCard({ report }: { report: ResumeReport }) {
   const stats = [
     ["Kept", report.kept],
     ["Repaired", report.repaired],
-    ["Replaced", report.replaced],
+    [LINE_STATUS_LABEL.replaced, report.replaced],
     ["Dropped", report.dropped],
   ] as const;
 
@@ -29,7 +30,7 @@ export function ReportCard({ report }: { report: ResumeReport }) {
           <Badge tone="repaired">Repaired</Badge> was fixed once so that it matches its facts.
         </li>
         <li>
-          <Badge tone="replaced">Replaced</Badge> was swapped for the wording of a fact it cites.
+          <Badge tone="replaced">{LINE_STATUS_LABEL.replaced}</Badge> {LINE_STATUS_HINT.replaced}.
         </li>
         <li>
           <Badge tone="dropped">Dropped</Badge> was left out, because no fact could back it.

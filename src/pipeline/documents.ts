@@ -137,6 +137,7 @@ export async function planDocument(
       snapshotSearch,
       cleanAnalysis,
       input.facts,
+      input.roles,
     );
   }
   if (

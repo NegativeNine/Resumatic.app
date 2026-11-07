@@ -69,6 +69,7 @@ export class TailorWorkflow extends WorkflowEntrypoint<Env, TailorParams> {
               (q, k) => v.searchFacts(q, k, event.instanceId),
               input.analysis!,
               input.facts,
+              input.roles,
             ));
           await v.saveStep(resumeId, "select", { selection }, event.instanceId);
           return {

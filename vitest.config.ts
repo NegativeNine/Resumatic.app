@@ -16,7 +16,7 @@ export default defineConfig({
         // Pure code (grounding, location, session helpers) runs in plain Node.
         test: {
           name: "unit",
-          include: ["test/unit/**/*.test.ts"],
+          include: ["test/unit/**/*.test.ts", "test/unit/**/*.test.tsx"],
           environment: "node",
         },
       },

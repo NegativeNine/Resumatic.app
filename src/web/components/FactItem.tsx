@@ -7,11 +7,12 @@ import {
   type Level,
   type RoleView,
 } from "../../shared/api";
+import { cleanExtractedText } from "../../shared/clean";
 import { api, ApiError } from "../api";
 import { factWriteObserved } from "../fact-save";
 import { FACT_KIND_LABEL, LEVEL_LABEL } from "../format";
 import { useAction, type Reload } from "../hooks";
-import { roleLabel, sourceLabel } from "../vault";
+import { groupFacts, roleLabel, sourceLabel } from "../vault";
 import { ReviewButtons, useReview } from "./ReviewButtons";
 import { SourceEvidence } from "./SourceEvidence";
 import { ActionError, Badge, CharCount, Quote } from "./ui";
@@ -24,15 +25,17 @@ interface Props {
   reload: Reload;
   reviewLocked: boolean;
   onEditingChange: (id: string, active: boolean) => void;
+  equivalentRoles?: ReadonlySet<string>;
 }
 
-export function FactList({ facts, roles, filenames, reload, reviewLocked, onEditingChange }: Props) {
+export function FactList({ facts, roles, filenames, reload, reviewLocked, onEditingChange, equivalentRoles }: Props) {
   return (
     <ul className="plain-list facts">
-      {facts.map((fact) => (
+      {groupFacts(facts, equivalentRoles).map(([fact, ...duplicates]) => fact && (
         <FactItem
           key={fact.id}
           fact={fact}
+          duplicates={duplicates}
           roles={roles}
           filenames={filenames}
           reload={reload}
@@ -46,15 +49,16 @@ export function FactList({ facts, roles, filenames, reload, reviewLocked, onEdit
 
 function FactItem({
   fact,
+  duplicates,
   roles,
   filenames,
   reload,
   reviewLocked,
   onEditingChange,
-}: { fact: FactView } & Omit<Props, "facts">) {
+}: { fact: FactView; duplicates: FactView[] } & Omit<Props, "facts">) {
   const [editing, setEditing] = useState(false);
   const ref = useRef<HTMLLIElement>(null);
-  const review = useReview(fact.id, reload, ref, fact.revision ?? 1);
+  const review = useReview(fact.id, reload, ref, fact.revision ?? 1, duplicates);
   const textId = useId();
   const role = roles.find((item) => item.id === fact.roleId);
   const roleRejected = role?.state === "rejected";
@@ -76,7 +80,7 @@ function FactItem({
         />
       ) : (
         <p className="fact-text" id={textId}>
-          {fact.text}
+          {fact.origin === "extracted" ? cleanExtractedText(fact.text) : fact.text}
         </p>
       )}
       <p className="meta">
@@ -124,6 +128,8 @@ function FactItem({
         </p>
       )}
       <FactEvidence fact={fact} filenames={filenames} />
+      {duplicates.length > 0 && <p className="meta">This fact also appears in {duplicates.length} other {duplicates.length === 1 ? "record" : "records"}. Review applies to all shown copies; editing changes this copy only.</p>}
+      {duplicates.map((copy) => <FactEvidence key={copy.id} fact={copy} filenames={filenames} />)}
       {!editing && (
         <ReviewButtons
           state={fact.state}
@@ -194,7 +200,7 @@ function FactEditor(props: {
   const { fact, roles, reload, onClose } = props;
   // Keep the editor's base values fixed even when a background refresh arrives.
   const [original] = useState(fact);
-  const [text, setText] = useState(fact.text);
+  const [text, setText] = useState(fact.origin === "extracted" ? cleanExtractedText(fact.text) : fact.text);
   const [roleId, setRoleId] = useState(fact.roleId ?? "");
   const [level, setLevel] = useState<Level | "">(fact.level ?? "");
   const [levelTouched, setLevelTouched] = useState(false);

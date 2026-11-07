@@ -8,7 +8,7 @@ type CacheVault = {
 };
 
 // Bump whenever either renderer's output or its security checks change.
-const RENDER_CACHE_VERSION = "resume-render-v3";
+const RENDER_CACHE_VERSION = "resume-render-v4";
 
 /** Bind regenerable bytes to the entire immutable snapshot and renderer version. */
 export async function snapshotCacheKey(base: string, data: RenderData): Promise<string> {

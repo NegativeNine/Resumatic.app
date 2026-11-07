@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { authoritativeFact, checkLine } from "../../src/grounding/verdict";
 import { linkedInMarkdown, parseCsv } from "../../src/pipeline/linkedin";
 import { renderDocx, textDocx } from "../../src/render/docx";
+import { renderResumeHtml } from "../../src/render/template";
 import type { FactRecord, RenderData } from "../../src/shared/types";
 
 describe("LinkedIn career data import", () => {
@@ -149,6 +150,16 @@ describe("DOCX generation", () => {
         unzipSync(textDocx("Letter", ["Built 12 APIs."]))["word/document.xml"]!,
       ),
     ).toContain("Built 12 APIs.");
+  });
+  it("renders an imported bullet and soft-wrapped line once without changing the saved version", () => {
+    const value = structuredClone(data);
+    value.body.sections[0]!.lines[0]!.text = "- • Worked with the team and helped\nlaunch the project.";
+    const html = renderResumeHtml(value);
+    const xml = strFromU8(unzipSync(renderDocx(value))["word/document.xml"]!);
+    expect(html).toContain("<li>Worked with the team and helped launch the project.</li>");
+    expect(xml).toContain("• Worked with the team and helped launch the project.");
+    expect(xml).not.toContain("• •");
+    expect(value.body.sections[0]!.lines[0]!.text).toBe("- • Worked with the team and helped\nlaunch the project.");
   });
   it("preserves line breaks and tabs as Word run elements in resumes and documents", () => {
     const value = structuredClone(data);

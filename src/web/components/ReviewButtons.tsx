@@ -22,6 +22,7 @@ export function useReview(
   reload: Reload,
   item: RefObject<HTMLElement | null>,
   revision = 1,
+  duplicates: { id: string; revision?: number }[] = [],
 ): ReviewControl {
   const { run, error } = useAction();
   const [deciding, setDeciding] = useState<Decision | null>(null);
@@ -37,11 +38,21 @@ export function useReview(
     ];
     setDeciding(decision);
     const ok = await run(async () => {
-      await api.review({
-        confirm: decision === "confirm" ? [id] : [],
-        reject: decision === "reject" ? [id] : [],
-        expectedRevisions: { [id]: revision },
-      });
+      const items = [{ id, revision }, ...duplicates];
+      const ids = items.map((item) => item.id);
+      try {
+        await api.review({
+          confirm: decision === "confirm" ? ids : [],
+          reject: decision === "reject" ? ids : [],
+          expectedRevisions: Object.fromEntries(items.map((item) => [item.id, item.revision ?? 1])),
+        });
+      } catch (error) {
+        // A lost response can follow an already committed transaction. Fetch
+        // the actual states before a retry; retain the original error if the
+        // refresh also fails.
+        try { await reload(); } catch { /* keep the decision error */ }
+        throw error;
+      }
       await reload();
     });
     setDeciding(null);
