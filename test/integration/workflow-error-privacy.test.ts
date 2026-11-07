@@ -1,7 +1,7 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import { describe, expect, it } from "vitest";
 import { AppError, errorCode } from "../../src/shared/errors";
-import { once, retrySafely, userMessage } from "../../src/workflows/steps";
+import { once, retrySafely, sourceFailureMessage, userMessage } from "../../src/workflows/steps";
 import { runFleet, type FleetServices } from "../../src/workflows/fleet";
 import type { WorkflowStep } from "cloudflare:workers";
 
@@ -40,6 +40,9 @@ describe("Workflow error privacy", () => {
     expect(errorCode(transient)).toBe("unavailable");
     expect(transient.message).not.toContain(privateText);
     expect(userMessage(transient, "Fallback.")).toBe("Fallback.");
+    expect(sourceFailureMessage(transient)).toBe("Reading is temporarily unavailable. Please try again later.");
+    expect(sourceFailureMessage(new Error(privateText))).toBe("We couldn't finish reading this file. Please try again later.");
+    expect(sourceFailureMessage(new AppError("invalid", "no text could be read from this file"))).toBe("No text could be read from this file");
 
     for (const wrap of [once, retrySafely]) {
       const terminal = await caught(wrap(async () => { throw new NonRetryableError(privateText); }));

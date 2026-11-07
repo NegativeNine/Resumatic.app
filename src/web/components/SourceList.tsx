@@ -8,6 +8,7 @@ import { useSession } from "../session";
 import { rasterizeResume } from "../scan";
 import { ApiError } from "../api";
 import { ActionError, Badge } from "./ui";
+import { sourceErrorMessage } from "../source-error";
 
 export function SourceList({
   vault,
@@ -119,8 +120,7 @@ function SourceRow({
       {source.state === "failed" && (
         <div>
           <p className="source-error">
-            {source.error ?? "We couldn't read this file."} You can also save it
-            in the other format (PDF or .docx) and upload that.
+            {sourceErrorMessage(source.error)}
           </p>
           {source.retryRunId && <RetryReading runId={source.retryRunId} reload={reload} />}
         </div>
@@ -269,7 +269,7 @@ function SourceStatus({ source, proposedRoles, proposedFacts, visibleItems }: {
         </Badge>
       );
     case "failed":
-      return <Badge tone="failed">Couldn't read</Badge>;
+      return <Badge tone="failed">Reading stopped</Badge>;
     case "ready": {
       const pending = [
         proposedRoles ? count(proposedRoles, "role") : "",

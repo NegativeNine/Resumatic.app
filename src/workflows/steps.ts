@@ -98,6 +98,13 @@ export function userMessage(e: unknown, fallback: string): string {
   return fallback;
 }
 
+/** Report service failures without implying that the uploaded file is invalid. */
+export function sourceFailureMessage(e: unknown): string {
+  if (errorCode(e) === "unavailable")
+    return "Reading is temporarily unavailable. Please try again later.";
+  return userMessage(e, "We couldn't finish reading this file. Please try again later.");
+}
+
 function capitalise(text: string): string {
   return text ? text[0]!.toUpperCase() + text.slice(1) : text;
 }

@@ -11,7 +11,7 @@ import { extractLinkedIn } from "../pipeline/linkedin-extract";
 import { linkedInDocument, linkedInMarkdown } from "../pipeline/linkedin";
 import { AppError, errorCode } from "../shared/errors";
 import { vault } from "../shared/stubs";
-import { MODEL_STEP, STEP, once, retrySafely, userMessage } from "./steps";
+import { MODEL_STEP, STEP, once, retrySafely, sourceFailureMessage } from "./steps";
 
 export type DistillParams = { vaultId: string; sourceId: string };
 
@@ -195,7 +195,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
       );
       return extracted;
     } catch (e) {
-      const message = userMessage(e, "We could not read this file.");
+      const message = sourceFailureMessage(e);
       await step.do("fail", STEP, retrySafely(async () => {
         try {
           await v.saveSource(
