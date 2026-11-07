@@ -318,7 +318,7 @@ if (!browser?.startsWith("/")) {
     await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to review'`);
     stage = "poll_recovery";
     state.sourceRunning = true; await call("Page.reload");
-    await wait(`document.body?.innerText.includes("we can't confirm that reading started")`);
+    await wait(`document.body?.innerText.includes("Resumatic can't confirm that reading started")`);
     await evalPage(`window.__syntheticVaultPushes = 0; window.addEventListener('resumatic:vault-change', () => window.__syntheticVaultPushes++)`);
     state.sourcePollFailures = 2;
     for (let i = 0; i < 100 && !state.sourcePollFailureCount; i++) await delay(100);
@@ -333,7 +333,7 @@ if (!browser?.startsWith("/")) {
     if (state.sourceReads !== readsAfterReady) throw new Error("POLL_DID_NOT_STOP_AT_READY");
     stage = "poll_forbidden";
     state.sourceRunning = true; await call("Page.reload");
-    await wait(`document.body?.innerText.includes("we can't confirm that reading started")`);
+    await wait(`document.body?.innerText.includes("Resumatic can't confirm that reading started")`);
     await evalPage(`window.__syntheticVaultPushes = 0; window.addEventListener('resumatic:vault-change', () => window.__syntheticVaultPushes++)`);
     state.sourceForbiddenFailures = 1;
     for (let i = 0; i < 100 && !state.sourceForbiddenSeen; i++) await delay(100);
@@ -347,7 +347,7 @@ if (!browser?.startsWith("/")) {
     await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to review'`);
     stage = "uncertain_source_cancellation";
     state.sourceRunning = true; await call("Page.reload");
-    await wait(`document.body?.innerText.includes("we can't confirm that reading started")`);
+    await wait(`document.body?.innerText.includes("Resumatic can't confirm that reading started")`);
     await clickText("button", "Cancel reading");
     await wait(`document.body?.innerText.includes('Cancellation is pending')`);
     if (!state.sourceCancel) throw new Error("SOURCE_CANCEL_NOT_SENT");
@@ -355,7 +355,7 @@ if (!browser?.startsWith("/")) {
     state.sourceRunning = false; state.sourceCancel = false; state.sourceFailed = true; await call("Page.reload");
     await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Retry reading')`);
     await clickText("button", "Retry reading");
-    await wait(`document.body?.innerText.includes('Try again') || !!document.querySelector('[role="alert"]')`);
+    await wait(`!!${sourceRow}?.querySelector('[role="alert"]')`);
     await clickText("button", "Retry reading");
     await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to review'`);
     if (state.sourceRetryKeys.length !== 2 || state.sourceRetryKeys[0] !== state.sourceRetryKeys[1]) throw new Error("SOURCE_RETRY_KEY_MISMATCH");
@@ -573,7 +573,7 @@ if (!browser?.startsWith("/")) {
     stage = "uncertain_document_cancellation";
     state.documents.push({ id: "document-2", applicationId: "application-1", kind: "prep", state: "running", dispatchUncertain: true, createdAt: 2, result: null, facts: {} });
     await clickText("button", "Close workspace"); await clickText("button", "Track & prepare");
-    await wait(`document.body?.innerText.includes("we can't confirm that preparation started")`);
+    await wait(`document.body?.innerText.includes("Resumatic can't confirm that preparation started")`);
     await clickText("button", "Cancel generation");
     await wait(`document.body?.innerText.includes("Cancellation is pending")`);
     if (!state.documents.find((d) => d.id === "document-2")?.cancellationPending) throw new Error("DOCUMENT_CANCEL_NOT_SENT");
@@ -608,7 +608,7 @@ if (!browser?.startsWith("/")) {
     await clickText("button", "Edit line");
     await evalPage(`(() => { const e = document.querySelector('.rs-note textarea'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(e, 'Built 12 reliable payment services'); e.dispatchEvent(new Event('input', {bubbles:true})); })()`);
     await clickText("button", "Check and save");
-    await wait(`document.body?.innerText.includes("couldn't verify that wording")`);
+    await wait(`document.body?.innerText.includes("couldn't be verified against its evidence")`);
     if (!await evalPage(`document.querySelector('.rs-note textarea')?.value === 'Built 12 reliable payment services'`)) throw new Error("MANUAL_TEXT_LOST");
     await clickText("button", "Check and save");
     await wait(`document.querySelector('[aria-label="Resume preview"]')?.innerText.includes('Built 12 reliable payment services') && !document.querySelector('.rs-note textarea')`);
@@ -664,7 +664,7 @@ if (!browser?.startsWith("/")) {
     state.resumeLineRemoved = false;
     stage = "uncertain_resume_cancellation";
     state.resumeRunning = true; await call("Page.reload");
-    await wait(`document.body?.innerText.includes("we can't confirm that tailoring started")`);
+    await wait(`document.body?.innerText.includes("Resumatic can't confirm that tailoring started")`);
     await clickText("button", "Cancel tailoring");
     await wait(`document.body?.innerText.includes("Cancellation is pending")`);
     if (!state.resumeCancel) throw new Error("RESUME_CANCEL_NOT_SENT");

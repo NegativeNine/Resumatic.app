@@ -99,13 +99,13 @@ function SourceRow({
       <div className="rs-source__extra app-source-extra">
       {source.state === "queued" && source.cancellationPending && (
         <p className="source-error" role="status">
-          Cancellation is pending. Reading may still start or continue; please check back.
+          Cancellation is pending. Reading may still start or carry on for a moment, so check back soon.
         </p>
       )}
       {source.state === "queued" && source.dispatchUncertain && !source.cancellationPending && (
         <p className="source-error" role="status">
-          Your upload was saved, but we can't confirm that reading started. It
-          may still begin; please check back.
+          Your upload was saved, but Resumatic can't confirm that reading started. It
+          may still begin, so check back soon.
         </p>
       )}
       {source.state === "queued" && !source.cancellationPending && (
@@ -201,7 +201,7 @@ function ScanRecovery({
         throw new ApiError(
           response.status,
           "unavailable",
-          "The source file could not be opened. Please try again.",
+          "The source file couldn't be opened. Try again.",
         );
       setProgress("Preparing all pages as images…");
       const images = await rasterizeResume(await response.blob());

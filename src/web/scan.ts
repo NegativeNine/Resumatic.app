@@ -40,7 +40,7 @@ export async function rasterizeResume(
           throw new ApiError(
             413,
             "too_large",
-            "These page images are too large. Please upload a DOCX or a smaller PDF.",
+            "These page images are too large. Upload a Word file (.docx) or a smaller PDF.",
           );
         images.push({ mimeType: "image/jpeg", base64 });
       } finally {
@@ -55,7 +55,7 @@ export async function rasterizeResume(
     throw new ApiError(
       422,
       "invalid",
-      "This PDF could not be opened for image reading. Try an unlocked PDF or a Word document.",
+      "This PDF couldn't be opened for image reading. Try an unlocked PDF or a Word file (.docx).",
     );
   } finally {
     await task.destroy();

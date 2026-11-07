@@ -2,6 +2,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import type { WorkflowStepConfig } from "cloudflare:workers";
 import { errorCode, errorDetail, type ErrorCode } from "../shared/errors";
 import { MODEL_FAILURE_DETAILS } from "../shared/model-failures";
+import { asSentence } from "../shared/sentence";
 
 /** Quick steps that touch the vault or R2. */
 export const STEP: WorkflowStepConfig = {
@@ -31,25 +32,27 @@ const FINAL = new Set([
 // messages may be retained or returned to the user.
 const SAFE_DETAILS = new Set([
   ...MODEL_FAILURE_DETAILS,
-  "confirm some facts before tailoring a resume",
-  "none of your confirmed facts match this job yet",
-  "the uploaded file is missing; upload it again",
-  "no text could be read from this file",
-  "the import source changed; upload it again",
-  "the edit could not be verified against its cited facts",
-  "experience changed while this draft was being made; generate it again",
-  "experience changed; refresh and review again",
+  "Confirm some facts before tailoring a resume.",
+  "None of your confirmed facts match this job yet. Add facts that cover its requirements, then tailor a new version.",
+  "The uploaded file is missing. Upload it again.",
+  "No text could be read from this file.",
+  "This file couldn't be read. Try a Word file (.docx) or a PDF with selectable text.",
+  "This file is too long to read. Upload a resume of a few pages.",
+  "The import source changed. Upload it again.",
+  "This edit couldn't be checked against the facts it cites. Change the wording or the facts, then try again.",
+  "Your facts changed while this draft was being made. Create it again.",
+  "Your facts changed. Refresh the page, then review again.",
 ]);
 const GENERIC_DETAIL: Record<ErrorCode, string> = {
-  unauthenticated: "sign-in is required",
-  forbidden: "this operation is not permitted",
-  not_found: "the requested item is unavailable",
-  conflict: "the requested item changed; try again",
-  gone: "the requested item is no longer available",
-  invalid: "the input could not be processed; check it and try again",
-  too_large: "the input is too large to process",
-  quota: "the usage limit has been reached",
-  unavailable: "the service is temporarily unavailable",
+  unauthenticated: "Sign in to continue.",
+  forbidden: "This isn't available to your account.",
+  not_found: "Something this needed is no longer available.",
+  conflict: "Something changed while Resumatic was working. Try again.",
+  gone: "This is no longer available.",
+  invalid: "This couldn't be processed. Check it, then try again.",
+  too_large: "This is too large to process.",
+  quota: "You've reached a usage limit.",
+  unavailable: "Resumatic is busy right now. Try again in a few minutes.",
 };
 
 function safeDetail(code: ErrorCode, error: unknown): string {
@@ -93,20 +96,16 @@ export function once<T>(body: () => Promise<T>): () => Promise<T> {
   };
 }
 
-/** A short message for the user about why a run stopped. Never includes career text. */
+/** A short message for the user about why a run stopped, as sentences. Never includes career text. */
 export function userMessage(e: unknown, fallback: string): string {
   const code = errorCode(e);
-  if (code && code !== "unavailable") return capitalise(safeDetail(code, e));
+  if (code && code !== "unavailable") return asSentence(safeDetail(code, e));
   return fallback;
 }
 
 /** Report service failures without implying that the uploaded file is invalid. */
 export function sourceFailureMessage(e: unknown): string {
   if (errorCode(e) === "unavailable")
-    return "Reading is temporarily unavailable. Please try again later.";
-  return userMessage(e, "We couldn't finish reading this file. Please try again later.");
-}
-
-function capitalise(text: string): string {
-  return text ? text[0]!.toUpperCase() + text.slice(1) : text;
+    return "Reading isn't available right now. Try again in a few minutes.";
+  return userMessage(e, "Resumatic couldn't finish reading this file. Try again in a few minutes.");
 }

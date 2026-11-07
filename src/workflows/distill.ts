@@ -49,7 +49,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
           if (!object)
             throw new AppError(
               "not_found",
-              "the uploaded file is missing; upload it again",
+              "The uploaded file is missing. Upload it again.",
             );
           const m = runModels(this.env, vaultId, event.instanceId, "convert", "distill");
           let markdown: string;
@@ -66,7 +66,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
           if (!markdown.trim())
             throw new AppError(
               "invalid",
-              "no text could be read from this file",
+              "No text could be read from this file.",
             );
           await v.saveSource(
             sourceId,
@@ -107,7 +107,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
             if (!object)
               throw new AppError(
                 "not_found",
-                "the uploaded file is missing; upload it again",
+                "The uploaded file is missing. Upload it again.",
               );
             const bytes = new Uint8Array(await object.arrayBuffer());
             let document = linkedInDocument(bytes);
@@ -117,7 +117,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
             if (document.markdown !== markdown)
               throw new AppError(
                 "conflict",
-                "the import source changed; upload it again",
+                "The import source changed. Upload it again.",
               );
             result = await extractLinkedIn(
               document,

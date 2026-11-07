@@ -157,11 +157,11 @@ describe("durable upload reservations", () => {
       store.reserve(two);
       store.reserve(three);
       expect(() => store.reserve(descriptor(id, "four"))).toThrow(
-        "wait for your other uploads",
+        "Resumatic is still reading your other sources",
       );
       store.complete(one, (intent) => insert(sql, intent));
       expect(() => store.reserve(descriptor(id, "four"))).toThrow(
-        "wait for your other uploads",
+        "Resumatic is still reading your other sources",
       );
       sql.exec(`UPDATE sources SET state = 'ready'`);
       expect(store.reserve(descriptor(id, "four")).intent.state).toBe(
@@ -172,7 +172,7 @@ describe("durable upload reservations", () => {
       store.reserve(descriptor(id, "one"));
       store.reserve(descriptor(id, "two"));
       expect(() => store.reserve(descriptor(id, "three"))).toThrow(
-        "at most 2 uploads",
+        "You can keep up to 2 sources during the beta",
       );
     }, 2);
   });

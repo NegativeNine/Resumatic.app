@@ -272,7 +272,7 @@ export class SnapshotStore {
     this.requireNoIncarnationWrite();
     const invalidFact = () => new AppError(
       "conflict",
-      "experience changed while this draft was being made; generate it again",
+      "Your facts changed while this draft was being made. Create it again.",
     );
     const invalidRole = () => new AppError(
       "conflict",

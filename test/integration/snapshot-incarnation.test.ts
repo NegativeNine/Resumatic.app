@@ -38,9 +38,9 @@ it("rejects identical fact or role reincarnations and does not overwrite a run o
     expect(sql.exec(`SELECT value FROM entity_incarnations WHERE kind='fact' AND item_id=?`, fact.id).toArray()).toHaveLength(0);
     insertFact();
     expect(sql.exec<{ value: number }>(`SELECT value FROM entity_incarnations WHERE kind='fact' AND item_id=?`, fact.id).one().value).toBeGreaterThan(originalFact);
-    expect(() => snapshots.assertCurrent(runId, factBody)).toThrow("experience changed");
+    expect(() => snapshots.assertCurrent(runId, factBody)).toThrow("Your facts changed while this draft was being made");
     snapshots.capture(runId, metadata, [fact], [role], new Map());
-    expect(() => snapshots.assertCurrent(runId, factBody)).toThrow("experience changed");
+    expect(() => snapshots.assertCurrent(runId, factBody)).toThrow("Your facts changed while this draft was being made");
     sql.exec(`INSERT OR REPLACE INTO roles(id,kind,org,state) VALUES (?, 'job','Example','confirmed')`, role.id);
     expect(sql.exec<{ value: number }>(`SELECT value FROM entity_incarnations WHERE kind='role' AND item_id=?`, role.id).one().value).toBeGreaterThan(originalRole);
     expect(() => snapshots.assertCurrent(runId, roleBody)).toThrow("role changed");
@@ -50,7 +50,7 @@ it("rejects identical fact or role reincarnations and does not overwrite a run o
     expect(() => snapshots.assertCurrent(newRun, roleBody)).not.toThrow();
     // REPLACE also fences a fact even when every stored field is unchanged.
     sql.exec(`INSERT OR REPLACE INTO facts(id,kind,text,origin,state,updated_at) VALUES (?, 'accomplishment','Built a service','user','confirmed',1)`, fact.id);
-    expect(() => snapshots.assertCurrent(newRun, factBody)).toThrow("experience changed");
+    expect(() => snapshots.assertCurrent(newRun, factBody)).toThrow("Your facts changed while this draft was being made");
   });
 });
 
@@ -64,7 +64,7 @@ it("fails closed for pre-migration or incomplete snapshot incarnation records", 
     sql.exec(`INSERT INTO facts(id,kind,text,origin,state,updated_at) VALUES (?, 'skill','Go','user','confirmed',1)`, id);
     // A snapshot written by an old runtime has no captured incarnation.
     sql.exec(`INSERT INTO generation_input_items(run_id,kind,item_id,data) VALUES ('legacy','fact',?,?)`, id, JSON.stringify(fact));
-    expect(() => snapshots.assertCurrent("legacy", body)).toThrow("experience changed");
+    expect(() => snapshots.assertCurrent("legacy", body)).toThrow("Your facts changed while this draft was being made");
     sql.exec(`INSERT INTO entity_incarnation_guard(slot) VALUES(1)`);
     expect(() => snapshots.assertCurrent("legacy", body)).toThrow("requires review");
     sql.exec(`DELETE FROM entity_incarnation_guard WHERE slot=1`);
@@ -94,7 +94,7 @@ it("fences reverted fact, role and evidence changes while allowing vector-only u
     expect(() => snapshots.assertCurrent(runId, factBody)).not.toThrow();
     sql.exec(`UPDATE facts SET text='Changed' WHERE id=?`, factId);
     sql.exec(`UPDATE facts SET text='Built a service' WHERE id=?`, factId);
-    expect(() => snapshots.assertCurrent(runId, factBody)).toThrow("experience changed");
+    expect(() => snapshots.assertCurrent(runId, factBody)).toThrow("Your facts changed while this draft was being made");
     sql.exec(`UPDATE roles SET org='Other' WHERE id=?`, roleId);
     sql.exec(`UPDATE roles SET org='Example' WHERE id=?`, roleId);
     expect(() => snapshots.assertCurrent(runId, roleBody)).toThrow("role changed");
@@ -102,12 +102,12 @@ it("fences reverted fact, role and evidence changes while allowing vector-only u
     snapshots.capture(runId, metadata, [fact], [role], new Map());
     sql.exec(`UPDATE evidence SET quote='Other text' WHERE id=?`, evidenceId);
     sql.exec(`UPDATE evidence SET quote='Built a service' WHERE id=?`, evidenceId);
-    expect(() => snapshots.assertCurrent(runId, factBody)).toThrow("experience changed");
+    expect(() => snapshots.assertCurrent(runId, factBody)).toThrow("Your facts changed while this draft was being made");
     expect(() => snapshots.assertCurrent(runId, roleBody)).toThrow("role changed");
     runId = crypto.randomUUID();
     snapshots.capture(runId, metadata, [fact], [role], new Map());
     sql.exec(`INSERT OR REPLACE INTO evidence(id,source_id,quote) VALUES (?, ?, 'Built a service')`, evidenceId, sourceId);
-    expect(() => snapshots.assertCurrent(runId, factBody)).toThrow("experience changed");
+    expect(() => snapshots.assertCurrent(runId, factBody)).toThrow("Your facts changed while this draft was being made");
     expect(() => snapshots.assertCurrent(runId, roleBody)).toThrow("role changed");
     expect(() => sql.exec(`UPDATE evidence SET id=? WHERE id=?`, crypto.randomUUID(), evidenceId)).toThrow();
   });

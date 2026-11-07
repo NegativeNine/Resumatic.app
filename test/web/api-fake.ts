@@ -212,7 +212,7 @@ export class FakeApi {
         if (!application) return notFound("no such application");
         const quota = this.state.me.quota;
         if (quota.used >= quota.limit) {
-          return { status: 429, body: { error: "quota", message: `you have used all ${quota.limit} tailored resumes for this month` } };
+          return { status: 429, body: { error: "quota", message: `You've used all ${quota.limit} tailored resumes for Nov 2026. You can tailor more from 1 Dec 2026.` } };
         }
         quota.used += 1;
         const id = this.id("res");

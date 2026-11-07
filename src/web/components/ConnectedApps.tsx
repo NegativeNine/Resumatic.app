@@ -17,7 +17,7 @@ export function ConnectedApps() {
       setGrants(data.grants);
       setError("");
     } catch {
-      setError("Connected apps could not be loaded.");
+      setError("Connected apps couldn't be loaded.");
     }
   }, []);
   useEffect(() => {

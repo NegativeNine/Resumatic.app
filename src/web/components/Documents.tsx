@@ -247,13 +247,13 @@ function DocumentCard({ doc, reload, retry, retryDisabled }: {
       </div>
       {doc.state === "running" && doc.cancellationPending && (
         <p role="status">
-          Cancellation is pending. Preparation may still start or continue; please check back.
+          Cancellation is pending. Preparation may still start or carry on for a moment, so check back soon.
         </p>
       )}
       {doc.state === "running" && doc.dispatchUncertain && !doc.cancellationPending && (
         <p role="status">
-          Your request was saved, but we can't confirm that preparation started.
-          It may still begin; please check back.
+          Your request was saved, but Resumatic can't confirm that preparation started.
+          It may still begin, so check back soon.
         </p>
       )}
       {doc.state === "running" && !doc.cancellationPending && (
@@ -576,8 +576,8 @@ function documentError(code: string | null): string {
   if (code === "conflict")
     return "The resume or facts changed while this document was being prepared. Review the current version, then try again.";
   if (code === "quota")
-    return "Generation stopped at the configured limit. Your output allowance was released.";
+    return "This document stopped at a usage limit, so it doesn't count toward your outputs.";
   if (code === "invalid")
-    return "There was not enough usable evidence to finish this document. Confirm relevant facts and try again.";
-  return "This document could not be completed. Your output allowance was released; you can try again from the controls above.";
+    return "Your confirmed facts aren't enough to finish this document. Confirm the facts it needs, then try again.";
+  return "This document couldn't be finished, so it doesn't count toward your outputs. Try again with the buttons above.";
 }

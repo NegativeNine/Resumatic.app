@@ -1,6 +1,6 @@
 /*
  * Resumatic component styles: the design system's components/bundle.css, without its `body` rule
- * (the app's ground is --desk, set in styles.css). Classes start with rs-. Copied from the design
+ * (the app's ground is --desk, set in app.css). Classes start with rs-. Copied from the design
  * system; change a rule there first, then here (see README.md).
  */
 *, *::before, *::after { box-sizing: border-box; }

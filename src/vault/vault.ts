@@ -257,26 +257,20 @@ export function monthOf(ms: number): string {
   return new Date(ms).toISOString().slice(0, 7);
 }
 
-const MONTH_NAMES = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** The day a quota month's count resets, such as "December 1" for "2026-11". */
+/** A quota month as the interface writes it, such as "Nov 2026" for "2026-11". */
+export function monthLabel(month: string): string {
+  const [year, m] = month.split("-").map(Number);
+  const start = new Date(Date.UTC(year ?? 1970, (m ?? 1) - 1, 1));
+  return `${MONTH_NAMES[start.getUTCMonth()]} ${start.getUTCFullYear()}`;
+}
+
+/** The day a quota month's count resets, such as "1 Dec 2026" for "2026-11". */
 export function resetDay(month: string): string {
   const [year, m] = month.split("-").map(Number);
   const next = new Date(Date.UTC(year ?? 1970, m ?? 1, 1));
-  return `${MONTH_NAMES[next.getUTCMonth()]} 1`;
+  return `1 ${MONTH_NAMES[next.getUTCMonth()]} ${next.getUTCFullYear()}`;
 }
 
 /**
@@ -679,7 +673,7 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1 ||
         this.readProfile().revision !== expectedRevision)
-      throw new AppError("conflict", "your profile changed; review the saved details before trying again");
+      throw new AppError("conflict", "Your profile was changed somewhere else. Load the saved profile, check it, then save again.");
     // updateProfile executes its write before returning its promise. There is
     // no await between the revision check and the write in this object.
     return this.updateProfile(who, patch);
@@ -923,12 +917,12 @@ export class Vault extends DurableObject<Env> {
     if (counts.queued >= MAX_QUEUED_SOURCES)
       throw new AppError(
         "conflict",
-        "wait for your other uploads to finish reading",
+        "Resumatic is still reading your other sources. Wait for one to finish, then upload this file.",
       );
     if (counts.total >= MAX_SOURCES)
       throw new AppError(
         "quota",
-        `you can keep at most ${MAX_SOURCES} uploads`,
+        `You can keep up to ${MAX_SOURCES} sources during the beta. Email support@resumatic.app if you need more.`,
       );
     const id = crypto.randomUUID();
     const extractor = this.extractionStrategy(s.origin, s.filename);
@@ -1482,7 +1476,7 @@ export class Vault extends DurableObject<Env> {
     ).toArray()[0];
     if (!role) throw new AppError("not_found", "no such role");
     if (patch.expectedRevision !== undefined && patch.expectedRevision !== role.revision)
-      throw new AppError("conflict", "this role changed; refresh and try again");
+      throw new AppError("conflict", "This role changed since you opened it. Refresh the page, then try again.");
     const start = patch.startDate === undefined ? role.start_date : patch.startDate;
     const end = patch.endDate === undefined ? role.end_date : patch.endDate;
     const unknown = patch.unknownEndStartDate === undefined ? role.unknown_end_start_date : patch.unknownEndStartDate;
@@ -1517,7 +1511,7 @@ export class Vault extends DurableObject<Env> {
     )
       throw new AppError(
         "conflict",
-        "this role changed; refresh and try again",
+        "This role changed since you opened it. Refresh the page, then try again.",
       );
     const fields: [string, string | null][] = [];
     if (patch.kind !== undefined) fields.push(["kind", patch.kind]);
@@ -1571,7 +1565,7 @@ export class Vault extends DurableObject<Env> {
         if (!current || current.revision !== expected)
           throw new AppError(
             "conflict",
-            "experience changed; refresh and review again",
+            "Your facts changed. Refresh the page, then review again.",
           );
       }
       // A confirmed fact is unusable while its role is rejected. Require an
@@ -1586,7 +1580,7 @@ export class Vault extends DurableObject<Env> {
           id,
         ).toArray()[0];
         if (role && (rejecting.has(role.id) || (role.state === "rejected" && !confirming.has(role.id))))
-          throw new AppError("conflict", "confirm the role before confirming its facts");
+          throw new AppError("conflict", "Confirm the role before confirming its facts.");
       }
       for (const id of r.confirm) {
         this.extractionFeedbackStore.review(id, "confirmed", Date.now());
@@ -2027,14 +2021,14 @@ export class Vault extends DurableObject<Env> {
     ) {
       throw new AppError(
         "conflict",
-        "a document is already being generated; wait for it to finish",
+        "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.",
       );
     }
     const quota = this.quota();
     if (quota.used + (quota.reserved ?? 0) >= quota.limit)
       throw new AppError(
         "quota",
-        `you have used all ${quota.limit} tailored resumes for this month; more on ${resetDay(quota.month)}`,
+        `You've used all ${quota.limit} tailored resumes for ${monthLabel(quota.month)}. You can tailor more from ${resetDay(quota.month)}.`,
       );
     const id = crypto.randomUUID();
     this.runs.begin(
@@ -2129,15 +2123,15 @@ export class Vault extends DurableObject<Env> {
     const result = this.ctx.storage.transactionSync(() => {
       this.requireOwner(who);
       const row = this.resumeRow(resumeId);
-      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "the resume is not ready");
+      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "This resume isn't ready yet. Wait for tailoring to finish, then try again.");
       if (row.version === expectedVersion + 1) {
         const saved = this.snapshots.read(resumeId, row.version);
         if (saved?.provenance === "legacy" && saved.reviewStartedFrom === expectedVersion)
           return { version: row.version };
       }
-      if (row.version !== expectedVersion) throw new AppError("conflict", "the resume changed; refresh and try again");
+      if (row.version !== expectedVersion) throw new AppError("conflict", "This resume changed since you opened it. Refresh the page, then try again.");
       if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
-        throw new AppError("conflict", "wait for the current document to finish");
+        throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
       if (base.provenance !== "snapshot") throw new AppError("conflict", "this resume is already in review");
       let blocked = false;
@@ -2169,15 +2163,15 @@ export class Vault extends DurableObject<Env> {
     const result = this.ctx.storage.transactionSync(() => {
       this.requireOwner(who);
       const row = this.resumeRow(resumeId);
-      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "the resume is not ready");
+      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "This resume isn't ready yet. Wait for tailoring to finish, then try again.");
       if (row.version === expectedVersion + 1) {
         const saved = this.snapshots.read(resumeId, row.version);
         if (saved?.provenance === "legacy" && saved.legacyRemoved?.fromVersion === expectedVersion && saved.legacyRemoved.lineId === lineId)
           return { version: row.version };
       }
-      if (row.version !== expectedVersion) throw new AppError("conflict", "the resume changed; refresh and try again");
+      if (row.version !== expectedVersion) throw new AppError("conflict", "This resume changed since you opened it. Refresh the page, then try again.");
       if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
-        throw new AppError("conflict", "wait for the current document to finish");
+        throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
       if (base.provenance !== "legacy") throw new AppError("conflict", "only a review version can remove a line");
       const body = structuredClone(base.render.body);
@@ -2211,15 +2205,15 @@ export class Vault extends DurableObject<Env> {
     const result = this.ctx.storage.transactionSync(() => {
       this.requireOwner(who);
       const row = this.resumeRow(resumeId);
-      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "the resume is not ready");
+      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "This resume isn't ready yet. Wait for tailoring to finish, then try again.");
       if (row.version === expectedVersion + 1) {
         const saved = this.snapshots.read(resumeId, row.version);
         if (saved?.provenance === "legacy" && saved.legacySectionRemoved?.fromVersion === expectedVersion && saved.legacySectionRemoved.sectionIndex === sectionIndex)
           return { version: row.version };
       }
-      if (row.version !== expectedVersion) throw new AppError("conflict", "the resume changed; refresh and try again");
+      if (row.version !== expectedVersion) throw new AppError("conflict", "This resume changed since you opened it. Refresh the page, then try again.");
       if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
-        throw new AppError("conflict", "wait for the current document to finish");
+        throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
       if (base.provenance !== "legacy") throw new AppError("conflict", "only a review version can remove a section");
       const body = structuredClone(base.render.body);
@@ -2249,15 +2243,15 @@ export class Vault extends DurableObject<Env> {
     const result = this.ctx.storage.transactionSync(() => {
       this.requireOwner(who);
       const row = this.resumeRow(resumeId);
-      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "the resume is not ready");
+      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "This resume isn't ready yet. Wait for tailoring to finish, then try again.");
       if (row.version === expectedVersion + 1) {
         const saved = this.snapshots.read(resumeId, row.version);
         if (saved?.provenance === "legacy" && saved.legacySkillRemoved?.fromVersion === expectedVersion && saved.legacySkillRemoved.skillIndex === skillIndex)
           return { version: row.version };
       }
-      if (row.version !== expectedVersion) throw new AppError("conflict", "the resume changed; refresh and try again");
+      if (row.version !== expectedVersion) throw new AppError("conflict", "This resume changed since you opened it. Refresh the page, then try again.");
       if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
-        throw new AppError("conflict", "wait for the current document to finish");
+        throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
       if (base.provenance !== "legacy") throw new AppError("conflict", "only a review version can remove a skill");
       const body = structuredClone(base.render.body);
@@ -2284,15 +2278,15 @@ export class Vault extends DurableObject<Env> {
     const result = this.ctx.storage.transactionSync(() => {
       this.requireOwner(who);
       const row = this.resumeRow(resumeId);
-      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "the resume is not ready");
+      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "This resume isn't ready yet. Wait for tailoring to finish, then try again.");
       if (row.version === expectedVersion + 1) {
         const saved = this.snapshots.read(resumeId, row.version);
         if (saved?.provenance === "snapshot" && saved.lineRemoved?.fromVersion === expectedVersion && saved.lineRemoved.lineId === lineId)
           return { version: row.version };
       }
-      if (row.version !== expectedVersion) throw new AppError("conflict", "the resume changed; refresh and try again");
+      if (row.version !== expectedVersion) throw new AppError("conflict", "This resume changed since you opened it. Refresh the page, then try again.");
       if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
-        throw new AppError("conflict", "wait for the current document to finish");
+        throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
       // A deletion must never promote a blocked or legacy version into a checked one.
       assertGroundedResume(base.render, base.facts, base.provenance, base.evidence, base.roleEvidence);
@@ -2335,15 +2329,15 @@ export class Vault extends DurableObject<Env> {
     const result = this.ctx.storage.transactionSync(() => {
       this.requireOwner(who);
       const row = this.resumeRow(resumeId);
-      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "the resume is not ready");
+      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "This resume isn't ready yet. Wait for tailoring to finish, then try again.");
       if (row.version === expectedVersion + 1) {
         const saved = this.snapshots.read(resumeId, row.version);
         if (saved?.provenance === "snapshot" && saved.skillRemoved?.fromVersion === expectedVersion && saved.skillRemoved.skillIndex === skillIndex)
           return { version: row.version };
       }
-      if (row.version !== expectedVersion) throw new AppError("conflict", "the resume changed; refresh and try again");
+      if (row.version !== expectedVersion) throw new AppError("conflict", "This resume changed since you opened it. Refresh the page, then try again.");
       if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
-        throw new AppError("conflict", "wait for the current document to finish");
+        throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
       // Removing a skill cannot turn a legacy or otherwise blocked version
       // into a checked version; both snapshots must pass the export guard.
@@ -2373,15 +2367,15 @@ export class Vault extends DurableObject<Env> {
     const result = this.ctx.storage.transactionSync(() => {
       this.requireOwner(who);
       const row = this.resumeRow(resumeId);
-      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "the resume is not ready");
+      if (row.state !== "ready" || !row.body) throw new AppError("conflict", "This resume isn't ready yet. Wait for tailoring to finish, then try again.");
       if (row.version === expectedVersion + 1) {
         const saved = this.snapshots.read(resumeId, row.version);
         if (saved?.provenance === "snapshot" && saved.legacyFinalizedFrom === expectedVersion)
           return { version: row.version };
       }
-      if (row.version !== expectedVersion) throw new AppError("conflict", "the resume changed; refresh and try again");
+      if (row.version !== expectedVersion) throw new AppError("conflict", "This resume changed since you opened it. Refresh the page, then try again.");
       if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
-        throw new AppError("conflict", "wait for the current document to finish");
+        throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
       const roles = this.confirmedRoles();
       const verified = finalLegacyEvidence(base, this.usableFacts(), roles);
@@ -2417,7 +2411,7 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     const row = this.resumeRow(resumeId);
     if (row.state !== "ready" || !row.body)
-      throw new AppError("conflict", "the resume is not ready yet");
+      throw new AppError("conflict", "This resume isn't ready yet. Wait for tailoring to finish, then try again.");
     if (expectedVersion !== undefined && expectedVersion !== row.version)
       throw new AppError(
         "conflict",
@@ -2447,7 +2441,7 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     const row = this.resumeRow(resumeId);
     if (row.state !== "ready" || !row.body)
-      throw new AppError("conflict", "the resume is not ready yet");
+      throw new AppError("conflict", "This resume isn't ready yet. Wait for tailoring to finish, then try again.");
     const saved = this.resumeVersion(row, version);
     assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence, saved.roleEvidence);
     return saved.render;
@@ -2683,7 +2677,7 @@ export class Vault extends DurableObject<Env> {
     const resume = await this.getResume(who, id, version);
     this.requireMcp(claims, "vault:read");
     if (resume.state !== "ready")
-      throw new AppError("conflict", "the resume is not ready");
+      throw new AppError("conflict", "This resume isn't ready yet. Wait for tailoring to finish, then try again.");
     const render = await this.renderData(who, id, resume.version);
     this.requireMcp(claims, "vault:read");
     return {
@@ -2833,7 +2827,7 @@ export class Vault extends DurableObject<Env> {
           ["tailor", "refine", "letter", "prep", "questions"].includes(r.kind),
         )
     )
-      throw new AppError("conflict", "wait for the current document to finish");
+      throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
     let base: ResumeVersion | undefined;
     if (options.kind === "refine") {
       if (!options.resumeId)
@@ -3296,7 +3290,7 @@ export class Vault extends DurableObject<Env> {
   async exportArchiveStream(who: Who): Promise<Response> {
     const { data, files } = this.ctx.storage.transactionSync(() => this.exportArchiveSnapshot(who));
     if (files.length > 128)
-      throw new AppError("too_large", "too many files for one archive; download the originals individually");
+      throw new AppError("too_large", "Your vault has too many files for one archive. Download the JSON and the original files one at a time.");
     const manifestFiles = files.map((file, index) => {
       if (!/^[A-Za-z0-9_-]{1,100}$/.test(file.id))
         throw new AppError("unavailable", "a source identifier cannot be exported");
@@ -3312,7 +3306,7 @@ export class Vault extends DurableObject<Env> {
     for (const chunk of exportJsonChunks(data)) {
       jsonBytes += encoder.encode(chunk).byteLength;
       if (jsonBytes > MAX_ARCHIVE_BYTES)
-        throw new AppError("too_large", "the export exceeds the archive size limit; download the originals individually");
+        throw new AppError("too_large", "Your vault is too large for one archive. Download the JSON and the original files one at a time.");
     }
     const manifest = encoder.encode(JSON.stringify({ exportedAt: data.exportedAt, jsonBytes, files: manifestFiles }));
     if (manifest.byteLength > 1024 * 1024) throw new AppError("too_large", "archive metadata is too large");
@@ -4612,13 +4606,12 @@ export class Vault extends DurableObject<Env> {
       }
       if (run.state !== "starting") return;
       this.runs.fail(id, "dispatch_not_started");
-      const message = "Could not start this request. Please try again.";
       if (run.kind === "distill")
-        this.sql.exec(`UPDATE sources SET state='failed', error=? WHERE id=? AND run_id=? AND state='queued'`, message, run.targetId, id);
+        this.sql.exec(`UPDATE sources SET state='failed', error=? WHERE id=? AND run_id=? AND state='queued'`, "Reading couldn't be started. Try again.", run.targetId, id);
       else if (run.kind === "tailor")
-        this.sql.exec(`UPDATE resumes SET state='failed', error=? WHERE id=? AND run_id=? AND state='running'`, message, run.targetId, id);
+        this.sql.exec(`UPDATE resumes SET state='failed', error=? WHERE id=? AND run_id=? AND state='running'`, "Tailoring couldn't be started. Try again.", run.targetId, id);
       else if (["refine", "letter", "prep", "questions"].includes(run.kind))
-        this.sql.exec(`UPDATE documents SET state='failed', error=? WHERE id=? AND state='running'`, message, run.targetId);
+        this.sql.exec(`UPDATE documents SET state='failed', error=? WHERE id=? AND state='running'`, "This document couldn't be started. Try again.", run.targetId);
       else if (run.kind === "reembed") this.reembeddings.cancel(id);
     });
     this.broadcast("run", id);
@@ -5087,7 +5080,7 @@ export class Vault extends DurableObject<Env> {
       .toArray()[0];
     if (!role) throw new AppError("not_found", "no such role");
     if (role.state === "rejected")
-      throw new AppError("invalid", "that role was rejected");
+      throw new AppError("invalid", "That role was rejected. Choose another role for this fact.");
   }
 
   /** Confirmed facts whose role is confirmed, or that belong to no role. */

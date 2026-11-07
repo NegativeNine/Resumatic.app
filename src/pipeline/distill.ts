@@ -29,7 +29,7 @@ export async function extractFacts(
   if (markdown.length > MAX_MARKDOWN_CHARS)
     throw new AppError(
       "invalid",
-      "this document is too long to read; upload a resume of a few pages",
+      "This file is too long to read. Upload a resume of a few pages.",
     );
   const input: ExtractInput = {
     markdown,

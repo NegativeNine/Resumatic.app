@@ -19,7 +19,7 @@ describe("uncertain Workflow redispatch", () => {
         const { sourceId } = await instance.addSource(who, { filename: "resume.pdf", r2Key: `vaults/${vid}/sources/file` });
         expect(create).not.toHaveBeenCalled();
         expect(await instance.runInfo(who, sourceId)).toMatchObject({ state: "failed", errorCode: "dispatch_not_started" });
-        expect((await instance.listSources(who))[0]).toMatchObject({ id: sourceId, state: "failed", error: "Could not start this request. Please try again." });
+        expect((await instance.listSources(who))[0]).toMatchObject({ id: sourceId, state: "failed", error: "Reading couldn't be started. Try again." });
         expect(state.storage.sql.exec(`SELECT run_id FROM workflow_dispatches`).toArray()).toHaveLength(0);
         expect(state.storage.sql.exec(`SELECT run_id FROM workflow_redispatches`).toArray()).toHaveLength(0);
         await expect(instance.close()).resolves.toEqual({ distill: [sourceId], tailor: [] });
@@ -46,7 +46,7 @@ describe("uncertain Workflow redispatch", () => {
         const { resumeId } = await instance.tailor(who, applicationId);
         expect(create).not.toHaveBeenCalled();
         expect(await instance.runInfo(who, resumeId)).toMatchObject({ state: "failed", creditState: "released", errorCode: "dispatch_not_started" });
-        expect(await instance.getResume(who, resumeId)).toMatchObject({ state: "failed", error: "Could not start this request. Please try again." });
+        expect(await instance.getResume(who, resumeId)).toMatchObject({ state: "failed", error: "Tailoring couldn't be started. Try again." });
         expect(state.storage.sql.exec(`SELECT run_id FROM workflow_dispatches`).toArray()).toHaveLength(0);
       } finally {
         fail.mockRestore();
@@ -70,7 +70,7 @@ describe("uncertain Workflow redispatch", () => {
       try {
         const { documentId } = await instance.startDocument(who, applicationId, { kind: "questions" }, crypto.randomUUID());
         expect(create).not.toHaveBeenCalled();
-        expect(await instance.getDocument(who, documentId)).toMatchObject({ state: "failed", error: "Could not start this request. Please try again." });
+        expect(await instance.getDocument(who, documentId)).toMatchObject({ state: "failed", error: "This document couldn't be started. Try again." });
         expect(await instance.runInfo(who, documentId)).toMatchObject({ state: "failed", errorCode: "dispatch_not_started" });
         expect(state.storage.sql.exec(`SELECT run_id FROM workflow_dispatches`).toArray()).toHaveLength(0);
       } finally { fail.mockRestore(); local.DOCUMENTS = previous; }

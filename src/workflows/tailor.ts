@@ -60,7 +60,7 @@ export class TailorWorkflow extends WorkflowEntrypoint<Env, TailorParams> {
           if (input.facts.length === 0)
             throw new AppError(
               "invalid",
-              "confirm some facts before tailoring a resume",
+              "Confirm some facts before tailoring a resume.",
             );
           const selection =
             input.selection ??
@@ -86,7 +86,7 @@ export class TailorWorkflow extends WorkflowEntrypoint<Env, TailorParams> {
           if (input.selection!.factIds.length === 0) {
             throw new AppError(
               "invalid",
-              "none of your confirmed facts match this job yet",
+              "None of your confirmed facts match this job yet. Add facts that cover its requirements, then tailor a new version.",
             );
           }
           const draft =
