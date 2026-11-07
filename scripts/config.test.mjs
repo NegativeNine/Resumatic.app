@@ -422,7 +422,7 @@ test("release gates require passing evidence for the exact candidate commit", as
     unresolvedFailures: 0,
   });
   Object.assign(evidence.latency, { p95Seconds: 70, sampleSize: 100 });
-  Object.assign(evidence.security, { openHighFindings: 0 });
+  Object.assign(evidence.security, { openHighFindings: 0, openCriticalFindings: 0 });
   Object.assign(evidence.billing, {
     testModePassed: true,
     livePaymentPassed: true,
@@ -460,9 +460,18 @@ test("release gates require passing evidence for the exact candidate commit", as
   };
   try {
     assert.equal(run({}).status, 2);
+    for (const security of [
+      { ...evidence.security, openHighFindings: 1 },
+      { ...evidence.security, openCriticalFindings: 1 },
+      { ...evidence.security, openCriticalFindings: undefined },
+      { ...evidence.security, openCriticalFindings: null },
+      { ...evidence.security, openCriticalFindings: -1 },
+      { ...evidence.security, openCriticalFindings: "0" },
+    ]) assertMissing({ ...evidence, security }, "SECURITY_FINDINGS");
     // An operator attestation and environment flag cannot manufacture the
     // complete Workflow inventory that the deletion audit cannot yet prove.
     assert.equal(run(evidence).status, 2);
+    assert.ok(!JSON.parse(run(evidence).stdout).missing.includes("SECURITY_FINDINGS"));
     assert.deepEqual(
       JSON.parse(await readFile(join(directory, "release-report.json"), "utf8")).missing,
       ["DELETION_INVENTORY_AUDIT_UNAVAILABLE", "MANUAL_RESUME_EDIT_GROUNDING_UNAVAILABLE"],

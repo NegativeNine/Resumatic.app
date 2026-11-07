@@ -375,7 +375,7 @@ describe("private extraction evaluation evidence", () => {
     } });
     Object.assign(evidence.ats, { syntheticPdfPassed: true, syntheticDocxPassed: true, externalParsersTested: 2, unresolvedFailures: 0 });
     Object.assign(evidence.latency, { p95Seconds: 1, sampleSize: 1 });
-    Object.assign(evidence.security, { openHighFindings: 0 });
+    Object.assign(evidence.security, { openHighFindings: 0, openCriticalFindings: 0 });
     Object.assign(evidence.billing, { testModePassed: true, livePaymentPassed: true, liveCancellationPassed: true });
     Object.assign(evidence.betaOperations, {
       quietDays: 14, unexplainedAlerts: 0,

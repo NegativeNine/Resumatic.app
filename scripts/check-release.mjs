@@ -238,7 +238,9 @@ try {
     evidence.ats?.unresolvedFailures !== 0
   )
     report.missing.push("ATS_VALIDATION");
-  if (evidence.security?.openHighFindings !== 0)
+  // Critical findings are more severe than high findings. Both counts must
+  // be explicit so a high-only report cannot silently omit a critical issue.
+  if (evidence.security?.openHighFindings !== 0 || evidence.security?.openCriticalFindings !== 0)
     report.missing.push("SECURITY_FINDINGS");
   if (
     evidence.billing?.testModePassed !== true ||
