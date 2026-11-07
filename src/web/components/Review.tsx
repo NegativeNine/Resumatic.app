@@ -158,7 +158,7 @@ function EmptyReview({ filter, vault }: { filter: ReviewState; vault: Vault }) {
   }
   return (
     <p className="empty">
-      You're all caught up: nothing is waiting for review. Next, <a href={href.applications}>add a job</a> and tailor
+      You're all caught up: nothing is waiting for review. Next, <a href={href.jobs}>add a job</a> and tailor
       a resume to it.
     </p>
   );

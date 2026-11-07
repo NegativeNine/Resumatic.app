@@ -1,0 +1,80 @@
+/*
+ * The app's own layout and the glue between its pages and the rs- components. Loaded last, so it
+ * wins over the v1 rules in styles.css while those are being replaced.
+ */
+
+/* Page frame: the header, main and footer share the design system's app width. */
+
+.page {
+  max-width: var(--layout-app);
+  padding: var(--space-12) var(--space-6) var(--space-16);
+}
+
+/* Header (AppHeader) */
+
+.app-nav {
+  display: flex;
+  align-self: stretch;
+}
+
+/* .rs-brand svg sets display: block, so these need the extra class to win. */
+.rs-brand svg.app-brand-mark {
+  display: none;
+  height: 18px;
+}
+
+/* An output that is in progress counts toward the allowance but isn't spent yet. */
+.rs-quota__ticks i.is-reserved {
+  background: var(--pencil);
+  opacity: 1;
+}
+
+.app-quota-small {
+  display: none;
+}
+
+/* Footer */
+
+.app-footer-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-6);
+}
+
+@media (max-width: 600px) {
+  .page {
+    padding: var(--space-8) var(--space-4) var(--space-12);
+  }
+
+  .rs-header__inner {
+    gap: var(--space-3);
+    padding: 0 var(--space-4);
+  }
+
+  .rs-brand svg.app-brand-lockup {
+    display: none;
+  }
+
+  .rs-brand svg.app-brand-mark {
+    display: block;
+  }
+
+  .rs-nav a {
+    padding: 0 var(--space-2);
+  }
+
+  /* The quota leaves the header for the top of Jobs. */
+  .rs-header__end {
+    display: none;
+  }
+
+  .app-quota-small {
+    display: flex;
+    margin-bottom: var(--space-6);
+    white-space: normal;
+  }
+
+  .rs-footer {
+    padding: var(--space-6) var(--space-4) var(--space-8);
+  }
+}

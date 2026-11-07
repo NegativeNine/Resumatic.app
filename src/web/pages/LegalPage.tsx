@@ -86,7 +86,7 @@ function Privacy() {
         <ul>
           <li>
             <strong>See and correct it:</strong> every fact, role and profile detail can be edited or rejected under{" "}
-            <a href={href.sources}>Sources & facts</a> and <a href={href.account}>Account</a>.
+            <a href={href.facts}>Facts</a> and <a href={href.account}>Account</a>.
           </li>
           <li>
             <strong>Take it with you:</strong> the data export under Account downloads everything in your account, with

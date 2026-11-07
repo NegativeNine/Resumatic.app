@@ -58,7 +58,7 @@ export function GapsCard({ gaps }: { gaps: string[] }) {
           </ul>
           <p className="hint">
             These are possible gaps in the confirmed facts used when this draft was made, not a coverage check on the current resume. If you do have this
-            experience, <a href={href.sources}>add it under Sources & facts</a>, then tailor a new version.
+            experience, <a href={href.facts}>add it under Facts</a>, then tailor a new version.
           </p>
         </>
       )}

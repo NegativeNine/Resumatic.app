@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { count, formatBytes, formatDateRange, formatMonth, formatMonthAfter } from "../../src/web/format";
+import {
+  count,
+  formatBytes,
+  formatDate,
+  formatDateRange,
+  formatDateTime,
+  formatDayMonthAfter,
+  formatMonth,
+  formatMonthAfter,
+} from "../../src/web/format";
 
 describe("dates", () => {
   it("shows a stored month as a short month and year", () => {
@@ -19,8 +28,23 @@ describe("dates", () => {
     expect(formatDateRange(null, null)).toBe("");
   });
 
-  it("has no next month for a value that isn't a month", () => {
+  it("gives the first day of the next month, across a year end", () => {
+    expect(formatMonthAfter("2026-11")).toBe("1 Dec 2026");
+    expect(formatMonthAfter("2026-12")).toBe("1 Jan 2027");
+    expect(formatDayMonthAfter("2026-11")).toBe("1 Dec");
     expect(formatMonthAfter("soon")).toBeNull();
+    expect(formatMonthAfter("2026-13")).toBeNull();
+  });
+
+  it("shows dates and times as the voice guide writes them, in any locale", () => {
+    const morning = new Date(2026, 10, 7, 9, 42).getTime();
+    const evening = new Date(2026, 10, 7, 21, 5).getTime();
+    const midnight = new Date(2026, 10, 7, 0, 15).getTime();
+    expect(formatDate(morning)).toBe("7 Nov 2026");
+    expect(formatDateTime(morning)).toBe("7 Nov 2026, 9:42 AM");
+    expect(formatDateTime(evening)).toBe("7 Nov 2026, 9:05 PM");
+    expect(formatDateTime(midnight)).toBe("7 Nov 2026, 12:15 AM");
+    expect(formatDate(morning / 1000)).toBe("7 Nov 2026");
   });
 });
 

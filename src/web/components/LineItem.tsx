@@ -283,7 +283,7 @@ function LineEditor({
           <legend>Supporting facts{roleId ? " for this role" : ""}</legend>
           {factsError && <p className="alert" role="alert">We couldn't load confirmed facts. Close this editor and try again.</p>}
           {!factsError && availableFacts === null && <p className="meta">Loading confirmed facts…</p>}
-          {availableFacts?.length === 0 && <p className="meta">No confirmed facts are available for this line. Add or confirm a relevant fact in Sources &amp; facts first.</p>}
+          {availableFacts?.length === 0 && <p className="meta">No confirmed facts are available for this line. Add or confirm a relevant fact under Facts first.</p>}
           {availableFacts?.map((fact) => (
             <label key={fact.id}>
               <input type="checkbox" checked={selectedFacts.has(fact.id)}

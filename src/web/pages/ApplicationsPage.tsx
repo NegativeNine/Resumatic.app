@@ -21,6 +21,7 @@ import {
 } from "../components/ui";
 import { formatDate, formatDateTime, RESUME_STATE_LABEL } from "../format";
 import { useAction, useResource, type Reload } from "../hooks";
+import { QuotaMeter } from "../components/QuotaMeter";
 import { href } from "../router";
 import { useSession } from "../session";
 import { quotaMessage, useTailor } from "../tailor";
@@ -83,11 +84,13 @@ export function ApplicationsPage() {
 
   return (
     <>
-      <PageHeader title="Applications">
+      <PageHeader title="Jobs">
         Paste a job description, then tailor a resume to it. Every line comes
         from facts you've confirmed under{" "}
-        <a href={href.sources}>Sources & facts</a>.
+        <a href={href.facts}>Facts</a>.
       </PageHeader>
+      {/* On small screens the quota leaves the header for the top of Jobs. */}
+      <QuotaMeter className="app-quota-small" />
       {quota.used >= quota.limit && (
         <p className="notice">{quotaMessage(quota)}</p>
       )}
@@ -98,11 +101,11 @@ export function ApplicationsPage() {
       </section>
 
       <section className="section" aria-labelledby="applications-heading">
-        <h2 id="applications-heading">Your applications</h2>
+        <h2 id="applications-heading">Your jobs</h2>
         {applications.length > 0 && (
           <div className="row-between">
             <div className="application-filter">
-              <label htmlFor={filterId}>Application status</label>
+              <label htmlFor={filterId}>Status</label>
               <select
                 id={filterId}
                 value={status}
@@ -126,7 +129,7 @@ export function ApplicationsPage() {
                 ))}
               </select>
             </div>
-            <div className="actions" role="group" aria-label="Application view">
+            <div className="actions" role="group" aria-label="Job view">
               <button
                 type="button"
                 className="small"
@@ -148,20 +151,20 @@ export function ApplicationsPage() {
         )}
         {list.error && <ErrorNote message={list.error} onRetry={list.reload} />}
         {!list.data && !list.error && (
-          <Loading>Loading your applications…</Loading>
+          <Loading>Loading your jobs…</Loading>
         )}
         {extraWorkspace && <p className="hint" role="status">Open workspaces remain visible even when their status does not match the filter.</p>}
         {list.data &&
           (applications.length === 0 ? (
             <p className="empty">
-              No applications yet. Paste a job description above to start your
-              first one.
+              No jobs yet. Paste a job description above to start your first
+              one.
             </p>
           ) : (
             <>
-              {visible.length === 0 && <p className="empty">No applications have this status yet.</p>}
+              {visible.length === 0 && <p className="empty">No jobs have this status yet.</p>}
               <div hidden={visible.length === 0} className={view === "board" ? "application-board-scroller" : undefined} role={view === "board" ? "region" : undefined}
-                aria-label={view === "board" ? "Applications by status" : undefined} tabIndex={view === "board" ? 0 : undefined}>
+                aria-label={view === "board" ? "Jobs by status" : undefined} tabIndex={view === "board" ? 0 : undefined}>
                 <ul className={`plain-list${view === "board" ? " application-board" : ""}`}
                   style={view === "board" ? { "--application-columns": columns.length } as CSSProperties : undefined}>
                   {content}

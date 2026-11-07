@@ -377,9 +377,9 @@ if (!browser?.startsWith("/")) {
     stage = "review_lock_released_on_navigation";
     await clickText("button", "Edit role");
     await wait(`!!document.querySelector('.group form input[id$="-title"]')`);
-    await evalPage(`location.hash = '#/applications'`);
+    await evalPage(`location.hash = '#/jobs'`);
     await wait(`!!document.getElementById('job-heading')`);
-    await evalPage(`location.hash = '#/sources'`);
+    await evalPage(`location.hash = '#/facts'`);
     await wait(`document.body?.innerText.includes('Ready · 1 role and 1 fact to review')`);
     if (await evalPage(`document.querySelector('fieldset.segmented')?.disabled || !!document.querySelector('.group form input[id$="-title"]')`)) throw new Error("REVIEW_LOCK_SURVIVED_NAVIGATION");
     stage = "fact_draft_during_refresh";
@@ -458,7 +458,7 @@ if (!browser?.startsWith("/")) {
     if (state.manualRoles.length !== 1 || state.manualRoleKeys.length !== 2 || state.manualRoleKeys[0] !== state.manualRoleKeys[1]) throw new Error("MANUAL_ROLE_RETRY_KEY_MISMATCH");
     stage = "application";
     const jobText = "Synthetic platform engineer position requiring experience building reliable payment services and APIs.";
-    await clickText("nav a", "Applications"); await wait(`!!document.querySelector('textarea')`); await evalPage(`document.querySelector('textarea').focus()`); await call("Input.insertText", { text: jobText });
+    await clickText("nav a", "Jobs"); await wait(`!!document.querySelector('textarea')`); await evalPage(`document.querySelector('textarea').focus()`); await call("Input.insertText", { text: jobText });
     await clickText("button", "Save job");
     let finishJob = await waitForRelease(() => releaseJob); releaseJob = undefined;
     await wait(`document.querySelector('form.card textarea')?.readOnly`);
@@ -503,7 +503,7 @@ if (!browser?.startsWith("/")) {
     // Keep a DOM reference and focus to detect loss of the editor itself.
     await clickText("button", "Board");
     await wait(`!!document.querySelector('.application-board-scroller')`);
-    if (!await evalPage(`(() => { const region = document.querySelector('[aria-label="Applications by status"]'); region.focus(); region.scrollLeft = 100; return document.activeElement === region && region.tabIndex === 0 && region.scrollWidth > region.clientWidth && region.scrollLeft > 0; })()`)) throw new Error("BOARD_NOT_KEYBOARD_SCROLLABLE");
+    if (!await evalPage(`(() => { const region = document.querySelector('[aria-label="Jobs by status"]'); region.focus(); region.scrollLeft = 100; return document.activeElement === region && region.tabIndex === 0 && region.scrollWidth > region.clientWidth && region.scrollLeft > 0; })()`)) throw new Error("BOARD_NOT_KEYBOARD_SCROLLABLE");
     await evalPage(`(() => { const s = document.querySelector('.application-filter select'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(s, 'applied'); s.dispatchEvent(new Event('change', { bubbles: true })); const e = document.querySelector('.application-workspace textarea'); e.focus(); window.__trackerDraft = e; })()`);
     state.applications[0].status = "interview"; state.applications[0].revision++;
     await evalPage(`window.dispatchEvent(new Event('resumatic:vault-change'))`);
@@ -707,7 +707,7 @@ if (!browser?.startsWith("/")) {
     await wait(`document.body?.innerText.includes('This link is currently unavailable.')`);
     if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Revoke link')`)) throw new Error("SHARE_REVOKE_MISSING");
     if (!await evalPage(`!!document.querySelector('a[href="/api/export/archive"]')`)) throw new Error("ARCHIVE_LINK_MISSING");
-    if (!await evalPage(`!!document.querySelector('a[href="/api/export"]') && [...document.querySelectorAll('a[href="#/sources"]')].some(x => x.textContent.includes('Sources & facts'))`)) throw new Error("EXPORT_DOWNLOAD_LINKS_MISSING");
+    if (!await evalPage(`!!document.querySelector('a[href="/api/export"]') && [...document.querySelectorAll('a[href="#/facts"]')].some(x => x.textContent.includes('Facts'))`)) throw new Error("EXPORT_DOWNLOAD_LINKS_MISSING");
     stage = "resource_reload";
     if (!await evalPage(`import('/test/support/resource-browser.tsx').then(m => m.checkResourceReload())`)) throw new Error("RESOURCE_RELOAD_DID_NOT_SETTLE");
     stage = "share_retry";

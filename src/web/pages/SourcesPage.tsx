@@ -10,7 +10,7 @@ export function SourcesPage() {
 
   return (
     <>
-      <PageHeader title="Sources & facts">
+      <PageHeader title="Facts">
         Upload your resume or CV. Resumatic breaks it into roles and facts, each with the exact words it came from.
         Only the facts you confirm are ever used in a tailored resume.
       </PageHeader>
