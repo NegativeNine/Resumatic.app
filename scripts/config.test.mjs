@@ -337,6 +337,45 @@ test("staging MCP preflight accepts the inherited root compatibility flag", asyn
   }
 });
 
+test("test-signin-only preflight waives Google only for explicitly enabled staging", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "resumatic-test-signin-config-"));
+  const configPath = join(directory, "wrangler.jsonc");
+  const vars = {
+    CF_ACCOUNT_ID: "account",
+    ACCESS_TEAM_DOMAIN: "https://access.example.test",
+    ACCESS_AUD: "aud",
+    AI_GATEWAY_ID: "gateway",
+    DAILY_SPEND_CAP_USD: "1",
+    ALLOW_TEST_SIGNIN: "true",
+  };
+  const bindings = {
+    r2_buckets: [{ binding: "FILES" }],
+    workflows: ["DISTILL", "TAILOR", "DOCUMENTS", "REEMBED"].map((binding) => ({ binding })),
+  };
+  const config = { vars: { ...vars, ALLOW_TEST_SIGNIN: "false" }, ...bindings, env: { staging: { vars, ...bindings } } };
+  const env = { CLOUDFLARE_API_TOKEN: "token", CLOUDFLARE_ACCOUNT_ID: "account" };
+  const check = (options = {}) => validate({ purpose: "deploy", env, configPath, ...options });
+  try {
+    await writeFile(configPath, JSON.stringify(config));
+    assert.ok((await check()).missing.includes("vars.OIDC_CLIENT_ID"));
+    assert.equal((await check({ testSigninOnly: true })).status, "ready");
+    const production = await check({ environment: "production", testSigninOnly: true });
+    assert.ok(production.missing.includes("TEST_SIGNIN_ONLY_STAGING_DEPLOY_REQUIRED"));
+    assert.ok(production.missing.includes("vars.OIDC_CLIENT_ID"));
+
+    config.env.staging.vars.ALLOW_TEST_SIGNIN = "false";
+    config.env.staging.vars.ACCESS_TEAM_DOMAIN = "";
+    config.env.staging.vars.ACCESS_AUD = "";
+    config.env.staging.vars.DAILY_SPEND_CAP_USD = "0";
+    await writeFile(configPath, JSON.stringify(config));
+    const missing = (await check({ testSigninOnly: true })).missing;
+    for (const name of ["vars.ALLOW_TEST_SIGNIN", "vars.ACCESS_TEAM_DOMAIN", "vars.ACCESS_AUD", "vars.DAILY_SPEND_CAP_USD"])
+      assert.ok(missing.includes(name), name);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("release gates require passing evidence for the exact candidate commit", async () => {
   const directory = await mkdtemp(join(tmpdir(), "resumatic-release-"));
   const commit = "a".repeat(40);

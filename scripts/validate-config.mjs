@@ -36,10 +36,14 @@ export async function validate({
   purpose = "deploy",
   env = process.env,
   configPath = "wrangler.jsonc",
+  testSigninOnly = false,
 } = {}) {
   if (!["deploy", "eval", "e2e"].includes(purpose))
     throw new Error("purpose must be deploy, eval or e2e");
   const missing = [];
+  const stagingTestOnly = testSigninOnly === true && environment === "staging" && purpose === "deploy";
+  if (testSigninOnly && !stagingTestOnly)
+    missing.push("TEST_SIGNIN_ONLY_STAGING_DEPLOY_REQUIRED");
   if (purpose !== "deploy") missing.push(...livePrerequisites(env, purpose));
   if (purpose === "e2e") {
     const { config } = await readConfig(environment, configPath);
@@ -54,12 +58,15 @@ export async function validate({
     const { root, config } = await readConfig(environment, configPath);
     for (const name of [
       "CF_ACCOUNT_ID",
-      "OIDC_CLIENT_ID",
       "ACCESS_TEAM_DOMAIN",
       "ACCESS_AUD",
       "AI_GATEWAY_ID",
     ])
       if (!config.vars?.[name]?.trim()) missing.push(`vars.${name}`);
+    if (!stagingTestOnly && !config.vars?.OIDC_CLIENT_ID?.trim())
+      missing.push("vars.OIDC_CLIENT_ID");
+    if (stagingTestOnly && config.vars?.ALLOW_TEST_SIGNIN !== "true")
+      missing.push("vars.ALLOW_TEST_SIGNIN");
     for (const name of ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"])
       if (!env[name]?.trim()) missing.push(name);
     if (
@@ -139,6 +146,7 @@ export async function validate({
     status: missing.length ? "pending" : "ready",
     purpose,
     environment,
+    ...(stagingTestOnly ? { testSigninOnly: true } : {}),
     checkedAt: new Date().toISOString(),
     commit: env.GITHUB_SHA ?? null,
     missing,
@@ -159,6 +167,7 @@ if (
     const report = await validate({
       environment: value("--environment", "staging"),
       purpose: value("--purpose", "deploy"),
+      testSigninOnly: args.includes("--test-signin-only"),
     });
     const serialized = JSON.stringify(report, null, 2) + "\n";
     if (value("--report"))

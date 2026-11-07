@@ -29,6 +29,8 @@ node scripts/validate-config.mjs --environment staging --purpose deploy --report
 
 The preflight reports `ready` or `pending`; readiness is configuration evidence only. Gateway payload headers do not control every logging destination. Inspect gateway logs, Worker logs and any Logpush configuration using synthetic data before allowing real career uploads. Leave body collection and caching disabled. Model recordings must also contain synthetic data only.
 
+For a staging-only deployment using the secret-protected test sign-in before Google is configured, add `--test-signin-only` to the deploy preflight. This requires `ALLOW_TEST_SIGNIN=true`; it does not waive Cloudflare Access or spend checks and is rejected for production. Without Google configuration, Google sign-in remains unavailable and must still be verified before release. The flag only changes preflight; it does not disable a Google client that is already configured.
+
 Deployment and staging lifecycle preflight require a finite positive `DAILY_SPEND_CAP_USD` in the selected Worker configuration. The committed value is zero, so paid work remains disabled until the operator sets a cap. Bind all four per-Vault Workflows (`DISTILL`, `TAILOR`, `DOCUMENTS`, `REEMBED`). The public production workflow also refuses configured restore fences; maintenance deploys follow the fenced replacement procedure below.
 
 ## Billing configuration
