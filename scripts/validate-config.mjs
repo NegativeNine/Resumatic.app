@@ -38,16 +38,20 @@ export async function validate({
   configPath = "wrangler.jsonc",
   testSigninOnly = false,
   smokeOnly = false,
+  smokeGoogle = false,
 } = {}) {
   if (!["deploy", "eval", "e2e"].includes(purpose))
     throw new Error("purpose must be deploy, eval or e2e");
   const missing = [];
   const stagingTestOnly = testSigninOnly === true && environment === "staging" && purpose === "deploy";
   const stagingSmoke = smokeOnly === true && environment === "staging" && purpose === "deploy";
+  const stagingSmokeGoogle = smokeGoogle === true && stagingSmoke;
   if (testSigninOnly && !stagingTestOnly)
     missing.push("TEST_SIGNIN_ONLY_STAGING_DEPLOY_REQUIRED");
   if (smokeOnly && !stagingSmoke)
     missing.push("SMOKE_ONLY_STAGING_DEPLOY_REQUIRED");
+  if (smokeGoogle && !stagingSmokeGoogle)
+    missing.push("SMOKE_GOOGLE_REQUIRES_STAGING_SMOKE_DEPLOY");
   if (purpose !== "deploy") missing.push(...livePrerequisites(env, purpose));
   if (purpose === "e2e") {
     const { config } = await readConfig(environment, configPath);
@@ -67,9 +71,12 @@ export async function validate({
     if ((stagingTestOnly || stagingSmoke) && config.vars?.ALLOW_TEST_SIGNIN !== "true")
       missing.push("vars.ALLOW_TEST_SIGNIN");
     if (stagingSmoke) {
-      // Google sign-in remains unavailable. Access can be disabled or fully
-      // configured; a partial or malformed pair must fail the preflight.
-      if (config.vars?.OIDC_CLIENT_ID !== undefined && config.vars.OIDC_CLIENT_ID !== "")
+      // Google sign-in is disabled unless explicitly selected for this smoke
+      // deploy. Access must be absent or a complete, valid pair.
+      const clientId = config.vars?.OIDC_CLIENT_ID;
+      if (stagingSmokeGoogle && (typeof clientId !== "string" || !clientId || clientId !== clientId.trim()))
+        missing.push("SMOKE_GOOGLE_REQUIRES_OIDC_CLIENT_ID");
+      if (!stagingSmokeGoogle && clientId !== undefined && clientId !== "")
         missing.push("SMOKE_REQUIRES_EMPTY_OIDC_CLIENT_ID");
       const team = config.vars?.ACCESS_TEAM_DOMAIN;
       const audience = config.vars?.ACCESS_AUD;
@@ -167,6 +174,7 @@ export async function validate({
     environment,
     ...(stagingTestOnly ? { testSigninOnly: true } : {}),
     ...(stagingSmoke ? { smokeOnly: true } : {}),
+    ...(stagingSmokeGoogle ? { smokeGoogle: true } : {}),
     checkedAt: new Date().toISOString(),
     commit: env.GITHUB_SHA ?? null,
     missing,
@@ -189,6 +197,7 @@ if (
       purpose: value("--purpose", "deploy"),
       testSigninOnly: args.includes("--test-signin-only"),
       smokeOnly: args.includes("--smoke-only"),
+      smokeGoogle: args.includes("--smoke-google"),
     });
     const serialized = JSON.stringify(report, null, 2) + "\n";
     if (value("--report"))

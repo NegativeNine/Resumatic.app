@@ -396,6 +396,18 @@ test("smoke-only preflight requires a staging-only non-model configuration", asy
   try {
     await writeFile(configPath, JSON.stringify(config));
     assert.equal((await check({ smokeOnly: true })).status, "ready");
+    assert.ok((await check({ smokeOnly: true, smokeGoogle: true })).missing.includes("SMOKE_GOOGLE_REQUIRES_OIDC_CLIENT_ID"));
+    vars.OIDC_CLIENT_ID = "google-client";
+    await writeFile(configPath, JSON.stringify(config));
+    assert.ok((await check({ smokeOnly: true })).missing.includes("SMOKE_REQUIRES_EMPTY_OIDC_CLIENT_ID"));
+    assert.equal((await check({ smokeOnly: true, smokeGoogle: true })).status, "ready");
+    assert.ok((await check({ smokeGoogle: true })).missing.includes("SMOKE_GOOGLE_REQUIRES_STAGING_SMOKE_DEPLOY"));
+    assert.ok((await check({ environment: "production", smokeOnly: true, smokeGoogle: true })).missing.includes("SMOKE_GOOGLE_REQUIRES_STAGING_SMOKE_DEPLOY"));
+    assert.ok((await check({ purpose: "e2e", smokeOnly: true, smokeGoogle: true })).missing.includes("SMOKE_GOOGLE_REQUIRES_STAGING_SMOKE_DEPLOY"));
+    vars.OIDC_CLIENT_ID = " ";
+    await writeFile(configPath, JSON.stringify(config));
+    assert.ok((await check({ smokeOnly: true, smokeGoogle: true })).missing.includes("SMOKE_GOOGLE_REQUIRES_OIDC_CLIENT_ID"));
+    vars.OIDC_CLIENT_ID = "";
     vars.ACCESS_TEAM_DOMAIN = "https://team.cloudflareaccess.com";
     vars.ACCESS_AUD = "example-audience";
     await writeFile(configPath, JSON.stringify(config));
