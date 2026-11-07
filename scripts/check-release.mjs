@@ -10,6 +10,7 @@ import { validExtractorId } from "../src/pipeline/extract/ids.mjs";
 import { workflowInventoryAuditCapability } from "./lib/deletion-audit.mjs";
 import { extractionConfiguration } from "../test/extract-evals/configuration.mjs";
 import { modelIndependence } from "./lib/model-independence.mjs";
+import { SEED_KINDS, SEED_VERSION } from "../test/evals/seed-kinds.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const required = [
   "models",
@@ -133,6 +134,41 @@ async function validExtractionConfiguration(extraction) {
     return false;
   }
 }
+/** Validate reviewer-attested seeded measurements against this source and model configuration.
+ * This checks consistency, not the authenticity of the report or provider responses. */
+function validSeededEvidence(grounding, commit) {
+  try {
+    const seeded = grounding?.seeded;
+    const baseline = seeded?.baseline;
+    if (!seeded || seeded.mode !== "live" || seeded.commit !== commit || seeded.seedVersion !== SEED_VERSION ||
+        !["staging", "production"].includes(seeded.environment) || !hex256(seeded.sourceConfigurationHash) ||
+        !baseline || !count(baseline.cases, 1) || !count(baseline.inputLines, 1) ||
+        !count(baseline.outputLines, 1) || baseline.outputLines > baseline.inputLines ||
+        baseline.deterministicViolations !== 0 || !Array.isArray(seeded.seeds) || seeded.seeds.length !== SEED_KINDS.length)
+      return false;
+    const expected = new Set(SEED_KINDS);
+    for (const row of seeded.seeds) {
+      if (!row || !expected.delete(row.kind) || !count(row.planted, 1) || !count(row.caught, 0) ||
+          !count(row.uncertain, 0) || row.caught + row.uncertain > row.planted ||
+          !count(row.skipped, 0) || row.planted + row.skipped !== baseline.cases ||
+          row.failed !== 0 || row.notRun !== 0 || !finite(row.catchRate) || row.catchRate !== row.caught / row.planted)
+        return false;
+    }
+    if (expected.size) return false;
+    const opts = { root, priceOverrides: {} };
+    const tested = extractionConfiguration(["llm:default"], seeded.environment, opts);
+    const production = extractionConfiguration(["llm:default"], "production", opts);
+    const sameModels = (a, b) => a && typeof a === "object" && !Array.isArray(a) &&
+      JSON.stringify(Object.entries(a).sort(([x], [y]) => x.localeCompare(y))) ===
+      JSON.stringify(Object.entries(b).sort(([x], [y]) => x.localeCompare(y)));
+    return tested.hash === seeded.sourceConfigurationHash && sameModels(seeded.models, tested.models) &&
+      sameModels(tested.models, production.models) &&
+      JSON.stringify(tested.behavior) === JSON.stringify(production.behavior);
+  } catch {
+    return false;
+  }
+}
+
 try {
   const evidence = JSON.parse(process.env.RELEASE_EVIDENCE_JSON ?? "{}");
   if (!/^[a-f0-9]{40}$/.test(report.commit ?? ""))
@@ -186,6 +222,8 @@ try {
     !count(evidence.grounding?.evaluatedLines, 1)
   )
     report.missing.push("GROUNDING_MEASUREMENTS");
+  if (!validSeededEvidence(evidence.grounding, report.commit))
+    report.missing.push("SEEDED_FABRICATION_MEASUREMENTS");
   if (
     !(finite(evidence.latency?.p95Seconds) && evidence.latency.p95Seconds > 0 && evidence.latency.p95Seconds < 90) ||
     !count(evidence.latency?.sampleSize, 1)

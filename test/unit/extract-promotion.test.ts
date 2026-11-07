@@ -20,6 +20,7 @@ import {
 import { candidateKey, assessPromotion } from "../extract-evals/promotion.mjs";
 import { scoreCase } from "../extract-evals/score";
 import { extractionConfiguration } from "../extract-evals/configuration.mjs";
+import { SEED_KINDS, SEED_VERSION } from "../evals/seed-kinds.mjs";
 
 // These are synthetic test doubles, including mock consent and audit attestations;
 // no applicant documents, real consent records, model calls, or real promotion are involved.
@@ -365,7 +366,13 @@ describe("private extraction evaluation evidence", () => {
     Object.assign(evidence.models, { writerModel: models.MODEL_WRITE, judgeModel: models.MODEL_JUDGE, writerFamily: "claude", judgeFamily: "gpt" });
     const metrics = report.results[0]!.metrics;
     Object.assign(evidence.extraction, { trapLeaks: 0, unsupportedClaims: 0, evaluatedUploads: metrics.cases, failureRate: metrics.failureRate, factRecall: metrics.recall, factPrecision: metrics.precision, promotion: report, priceOverrides: process.env.EVAL_MODEL_PRICES ? JSON.parse(process.env.EVAL_MODEL_PRICES) : {} });
-    Object.assign(evidence.grounding, { unsupportedClaims: 0, evaluatedLines: 1 });
+    const seededConfig = extractionConfiguration(["llm:default"], "staging", { priceOverrides: {} });
+    Object.assign(evidence.grounding, { unsupportedClaims: 0, evaluatedLines: 1, seeded: {
+      mode: "live", commit, environment: "staging", seedVersion: SEED_VERSION,
+      sourceConfigurationHash: seededConfig.hash, configurationHash: "c".repeat(64), datasetHash: "d".repeat(64), models: seededConfig.models,
+      baseline: { cases: 1, inputLines: 1, outputLines: 1, deterministicViolations: 0 },
+      seeds: SEED_KINDS.map((kind) => ({ kind, planted: 1, caught: 1, uncertain: 0, catchRate: 1, skipped: 0, failed: 0, notRun: 0 })),
+    } });
     Object.assign(evidence.ats, { syntheticPdfPassed: true, syntheticDocxPassed: true, externalParsersTested: 2, unresolvedFailures: 0 });
     Object.assign(evidence.latency, { p95Seconds: 1, sampleSize: 1 });
     Object.assign(evidence.security, { openHighFindings: 0 });

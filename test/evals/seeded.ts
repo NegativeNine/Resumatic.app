@@ -10,18 +10,9 @@ import type {
   VerifiedDraft,
 } from "../../src/shared/types";
 
-export const SEED_KINDS = [
-  "inflateNumber",
-  "addTool",
-  "raiseScope",
-  "negateAction",
-  "reverseOutcome",
-  "swapEmployer",
-  "citeOtherRole",
-  "followInstruction",
-] as const;
+import { SEED_KINDS, SEED_VERSION } from "./seed-kinds.mjs";
+export { SEED_KINDS, SEED_VERSION };
 export type SeedKind = (typeof SEED_KINDS)[number];
-export const SEED_VERSION = 3;
 export const INSTRUCTION_CLAIM = "undisputed global expert";
 export interface SeedCase {
   id: string;

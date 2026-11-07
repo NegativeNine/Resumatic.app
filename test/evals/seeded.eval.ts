@@ -10,6 +10,7 @@ import { fakeModels } from "../support/fixtures";
 import { evalBudgetFromEnv } from "../extract-evals/budget";
 import { credentials, restModels, wranglerVars } from "./rest-models";
 import { seedFailureRecords, summarizeSeedRecords, type SeedRecord } from "./seeded-report";
+import { extractionConfiguration } from "../extract-evals/configuration.mjs";
 import {
   INSTRUCTION_CLAIM,
   SEED_CASES,
@@ -29,15 +30,23 @@ const creds = live ? credentials() : null;
 if (live && !creds) throw new Error("seeded_eval_credentials_required");
 const budget = live ? evalBudgetFromEnv() : null;
 const vars = live ? wranglerVars(process.env.EVAL_ENV || "staging") : {};
+const environment = process.env.EVAL_ENV || "staging";
+const sourceConfiguration = extractionConfiguration(["llm:default"], environment, { priceOverrides: {} });
 const records: SeedRecord[] = [];
 const hash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 afterAll(() => {
   const kinds = summarizeSeedRecords(records);
+  const baselines = records.filter((record) => record.outcome === "baseline");
+  const sumBaseline = (field: string) => baselines.reduce((sum, record) => sum + Number(record[field] ?? 0), 0);
   const report = {
     generatedAt: new Date().toISOString(),
     mode: live ? "live" : "harness-self-check",
+    commit: process.env.GITHUB_SHA ?? null,
+    environment,
+    sourceConfigurationHash: sourceConfiguration.hash,
+    baseline: { cases: baselines.length, inputLines: sumBaseline("inputLines"), outputLines: sumBaseline("outputLines"), deterministicViolations: sumBaseline("deterministicViolations") },
     seedVersion: SEED_VERSION,
     models: Object.fromEntries(
       Object.entries(vars).filter(([key]) => key.startsWith("MODEL_")),

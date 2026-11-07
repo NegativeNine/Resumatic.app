@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { extractionConfiguration } from "../test/extract-evals/configuration.mjs";
+import { SEED_KINDS, SEED_VERSION } from "../test/evals/seed-kinds.mjs";
 import { configuredExtractors } from "./lib/extractor-routes.mjs";
 import { validEvaluationSecretNames, validProductionSecretNames } from "./lib/release-secret-names.mjs";
 
@@ -402,9 +403,17 @@ test("release gates require passing evidence for the exact candidate commit", as
       }],
     },
   });
+  const seededConfig = extractionConfiguration(["llm:default"], "staging", { root: fileURLToPath(new URL("../", import.meta.url)), priceOverrides: {} });
   Object.assign(evidence.grounding, {
     unsupportedClaims: 0,
     evaluatedLines: 100,
+    seeded: {
+      mode: "live", commit, environment: "staging", seedVersion: SEED_VERSION,
+      sourceConfigurationHash: seededConfig.hash, configurationHash: "c".repeat(64), datasetHash: "d".repeat(64),
+      models: seededConfig.models,
+      baseline: { cases: 3, inputLines: 9, outputLines: 7, deterministicViolations: 0 },
+      seeds: SEED_KINDS.map((kind) => ({ kind, planted: 2, caught: 1, uncertain: 0, catchRate: 0.5, skipped: 1, failed: 0, notRun: 0 })),
+    },
   });
   Object.assign(evidence.ats, {
     syntheticPdfPassed: true,
@@ -458,6 +467,25 @@ test("release gates require passing evidence for the exact candidate commit", as
       JSON.parse(await readFile(join(directory, "release-report.json"), "utf8")).missing,
       ["DELETION_INVENTORY_AUDIT_UNAVAILABLE", "MANUAL_RESUME_EDIT_GROUNDING_UNAVAILABLE"],
     );
+    // Seeded coverage must be a complete live measurement bound to this
+    // commit and configuration; a synthetic harness report cannot promote.
+    const seeded = evidence.grounding.seeded;
+    for (const patch of [
+      { mode: "harness-self-check" }, { commit: "b".repeat(40) }, { environment: "invalid" },
+      { sourceConfigurationHash: "f".repeat(64) },
+      { seedVersion: SEED_VERSION + 1 }, { models: { ...seeded.models, MODEL_JUDGE: "different/model" } },
+      { baseline: { ...seeded.baseline, cases: 0 } }, { baseline: { ...seeded.baseline, outputLines: 0 } },
+      { baseline: { ...seeded.baseline, deterministicViolations: 1 } }, { seeds: [] },
+      { seeds: [...seeded.seeds.slice(0, -1), seeded.seeds[0]] },
+      { seeds: [{ ...seeded.seeds[0], planted: 0 }, ...seeded.seeds.slice(1)] },
+      { seeds: [{ ...seeded.seeds[0], caught: 3 }, ...seeded.seeds.slice(1)] },
+      { seeds: [{ ...seeded.seeds[0], uncertain: 2 }, ...seeded.seeds.slice(1)] },
+      { seeds: [{ ...seeded.seeds[0], catchRate: 1 }, ...seeded.seeds.slice(1)] },
+      { seeds: [{ ...seeded.seeds[0], failed: 1 }, ...seeded.seeds.slice(1)] },
+      { seeds: [{ ...seeded.seeds[0], notRun: 1 }, ...seeded.seeds.slice(1)] },
+      { seeds: [{ ...seeded.seeds[0], skipped: 0 }, ...seeded.seeds.slice(1)] },
+    ]) assertMissing({ ...evidence, grounding: { ...evidence.grounding, seeded: { ...seeded, ...patch } } }, "SEEDED_FABRICATION_MEASUREMENTS");
+    assertMissing({ ...evidence, grounding: { ...evidence.grounding, seeded: undefined } }, "SEEDED_FABRICATION_MEASUREMENTS");
     for (const [patch, reason] of [
       [{ unexplainedAlerts: 1 }, "BETA_UNEXPLAINED_ALERTS"],
       [{ unexplainedAlerts: "0" }, "BETA_UNEXPLAINED_ALERTS"],
