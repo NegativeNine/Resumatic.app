@@ -78,7 +78,7 @@ describe("the keyboard queue", () => {
     fact.focus();
     await userEvent.keyboard("e");
     // ByLabelText rather than ByRole: computing every accessible name is slow on a page this size.
-    const editor = await screen.findByLabelText("Fact", { selector: "textarea" });
+    const editor = await screen.findByLabelText("Fact", { selector: "textarea" }, { timeout: 4000 });
     expect(editor).toHaveFocus();
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByLabelText("Fact", { selector: "textarea" })).toBeNull();

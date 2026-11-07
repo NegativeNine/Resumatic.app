@@ -76,9 +76,12 @@ export function ReviewQueue({ children }: { children: ReactNode }) {
     if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.repeat || isTyping(e.target)) return;
     const key = e.key.toLowerCase();
     if (!KEYS.has(key)) return;
+    // The focused item is the active one, even if its focus hasn't re-rendered the queue yet.
+    const focused = e.target instanceof HTMLElement ? e.target.closest<HTMLElement>("[data-queue-item]")?.dataset.queueItem : undefined;
+    const current = focused ?? activeId;
     if (key === "j" || key === "k") {
       const shown = nodes();
-      const index = shown.findIndex((n) => n.dataset.queueItem === activeId);
+      const index = shown.findIndex((n) => n.dataset.queueItem === current);
       const next = shown[key === "j" ? index + 1 : Math.max(0, index - 1)];
       if (!next) return;
       e.preventDefault();
@@ -86,7 +89,7 @@ export function ReviewQueue({ children }: { children: ReactNode }) {
       setActiveId(next.dataset.queueItem ?? null);
       return;
     }
-    const actions = activeId ? items.current.get(activeId)?.() : undefined;
+    const actions = current ? items.current.get(current)?.() : undefined;
     const run = key === "c" ? actions?.confirm : key === "e" ? actions?.edit : actions?.reject;
     if (!run) return;
     e.preventDefault();
