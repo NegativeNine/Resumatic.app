@@ -265,42 +265,6 @@ main:focus {
 
 /* Signed out and loading */
 
-.splash {
-  display: grid;
-  place-items: center;
-  min-height: 100vh;
-  padding: 2rem 1.25rem;
-}
-
-.welcome {
-  width: 100%;
-  max-width: 36rem;
-  padding: 2.5rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
-}
-
-.welcome h1 {
-  font-size: 2.1rem;
-}
-
-.welcome .lede {
-  margin: 0.8rem 0 1.6rem;
-}
-
-.welcome .notice,
-.welcome .alert {
-  margin: 0 0 1.25rem;
-}
-
-.fine-print {
-  margin-top: 1.25rem;
-  font-size: 0.88rem;
-  color: var(--muted);
-}
-
 /* Account */
 
 .option-row {
@@ -337,9 +301,6 @@ main:focus {
     padding: 1.1rem;
   }
 
-  .welcome {
-    padding: 1.75rem 1.35rem;
-  }
 }
 
 /* Adding roles and facts */

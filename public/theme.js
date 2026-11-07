@@ -2,8 +2,8 @@
 // It runs as a separate file because the Content-Security-Policy allows no inline scripts.
 // src/web/theme.ts stores the choice and keeps this logic in step while the app runs.
 (function () {
-  // Off until the Appearance setting ships: then a person with no stored choice follows the OS.
-  var FOLLOW_SYSTEM = false;
+  // A person with no stored choice follows the operating system (Account > Appearance).
+  var FOLLOW_SYSTEM = true;
   var choice = null;
   try {
     choice = window.localStorage.getItem("resumatic:theme");

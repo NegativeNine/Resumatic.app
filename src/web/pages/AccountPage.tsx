@@ -1,13 +1,14 @@
 import { useId, useState, type ChangeEvent } from "react";
 import type { Profile } from "../../shared/api";
 import { api, ApiError } from "../api";
-import { ActionError, Field, PageHeader } from "../components/ui";
+import { ActionError, Field, Glyph, PageHeader } from "../components/ui";
 import { BillingTools, CoachSharingTools } from "../components/AccountTools";
 import { ConnectedApps } from "../components/ConnectedApps";
 import { useAction } from "../hooks";
 import { href } from "../router";
 import { useSession } from "../session";
 import { isProfileSnapshot, profileWriteObserved } from "../profile-save";
+import { getThemeChoice, setThemeChoice, type ThemeChoice } from "../theme";
 
 const CONFIRM_PHRASE = "delete my account";
 const DELETION_NOTE =
@@ -20,28 +21,87 @@ export function AccountPage() {
       <PageHeader title="Account" />
       <div className="stack">
         <ProfileForm />
+        <Appearance />
         <BillingTools />
         <CoachSharingTools />
         {me.capabilities?.connectedApps && <ConnectedApps />}
         <SignOutCard />
         <section className="card" aria-labelledby="data-heading">
           <h2 id="data-heading">Your data</h2>
-          <p className="card-text">
-            Download your vault data and source files together as a ZIP archive.
-            The archive supports up to 128 source files and 100 MiB of data.
-            For larger vaults, download the JSON and individual files from
-            {" "}<a href={href.facts}>Facts</a> while your account is active.
-          </p>
-          <a className="button primary" href={api.exportArchiveUrl} download>
-            Download vault archive (ZIP)
-          </a>{" "}
-          <a className="button" href={api.exportUrl} download>
-            Download vault data (JSON)
-          </a>
+          <div className="rs-setting">
+            <p className="rs-setting__text">
+              <strong>Everything</strong>
+              <span>
+                Your vault data and source files together, as a ZIP archive. It holds up to 128 source files and
+                100 MiB of data.
+              </span>
+            </p>
+            <a className="rs-btn" href={api.exportArchiveUrl} download>
+              <Glyph name="download" />
+              Download vault archive (ZIP)
+            </a>
+          </div>
+          <div className="rs-setting">
+            <p className="rs-setting__text">
+              <strong>Vault data only</strong>
+              <span>
+                One JSON file. For a larger vault, download this and the individual files from{" "}
+                <a href={href.facts}>Facts</a> while your account is active.
+              </span>
+            </p>
+            <a className="rs-btn" href={api.exportUrl} download>
+              <Glyph name="download" />
+              Download vault data (JSON)
+            </a>
+          </div>
         </section>
         <DeleteAccount />
       </div>
     </>
+  );
+}
+
+const THEMES: { value: ThemeChoice; label: string }[] = [
+  { value: "system", label: "Match system" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
+
+/** Light, dark, or whatever the device uses. The choice is kept in this browser. */
+function Appearance() {
+  const [choice, setChoice] = useState<ThemeChoice>(() => getThemeChoice());
+  const choose = (next: ThemeChoice) => {
+    setChoice(next);
+    setThemeChoice(next);
+  };
+  return (
+    <section className="card" aria-labelledby="appearance-heading">
+      <h2 id="appearance-heading">Appearance</h2>
+      <div className="rs-setting">
+        <p className="rs-setting__text">
+          <strong>Theme</strong>
+          <span>
+            The resume preview stays white in every theme, because it shows what prints. The choice is kept in this
+            browser.
+          </span>
+        </p>
+        <fieldset className="rs-filter">
+          <legend>Theme</legend>
+          {THEMES.map((theme) => (
+            <label key={theme.value}>
+              <input
+                type="radio"
+                name="theme"
+                value={theme.value}
+                checked={choice === theme.value}
+                onChange={() => choose(theme.value)}
+              />
+              <span className="rs-filter__opt">{theme.label}</span>
+            </label>
+          ))}
+        </fieldset>
+      </div>
+    </section>
   );
 }
 
@@ -229,16 +289,20 @@ function SignOutCard() {
   return (
     <section className="card" aria-labelledby="sign-out-heading">
       <h2 id="sign-out-heading">Signing out</h2>
-      <div className="option-row">
-        <p>Sign out of Resumatic on this device.</p>
+      <div className="rs-setting">
+        <p className="rs-setting__text">
+          <strong>This device</strong>
+          <span>Sign out of Resumatic on this device.</span>
+        </p>
         <button type="button" onClick={() => void signOut()} disabled={busy}>
           {here.pending ? "Signing out…" : "Sign out"}
         </button>
       </div>
       <ActionError message={here.error} />
-      <div className="option-row">
-        <p>
-          Sign out on every device where you're signed in, including this one.
+      <div className="rs-setting">
+        <p className="rs-setting__text">
+          <strong>Every device</strong>
+          <span>Sign out on every device where you're signed in, including this one.</span>
         </p>
         <button
           type="button"

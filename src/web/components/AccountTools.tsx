@@ -85,7 +85,7 @@ export function BillingTools() {
                 >
                   {data.plans.map((plan) => (
                     <option key={plan.id} value={plan.id}>
-                      {plan.id} · {plan.generationLimit} outputs per billing
+                      {plan.id}: {plan.generationLimit} outputs per billing
                       period
                     </option>
                   ))}
@@ -244,11 +244,11 @@ export function CoachSharingTools() {
               <li className="option-row" key={grant.id}>
                 <div>
                   <p>
-                    {grant.factCount} facts · {grant.resumeCount} resume
+                    {grant.factCount} facts and {grant.resumeCount} resume
                     versions
                   </p>
                   <p className="meta">
-                    Created {formatDateTime(grant.createdAt)} · expires{" "}
+                    Created {formatDateTime(grant.createdAt)}, expires{" "}
                     {formatDateTime(grant.expiresAt)}
                   </p>
                   {active && grant.available === false && (
@@ -429,8 +429,8 @@ function ShareSelection({
                       <span>
                         {resume.title}
                         <span className="meta">
-                          {" "}
-                          · {formatDateTime(resume.createdAt)}
+                          {", "}
+                          {formatDateTime(resume.createdAt)}
                         </span>
                       </span>
                     </label>
@@ -498,7 +498,7 @@ function ShareVersionPicker({
         {values.map((saved) => (
           <option value={saved.version} key={saved.version}>
             Version {saved.version}
-            {saved.createdAt ? ` · ${formatDateTime(saved.createdAt)}` : ""}
+            {saved.createdAt ? `, saved ${formatDateTime(saved.createdAt)}` : ""}
           </option>
         ))}
       </select>

@@ -7,9 +7,9 @@ export const THEME_KEY = "resumatic:theme";
 
 /**
  * Whether a person with no stored choice follows the operating system. Keep in step with
- * FOLLOW_SYSTEM in public/theme.js. Off until the Appearance setting ships on Account.
+ * FOLLOW_SYSTEM in public/theme.js.
  */
-export const FOLLOW_SYSTEM = false;
+export const FOLLOW_SYSTEM = true;
 
 const DARK_QUERY = "(prefers-color-scheme: dark)";
 
