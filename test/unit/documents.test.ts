@@ -120,12 +120,8 @@ function models(
         });
       if (route === "judge") {
         if (options.judgeError) throw new Error("judge unavailable");
-        const ids = [
-          ...messages
-            .map((m) => m.content)
-            .join("\n")
-            .matchAll(/^(L\d+):/gm),
-        ].map((match) => match[1]!);
+        const user = messages.find((m) => m.role === "user")?.content ?? "";
+        const ids = (JSON.parse(user) as { lines: { id: string }[] }).lines.map((line) => line.id);
         return schema.parse({
           verdicts: ids.map((id) => ({
             id,
