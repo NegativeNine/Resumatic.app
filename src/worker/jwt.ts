@@ -5,6 +5,7 @@ export interface JwtClaims {
   aud?: string | string[];
   sub?: string;
   exp?: number;
+  nbf?: number;
   iat?: number;
   nonce?: string;
   email?: string;
@@ -70,6 +71,11 @@ export async function verifyJwt(
   if (!claims.iss || !opts.issuers.includes(claims.iss)) throw new Error("unexpected token issuer");
   const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
   if (!audiences.includes(opts.audience)) throw new Error("unexpected token audience");
-  if (typeof claims.exp !== "number" || claims.exp + 60 < now) throw new Error("token expired");
+  if (typeof claims.exp !== "number" || !Number.isFinite(claims.exp) || claims.exp + 60 < now) throw new Error("token expired");
+  // Apply the same one-minute clock-skew allowance as expiration. An
+  // explicitly malformed not-before value cannot be treated as absent.
+  if (Object.hasOwn(claims, "nbf") &&
+      (typeof claims.nbf !== "number" || !Number.isFinite(claims.nbf) || claims.nbf > now + 60))
+    throw new Error("token not yet valid");
   return claims;
 }

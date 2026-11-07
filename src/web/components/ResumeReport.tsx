@@ -1,4 +1,5 @@
 import type { ResumeReport } from "../../shared/api";
+import { LINE_STATUS_HINT, LINE_STATUS_LABEL } from "../format";
 import { href } from "../router";
 import { Badge } from "./ui";
 
@@ -6,7 +7,7 @@ export function ReportCard({ report }: { report: ResumeReport }) {
   const stats = [
     ["Kept", report.kept],
     ["Repaired", report.repaired],
-    ["Replaced", report.replaced],
+    [LINE_STATUS_LABEL.replaced, report.replaced],
     ["Dropped", report.dropped],
   ] as const;
 
@@ -29,7 +30,7 @@ export function ReportCard({ report }: { report: ResumeReport }) {
           <Badge tone="repaired">Repaired</Badge> was fixed once so that it matches its facts.
         </li>
         <li>
-          <Badge tone="replaced">Replaced</Badge> was swapped for the wording of a fact it cites.
+          <Badge tone="replaced">{LINE_STATUS_LABEL.replaced}</Badge> {LINE_STATUS_HINT.replaced}.
         </li>
         <li>
           <Badge tone="dropped">Dropped</Badge> was left out, because no fact could back it.
@@ -45,9 +46,9 @@ export function ReportCard({ report }: { report: ResumeReport }) {
 export function GapsCard({ gaps }: { gaps: string[] }) {
   return (
     <section className="card gaps" aria-labelledby="gaps-heading">
-      <h2 id="gaps-heading">Requirements none of your confirmed facts cover</h2>
+      <h2 id="gaps-heading">Possible gaps identified when this draft was created</h2>
       {gaps.length === 0 ? (
-        <p>None. Every requirement Resumatic found in the job description is covered by a confirmed fact.</p>
+        <p>The initial matching found no potential gaps. Check the resume against the job description; matching does not guarantee every requirement appears in the resume.</p>
       ) : (
         <>
           <ul>
@@ -56,7 +57,7 @@ export function GapsCard({ gaps }: { gaps: string[] }) {
             ))}
           </ul>
           <p className="hint">
-            Resumatic never fills a gap by itself. The way to close one is to add a true fact: if you do have this
+            These are possible gaps in the confirmed facts used when this draft was made, not a coverage check on the current resume. If you do have this
             experience, <a href={href.sources}>add it under Sources & facts</a>, then tailor a new version.
           </p>
         </>

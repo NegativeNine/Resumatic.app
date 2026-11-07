@@ -187,14 +187,18 @@ export function fakeModels(o: FakeModelOptions = {}): Models {
         case "write":
           raw = fakeWrite(user, o);
           break;
-        case "judge":
+        case "judge": {
+          const input: unknown = JSON.parse(user);
+          const lines = Array.isArray(input) ? input : (input as { lines: unknown }).lines;
+          if (!Array.isArray(lines)) throw new Error("invalid judge fixture input");
           raw = {
-            verdicts: [...user.matchAll(/^(L\d+): (.*)$/gm)].map(([, id, text]) => {
-              const bad = (o.judgeRejects ?? []).some((s) => text!.includes(s));
+            verdicts: lines.map(({ id, text }: { id: string | number; text: string }) => {
+              const bad = (o.judgeRejects ?? []).some((s) => text.includes(s));
               return { id, verdict: bad ? "unsupported" : "supported", reason: bad ? "adds a claim the facts do not make" : "" };
             }),
           };
           break;
+        }
         case "repair": {
           const line = /^Line: (.*)$/m.exec(user)?.[1] ?? "";
           raw = { text: o.repairs?.[line] ?? line };

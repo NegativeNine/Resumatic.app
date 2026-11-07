@@ -15,15 +15,18 @@
 //   POST   /api/account/sign-out-everywhere   204
 //   POST   /api/sources                multipart field "file" (PDF or DOCX, at most 10 MB) -> 201 { sourceId }
 //   GET    /api/sources                { sources: SourceView[] }
-//   GET    /api/sources/:id/file       the original upload, as an attachment
+//   GET    /api/sources/:id/file       source object as an attachment (OCR sources contain JSON input)
+//   POST   /api/sources/:id/cancel     request cancellation of the current reading run
 //   GET    /api/roles                  { roles: RoleView[] }
 //   POST   /api/roles                  NewRole -> 201 { roleId }   (a role the uploads missed)
+//   POST   /api/v3/roles               NewRole + Idempotency-Key -> 201 { roleId }
 //   PATCH  /api/roles/:id              RolePatch -> 204
 //   GET    /api/facts?state=           { facts: FactView[] }
 //   POST   /api/facts                  NewFact -> 201 { factId }
 //   PATCH  /api/facts/:id              FactPatch -> 204          (new wording, another role, or both)
 //   POST   /api/review                 ReviewRequest -> 204   (role or fact IDs)
 //   POST   /api/applications           { jdText } -> 201 { applicationId }
+//   POST   /api/v2/applications        same, with an idempotency key
 //   GET    /api/applications           { applications: ApplicationView[] }
 //   POST   /api/applications/:id/resumes   202 { resumeId }
 //   GET    /api/resumes/:id            ResumeView               (poll while state is "running")
@@ -32,6 +35,7 @@
 //   GET    /api/resumes/:id/preview    text/html: exactly what the PDF prints
 //   GET    /api/export                 application/json attachment: everything in the vault, with
 //                                       links to the original uploads
+//   GET    /api/export/archive         streamed ZIP: vault.json and source objects (bounded)
 //
 // Errors are JSON: { error: ErrorCode, message: string }. A 4xx message is written for the user.
 // /auth/callback reports failures as /?error=<code>: "unauthenticated" (cancelled, expired or not
@@ -39,7 +43,8 @@
 // deleted) or "unavailable" (sign-in is not configured or Google could not be reached).
 //
 // Times (createdAt) are milliseconds since the epoch. Role dates are "YYYY-MM" or "YYYY" as the
-// source gave them; a null endDate means the role is current.
+// source gave them; a null endDate with a startDate means the role is current,
+// while two null dates mean that the dates are unknown.
 
 export type RoleKind = "job" | "education" | "project" | "volunteer";
 export type FactKind = "accomplishment" | "skill" | "credential";
@@ -50,9 +55,24 @@ export type ResumeState = "running" | "ready" | "failed";
 export type LineStatus = "kept" | "repaired" | "replaced" | "edited";
 export type FactOrigin = "extracted" | "user";
 
-export const ROLE_KINDS: readonly RoleKind[] = ["job", "education", "project", "volunteer"];
-export const FACT_KINDS: readonly FactKind[] = ["accomplishment", "skill", "credential"];
-export const LEVELS: readonly Level[] = ["contributed", "implemented", "led", "owned", "founded"];
+export const ROLE_KINDS: readonly RoleKind[] = [
+  "job",
+  "education",
+  "project",
+  "volunteer",
+];
+export const FACT_KINDS: readonly FactKind[] = [
+  "accomplishment",
+  "skill",
+  "credential",
+];
+export const LEVELS: readonly Level[] = [
+  "contributed",
+  "implemented",
+  "led",
+  "owned",
+  "founded",
+];
 
 /** Role dates: a year, or a year and month. */
 export const DATE_PATTERN = /^\d{4}(-(0[1-9]|1[0-2]))?$/;
@@ -63,6 +83,7 @@ export const MAX_FACT_CHARS = 600;
 export const MAX_LINE_CHARS = 300;
 
 export interface Profile {
+  revision?: number;
   name: string;
   email: string;
   phone: string;
@@ -71,6 +92,8 @@ export interface Profile {
 }
 
 export interface Quota {
+  reserved?: number;
+  periodEnd?: number;
   used: number;
   limit: number;
   /** Calendar month the count applies to, as "YYYY-MM" in UTC. */
@@ -78,12 +101,27 @@ export interface Quota {
 }
 
 export interface Me {
+  capabilities?: { ocr: boolean; connectedApps: boolean; roleDateUnknownEnd?: boolean };
   userId: string;
   profile: Profile;
   quota: Quota;
 }
 
 export interface SourceView {
+  /** Stopped reading run that can be retried without uploading the file again. */
+  retryRunId?: string;
+  /** The upload was saved, but starting its reading workflow is unconfirmed. */
+  dispatchUncertain?: boolean;
+  /** Cancellation was requested but has not yet been confirmed. */
+  cancellationPending?: boolean;
+  /** Number of page images submitted for OCR; null for ordinary PDFs and old sources.
+   * This does not assert the number of pages in the original PDF. */
+  conversionImageCount?: number | null;
+  conversionWarnings?: ("little-text" | "short-lines" | "no-structure")[];
+  origin?: "upload" | "ocr";
+  /** Original upload used to create an image-transcription source, if known. */
+  parentSourceId?: string | null;
+  extractor?: string | null;
   id: string;
   filename: string;
   state: SourceState;
@@ -94,26 +132,43 @@ export interface SourceView {
 }
 
 export interface RoleView {
+  revision?: number;
+  span?: [number, number] | null;
   id: string;
   kind: RoleKind;
   org: string;
   title: string | null;
   startDate: string | null;
+  /** Null with a start date means ongoing; both dates null means dates are unknown. */
   endDate: string | null;
+  /** A start whose end is unknown; startDate and endDate remain null for legacy clients. */
+  unknownEndStartDate?: string | null;
   state: ReviewState;
   quote: string | null;
   sourceId: string | null;
 }
 
 export interface RolePatch {
+  expectedRevision?: number;
   kind?: RoleKind;
   org?: string;
   title?: string | null;
   startDate?: string | null;
   endDate?: string | null;
+  unknownEndStartDate?: string | null;
 }
 
 export interface FactView {
+  /** An older level was retained for history but needs the owner's confirmation. */
+  levelNeedsReview?: boolean;
+  previousLevel?: Level;
+  /** Original user-authored interview answer; it is historical after a fact edit. */
+  interview?: import("./interview").InterviewProvenance | null;
+  evidenceOrigin?: "upload" | "ocr";
+  confidence?: number | null;
+  reviewReasons?: string[];
+  revision?: number;
+  span?: [number, number] | null;
   id: string;
   roleId: string | null;
   kind: FactKind;
@@ -133,12 +188,15 @@ export interface NewRole {
   title: string | null;
   startDate: string | null;
   endDate: string | null;
+  unknownEndStartDate?: string | null;
 }
 
-/** At least one field. Either change makes the fact the user's own claim. */
+/** At least one field. Any change makes the fact the user's own claim. */
 export interface FactPatch {
+  expectedRevision?: number;
   text?: string;
   roleId?: string | null;
+  level?: Level | null;
 }
 
 export interface NewFact {
@@ -149,11 +207,16 @@ export interface NewFact {
 }
 
 export interface ReviewRequest {
+  expectedRevisions?: Record<string, number>;
   confirm: string[];
   reject: string[];
 }
 
 export interface ApplicationView {
+  revision?: number;
+  status?: ApplicationStatus;
+  appliedAt?: string | null;
+  notes?: string;
   id: string;
   /** From Tailor's analyze step; null until the first resume for this job has been started. */
   company: string | null;
@@ -161,7 +224,7 @@ export interface ApplicationView {
   /** The start of the job description, at most about 100 characters. */
   excerpt: string;
   createdAt: number;
-  resumes: { id: string; state: ResumeState; createdAt: number }[];
+  resumes: { id: string; state: ResumeState; createdAt: number; dispatchUncertain?: boolean; cancellationPending?: boolean }[];
 }
 
 export interface ResumeLine {
@@ -178,6 +241,7 @@ export interface ResumeSection {
   title: string | null;
   startDate: string | null;
   endDate: string | null;
+  unknownEndStartDate?: string | null;
   lines: ResumeLine[];
 }
 
@@ -197,6 +261,15 @@ export interface ResumeReport {
 }
 
 export interface ResumeView {
+  /** The stored version is retained for the owner but cannot currently be exported or shared. */
+  needsGroundingReview?: boolean;
+  /** Fresh verification progress for an old version; earlier flags are not trusted. */
+  legacyReview?: { verifiedLineIds: string[]; totalLines: number; headersReady: boolean; skillsReady: boolean };
+  /** The request was saved, but starting its workflow is unconfirmed. */
+  dispatchUncertain?: boolean;
+  /** Cancellation was requested but has not yet been confirmed. */
+  cancellationPending?: boolean;
+  provenance?: "snapshot" | "legacy";
   id: string;
   applicationId: string;
   state: ResumeState;
@@ -216,3 +289,12 @@ export interface ApiErrorBody {
   error: string;
   message: string;
 }
+
+export const APPLICATION_STATUSES = [
+  "saved",
+  "applied",
+  "interview",
+  "offer",
+  "closed",
+] as const;
+export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number];

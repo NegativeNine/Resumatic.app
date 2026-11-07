@@ -34,6 +34,7 @@ export function describeError(e: unknown, words: ErrorWords = {}): string {
 // The codes /auth/callback can send (see src/shared/api.ts).
 const SIGN_IN_WORDS: ErrorWords = {
   unauthenticated: "Sign-in didn't finish. It may have been cancelled or taken too long. Please try again.",
+  conflict: "Sign-in needs to be restarted. Please try again.",
   forbidden:
     "This Google account can't sign in yet. During the beta, Resumatic needs an invitation for your email address, and the address must be verified with Google.",
   unavailable: "Sign-in isn't available right now. Please try again in a few minutes.",

@@ -1,6 +1,13 @@
 import { AppError } from "../shared/errors";
-import { base64url, randomToken, sha256, signToken, verifyToken } from "./crypto";
+import {
+  base64url,
+  randomToken,
+  sha256,
+  signToken,
+  verifyToken,
+} from "./crypto";
 import { verifyJwt } from "./jwt";
+import { requireFreshAuth } from "../shared/auth-expiry";
 
 export const GOOGLE = {
   authorize: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -17,6 +24,8 @@ interface PendingLogin {
   nonce: string;
   verifier: string;
   exp: number;
+  authEpoch: number;
+  returnTo?: string;
 }
 
 function redirectUri(origin: string): string {
@@ -30,13 +39,22 @@ function requireConfig(env: Env): void {
 }
 
 /** Starts sign-in: a state, a nonce and a PKCE verifier go into a short-lived signed cookie. */
-export async function beginLogin(env: Env, origin: string): Promise<{ location: string; cookie: string }> {
+export async function beginLogin(
+  env: Env,
+  origin: string,
+  returnTo?: string,
+  authEpoch?: number,
+): Promise<{ location: string; cookie: string }> {
   requireConfig(env);
+  if (!Number.isSafeInteger(authEpoch) || authEpoch! < 0)
+    throw new AppError("unavailable", "sign-in coordinator is unavailable");
   const pending: PendingLogin = {
     state: randomToken(),
     nonce: randomToken(),
     verifier: randomToken(48),
     exp: Date.now() + OIDC_TTL_MS,
+    authEpoch: authEpoch!,
+    returnTo: safeReturnTo(returnTo),
   };
   const params = new URLSearchParams({
     client_id: env.OIDC_CLIENT_ID,
@@ -70,13 +88,19 @@ export async function finishLogin(
   query: URLSearchParams,
   cookieValue: string | undefined,
   fetcher: typeof fetch = fetch,
-): Promise<{ subject: string; email: string }> {
+): Promise<{ subject: string; email: string; authExpiryMs: number; authEpoch: number; returnTo?: string }> {
   requireConfig(env);
   const pending = await verifyToken<PendingLogin>(env.SESSION_KEY, cookieValue);
-  if (!pending || pending.exp < Date.now()) throw new AppError("unauthenticated", "sign-in took too long; try again");
-  if (query.get("error")) throw new AppError("unauthenticated", "sign-in was cancelled");
+  if (!pending)
+    throw new AppError("unauthenticated", "sign-in took too long; try again");
+  requireFreshAuth(pending.exp);
+  if (!Number.isSafeInteger(pending.authEpoch) || pending.authEpoch < 0)
+    throw new AppError("unauthenticated", "sign-in service changed; try again");
+  if (query.get("error"))
+    throw new AppError("unauthenticated", "sign-in was cancelled");
   const code = query.get("code");
-  if (!code || query.get("state") !== pending.state) throw new AppError("unauthenticated", "sign-in could not be verified");
+  if (!code || query.get("state") !== pending.state)
+    throw new AppError("unauthenticated", "sign-in could not be verified");
 
   const res = await fetcher(GOOGLE.token, {
     method: "POST",
@@ -90,9 +114,11 @@ export async function finishLogin(
       code_verifier: pending.verifier,
     }),
   });
-  if (!res.ok) throw new AppError("unauthenticated", "Google did not accept the sign-in");
+  if (!res.ok)
+    throw new AppError("unauthenticated", "Google did not accept the sign-in");
   const { id_token: idToken } = (await res.json()) as { id_token?: string };
-  if (!idToken) throw new AppError("unauthenticated", "Google returned no identity");
+  if (!idToken)
+    throw new AppError("unauthenticated", "Google returned no identity");
 
   let claims;
   try {
@@ -103,10 +129,58 @@ export async function finishLogin(
       fetcher: (u) => fetcher(u),
     });
   } catch {
-    throw new AppError("unauthenticated", "the identity token could not be verified");
+    throw new AppError(
+      "unauthenticated",
+      "the identity token could not be verified",
+    );
   }
-  if (claims.nonce !== pending.nonce) throw new AppError("unauthenticated", "sign-in could not be verified");
-  const verified = claims.email_verified === true || claims.email_verified === "true";
-  if (!claims.sub || !claims.email || !verified) throw new AppError("forbidden", "a verified email address is required");
-  return { subject: claims.sub, email: claims.email };
+  if (claims.nonce !== pending.nonce)
+    throw new AppError("unauthenticated", "sign-in could not be verified");
+  // Only this application's client ID is trusted as an ID-token audience.
+  // A token presented on behalf of another client must not establish a session.
+  const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+  if (
+    audiences.some((audience) => audience !== env.OIDC_CLIENT_ID) ||
+    (claims.azp !== undefined && claims.azp !== env.OIDC_CLIENT_ID)
+  )
+    throw new AppError("unauthenticated", "sign-in could not be verified");
+  const verified =
+    claims.email_verified === true || claims.email_verified === "true";
+  if (
+    typeof claims.sub !== "string" ||
+    !/^[\x21-\x7e]{1,255}$/.test(claims.sub) ||
+    typeof claims.email !== "string" ||
+    claims.email.length === 0 ||
+    claims.email.length > 320 ||
+    /[\x00-\x20\x7f]/.test(claims.email) ||
+    !verified
+  )
+    throw new AppError("forbidden", "a verified email address is required");
+  // Token exchange and JWKS retrieval can outlive the signed OAuth state.
+  requireFreshAuth(pending.exp);
+  return {
+    subject: claims.sub,
+    email: claims.email,
+    authExpiryMs: pending.exp,
+    authEpoch: pending.authEpoch,
+    ...(safeReturnTo(pending.returnTo)
+      ? { returnTo: safeReturnTo(pending.returnTo) }
+      : {}),
+  };
+}
+
+/** Only the local OAuth consent route may survive sign-in; never accept an arbitrary redirect. */
+export function safeReturnTo(value?: string): string | undefined {
+  if (!value || value.length > 8192 || /[\r\n\\]/.test(value)) return undefined;
+  try {
+    const url = new URL(value, "https://resumatic.invalid");
+    return url.origin === "https://resumatic.invalid" &&
+      value.startsWith("/") &&
+      url.pathname === "/oauth/authorize" &&
+      !url.hash
+      ? url.pathname + url.search
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }

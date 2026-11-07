@@ -1,0 +1,68 @@
+name: Deploy production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: node --test scripts/*.test.mjs
+      - run: npm audit --audit-level=high
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      RELEASE_EVIDENCE_JSON: ${{ vars.RELEASE_EVIDENCE_JSON }}
+      PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+      MAINTENANCE_ACTIVE: ${{ vars.MAINTENANCE_ACTIVE }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Preserve maintenance fence
+        run: test "$MAINTENANCE_ACTIVE" != "true"
+      - name: Require recorded live and external release gates for this commit
+        run: node scripts/check-release.mjs
+      - run: node scripts/validate-config.mjs --environment production --purpose deploy --report production-preflight.json
+      - name: Verify production secret names do not shadow evaluated configuration
+        run: |
+          npx wrangler secret list > production-secret-names.json
+          node --input-type=module -e 'import fs from "node:fs"; import {readConfig} from "./scripts/lib/config.mjs"; import {validProductionSecretNames} from "./scripts/lib/release-secret-names.mjs"; const secrets=JSON.parse(fs.readFileSync("production-secret-names.json","utf8")); const {config}=await readConfig("production"); if (!validProductionSecretNames(secrets,config.vars)) process.exit(1);'
+      # Production uses the top-level Wrangler configuration, not env.production.
+      - run: npm run build
+      - run: npx wrangler deploy
+      - name: Smoke test the configured production origin
+        run: |
+          node --input-type=module -e 'import {httpsOrigin} from "./scripts/lib/config.mjs"; const origin=httpsOrigin(process.env.PRODUCTION_URL); if(!origin) process.exit(1); const r=await fetch(`${origin}/api/health`,{redirect:"error",signal:AbortSignal.timeout(15000)}); if(!r.ok) process.exit(1);'
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: production-release-evidence
+          path: |
+            release-report.json
+            production-preflight.json
+          if-no-files-found: error

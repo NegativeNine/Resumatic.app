@@ -1,29 +1,42 @@
 import { useId, useState, type ChangeEvent } from "react";
 import type { Profile } from "../../shared/api";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { ActionError, Field, PageHeader } from "../components/ui";
+import { BillingTools, CoachSharingTools } from "../components/AccountTools";
+import { ConnectedApps } from "../components/ConnectedApps";
 import { useAction } from "../hooks";
+import { href } from "../router";
 import { useSession } from "../session";
+import { isProfileSnapshot, profileWriteObserved } from "../profile-save";
 
 const CONFIRM_PHRASE = "delete my account";
 const DELETION_NOTE =
   "Your account is being deleted. You've been signed out, and your uploads, facts, applications and resumes are being removed.";
 
 export function AccountPage() {
+  const { me } = useSession();
   return (
     <>
       <PageHeader title="Account" />
       <div className="stack">
         <ProfileForm />
+        <BillingTools />
+        <CoachSharingTools />
+        {me.capabilities?.connectedApps && <ConnectedApps />}
         <SignOutCard />
         <section className="card" aria-labelledby="data-heading">
           <h2 id="data-heading">Your data</h2>
           <p className="card-text">
-            Download everything in your vault as one JSON file: your profile, sources, roles, facts with their quotes,
-            applications and resumes.
+            Download your vault data and source files together as a ZIP archive.
+            The archive supports up to 128 source files and 100 MiB of data.
+            For larger vaults, download the JSON and individual files from
+            {" "}<a href={href.sources}>Sources &amp; facts</a> while your account is active.
           </p>
+          <a className="button primary" href={api.exportArchiveUrl} download>
+            Download vault archive (ZIP)
+          </a>{" "}
           <a className="button" href={api.exportUrl} download>
-            Download all my data
+            Download vault data (JSON)
           </a>
         </section>
         <DeleteAccount />
@@ -34,7 +47,10 @@ export function AccountPage() {
 
 type ProfileDraft = Omit<Profile, "links"> & { links: string };
 
-const toDraft = (profile: Profile): ProfileDraft => ({ ...profile, links: profile.links.join("\n") });
+const toDraft = (profile: Profile): ProfileDraft => ({
+  ...profile,
+  links: profile.links.join("\n"),
+});
 
 function ProfileForm() {
   const { me, updateMe } = useSession();
@@ -43,11 +59,13 @@ function ProfileForm() {
   const { run, pending, error } = useAction();
   const id = useId();
 
-  const edit = (key: keyof ProfileDraft) => (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const value = e.target.value;
-    setDraft((current) => ({ ...current, [key]: value }));
-    setSaved(false);
-  };
+  const edit =
+    (key: keyof ProfileDraft) =>
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const value = e.target.value;
+      setDraft((current) => ({ ...current, [key]: value }));
+      setSaved(false);
+    };
 
   async function save() {
     const profile: Profile = {
@@ -61,33 +79,88 @@ function ProfileForm() {
         .filter(Boolean),
     };
     const ok = await run(async () => {
-      const stored = (await api.updateProfile(profile)) ?? profile;
+      const revision = draft.revision;
+      if (!Number.isSafeInteger(revision) || revision! < 1 || revision! >= Number.MAX_SAFE_INTEGER)
+        throw new ApiError(409, "conflict", "Load the saved profile before saving your changes.");
+      let stored: Profile;
+      try {
+        stored = await api.updateProfile(profile, revision!);
+        if (!profileWriteObserved(stored, revision, profile))
+          throw new ApiError(502, "unavailable", "The response was incomplete.");
+      } catch (error) {
+        if (error instanceof ApiError && (error.status === 401 || error.status === 410)) throw error;
+        // A failed reply can follow a committed update. Only accept a fresh
+        // read at the next revision with exactly the submitted values.
+        let current: Profile;
+        try { current = await api.profile(); }
+        catch (readError) {
+          if (readError instanceof ApiError && (readError.status === 401 || readError.status === 410)) throw readError;
+          throw error;
+        }
+        if (!profileWriteObserved(current, revision, profile)) throw error;
+        stored = current;
+      }
       updateMe((current) => ({ ...current, profile: stored }));
       setDraft(toDraft(stored));
     });
     if (ok) setSaved(true);
   }
 
+  async function loadSaved() {
+    await run(async () => {
+      const current = await api.profile();
+      if (!isProfileSnapshot(current))
+        throw new ApiError(502, "unavailable", "The response was incomplete.");
+      updateMe((me) => ({ ...me, profile: current }));
+      setDraft(toDraft(current));
+      setSaved(false);
+    });
+  }
+
   return (
     <form
       className="card"
       aria-labelledby="profile-heading"
+      aria-busy={pending}
       onSubmit={(e) => {
         e.preventDefault();
         void save();
       }}
     >
       <h2 id="profile-heading">Profile</h2>
-      <p className="card-text meta">Your contact details, for the top of your resumes.</p>
+      <p className="card-text meta">
+        Your contact details, for the top of your resumes.
+      </p>
       <div className="field-grid">
         <Field id={`${id}-name`} label="Name">
-          <input id={`${id}-name`} type="text" autoComplete="name" value={draft.name} onChange={edit("name")} />
+          <input
+            id={`${id}-name`}
+            type="text"
+            autoComplete="name"
+            value={draft.name}
+            readOnly={pending}
+            onChange={edit("name")}
+          />
         </Field>
         <Field id={`${id}-email`} label="Email">
-          <input id={`${id}-email`} type="email" autoComplete="email" value={draft.email} onChange={edit("email")} />
+          <input
+            id={`${id}-email`}
+            type="email"
+            autoComplete="email"
+            value={draft.email}
+            readOnly={pending}
+            onChange={edit("email")}
+          />
         </Field>
         <Field id={`${id}-phone`} label="Phone">
-          <input id={`${id}-phone`} type="tel" autoComplete="tel" value={draft.phone} onChange={edit("phone")} />
+          <input
+            id={`${id}-phone`}
+            type="tel"
+            autoComplete="tel"
+            value={draft.phone}
+            readOnly={pending}
+            onChange={edit("phone")}
+          />
         </Field>
         <Field id={`${id}-location`} label="Location">
           <input
@@ -96,15 +169,21 @@ function ProfileForm() {
             autoComplete="address-level2"
             placeholder="City, country"
             value={draft.location}
+            readOnly={pending}
             onChange={edit("location")}
           />
         </Field>
       </div>
-      <Field id={`${id}-links`} label="Links" hint="One per line, such as your LinkedIn profile or portfolio.">
+      <Field
+        id={`${id}-links`}
+        label="Links"
+        hint="One per line, such as your LinkedIn profile or portfolio."
+      >
         <textarea
           id={`${id}-links`}
           rows={3}
           value={draft.links}
+          readOnly={pending}
           onChange={edit("links")}
           aria-describedby={`${id}-links-hint`}
         />
@@ -113,12 +192,16 @@ function ProfileForm() {
         <button type="submit" className="primary" disabled={pending}>
           {pending ? "Saving…" : "Save profile"}
         </button>
+        <button type="button" disabled={pending} onClick={() => void loadSaved()}>
+          Load saved profile
+        </button>
         {saved && (
           <p className="success inline" role="status">
             Profile saved.
           </p>
         )}
       </div>
+      <p className="hint">Loading the saved profile replaces your unsaved changes in this form.</p>
       <ActionError message={error} />
     </form>
   );
@@ -154,8 +237,14 @@ function SignOutCard() {
       </div>
       <ActionError message={here.error} />
       <div className="option-row">
-        <p>Sign out on every device where you're signed in, including this one.</p>
-        <button type="button" onClick={() => void signOutEverywhere()} disabled={busy}>
+        <p>
+          Sign out on every device where you're signed in, including this one.
+        </p>
+        <button
+          type="button"
+          onClick={() => void signOutEverywhere()}
+          disabled={busy}
+        >
           {everywhere.pending ? "Signing out…" : "Sign out everywhere"}
         </button>
       </div>
@@ -175,8 +264,10 @@ function DeleteAccount() {
     <section className="card danger-card" aria-labelledby="delete-heading">
       <h2 id="delete-heading">Delete account</h2>
       <p className="card-text">
-        This permanently deletes your account and everything in your vault: uploaded files, roles, facts, applications
-        and resumes. It can't be undone, so you may want to download your data first.
+        This permanently deletes your account and everything in your vault:
+        uploaded files, roles, facts, applications and resumes. It can't be
+        undone. Before deleting, download your vault data and any original files
+        you want to keep from <a href={href.sources}>Sources &amp; facts</a>.
       </p>
       <form
         onSubmit={(e) => {
@@ -200,7 +291,11 @@ function DeleteAccount() {
           spellCheck={false}
         />
         <div className="actions">
-          <button type="submit" className="danger" disabled={!confirmed || pending}>
+          <button
+            type="submit"
+            className="danger"
+            disabled={!confirmed || pending}
+          >
             {pending ? "Deleting…" : "Delete my account"}
           </button>
         </div>

@@ -46,7 +46,7 @@ describe("test sign-in (staging only)", () => {
 describe("invites", () => {
   it("are required for real sign-ups while sign-up is invite-only", async () => {
     const email = uniqueEmail("Stranger");
-    const google = { provider: "google" as const, subject: `g-${email}`, email, hint: "enam" as const };
+    const google = { provider: "google" as const, subject: `g-${email}`, email, hint: "enam" as const, authEpoch: await directory(env).googleAuthEpoch() };
     const refused = await directory(env)
       .signIn(google)
       .then(
@@ -213,6 +213,25 @@ describe("Google sign-in", () => {
     expect((await call("/api/me", { cookie: session! })).status).toBe(200);
   });
 
+  it("does not establish a session if another account was deleted after OAuth start", async () => {
+    const email = uniqueEmail("google-stale");
+    await directory(env).addInvite(email);
+    const google = await stubGoogle((nonce) => ({
+      iss: "https://accounts.google.com", aud: env.OIDC_CLIENT_ID,
+      sub: `google-${email}`, email, email_verified: true, nonce,
+      exp: nowSeconds() + 600,
+    }));
+    const otherEmail = uniqueEmail("other-account");
+    const other = await directory(env).signIn({ provider: "test", subject: otherEmail, email: otherEmail, hint: "enam" });
+    const { location, cookie } = await startLogin();
+    google.pending.nonce = location.searchParams.get("nonce")!;
+    await directory(env).deleteAccount(other.userId, other.vaultId);
+    const res = await call(`/auth/callback?code=good-code&state=${location.searchParams.get("state")}`, { cookie });
+    expect(res.headers.get("location")).toBe("/?error=conflict");
+    expect(cookieFrom(res, "__Host-session")).toBeNull();
+    expect(await directory(env).existingIdentity("google", `google-${email}`)).toBeNull();
+  });
+
   it("rejects a callback whose state does not match the cookie", async () => {
     await stubGoogle(() => ({}));
     const { cookie } = await startLogin();
@@ -228,9 +247,15 @@ describe("Google sign-in", () => {
     for (const [variant, expected] of [
       [(nonce: string) => ({ ...base, nonce: `${nonce}x` }), "unauthenticated"],
       [(nonce: string) => ({ ...base, nonce, aud: "someone-else" }), "unauthenticated"],
+      [(nonce: string) => ({ ...base, nonce, aud: [env.OIDC_CLIENT_ID, "untrusted-client"] }), "unauthenticated"],
+      [(nonce: string) => ({ ...base, nonce, azp: "untrusted-client" }), "unauthenticated"],
       [(nonce: string) => ({ ...base, nonce, iss: "https://evil.example" }), "unauthenticated"],
       [(nonce: string) => ({ ...base, nonce, exp: nowSeconds() - 3600 }), "unauthenticated"],
       [(nonce: string) => ({ ...base, nonce, email_verified: false }), "forbidden"],
+      [(nonce: string) => ({ ...base, nonce, sub: 42 }), "forbidden"],
+      [(nonce: string) => ({ ...base, nonce, sub: "" }), "forbidden"],
+      [(nonce: string) => ({ ...base, nonce, email: { value: email } }), "forbidden"],
+      [(nonce: string) => ({ ...base, nonce, email: "user\n@example.com" }), "forbidden"],
     ] as const) {
       const google = await stubGoogle(variant);
       const { location, cookie } = await startLogin();
@@ -239,6 +264,21 @@ describe("Google sign-in", () => {
       expect(res.headers.get("location")).toBe(`/?error=${expected}`);
       vi.unstubAllGlobals();
     }
+  });
+
+  it("accepts the configured client as the sole audience and authorized party", async () => {
+    const email = uniqueEmail("google-azp");
+    await directory(env).addInvite(email);
+    const google = await stubGoogle((nonce) => ({
+      iss: "https://accounts.google.com", aud: [env.OIDC_CLIENT_ID],
+      azp: env.OIDC_CLIENT_ID, sub: `google-${email}`, email,
+      email_verified: true, nonce, exp: nowSeconds() + 600,
+    }));
+    const { location, cookie } = await startLogin();
+    google.pending.nonce = location.searchParams.get("nonce")!;
+    const res = await call(`/auth/callback?code=good-code&state=${location.searchParams.get("state")}`, { cookie });
+    expect(res.headers.get("location")).toBe("/");
+    expect(cookieFrom(res, "__Host-session")).toBeTruthy();
   });
 
   it("refuses an uninvited Google account", async () => {
@@ -301,8 +341,15 @@ describe("admin", () => {
     expect(listed.invites.map((i) => i.email)).toContain(invitee.toLowerCase());
     expect((await testLogin(invitee.toLowerCase())).status).toBe(204);
 
-    expect((await call(`/admin/invites/${encodeURIComponent(invitee)}`, { method: "DELETE", headers })).status).toBe(204);
+    expect((await call(`/admin/invites/${encodeURIComponent(invitee)}`, { method: "DELETE", headers })).status).toBe(422);
+    const operation = crypto.randomUUID();
+    expect((await call(`/admin/invites/${encodeURIComponent(invitee)}`, { method: "DELETE", headers: { ...headers, "Idempotency-Key": operation } })).status).toBe(204);
+    expect((await call(`/admin/invites/revocations/${operation}`, { headers })).status).toBe(200);
     const after = (await (await call("/admin/invites", { headers })).json()) as { invites: { email: string }[] };
     expect(after.invites.map((i) => i.email)).not.toContain(invitee.toLowerCase());
+    expect((await call("/admin/invites", { method: "POST", headers, body: JSON.stringify({ email: invitee }) })).status).toBe(201);
+    expect((await call(`/admin/invites/${encodeURIComponent(invitee)}`, { method: "DELETE", headers: { ...headers, "Idempotency-Key": operation } })).status).toBe(204);
+    const reissued = (await (await call("/admin/invites", { headers })).json()) as { invites: { email: string }[] };
+    expect(reissued.invites.map((i) => i.email)).toContain(invitee.toLowerCase());
   });
 });

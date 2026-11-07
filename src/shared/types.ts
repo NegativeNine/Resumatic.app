@@ -1,8 +1,16 @@
-import type { FactKind, Level, LineStatus, ResumeBody, ResumeReport, RoleKind } from "./api";
+import type {
+  FactKind,
+  Level,
+  LineStatus,
+  ResumeBody,
+  ResumeReport,
+  RoleKind,
+} from "./api";
 import type { LocationHint } from "./location";
 
 /** The caller, taken from a verified session cookie. Every user call to a vault carries it. */
 export interface Who {
+  epoch?: string;
   userId: string;
   gen: number;
 }
@@ -12,6 +20,24 @@ export interface SignInInput {
   subject: string;
   email: string;
   hint: LocationHint;
+  /** Internal: expiry authenticated by the OAuth state cookie, in milliseconds. */
+  authExpiryMs?: number;
+  /** Directory epoch captured before the signed Google authorization was issued. */
+  authEpoch?: number;
+  /** Internal placement metadata supplied only by the Directory routing helper. */
+  homeShard?: number;
+  /** The global Directory has already authorized this new account's invite. */
+  inviteAuthorized?: boolean;
+  /** Internal: a routed existing identity must still belong to this user. */
+  expectedUserId?: string;
+  /** Internal: request whether this particular sign-in inserted the identity. */
+  reportCreation?: boolean;
+  /** Internal: opaque generation issued by the global coordinator for a new shard home. */
+  shardClaimToken?: string;
+  /** Internal immutable invitation authorization for a V3 shard claim. */
+  shardInviteClaim?: import("../directory/shard-invite-binding").ShardInviteClaim;
+  /** Internal experimental placement dispatch, reserved by the global Directory. */
+  placementAttempt?: import("../directory/placement-fence").PlacementAttempt;
 }
 
 export interface VaultRow {
@@ -26,6 +52,8 @@ export interface VaultRow {
 // ---- Distill ----
 
 export interface ExtractedRole {
+  span?: [number, number];
+  confidence?: number | null;
   /** A label the model gives the role so facts can point at it. */
   key: string;
   kind: RoleKind;
@@ -33,10 +61,14 @@ export interface ExtractedRole {
   title: string | null;
   startDate: string | null;
   endDate: string | null;
+  unknownEndStartDate?: string | null;
   quote: string;
 }
 
 export interface ExtractedFact {
+  reviewReasons?: string[];
+  span?: [number, number];
+  confidence?: number | null;
   roleKey: string | null;
   kind: FactKind;
   text: string;
@@ -52,6 +84,10 @@ export interface Extraction {
 // ---- Tailor ----
 
 export interface FactRecord {
+  revision?: number;
+  origin?: "extracted" | "user";
+  /** True only when the owner explicitly selected the level for this revision. */
+  levelExplicit?: boolean;
   id: string;
   roleId: string | null;
   kind: FactKind;
@@ -61,12 +97,14 @@ export interface FactRecord {
 }
 
 export interface RoleRecord {
+  revision?: number;
   id: string;
   kind: RoleKind;
   org: string;
   title: string | null;
   startDate: string | null;
   endDate: string | null;
+  unknownEndStartDate?: string | null;
 }
 
 export interface Analysis {

@@ -25,7 +25,8 @@ export function formatMonthAfter(value: string): string | null {
   return match ? dayUtc.format(Date.UTC(Number(match[1]), Number(match[2]), 1)) : null;
 }
 
-export function formatDateRange(start: string | null, end: string | null): string {
+export function formatDateRange(start: string | null, end: string | null, unknownEndStart?: string | null): string {
+  if (unknownEndStart) return `Start: ${formatMonth(unknownEndStart)} (end unknown)`;
   if (!start) return end ? formatMonth(end) : "";
   return `${formatMonth(start)} – ${end ? formatMonth(end) : "present"}`;
 }
@@ -88,13 +89,13 @@ export const RESUME_STATE_LABEL: Record<ResumeState, string> = {
 export const LINE_STATUS_LABEL: Record<LineStatus, string> = {
   kept: "Kept",
   repaired: "Repaired",
-  replaced: "Replaced",
+  replaced: "Used your fact",
   edited: "Edited",
 };
 
 export const LINE_STATUS_HINT: Record<LineStatus, string> = {
   kept: "Passed every check as written",
   repaired: "Fixed once so that it matches its facts",
-  replaced: "Swapped for the wording of a fact it cites",
+  replaced: "The draft wording could not be verified, so this line uses the wording of a confirmed fact",
   edited: "Changed by you",
 };

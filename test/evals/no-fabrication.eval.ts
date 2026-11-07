@@ -9,6 +9,7 @@ import type { FactRecord, RoleRecord } from "../../src/shared/types";
 import { topMatches, toUnit } from "../../src/vault/search";
 import { CASES } from "./cases";
 import { credentials, restModels, wranglerVars } from "./rest-models";
+import { requireCitedDraft, requireExpectedExtraction } from "./nonvacuity";
 
 // Runs each case through the real pipeline: extract, confirm everything, analyze, select, write,
 // verify, compose. Fails on any fabrication; writes eval-report.json with quality metrics.
@@ -26,6 +27,9 @@ describe.skipIf(!creds)("no fabrication", () => {
     const models = restModels(creds!, vars);
 
     const { extraction, dropped } = await extractFacts(models, c.resume);
+    // Each synthetic case contains roles and facts; empty extraction is not a
+    // successful absence-of-fabrication evaluation.
+    requireExpectedExtraction(extraction, { roles: [1], facts: [1] });
     for (const x of [...extraction.roles, ...extraction.facts]) expect(quoteIsVerbatim(c.resume, x.quote), x.quote).toBe(true);
 
     // The user confirms everything the extractor proposed.
@@ -45,6 +49,7 @@ describe.skipIf(!creds)("no fabrication", () => {
     const draft = await writeDraft(models, analysis, selection, facts, roles);
     const verified = await verifyDraft(models, draft, selection, facts);
     const body = composeBody(verified, roles, facts, selection);
+    requireCitedDraft(body);
 
     const byId = new Map(facts.map((f) => [f.id, f]));
     const selected = new Set([...selection.factIds, ...selection.skillIds]);

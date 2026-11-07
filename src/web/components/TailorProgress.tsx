@@ -7,7 +7,26 @@ const STEPS = [
 ] as const;
 
 /** Progress of a running Tailor run. `step` is the last step that finished. */
-export function TailorProgress({ step }: { step: string | null }) {
+export function TailorProgress({ step, dispatchUncertain, cancellationPending }: { step: string | null; dispatchUncertain?: boolean; cancellationPending?: boolean }) {
+  if (cancellationPending)
+    return (
+      <section className="card" aria-labelledby="progress-heading">
+        <h2 id="progress-heading">Tailoring your resume</h2>
+        <p role="status">
+          Cancellation is pending. Tailoring may still start or continue; please check back.
+        </p>
+      </section>
+    );
+  if (dispatchUncertain)
+    return (
+      <section className="card" aria-labelledby="progress-heading">
+        <h2 id="progress-heading">Tailoring your resume</h2>
+        <p role="status">
+          Your request was saved, but we can't confirm that tailoring started.
+          It may still begin; please check back.
+        </p>
+      </section>
+    );
   const done = STEPS.findIndex((s) => s.id === step) + 1;
   const current = Math.min(done, STEPS.length - 1);
 
