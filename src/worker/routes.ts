@@ -1368,6 +1368,16 @@ admin.delete("/invites/:email", async (c) => {
   return c.json({ ...result, operationId: operation }, 202);
 });
 
+admin.get("/invites/revocations", async (c) => {
+  const afterValues = c.req.queries("after"), limitValues = c.req.queries("limit");
+  if ((afterValues?.length ?? 0) > 1 || (limitValues?.length ?? 0) > 1)
+    throw new AppError("invalid", "invalid invitation inventory page");
+  const rawLimit = limitValues?.[0];
+  if (rawLimit !== undefined && !/^(?:[1-9]|[1-9]\d|100)$/.test(rawLimit))
+    throw new AppError("invalid", "invalid invitation inventory page");
+  return c.json(await directory(c.env).listInviteRevocations(afterValues?.[0] ?? null, rawLimit === undefined ? 25 : Number(rawLimit)));
+});
+
 admin.get("/invites/revocations/:operation", async (c) => {
   const result = await directory(c.env).inviteRevocationStatus(c.req.param("operation"));
   if (result.state === "unknown") throw new AppError("not_found", "invitation revocation not found");

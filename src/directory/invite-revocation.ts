@@ -369,6 +369,40 @@ export class InviteRevocation {
     return { state: "unknown" };
   }
 
+  /** Read-only inventory of pending operations; no email, subject, token or career data leaves the coordinator. */
+  listPending(after: string | null = null, limit = 25): {
+    operations: { operationId: string; phase: "active" | "quarantined" | "inventory"; remaining: number; orphans: number; inventoryPending?: true }[];
+    nextCursor: string | null;
+  } {
+    if (after !== null) this.validateOperation(after);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+      throw new AppError("invalid", "invalid invitation inventory page");
+    const rows = this.d.sql.exec<{ operation_id: string; phase: string }>(
+      `SELECT operation_id,phase FROM (
+         SELECT operation_id,'active' AS phase FROM invite_revocation_barrier
+         UNION ALL SELECT operation_id,'quarantined' FROM invite_revocation_quarantines
+         UNION ALL SELECT l.operation_id,'inventory' FROM invite_revocation_legacy_operations l
+           WHERE NOT EXISTS(SELECT 1 FROM invite_revocation_fences f WHERE f.operation_id=l.operation_id)
+       ) WHERE (? IS NULL OR operation_id>?) ORDER BY operation_id LIMIT ?`, after, after, limit + 1,
+    ).toArray();
+    const seen = new Set<string>();
+    for (const row of rows) {
+      if (typeof row.operation_id !== "string" || !uuid.test(row.operation_id) || seen.has(row.operation_id) ||
+          !["active", "quarantined", "inventory"].includes(row.phase))
+        throw new AppError("unavailable", "invitation inventory requires review");
+      seen.add(row.operation_id);
+    }
+    const operations = rows.slice(0, limit).map((row) => {
+      const status = this.status(row.operation_id);
+      if (status.state !== "pending" || !Number.isSafeInteger(status.remaining) || status.remaining < 0 ||
+          !Number.isSafeInteger(status.orphans) || status.orphans < 0 || status.orphans > status.remaining)
+        throw new AppError("unavailable", "invitation inventory requires review");
+      return { operationId: row.operation_id, phase: row.phase as "active" | "quarantined" | "inventory",
+        remaining: status.remaining, orphans: status.orphans, ...(status.inventoryPending ? { inventoryPending: true as const } : {}) };
+    });
+    return { operations, nextCursor: rows.length > limit ? operations.at(-1)!.operationId : null };
+  }
+
   private snapshotLocal(operation: string, email: string): void {
     // A local account can exist while its first bind is still waiting on
     // Vault.init. Preserve and report it: neither deletion nor adoption is

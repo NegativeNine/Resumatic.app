@@ -168,6 +168,11 @@ export class Directory extends DurableObject<Env> {
     return this.inviteRevocation.status(operation);
   }
 
+  async listInviteRevocations(after: string | null = null, limit = 25): Promise<ReturnType<InviteRevocation["listPending"]>> {
+    if (!this.isGlobal) throw new AppError("invalid", "invitation revocation requires the coordinator");
+    return this.inviteRevocation.listPending(after, limit);
+  }
+
   private get shardClaimRevocation(): ShardClaimRevocation {
     return new ShardClaimRevocation(this.sql, (fn) => this.ctx.storage.transactionSync(fn),
       (shard, userId) => this.ctx.id.equals(this.env.DIRECTORY.idFromName(`directory-${shard}`)) &&
