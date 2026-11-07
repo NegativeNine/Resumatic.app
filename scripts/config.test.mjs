@@ -419,7 +419,16 @@ test("release gates require passing evidence for the exact candidate commit", as
     livePaymentPassed: true,
     liveCancellationPassed: true,
   });
-  Object.assign(evidence.betaOperations, { quietDays: 14 });
+  Object.assign(evidence.betaOperations, {
+    quietDays: 14, unexplainedAlerts: 0,
+    reportedFabrications: 2, fabricationReportsWithPassingTests: 2,
+    uploadCostSamples: 3, resumeCostSamples: 4,
+    meanUploadCostUsd: 0.01, meanResumeCostUsd: 0.02,
+    extractionArms: [
+      { strategy: "llm:default", sources: 3, proposed: 12, confirmed: 9, edited: 4, windowComplete: true },
+      { strategy: "clairic", sources: 2, proposed: 10, confirmed: 8, edited: 2, windowComplete: true },
+    ],
+  });
   const run = (input) =>
     spawnSync(
       process.execPath,
@@ -449,6 +458,37 @@ test("release gates require passing evidence for the exact candidate commit", as
       JSON.parse(await readFile(join(directory, "release-report.json"), "utf8")).missing,
       ["DELETION_INVENTORY_AUDIT_UNAVAILABLE", "MANUAL_RESUME_EDIT_GROUNDING_UNAVAILABLE"],
     );
+    for (const [patch, reason] of [
+      [{ unexplainedAlerts: 1 }, "BETA_UNEXPLAINED_ALERTS"],
+      [{ unexplainedAlerts: "0" }, "BETA_UNEXPLAINED_ALERTS"],
+      [{ reportedFabrications: 3 }, "BETA_FABRICATION_REGRESSIONS"],
+      [{ fabricationReportsWithPassingTests: undefined }, "BETA_FABRICATION_REGRESSIONS"],
+      [{ reportedFabrications: -1 }, "BETA_FABRICATION_REGRESSIONS"],
+      [{ uploadCostSamples: 0 }, "BETA_COST_MEASUREMENTS"],
+      [{ resumeCostSamples: 1.5 }, "BETA_COST_MEASUREMENTS"],
+      [{ meanUploadCostUsd: -0.01 }, "BETA_COST_MEASUREMENTS"],
+      [{ meanResumeCostUsd: "0.02" }, "BETA_COST_MEASUREMENTS"],
+      [{ extractionArms: [] }, "BETA_EXTRACTION_FEEDBACK"],
+      [{ extractionArms: [evidence.betaOperations.extractionArms[0]] }, "BETA_EXTRACTION_FEEDBACK"],
+      [{ extractionArms: [evidence.betaOperations.extractionArms[0], evidence.betaOperations.extractionArms[0]] }, "BETA_EXTRACTION_FEEDBACK"],
+      [{ extractionArms: [{ ...evidence.betaOperations.extractionArms[0], strategy: "other" }, evidence.betaOperations.extractionArms[1]] }, "BETA_EXTRACTION_FEEDBACK"],
+      [{ extractionArms: [evidence.betaOperations.extractionArms[0], { ...evidence.betaOperations.extractionArms[1], strategy: "not-an-extractor" }] }, "BETA_EXTRACTION_FEEDBACK"],
+      [{ extractionArms: [{ ...evidence.betaOperations.extractionArms[0], proposed: 0 }, evidence.betaOperations.extractionArms[1]] }, "BETA_EXTRACTION_FEEDBACK"],
+      [{ extractionArms: [{ ...evidence.betaOperations.extractionArms[0], edited: 13 }, evidence.betaOperations.extractionArms[1]] }, "BETA_EXTRACTION_FEEDBACK"],
+      [{ extractionArms: [{ ...evidence.betaOperations.extractionArms[0], confirmed: "9" }, evidence.betaOperations.extractionArms[1]] }, "BETA_EXTRACTION_FEEDBACK"],
+      [{ extractionArms: [{ ...evidence.betaOperations.extractionArms[0], windowComplete: false }, evidence.betaOperations.extractionArms[1]] }, "BETA_EXTRACTION_FEEDBACK"],
+    ]) assertMissing({ ...evidence, betaOperations: { ...evidence.betaOperations, ...patch } }, reason);
+    // Decisions overlap: an edited fact may also have been confirmed.
+    const overlapping = { ...evidence, betaOperations: { ...evidence.betaOperations, extractionArms: [
+      { ...evidence.betaOperations.extractionArms[0], confirmed: 12, edited: 12 }, evidence.betaOperations.extractionArms[1],
+    ] } };
+    assert.equal(JSON.parse(run(overlapping).stdout).missing.includes("BETA_EXTRACTION_FEEDBACK"), false);
+    // Zero reported fabrications and zero measured costs are valid when attested.
+    const zero = { ...evidence, betaOperations: { ...evidence.betaOperations, reportedFabrications: 0,
+      fabricationReportsWithPassingTests: 0, meanUploadCostUsd: 0, meanResumeCostUsd: 0 } };
+    const zeroMissing = JSON.parse(run(zero).stdout).missing;
+    assert.equal(zeroMissing.includes("BETA_FABRICATION_REGRESSIONS"), false);
+    assert.equal(zeroMissing.includes("BETA_COST_MEASUREMENTS"), false);
     for (const field of ["testModePassed", "livePaymentPassed", "liveCancellationPassed"]) {
       for (const value of [false, undefined, "true"]) {
         assert.equal(run({ ...evidence, billing: { ...evidence.billing, [field]: value } }).status, 2);

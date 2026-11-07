@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { readConfig } from "./lib/config.mjs";
 import { configuredExtractors } from "./lib/extractor-routes.mjs";
+import { validExtractorId } from "../src/pipeline/extract/ids.mjs";
 import { workflowInventoryAuditCapability } from "./lib/deletion-audit.mjs";
 import { extractionConfiguration } from "../test/extract-evals/configuration.mjs";
 import { modelIndependence } from "./lib/model-independence.mjs";
@@ -215,8 +216,31 @@ try {
   // checked, but historic share guarantees and live validation remain incomplete.
   // Operator evidence cannot replace the missing implementation or live tests.
   report.missing.push("MANUAL_RESUME_EDIT_GROUNDING_UNAVAILABLE");
-  if (!count(evidence.betaOperations?.quietDays, 14))
+  const beta = evidence.betaOperations;
+  if (!count(beta?.quietDays, 14))
     report.missing.push("BETA_OBSERVATION_WINDOW");
+  if (beta?.unexplainedAlerts !== 0)
+    report.missing.push("BETA_UNEXPLAINED_ALERTS");
+  if (!count(beta?.reportedFabrications, 0) ||
+      !count(beta?.fabricationReportsWithPassingTests, 0) ||
+      beta.fabricationReportsWithPassingTests !== beta.reportedFabrications)
+    report.missing.push("BETA_FABRICATION_REGRESSIONS");
+  if (!count(beta?.uploadCostSamples, 1) || !count(beta?.resumeCostSamples, 1) ||
+      !finite(beta?.meanUploadCostUsd) || beta.meanUploadCostUsd < 0 ||
+      !finite(beta?.meanResumeCostUsd) || beta.meanResumeCostUsd < 0)
+    report.missing.push("BETA_COST_MEASUREMENTS");
+  // Review counts can overlap: a fact can be edited and later confirmed.
+  // A completed seven-day window with nonzero proposals allows both rates to
+  // be derived for each arm; the winner must be one of the observed arms.
+  const arms = beta?.extractionArms;
+  if (!Array.isArray(arms) || arms.length < 2 || arms.length > 20 ||
+      arms.some((arm) => !arm || !validExtractorId(arm.strategy) || arm.strategy.length > 240 ||
+        arm.windowComplete !== true || !count(arm.sources, 1) || !count(arm.proposed, 1) ||
+        !count(arm.confirmed, 0) || arm.confirmed > arm.proposed ||
+        !count(arm.edited, 0) || arm.edited > arm.proposed) ||
+      new Set(arms.map((arm) => arm.strategy)).size !== arms.length ||
+      !arms.some((arm) => arm.strategy === evidence.extraction?.promotion?.winner))
+    report.missing.push("BETA_EXTRACTION_FEEDBACK");
   if (report.missing.length === 0) report.status = "passed";
 } catch {
   report.missing.push("INVALID_EVIDENCE");
