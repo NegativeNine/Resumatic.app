@@ -186,6 +186,40 @@ describe("Vault-owned source writes", () => {
     });
   });
 
+  it.each(["missing attempt", "wrong attempt", "missing checksum", "wrong checksum"] as const)(
+    "keeps an upload fenced when the R2 acknowledgement has %s",
+    async (variant) => {
+      const { stub, who, input, bytes, originalFilename } = await setup();
+      await runInDurableObject(stub, async (instance, state) => {
+        const local = (instance as unknown as { env: Env }).env;
+        const previous = local.FILES;
+        let calls = 0;
+        local.FILES = { put: async (key: string, data: ArrayBuffer, options: R2PutOptions) => {
+          const result = await previous.put(key, data, options);
+          if (++calls !== 1) return result;
+          return {
+            key, size: data.byteLength,
+            customMetadata: variant === "missing attempt" ? {} : variant === "wrong attempt"
+              ? { resumatic_cache_attempt: crypto.randomUUID() } : result?.customMetadata,
+            checksums: variant === "missing checksum" ? {} : variant === "wrong checksum"
+              ? { sha256: new Uint8Array(32).buffer } : result?.checksums,
+          };
+        } } as unknown as R2Bucket;
+        try {
+          await expect(instance.writeReservedSource(who, input, bytes, originalFilename)).rejects.toThrow("upload outcome is unresolved");
+          expect(await previous.head(input.r2Key)).not.toBeNull();
+          expect(state.storage.sql.exec(`SELECT attempt_id FROM r2_cache_dispatches WHERE kind='source'`).toArray()).toHaveLength(1);
+          // A successful retry cannot settle an earlier mismatched acknowledgement.
+          await expect(instance.writeReservedSource(who, input, bytes, originalFilename)).resolves.toEqual({});
+          expect(calls).toBe(2);
+          expect(state.storage.sql.exec(`SELECT attempt_id FROM r2_cache_dispatches WHERE kind='source'`).toArray()).toHaveLength(1);
+          await expect(instance.close()).rejects.toThrow("source write is unresolved");
+        } finally { local.FILES = previous; }
+      });
+    },
+    30_000,
+  );
+
   it("tracks concurrent retries separately and settles after a caller discards the result", async () => {
     const { stub, who, input, bytes, originalFilename } = await setup();
     await runInDurableObject(stub, async (instance, state) => {

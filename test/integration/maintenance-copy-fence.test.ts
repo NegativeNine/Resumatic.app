@@ -147,7 +147,7 @@ it("keeps a lost copy acknowledgement fenced even if a later copy succeeds", asy
   });
 }, 30_000);
 
-it.each(["null", "wrong key", "wrong size", "missing checksum", "wrong checksum"])("keeps a copy fenced after an inconsistent %s acknowledgement", async (variant) => {
+it.each(["null", "wrong key", "wrong size", "missing checksum", "wrong checksum", "missing attempt", "wrong attempt"])("keeps a copy fenced after an inconsistent %s acknowledgement", async (variant) => {
   await withImport(async (instance, state, files, operationId, sourceId) => {
     const local = (instance as unknown as { env: Env }).env;
     let calls = 0;
@@ -159,6 +159,7 @@ it.each(["null", "wrong key", "wrong size", "missing checksum", "wrong checksum"
         if (variant === "null") return null;
         return { key: variant === "wrong key" ? `${key}-other` : key,
           size: variant === "wrong size" ? bytes.byteLength + 1 : bytes.byteLength,
+          customMetadata: variant === "missing attempt" ? {} : variant === "wrong attempt" ? { resumatic_cache_attempt: crypto.randomUUID() } : result?.customMetadata,
           checksums: variant === "missing checksum" ? {} : variant === "wrong checksum" ? { sha256: new Uint8Array(32).buffer } : result?.checksums };
       },
       head: (key: string) => files.head(key),

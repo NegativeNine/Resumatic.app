@@ -805,9 +805,10 @@ export class Vault extends DurableObject<Env> {
         throw new AppError("invalid", "invalid image transcription input");
       digestBody = stable;
     }
-    const [digest, keyHash] = await Promise.all([
+    const [digest, keyHash, contentHash] = await Promise.all([
       uploadDescriptorDigest({ filename: originalFilename, contentType: input.contentType, origin: input.origin, parentSourceId: input.parentSourceId }, digestBody),
       sha256(input.r2Key),
+      crypto.subtle.digest("SHA-256", bytes),
     ]);
     // Hashing yields. Recheck the lifecycle and reservation before dispatch.
     this.requireOwner(who);
@@ -822,10 +823,13 @@ export class Vault extends DurableObject<Env> {
         result = await this.env.FILES.put(input.r2Key, bytes, {
           httpMetadata: { contentType: input.contentType },
           customMetadata: { resumatic_cache_attempt: attemptId },
+          sha256: contentHash,
         });
-        // With no conditional put, null or inconsistent metadata is
-        // unexpected and cannot establish that this attempt succeeded.
-        if (!result || result.key !== input.r2Key || result.size !== bytes.byteLength)
+        // A same-key, same-size response could belong to a different retry.
+        // Require this attempt's metadata and the checksum of the sent bytes.
+        if (!result || result.key !== input.r2Key || result.size !== bytes.byteLength ||
+            result.customMetadata?.resumatic_cache_attempt !== attemptId ||
+            !result.checksums?.sha256 || base64url(result.checksums.sha256) !== base64url(contentHash))
           throw new Error("unexpected R2 acknowledgement");
       } catch {
         // Provider exceptions can contain request details; the attempt is
@@ -3724,6 +3728,7 @@ export class Vault extends DurableObject<Env> {
           // A null or inconsistent response is not an acknowledgement of this
           // write. Keep its marker even if a later head finds an object.
           if (!result || result.key !== row.r2_key || result.size !== bytes.byteLength ||
+              result.customMetadata?.resumatic_cache_attempt !== attemptId ||
               !result.checksums?.sha256 || base64url(result.checksums.sha256) !== base64url(digest))
             throw new Error("unexpected R2 acknowledgement");
         } catch {
