@@ -67,11 +67,17 @@ export async function validate({
     if ((stagingTestOnly || stagingSmoke) && config.vars?.ALLOW_TEST_SIGNIN !== "true")
       missing.push("vars.ALLOW_TEST_SIGNIN");
     if (stagingSmoke) {
-      // These empty settings keep the public Google and admin entry points
-      // unavailable. Pilot mode blocks model attempts and Browser Run.
-      for (const name of ["OIDC_CLIENT_ID", "ACCESS_TEAM_DOMAIN", "ACCESS_AUD"])
-        if (config.vars?.[name] !== undefined && config.vars[name] !== "")
-          missing.push(`SMOKE_REQUIRES_EMPTY_${name}`);
+      // Google sign-in remains unavailable. Access can be disabled or fully
+      // configured; a partial or malformed pair must fail the preflight.
+      if (config.vars?.OIDC_CLIENT_ID !== undefined && config.vars.OIDC_CLIENT_ID !== "")
+        missing.push("SMOKE_REQUIRES_EMPTY_OIDC_CLIENT_ID");
+      const team = config.vars?.ACCESS_TEAM_DOMAIN;
+      const audience = config.vars?.ACCESS_AUD;
+      const blank = (value) => value === undefined || value === "";
+      if (!(blank(team) && blank(audience)) &&
+          (typeof team !== "string" || team !== team.trim() || !httpsOrigin(team) ||
+           typeof audience !== "string" || !audience || audience !== audience.trim()))
+        missing.push("SMOKE_REQUIRES_VALID_ACCESS_CONFIGURATION");
       for (const [name, value] of Object.entries({
         PILOT_SHARED_BUDGET: "true", DAILY_SPEND_CAP_USD: "0", INVITE_ONLY: "true",
         BILLING_ENABLED: "false", MCP_ENABLED: "false",

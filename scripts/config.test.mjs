@@ -396,6 +396,27 @@ test("smoke-only preflight requires a staging-only non-model configuration", asy
   try {
     await writeFile(configPath, JSON.stringify(config));
     assert.equal((await check({ smokeOnly: true })).status, "ready");
+    vars.ACCESS_TEAM_DOMAIN = "https://team.cloudflareaccess.com";
+    vars.ACCESS_AUD = "example-audience";
+    await writeFile(configPath, JSON.stringify(config));
+    assert.equal((await check({ smokeOnly: true })).status, "ready");
+    for (const [team, audience] of [
+      ["https://team.cloudflareaccess.com", ""],
+      ["", "example-audience"],
+      ["http://team.cloudflareaccess.com", "example-audience"],
+      ["https://team.cloudflareaccess.com/path", "example-audience"],
+      ["https://team.cloudflareaccess.com", "   "],
+      ["https://team.cloudflareaccess.com", " example-audience"],
+      [null, "example-audience"],
+    ]) {
+      vars.ACCESS_TEAM_DOMAIN = team;
+      vars.ACCESS_AUD = audience;
+      await writeFile(configPath, JSON.stringify(config));
+      assert.ok((await check({ smokeOnly: true })).missing.includes("SMOKE_REQUIRES_VALID_ACCESS_CONFIGURATION"));
+    }
+    vars.ACCESS_TEAM_DOMAIN = "";
+    vars.ACCESS_AUD = "";
+    await writeFile(configPath, JSON.stringify(config));
     assert.equal((await check()).status, "pending");
     const production = await check({ environment: "production", smokeOnly: true });
     assert.ok(production.missing.includes("SMOKE_ONLY_STAGING_DEPLOY_REQUIRED"));
