@@ -9,10 +9,7 @@ export function ShareSnapshotContent({ view }: { view: SharedView }) {
       {value.verification !== "verified" && (
         <small>
           {" "}
-          ·{" "}
-          {value.verification === "user-authored"
-            ? "User-authored"
-            : "Unverified"}
+          ({value.verification === "user-authored" ? "user-authored" : "unverified"})
         </small>
       )}
     </li>
@@ -34,9 +31,9 @@ export function ShareSnapshotContent({ view }: { view: SharedView }) {
                 {fact.text}
                 {fact.role && (
                   <small>
-                    {" "}
-                    · {fact.role.org}
-                    {fact.role.title ? ` — ${fact.role.title}` : ""}
+                    {", "}
+                    {fact.role.org}
+                    {fact.role.title ? `, ${fact.role.title}` : ""}
                   </small>
                 )}
               </li>
@@ -47,7 +44,7 @@ export function ShareSnapshotContent({ view }: { view: SharedView }) {
       {view.snapshot.resumes.map((resume) => (
         <article key={`${resume.id}:${resume.version}`}>
           <h2>
-            {resume.profile.name || "Resume"} · Version {resume.version}
+            {resume.profile.name || "Resume"}, version {resume.version}
           </h2>
           <p>
             {[
@@ -69,7 +66,7 @@ export function ShareSnapshotContent({ view }: { view: SharedView }) {
           {resume.sections.map((section, index) => (
             <section key={`${section.id}:${index}`}>
               <h3>
-                {section.title ? `${section.title} · ` : ""}
+                {section.title ? `${section.title}, ` : ""}
                 {section.org}
               </h3>
               {formatDateRange(section.startDate, section.endDate, section.unknownEndStartDate) && (

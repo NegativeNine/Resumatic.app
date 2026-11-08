@@ -5,6 +5,7 @@ import {
   MAX_JD_CHARS,
   type ApplicationStatus,
   type ApplicationView,
+  type ResumeState,
 } from "../../shared/api";
 import { api } from "../api";
 import {
@@ -16,8 +17,10 @@ import {
   Badge,
   CharCount,
   ErrorNote,
+  Glyph,
   Loading,
   PageHeader,
+  type GlyphName,
 } from "../components/ui";
 import { formatDate, formatDateTime, RESUME_STATE_LABEL } from "../format";
 import { useAction, useResource, type Reload } from "../hooks";
@@ -26,10 +29,16 @@ import { href } from "../router";
 import { useSession } from "../session";
 import { quotaMessage, useTailor } from "../tailor";
 
+/** A finished resume's mark carries a glyph, so its state never rests on color. */
+const STATE_GLYPH: Partial<Record<ResumeState, GlyphName>> = {
+  ready: "check",
+  failed: "alert",
+};
+
 const isTailoring = (data: { applications: ApplicationView[] }) =>
   data.applications.some((a) => a.resumes.some((r) => r.state === "running"));
 
-export function ApplicationsPage() {
+export function JobsPage() {
   const list = useResource(api.applications, isTailoring);
   const { quota } = useSession().me;
   const applications = [...(list.data?.applications ?? [])].sort(
@@ -95,12 +104,13 @@ export function ApplicationsPage() {
         <p className="notice">{quotaMessage(quota)}</p>
       )}
 
-      <section className="section" aria-labelledby="job-heading">
+      <div className="app-jobs" data-view={view}>
+      <section className="section app-jobs__add" aria-labelledby="job-heading">
         <h2 id="job-heading">Add a job</h2>
         <JobForm onSaved={list.reload} />
       </section>
 
-      <section className="section" aria-labelledby="applications-heading">
+      <section className="section app-jobs__list" aria-labelledby="applications-heading">
         <h2 id="applications-heading">Your jobs</h2>
         {applications.length > 0 && (
           <div className="row-between">
@@ -129,10 +139,10 @@ export function ApplicationsPage() {
                 ))}
               </select>
             </div>
-            <div className="actions" role="group" aria-label="Job view">
+            <div className="rs-filter app-view-toggle" role="group" aria-label="Job view">
               <button
                 type="button"
-                className="small"
+                className="rs-filter__opt"
                 aria-pressed={view === "list"}
                 onClick={() => setView("list")}
               >
@@ -140,7 +150,7 @@ export function ApplicationsPage() {
               </button>
               <button
                 type="button"
-                className="small"
+                className="rs-filter__opt"
                 aria-pressed={view === "board"}
                 onClick={() => setView("board")}
               >
@@ -173,6 +183,7 @@ export function ApplicationsPage() {
             </>
           ))}
       </section>
+      </div>
     </>
   );
 }
@@ -275,19 +286,16 @@ function ApplicationCard({
   const Heading = compact ? "h4" : "h3";
 
   return (
-    <li className="card application" hidden={hidden} style={style}
+    <li className="card application rs-job" hidden={hidden} style={style}
       aria-labelledby={columnLabel ? `${columnLabel} ${headingId}` : headingId}>
       <div className="row-between">
-        <div>
+        <div className="app-job-head">
           <Heading id={headingId}>{jobName(application)}</Heading>
-          <p className="meta">
-            Added {formatDate(application.createdAt)}
-            {unnamed &&
-              " · The title and company appear once a resume has been tailored"}
+          <p className="rs-meta app-meta-row app-job-meta">
+            <Badge tone="status">{APPLICATION_LABELS[application.status ?? "saved"]}</Badge>
+            <span>Added {formatDate(application.createdAt)}</span>
+            {unnamed && <span>The title and company appear once a resume has been tailored.</span>}
           </p>
-          <Badge tone="mine">
-            {APPLICATION_LABELS[application.status ?? "saved"]}
-          </Badge>
         </div>
         <button
           type="button"
@@ -304,18 +312,20 @@ function ApplicationCard({
         <p className="meta resume-list-empty">No resumes yet.</p>
       ) : (
         <ul className="plain-list resume-list">
-          {resumes.map((resume) => (
+          {resumes.map((resume, index) => (
             <li key={resume.id}>
-              <a href={href.resume(resume.id)}>
-                Resume tailored {formatDateTime(resume.createdAt)}
-              </a>
-              <Badge tone={resume.state}>
-                {resume.state === "running" && resume.cancellationPending
-                  ? "Cancellation pending"
-                  : resume.state === "running" && resume.dispatchUncertain
-                  ? "Start unconfirmed"
-                  : RESUME_STATE_LABEL[resume.state]}
-              </Badge>
+              <a href={href.resume(resume.id)}>Resume tailored {formatDateTime(resume.createdAt)}</a>
+              <span className="app-resume-state">
+                {index === 0 && resumes.length > 1 && <span className="app-latest">Latest</span>}
+                <Badge tone={resume.state}>
+                  {STATE_GLYPH[resume.state] && <Glyph name={STATE_GLYPH[resume.state]!} />}
+                  {resume.state === "running" && resume.cancellationPending
+                    ? "Cancellation pending"
+                    : resume.state === "running" && resume.dispatchUncertain
+                    ? "Start unconfirmed"
+                    : RESUME_STATE_LABEL[resume.state]}
+                </Badge>
+              </span>
             </li>
           ))}
         </ul>

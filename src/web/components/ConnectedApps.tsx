@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { McpGrant } from "../../shared/mcp";
+import { formatDate } from "../format";
 
 export function ConnectedApps() {
   const [grants, setGrants] = useState<McpGrant[]>([]);
@@ -60,16 +61,16 @@ export function ConnectedApps() {
             grant.revokedAt !== null || grant.expiresAt <= Date.now();
           return (
             <li key={grant.id}>
-              <strong>{grant.clientName}</strong> ·{" "}
+              <strong>{grant.clientName}</strong>,{" "}
               {grant.scopes.includes("vault:generate")
-                ? "Read and generate"
-                : "Read only"}{" "}
-              ·{" "}
+                ? "read and generate"
+                : "read only"}
+              :{" "}
               {inactive
-                ? "Access ended"
+                ? "access ended"
                 : grant.state === "pending"
-                  ? "Awaiting connection"
-                  : `Expires ${new Date(grant.expiresAt).toLocaleDateString()}`}{" "}
+                  ? "awaiting connection"
+                  : `expires ${formatDate(grant.expiresAt)}`}{" "}
               <button
                 type="button"
                 disabled={busy === grant.id}

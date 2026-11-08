@@ -6,10 +6,10 @@ import { Shell } from "./components/Shell";
 import { ErrorNote, Loading, PageHeader } from "./components/ui";
 import { describeError, signInErrorMessage } from "./errors";
 import { AccountPage } from "./pages/AccountPage";
-import { ApplicationsPage } from "./pages/ApplicationsPage";
+import { JobsPage } from "./pages/JobsPage";
 import { LEGAL_TITLES, LegalPage } from "./pages/LegalPage";
 import { ResumePage } from "./pages/ResumePage";
-import { SignedOut } from "./pages/SignedOut";
+import { SignedOut, SignInFrame } from "./pages/SignedOut";
 import { SourcesPage } from "./pages/SourcesPage";
 import { href, useRoute, type Route } from "./router";
 import {
@@ -85,21 +85,16 @@ function OwnerApp() {
   switch (auth.status) {
     case "loading":
       return (
-        <main className="splash">
+        <SignInFrame>
           <Loading>Loading Resumatic…</Loading>
-        </main>
+        </SignInFrame>
       );
     case "unavailable":
       return (
-        <main className="splash">
-          <div className="welcome">
-            <h1>Resumatic</h1>
-            <ErrorNote
-              message={`We couldn't load your account. ${auth.message}`}
-              onRetry={loadMe}
-            />
-          </div>
-        </main>
+        <SignInFrame>
+          <h1>Resumatic couldn't load your account.</h1>
+          <ErrorNote message={auth.message} onRetry={loadMe} />
+        </SignInFrame>
       );
     case "signedOut":
       return (
@@ -169,7 +164,7 @@ function Page({ route }: { route: Route }) {
     case "facts":
       return <SourcesPage />;
     case "jobs":
-      return <ApplicationsPage />;
+      return <JobsPage />;
     case "resume":
       return <ResumePage key={route.id} id={route.id} />;
     case "account":

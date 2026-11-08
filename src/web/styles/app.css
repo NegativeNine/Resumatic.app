@@ -408,6 +408,117 @@
   }
 }
 
+/* Jobs: in the list view the form sits beside the jobs, as on the artboard. The board needs
+   the full width, so there the form stays above it. */
+
+@media (min-width: 1024px) {
+  .app-jobs[data-view="list"] {
+    display: grid;
+    grid-template-columns: minmax(0, 4fr) minmax(0, 5fr);
+    gap: var(--space-10);
+    align-items: start;
+    margin-top: 2.75rem;
+  }
+
+  .app-jobs[data-view="list"] > .section {
+    margin-top: 0;
+  }
+}
+
+/* List or Board: buttons drawn as the segmented filter, so the chosen view shows. */
+.app-view-toggle .rs-filter__opt {
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
+
+.app-view-toggle .rs-filter__opt:hover {
+  color: var(--ink);
+  background: var(--paper-hover);
+}
+
+.app-view-toggle .rs-filter__opt[aria-pressed="true"] {
+  color: var(--on-ink);
+  background: var(--ink);
+}
+
+.app-view-toggle .rs-filter__opt:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* A long job name wraps beside the Tailor button rather than pushing it down. */
+.app-job-head {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.app-job-meta {
+  margin-top: 4px;
+}
+
+/* A job's status is the person's own tracking, so it's neutral, not a check result. */
+.rs-mark--status {
+  color: var(--ink-muted);
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+}
+
+.app-resume-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+}
+
+.app-latest {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--ink-muted);
+}
+
+/* Sign in (SignInCard) */
+
+/* The G is drawn by CSS, so the link's text is exactly "Sign in with Google". */
+.rs-google::before {
+  content: "G";
+}
+
+.app-signin-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: 100vh;
+  padding: 72px var(--space-6) var(--space-12);
+}
+
+.app-signin-page .rs-signin > .rs-loading {
+  margin-top: var(--space-8);
+}
+
+.app-signin-page .rs-signin > .rs-msg {
+  margin-top: var(--space-6);
+}
+
+.app-signin-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2) var(--space-6);
+  font-size: 14px;
+}
+
+.app-signin-links a {
+  color: var(--ink-muted);
+}
+
+@media (max-width: 600px) {
+  .app-signin-page {
+    padding: var(--space-10) var(--space-4) var(--space-8);
+  }
+}
+
 /* Footer */
 
 .app-footer-nav {
