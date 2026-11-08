@@ -10,3 +10,7 @@
 /share
   Referrer-Policy: no-referrer
   Cache-Control: no-store
+
+# Vite fingerprints everything under /assets, so a file there never changes.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

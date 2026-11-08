@@ -6,7 +6,7 @@
 .document-list { margin-top: 1.1rem; }
 .document-card { padding: 1rem 0; border-top: 1px solid var(--border); }
 .document-card h4, .document-content h4 { margin: 0; font-size: 1rem; }
-.document-card summary { padding: .55rem 0; cursor: pointer; color: var(--accent); font-weight: 550; }
+.document-card summary { padding: .55rem 0; cursor: pointer; color: var(--ballpoint); font-weight: 550; }
 .document-content { margin-top: .7rem; }
 .document-content p, .document-content li { overflow-wrap: anywhere; }
 .document-content .evidence p + div { margin-top: .6rem; }

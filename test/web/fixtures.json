@@ -1,0 +1,365 @@
+{
+  "me": {
+    "userId": "user-sam",
+    "profile": {
+      "name": "Sam Rivera",
+      "email": "sam.rivera@example.com",
+      "phone": "",
+      "location": "Waterloo, ON",
+      "links": ["linkedin.com/in/samrivera"]
+    },
+    "quota": { "used": 12, "limit": 20, "month": "2026-11" }
+  },
+  "sources": [
+    {
+      "id": "src-cv",
+      "filename": "sam-rivera-cv.docx",
+      "state": "failed",
+      "error": "No text could be read from this file",
+      "createdAt": 1793888400000,
+      "proposed": 0
+    },
+    {
+      "id": "src-2024",
+      "filename": "sam-rivera-2024.pdf",
+      "state": "ready",
+      "error": null,
+      "createdAt": 1793783400000,
+      "proposed": 4
+    }
+  ],
+  "roles": [
+    {
+      "id": "role-northwind",
+      "kind": "job",
+      "org": "Northwind Logistics",
+      "title": "Senior Backend Engineer",
+      "startDate": "2021-03",
+      "endDate": null,
+      "state": "proposed",
+      "quote": "Senior Backend Engineer, Northwind Logistics, March 2021 to present",
+      "sourceId": "src-2024"
+    },
+    {
+      "id": "role-contoso",
+      "kind": "job",
+      "org": "Contoso Health",
+      "title": "Software Engineer",
+      "startDate": "2018-06",
+      "endDate": "2021-02",
+      "state": "confirmed",
+      "quote": "Software Engineer at Contoso Health (June 2018 to February 2021)",
+      "sourceId": "src-2024"
+    },
+    {
+      "id": "role-fabrikam",
+      "kind": "volunteer",
+      "org": "Fabrikam Transit Data",
+      "title": "Volunteer data engineer",
+      "startDate": "2019-01",
+      "endDate": "2020-12",
+      "state": "confirmed",
+      "quote": "Volunteer data engineer, Fabrikam Transit Data, 2019 to 2020",
+      "sourceId": "src-2024"
+    },
+    {
+      "id": "role-waterloo",
+      "kind": "education",
+      "org": "University of Waterloo",
+      "title": "BASc, Computer Engineering",
+      "startDate": "2014-09",
+      "endDate": "2018-04",
+      "state": "confirmed",
+      "quote": "University of Waterloo, BASc Computer Engineering, 2014 to 2018",
+      "sourceId": "src-2024"
+    }
+  ],
+  "facts": [
+    {
+      "id": "fact-latency",
+      "roleId": "role-northwind",
+      "kind": "accomplishment",
+      "text": "Reduced p95 API latency from 900 ms to 210 ms by moving hot paths to Redis.",
+      "level": "implemented",
+      "origin": "extracted",
+      "state": "proposed",
+      "quote": "Cut p95 API latency from 900ms to 210ms by moving hot paths to Redis",
+      "sourceId": "src-2024"
+    },
+    {
+      "id": "fact-migration",
+      "roleId": "role-northwind",
+      "kind": "accomplishment",
+      "text": "Led the migration of 40 services from Heroku to Kubernetes.",
+      "level": "led",
+      "origin": "extracted",
+      "state": "proposed",
+      "quote": "Led migration of 40 services from Heroku to Kubernetes",
+      "sourceId": "src-2024"
+    },
+    {
+      "id": "fact-mentoring",
+      "roleId": "role-northwind",
+      "kind": "accomplishment",
+      "text": "Mentored four engineers through their first on-call rotations.",
+      "level": null,
+      "origin": "extracted",
+      "state": "proposed",
+      "quote": "Mentored 4 engineers through first on-call rotations",
+      "sourceId": "src-2024"
+    },
+    {
+      "id": "fact-runbook",
+      "roleId": "role-northwind",
+      "kind": "accomplishment",
+      "text": "Wrote the on-call runbook.",
+      "level": null,
+      "origin": "extracted",
+      "state": "rejected",
+      "quote": "Wrote on-call runbook",
+      "sourceId": "src-2024"
+    },
+    {
+      "id": "fact-pipeline",
+      "roleId": "role-contoso",
+      "kind": "accomplishment",
+      "text": "Built the claims-intake pipeline in Python and Apache Airflow, processing 2 million claims a month.",
+      "level": "implemented",
+      "origin": "extracted",
+      "state": "confirmed",
+      "quote": "Built claims intake pipeline (Python, Airflow) processing 2M claims/month",
+      "sourceId": "src-2024"
+    },
+    {
+      "id": "fact-audit",
+      "roleId": "role-contoso",
+      "kind": "accomplishment",
+      "text": "Shipped audit logging that passed the 2020 HIPAA review.",
+      "level": "implemented",
+      "origin": "user",
+      "state": "confirmed",
+      "quote": "Implemented audit logging for HIPAA review",
+      "sourceId": "src-2024"
+    },
+    {
+      "id": "fact-dashboard",
+      "roleId": "role-fabrikam",
+      "kind": "accomplishment",
+      "text": "Built a public dashboard of bus arrival times used by 3,000 riders a week.",
+      "level": "implemented",
+      "origin": "extracted",
+      "state": "confirmed",
+      "quote": "Built public bus-arrival dashboard (3,000 weekly riders)",
+      "sourceId": "src-2024"
+    },
+    {
+      "id": "fact-degree",
+      "roleId": "role-waterloo",
+      "kind": "credential",
+      "text": "BASc in Computer Engineering, University of Waterloo.",
+      "level": null,
+      "origin": "extracted",
+      "state": "confirmed",
+      "quote": "University of Waterloo, BASc Computer Engineering",
+      "sourceId": "src-2024"
+    },
+    {
+      "id": "fact-postgres",
+      "roleId": null,
+      "kind": "skill",
+      "text": "PostgreSQL",
+      "level": null,
+      "origin": "extracted",
+      "state": "proposed",
+      "quote": "Skills: Python, Django, Redis, PostgreSQL",
+      "sourceId": "src-2024"
+    },
+    {
+      "id": "fact-python",
+      "roleId": null,
+      "kind": "skill",
+      "text": "Python",
+      "level": null,
+      "origin": "extracted",
+      "state": "confirmed",
+      "quote": "Skills: Python, Django, Redis, PostgreSQL",
+      "sourceId": "src-2024"
+    },
+    {
+      "id": "fact-aws",
+      "roleId": null,
+      "kind": "credential",
+      "text": "AWS Certified Solutions Architect, Associate.",
+      "level": null,
+      "origin": "user",
+      "state": "confirmed",
+      "quote": null,
+      "sourceId": null
+    }
+  ],
+  "applications": [
+    {
+      "id": "app-litware",
+      "company": "Litware",
+      "title": "Platform Engineer",
+      "excerpt": "Platform Engineer, Litware. We're hiring a platform engineer to run our Kubernetes fleet and build the…",
+      "createdAt": 1793960100000,
+      "resumes": [
+        { "id": "res-ready", "state": "ready", "createdAt": 1794044520000 },
+        { "id": "res-first", "state": "ready", "createdAt": 1793983320000 }
+      ]
+    },
+    {
+      "id": "app-tailspin",
+      "company": "Tailspin Toys",
+      "title": "Senior Data Engineer",
+      "excerpt": "Senior Data Engineer, Tailspin Toys. Own the pipelines that move order data from our stores to the…",
+      "createdAt": 1793888400000,
+      "resumes": [{ "id": "res-failed", "state": "failed", "createdAt": 1793888400000 }]
+    },
+    {
+      "id": "app-unnamed",
+      "company": null,
+      "title": null,
+      "excerpt": "We are looking for a Staff Engineer to lead our payments platform. You will own the ledger and…",
+      "createdAt": 1793703900000,
+      "resumes": []
+    }
+  ],
+  "resumes": {
+    "res-ready": {
+      "id": "res-ready",
+      "applicationId": "app-litware",
+      "state": "ready",
+      "step": "finish",
+      "error": null,
+      "version": 2,
+      "createdAt": 1794044520000,
+      "body": {
+        "summary": {
+          "id": "line-summary",
+          "text": "Backend engineer who builds data pipelines and moves services to Kubernetes.",
+          "factIds": ["fact-migration", "fact-pipeline"],
+          "status": "kept"
+        },
+        "sections": [
+          {
+            "roleId": "role-northwind",
+            "kind": "job",
+            "org": "Northwind Logistics",
+            "title": "Senior Backend Engineer",
+            "startDate": "2021-03",
+            "endDate": null,
+            "lines": [
+              {
+                "id": "line-migration",
+                "text": "Led the migration of 40 services from Heroku to Kubernetes.",
+                "factIds": ["fact-migration"],
+                "status": "kept"
+              },
+              {
+                "id": "line-latency",
+                "text": "Reduced p95 API latency from 900 ms to 210 ms by moving hot paths to Redis.",
+                "factIds": ["fact-latency"],
+                "status": "repaired"
+              },
+              {
+                "id": "line-mentoring",
+                "text": "Mentored four engineers through their first on-call rotations.",
+                "factIds": ["fact-mentoring"],
+                "status": "replaced"
+              }
+            ]
+          },
+          {
+            "roleId": "role-contoso",
+            "kind": "job",
+            "org": "Contoso Health",
+            "title": "Software Engineer",
+            "startDate": "2018-06",
+            "endDate": "2021-02",
+            "lines": [
+              {
+                "id": "line-pipeline",
+                "text": "Built the claims-intake pipeline in Python and Apache Airflow, processing 2 million claims a month.",
+                "factIds": ["fact-pipeline"],
+                "status": "kept"
+              },
+              {
+                "id": "line-audit",
+                "text": "Shipped audit logging that passed the 2020 HIPAA review.",
+                "factIds": ["fact-audit"],
+                "status": "edited"
+              }
+            ]
+          },
+          {
+            "roleId": "role-fabrikam",
+            "kind": "volunteer",
+            "org": "Fabrikam Transit Data",
+            "title": "Volunteer data engineer",
+            "startDate": "2019-01",
+            "endDate": "2020-12",
+            "lines": [
+              {
+                "id": "line-dashboard",
+                "text": "Built a public dashboard of bus arrival times used by 3,000 riders a week.",
+                "factIds": ["fact-dashboard"],
+                "status": "kept"
+              }
+            ]
+          },
+          {
+            "roleId": "role-waterloo",
+            "kind": "education",
+            "org": "University of Waterloo",
+            "title": "BASc, Computer Engineering",
+            "startDate": "2014-09",
+            "endDate": "2018-04",
+            "lines": []
+          }
+        ],
+        "skills": ["Python", "Apache Airflow", "Redis", "PostgreSQL", "Kubernetes"]
+      },
+      "report": {
+        "kept": 4,
+        "repaired": 1,
+        "replaced": 1,
+        "dropped": 1,
+        "gaps": ["Terraform", "Experience running Kafka in production"]
+      },
+      "facts": {
+        "fact-migration": { "text": "Led the migration of 40 services from Heroku to Kubernetes.", "quote": "Led migration of 40 services from Heroku to Kubernetes" },
+        "fact-latency": { "text": "Reduced p95 API latency from 900 ms to 210 ms by moving hot paths to Redis.", "quote": "Cut p95 API latency from 900ms to 210ms by moving hot paths to Redis" },
+        "fact-mentoring": { "text": "Mentored four engineers through their first on-call rotations.", "quote": "Mentored 4 engineers through first on-call rotations" },
+        "fact-pipeline": { "text": "Built the claims-intake pipeline in Python and Apache Airflow, processing 2 million claims a month.", "quote": "Built claims intake pipeline (Python, Airflow) processing 2M claims/month" },
+        "fact-audit": { "text": "Shipped audit logging that passed the 2020 HIPAA review.", "quote": null },
+        "fact-dashboard": { "text": "Built a public dashboard of bus arrival times used by 3,000 riders a week.", "quote": "Built public bus-arrival dashboard (3,000 weekly riders)" }
+      }
+    },
+    "res-running": {
+      "id": "res-running",
+      "applicationId": "app-litware",
+      "state": "running",
+      "step": "select",
+      "error": null,
+      "version": 1,
+      "createdAt": 1794044520000,
+      "body": null,
+      "report": null,
+      "facts": {}
+    },
+    "res-failed": {
+      "id": "res-failed",
+      "applicationId": "app-tailspin",
+      "state": "failed",
+      "step": "select",
+      "error": "None of your confirmed facts match this job yet",
+      "version": 1,
+      "createdAt": 1793888400000,
+      "body": null,
+      "report": null,
+      "facts": {}
+    }
+  }
+}
