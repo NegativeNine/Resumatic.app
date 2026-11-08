@@ -1,28 +1,35 @@
 import type { FactKind, Level, LineStatus, ResumeState, ReviewState, RoleKind } from "../shared/api";
 
-const monthYear = new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric", timeZone: "UTC" });
-const dayUtc = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
-const day = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" });
-const dayAndTime = new Intl.DateTimeFormat(undefined, {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
+// Dates follow the voice guide whatever the browser's locale: "Nov 2026", "7 Nov 2026",
+// "7 Nov 2026, 9:42 AM". The app is written in English, and the PDF template uses the same
+// month names (src/render/template.ts).
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const YEAR_MONTH = /^(\d{4})-(\d{2})(?:-\d{2})?$/;
 
 /** "2026-11" (or "2026-11-05") as "Nov 2026". Dates in any other form are shown as written. */
 export function formatMonth(value: string): string {
   const match = YEAR_MONTH.exec(value);
-  return match ? monthYear.format(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1)) : value;
+  const month = match ? MONTHS[Number(match[2]) - 1] : undefined;
+  return match && month ? `${month} ${match[1]}` : value;
 }
 
 /** The first day of the month after a "YYYY-MM" month, such as "1 Dec 2026". */
 export function formatMonthAfter(value: string): string | null {
+  const next = monthAfter(value);
+  return next ? `1 ${MONTHS[next.getUTCMonth()]} ${next.getUTCFullYear()}` : null;
+}
+
+/** The same day without its year, such as "1 Dec", for tight spaces like the quota meter. */
+export function formatDayMonthAfter(value: string): string | null {
+  const next = monthAfter(value);
+  return next ? `1 ${MONTHS[next.getUTCMonth()]}` : null;
+}
+
+function monthAfter(value: string): Date | null {
   const match = YEAR_MONTH.exec(value);
-  return match ? dayUtc.format(Date.UTC(Number(match[1]), Number(match[2]), 1)) : null;
+  if (!match || Number(match[2]) < 1 || Number(match[2]) > 12) return null;
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]), 1));
 }
 
 export function formatDateRange(start: string | null, end: string | null, unknownEndStart?: string | null): string {
@@ -32,9 +39,28 @@ export function formatDateRange(start: string | null, end: string | null, unknow
 }
 
 // Timestamps are expected in milliseconds; values small enough to be seconds are scaled.
+// They are shown in the person's own time zone.
 const toMillis = (time: number) => (time < 1e12 ? time * 1000 : time);
-export const formatDate = (time: number) => day.format(toMillis(time));
-export const formatDateTime = (time: number) => dayAndTime.format(toMillis(time));
+
+/** "7 Nov 2026". */
+export function formatDate(time: number): string {
+  const d = new Date(toMillis(time));
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/** "7 Nov", for a date this year in a tight space. */
+export function formatDayMonth(time: number): string {
+  const d = new Date(toMillis(time));
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
+
+/** "7 Nov 2026, 9:42 AM". */
+export function formatDateTime(time: number): string {
+  const d = new Date(toMillis(time));
+  const hour = d.getHours() % 12 || 12;
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+  return `${formatDate(time)}, ${hour}:${minutes} ${d.getHours() < 12 ? "AM" : "PM"}`;
+}
 
 export function formatBytes(bytes: number): string {
   const mb = bytes / (1024 * 1024);

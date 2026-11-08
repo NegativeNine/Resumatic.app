@@ -30,7 +30,7 @@ export function AccountPage() {
             Download your vault data and source files together as a ZIP archive.
             The archive supports up to 128 source files and 100 MiB of data.
             For larger vaults, download the JSON and individual files from
-            {" "}<a href={href.sources}>Sources &amp; facts</a> while your account is active.
+            {" "}<a href={href.facts}>Facts</a> while your account is active.
           </p>
           <a className="button primary" href={api.exportArchiveUrl} download>
             Download vault archive (ZIP)
@@ -267,7 +267,7 @@ function DeleteAccount() {
         This permanently deletes your account and everything in your vault:
         uploaded files, roles, facts, applications and resumes. It can't be
         undone. Before deleting, download your vault data and any original files
-        you want to keep from <a href={href.sources}>Sources &amp; facts</a>.
+        you want to keep from <a href={href.facts}>Facts</a>.
       </p>
       <form
         onSubmit={(e) => {

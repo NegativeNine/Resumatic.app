@@ -19,7 +19,9 @@ import {
 } from "./session";
 import "./styles/tokens.css";
 import "./styles/fonts.css";
+import "./styles/components.css";
 import "./styles.css";
+import "./styles/app.css";
 
 type Auth =
   | { status: "loading" }
@@ -120,8 +122,8 @@ function OwnerApp() {
 }
 
 const TITLES: Record<Route["page"], string> = {
-  sources: "Sources & facts",
-  applications: "Applications",
+  facts: "Facts",
+  jobs: "Jobs",
   resume: "Tailored resume",
   account: "Account",
   privacy: LEGAL_TITLES.privacy,
@@ -162,9 +164,9 @@ function SignedInApp() {
 
 function Page({ route }: { route: Route }) {
   switch (route.page) {
-    case "sources":
+    case "facts":
       return <SourcesPage />;
-    case "applications":
+    case "jobs":
       return <ApplicationsPage />;
     case "resume":
       return <ResumePage key={route.id} id={route.id} />;
@@ -176,9 +178,8 @@ function Page({ route }: { route: Route }) {
     case "notFound":
       return (
         <PageHeader title="Page not found">
-          There's nothing at this address. Go to{" "}
-          <a href={href.sources}>Sources & facts</a> or{" "}
-          <a href={href.applications}>Applications</a>.
+          There's nothing at this address. Go to <a href={href.facts}>Facts</a> or{" "}
+          <a href={href.jobs}>Jobs</a>.
         </PageHeader>
       );
   }

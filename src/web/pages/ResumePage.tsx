@@ -27,8 +27,8 @@ export function ResumePage({ id }: { id: string }) {
   return (
     <>
       <p className="back-link">
-        <a href={href.applications}>
-          <span aria-hidden="true">← </span>Back to applications
+        <a href={href.jobs}>
+          <span aria-hidden="true">← </span>Back to Jobs
         </a>
       </p>
       <PageHeader title="Tailored resume" />
@@ -209,8 +209,8 @@ function TailorFailed({ resume }: { resume: ResumeView }) {
         >
           {pending ? "Starting…" : "Tailor again"}
         </button>
-        <a className="button" href={href.applications}>
-          Back to applications
+        <a className="button" href={href.jobs}>
+          Back to Jobs
         </a>
       </div>
       <ActionError message={error} />

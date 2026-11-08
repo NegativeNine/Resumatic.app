@@ -171,7 +171,7 @@ export function ResumeSheet({
                   : !review.headersReady
                     ? "Some headings don't match confirmed roles."
                     : "Some skills don't match confirmed facts."}{" "}
-                Review your confirmed experience in <a href={href.sources}>Sources &amp; facts</a>, then return and refresh this page.
+                Review your confirmed experience in <a href={href.facts}>Facts</a>, then return and refresh this page.
                 You can also remove a section or skill from this review version below.
               </p>
             )}

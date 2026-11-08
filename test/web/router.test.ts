@@ -1,16 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { href, parseRoute } from "../../src/web/router";
+import { canonicalHash, href, parseRoute } from "../../src/web/router";
 
 describe("parseRoute", () => {
-  it("opens the sources page for an empty hash", () => {
-    expect(parseRoute("")).toEqual({ page: "sources" });
-    expect(parseRoute("#/")).toEqual({ page: "sources" });
+  it("opens Facts for an empty hash", () => {
+    expect(parseRoute("")).toEqual({ page: "facts" });
+    expect(parseRoute("#/")).toEqual({ page: "facts" });
   });
 
   it("reads each top-level page", () => {
-    for (const page of ["sources", "applications", "account", "privacy", "terms"] as const) {
+    for (const page of ["facts", "jobs", "account", "privacy", "terms"] as const) {
       expect(parseRoute(`#/${page}`)).toEqual({ page });
     }
+  });
+
+  it("still lands the v1 addresses on the renamed pages", () => {
+    expect(parseRoute("#/sources")).toEqual({ page: "facts" });
+    expect(parseRoute("#/applications")).toEqual({ page: "jobs" });
   });
 
   it("reads a resume and decodes its ID", () => {
@@ -22,5 +27,16 @@ describe("parseRoute", () => {
     expect(parseRoute("#/resumes")).toEqual({ page: "notFound" });
     expect(parseRoute("#/resumes/a/b")).toEqual({ page: "notFound" });
     expect(parseRoute("#/resumes/%E0%A4%A")).toEqual({ page: "notFound" });
+    expect(parseRoute("#/sources/extra")).toEqual({ page: "notFound" });
+  });
+});
+
+describe("canonicalHash", () => {
+  it("rewrites only the v1 addresses", () => {
+    expect(canonicalHash("#/sources")).toBe("#/facts");
+    expect(canonicalHash("#/applications")).toBe("#/jobs");
+    expect(canonicalHash("#/facts")).toBeNull();
+    expect(canonicalHash("#/resumes/abc")).toBeNull();
+    expect(canonicalHash("")).toBeNull();
   });
 });

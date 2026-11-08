@@ -34,7 +34,7 @@ export function TailorProgress({ step, dispatchUncertain, cancellationPending }:
     <section className="card" aria-labelledby="progress-heading">
       <h2 id="progress-heading">Tailoring your resume</h2>
       <p className="meta">
-        You can leave this page. Tailoring carries on, and the resume will be waiting under Applications.
+        You can leave this page. Tailoring carries on, and the resume will be waiting under Jobs.
       </p>
       <p className="step-count" role="status">
         Step {current + 1} of {STEPS.length}: {STEPS[current].label}

@@ -142,88 +142,6 @@ main:focus {
 
 /* Header and page */
 
-.site-header {
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-}
-
-.site-header-inner {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 1.1rem 1.25rem 0;
-}
-
-.topline {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem 1.5rem;
-}
-
-.brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.6rem;
-  font-size: 1.2rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--text);
-  text-decoration: none;
-}
-
-.brand:hover {
-  color: var(--text);
-}
-
-.beta {
-  padding: 0.1rem 0.55rem;
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-}
-
-.quota {
-  font-size: 0.9rem;
-  color: var(--muted);
-}
-
-.quota-full {
-  font-weight: 600;
-  color: var(--danger);
-}
-
-.nav ul {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 1.75rem;
-  margin: 0.6rem 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.nav a {
-  display: inline-block;
-  padding: 0.55rem 0 0.7rem;
-  font-weight: 550;
-  color: var(--muted);
-  text-decoration: none;
-  border-bottom: 3px solid transparent;
-}
-
-.nav a:hover {
-  color: var(--text);
-}
-
-.nav a[aria-current="page"] {
-  color: var(--text);
-  border-bottom-color: var(--ink);
-}
-
 .page {
   display: block;
   max-width: 960px;
@@ -1222,25 +1140,7 @@ select:focus-visible {
   flex-basis: 100%;
 }
 
-/* Footer and the beta's privacy notice and terms */
-
-.site-footer {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 2rem 1.25rem 2.5rem;
-  border-top: 1px solid var(--border);
-  font-size: 0.9rem;
-}
-
-.site-footer nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.5rem;
-}
-
-.site-footer a {
-  color: var(--muted);
-}
+/* The beta's privacy notice and terms */
 
 .legal {
   max-width: 44rem;
