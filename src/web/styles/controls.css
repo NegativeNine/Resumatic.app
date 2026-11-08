@@ -1,0 +1,291 @@
+/*
+ * The design system's controls and messages for the app's v1 markup: plain <button>, <input>,
+ * <select> and <textarea> elements, and the v1 class names (primary, quiet, danger, small, large,
+ * link-button, alert, notice, success, empty, hint, meta). The declarations copy the rs- rules in
+ * components.css, so a v1 control looks exactly like its rs- counterpart.
+ *
+ * Every element selector is wrapped in :where(), and elements that already carry an rs- class are
+ * skipped, so these rules never compete with the rs- components or with a page's own rules.
+ * New markup uses the rs- classes directly.
+ */
+
+/* Buttons: .rs-btn and its variants */
+
+:where(button, .button):not([class*="rs-"]) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: 0 var(--space-4);
+  font: 600 14px/20px var(--font-sans);
+  color: var(--ink);
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  background: var(--paper);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-md);
+  transition:
+    background-color 0.12s,
+    border-color 0.12s,
+    color 0.12s;
+}
+
+:where(button, .button):not([class*="rs-"]):not(:disabled):hover {
+  color: var(--ink);
+  background: var(--paper-hover);
+}
+
+.primary:where(button, .button):not([class*="rs-"]) {
+  color: var(--on-ink);
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+.primary:where(button, .button):not([class*="rs-"]):not(:disabled):hover {
+  color: var(--on-ink);
+  background: var(--ink-hover);
+  border-color: var(--ink-hover);
+}
+
+.quiet:where(button, .button):not([class*="rs-"]) {
+  color: var(--ballpoint);
+  background: transparent;
+  border-color: transparent;
+}
+
+.quiet:where(button, .button):not([class*="rs-"]):not(:disabled):hover {
+  color: var(--ballpoint);
+  background: var(--ballpoint-soft);
+}
+
+.danger:where(button, .button):not([class*="rs-"]) {
+  color: var(--on-danger);
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.danger:where(button, .button):not([class*="rs-"]):not(:disabled):hover {
+  color: var(--on-danger);
+  background: var(--danger);
+  filter: brightness(0.92);
+}
+
+.small:where(button, .button):not([class*="rs-"]) {
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  font-size: 13px;
+}
+
+.large:where(button, .button):not([class*="rs-"]) {
+  min-height: 48px;
+  padding: 0 var(--space-6);
+  font-size: 16px;
+}
+
+:where(button):not([class*="rs-"]):disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* .rs-linkbtn */
+.link-button:where(button):not([class*="rs-"]) {
+  min-height: 0;
+  padding: 2px 0;
+  color: var(--ballpoint);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  background: none;
+  border: 0;
+}
+
+.link-button:where(button):not([class*="rs-"]):not(:disabled):hover {
+  color: var(--ballpoint);
+  text-decoration-thickness: 2px;
+  background: none;
+}
+
+/* Fields: .rs-label, .rs-input, .rs-textarea, .rs-select, .rs-hint, .rs-count */
+
+:where(label):not([class*="rs-"]) {
+  display: block;
+  font: 600 14px/20px var(--font-sans);
+  color: var(--ink);
+}
+
+:where(
+    input[type="text"],
+    input[type="email"],
+    input[type="tel"],
+    input[type="url"],
+    input[type="search"],
+    input[type="number"],
+    input[type="date"],
+    input[type="password"],
+    input:not([type]),
+    textarea,
+    select
+  ):not([class*="rs-"]) {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 12px;
+  font: 400 16px/24px var(--font-sans);
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-md);
+}
+
+:where(textarea):not([class*="rs-"]) {
+  min-height: 112px;
+  resize: vertical;
+}
+
+:where(input, textarea, select):not([class*="rs-"]):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-color: var(--focus);
+}
+
+:where(input, textarea):not([class*="rs-"])::placeholder {
+  color: var(--ink-muted);
+  opacity: 0.85;
+}
+
+:where(input[type="checkbox"], input[type="radio"]) {
+  accent-color: var(--ink);
+}
+
+:where([aria-invalid="true"]):not([class*="rs-"]) {
+  border-color: var(--danger);
+}
+
+.hint {
+  max-width: var(--layout-reading);
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--ink-muted);
+}
+
+.meta {
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--ink-muted);
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--space-4) var(--space-5);
+}
+
+.field-grid + .field {
+  margin-top: var(--space-4);
+}
+
+.field-grid + .hint {
+  margin-top: var(--space-3);
+}
+
+.rs-count {
+  margin-top: 6px;
+}
+
+.form-foot {
+  align-items: center;
+  margin-top: var(--space-3);
+}
+
+.form-foot .rs-count {
+  margin-top: 0;
+}
+
+.inline-form {
+  margin-top: var(--space-3);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+/* Messages: .rs-msg--error, .rs-msg--info, .rs-success, .rs-empty */
+
+.alert {
+  margin-top: var(--space-3);
+  padding: 12px 14px;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-radius: var(--radius-md);
+}
+
+.notice {
+  margin: 0 0 var(--space-5);
+  padding: 12px 14px;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--ink);
+  background: var(--ballpoint-soft);
+  border-radius: var(--radius-md);
+}
+
+.success {
+  margin-top: var(--space-3);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--ledger);
+}
+
+.success.inline {
+  margin-top: 0;
+}
+
+.empty {
+  padding: var(--space-5) var(--space-6);
+  color: var(--ink-muted);
+  border: 1.5px dashed var(--rule-strong);
+  border-radius: var(--radius-lg);
+}
+
+/* Block messages from ErrorNote and Message sit apart from what's around them. */
+.app-msg-block {
+  margin: var(--space-4) 0;
+}
+
+.rs-inline-error > span {
+  flex: 1 1 auto;
+}
+
+/* A spinner inside a v1 badge or button (.rs-spinner). */
+.spinner {
+  display: inline-block;
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border: 1.75px solid currentColor;
+  border-right-color: transparent;
+  border-radius: var(--radius-full);
+  animation: rs-spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(button, .button):not([class*="rs-"]) {
+    transition: none;
+  }
+
+  .spinner {
+    animation: none;
+    border-right-color: currentColor;
+    opacity: 0.6;
+  }
+}

@@ -19,7 +19,9 @@ import {
 } from "./session";
 import "./styles/tokens.css";
 import "./styles/fonts.css";
+import "./styles/type.css";
 import "./styles/components.css";
+import "./styles/controls.css";
 import "./styles.css";
 import "./styles/app.css";
 
