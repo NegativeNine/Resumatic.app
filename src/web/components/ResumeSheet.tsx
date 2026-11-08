@@ -169,7 +169,7 @@ export function ResumeSheet({
         )}
         {resume.report && <ReportCard report={resume.report} />}
         <div className={fresh ? "resume-page is-fresh" : "resume-page"} ref={page}>
-          <div className="app-sheet-frame">
+          <div className="rs-sheet-frame">
             {isEmpty ? (
               <p className="rs-empty">This resume has no lines. Confirm more facts, then tailor a new version.</p>
             ) : (

@@ -523,62 +523,6 @@ main:focus {
   align-items: start;
 }
 
-/*
- * The sheet is a scaled Letter page. At full size it is the PDF's 816px with 14px (10.5pt) text;
- * in a narrower frame every measure shrinks together, so lines break close to where the PDF
- * breaks them. Measures are the template's points over 10.5pt (src/render/template.ts).
- */
-.app-sheet-frame {
-  container-type: inline-size;
-  min-width: 0;
-}
-
-.app-sheet-frame .rs-sheet {
-  width: 100%;
-  max-width: 816px;
-  padding: 4.114em 4.8em;
-  font-size: min(14px, 100cqw * 14 / 816);
-}
-
-.app-sheet-frame .rs-sheet h1 {
-  margin: 0 0 0.1em;
-  font-size: 1.905em;
-}
-
-.app-sheet-frame .rs-sheet__contact {
-  margin: 0 0 0.952em;
-}
-
-.app-sheet-frame .rs-sheet__summary {
-  margin: 0 0 0.381em;
-}
-
-.app-sheet-frame .rs-sheet h2 {
-  margin: 1.091em 0 0.545em;
-  padding-bottom: 0.182em;
-  font-size: 1.048em;
-}
-
-.app-sheet-frame .rs-sheet__role {
-  margin-bottom: 0.762em;
-}
-
-.app-sheet-frame .rs-sheet__role-head {
-  gap: 1.143em;
-}
-
-.app-sheet-frame .rs-sheet h3 {
-  font-size: 1em;
-}
-
-.app-sheet-frame .rs-sheet ul {
-  margin: 0.286em 0 0 1.333em;
-}
-
-.app-sheet-frame .rs-sheet li {
-  margin: 0 0 0.19em;
-}
-
 /* Notes sit level with their lines; margin-layout.ts sets each one's top. */
 .app-notes {
   position: relative;
@@ -761,10 +705,6 @@ main:focus {
 
 /* Sign in (SignInCard) */
 
-/* The G is drawn by CSS, so the link's text is exactly "Sign in with Google". */
-.rs-google::before {
-  content: "G";
-}
 
 .app-signin-page {
   display: flex;
