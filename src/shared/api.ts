@@ -283,6 +283,8 @@ export interface ResumeView {
   report: ResumeReport | null;
   /** The facts cited by body lines, for showing evidence beside each line. */
   facts: Record<string, { text: string; quote: string | null }>;
+  /** The contact details this version prints, captured with it; absent while running. */
+  profile?: Profile;
 }
 
 export interface ApiErrorBody {

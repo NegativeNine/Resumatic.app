@@ -164,6 +164,9 @@ describe("Tailor", () => {
     for (const invented of ["75%", "synergy", "Won three", 'on Kubernetes"'])
       expect(text).not.toContain(invented);
 
+    // The view carries the contact details this version prints, so the sheet in the app matches its PDF.
+    expect(resume.profile).toEqual(await user.json("/api/profile"));
+
     const { applications } = await user.json("/api/applications");
     expect(applications[0]).toMatchObject({
       id: applicationId,

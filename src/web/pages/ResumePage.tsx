@@ -19,8 +19,13 @@ export function ResumePage({ id }: { id: string }) {
   const r = resume.data;
   const { refreshMe } = useSession();
   const wasRunning = useRef(false);
+  // Set once this page watches the resume finish, so the margin's marks tick in once; never on a later visit.
+  const [fresh, setFresh] = useState(false);
   useEffect(() => {
-    if (r && wasRunning.current && r.state !== "running") void refreshMe();
+    if (r && wasRunning.current && r.state !== "running") {
+      void refreshMe();
+      if (r.state === "ready") setFresh(true);
+    }
     wasRunning.current = r?.state === "running";
   }, [r, refreshMe]);
 
@@ -40,7 +45,7 @@ export function ResumePage({ id }: { id: string }) {
       {r?.state === "failed" && <TailorFailed resume={r} />}
       {r?.state === "ready" &&
         (r.body ? (
-          <ReadyResume key={r.id} resume={r} reload={resume.reload} />
+          <ReadyResume key={r.id} resume={r} reload={resume.reload} fresh={fresh} />
         ) : (
           <ErrorNote message="This resume is marked ready, but it has no content. Try tailoring a new version." />
         ))}
@@ -69,9 +74,11 @@ function RunningResume({ resume, reload }: { resume: ResumeView; reload: Reload 
 function ReadyResume({
   resume,
   reload,
+  fresh,
 }: {
   resume: ResumeView;
   reload: Reload;
+  fresh: boolean;
 }) {
   const versions = useResource(() => api.resumeVersions(resume.id));
   const [version, setVersion] = useState<number | undefined>();
@@ -116,13 +123,13 @@ function ReadyResume({
             )
           }
         >
-          <option value="latest">Latest · version {resume.version}</option>
+          <option value="latest">Latest (version {resume.version})</option>
           {(versions.data?.versions ?? [])
             .filter((saved) => saved.version !== resume.version)
             .sort((a, b) => b.version - a.version)
             .map((saved) => (
               <option key={saved.version} value={saved.version}>
-                Version {saved.version} · {formatDateTime(saved.createdAt)}
+                Version {saved.version}, saved {formatDateTime(saved.createdAt)}
               </option>
             ))}
         </select>
@@ -146,6 +153,7 @@ function ReadyResume({
             reload={refresh}
             onLineEditingChange={editingChanged}
             editingOutdated={editingOutdated}
+            fresh={fresh}
           />
           <ApplicationDocuments
             applicationId={resume.applicationId}

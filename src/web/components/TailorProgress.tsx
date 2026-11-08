@@ -1,3 +1,5 @@
+import { Tick } from "./ui";
+
 const STEPS = [
   { id: "analyze", label: "Read the job description" },
   { id: "select", label: "Choose your most relevant confirmed facts" },
@@ -36,17 +38,19 @@ export function TailorProgress({ step, dispatchUncertain, cancellationPending }:
       <p className="meta">
         You can leave this page. Tailoring carries on, and the resume will be waiting under Jobs.
       </p>
-      <p className="step-count" role="status">
+      <p className="app-step-count" role="status">
         Step {current + 1} of {STEPS.length}: {STEPS[current].label}
       </p>
-      <ol className="plain-list steps">
+      <ol className="rs-steps app-steps">
         {STEPS.map((s, i) => {
           const state = i < done ? "done" : i === current ? "current" : "todo";
           return (
-            <li key={s.id} className={state} aria-current={state === "current" ? "step" : undefined}>
-              <span className="marker" aria-hidden="true" />
-              {s.label}
-              {state === "done" && <span className="visually-hidden"> (done)</span>}
+            <li key={s.id} className={`rs-step is-${state}`} aria-current={state === "current" ? "step" : undefined}>
+              <Tick state={state === "done" ? "done" : state === "current" ? "running" : "todo"} />
+              <span>
+                {s.label}
+                {state === "done" && <span className="rs-visually-hidden"> (done)</span>}
+              </span>
             </li>
           );
         })}

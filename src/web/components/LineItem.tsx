@@ -10,7 +10,7 @@ import { api } from "../api";
 import { count, LINE_STATUS_HINT, LINE_STATUS_LABEL } from "../format";
 import { useAction, type Reload } from "../hooks";
 import { sessionEndNote, useSession } from "../session";
-import { ActionError, Badge, CharCount, Quote } from "./ui";
+import { ActionError, Badge, CharCount, Glyph, Quote } from "./ui";
 
 type CitedFact = { id: string; text: string; quote: string | null };
 
@@ -31,7 +31,11 @@ interface Props {
   editingOutdated?: boolean;
 }
 
-/** One resume line, with its status and, on request, the facts and quotes it cites. */
+/**
+ * A resume line's note in the margin (ResumeLine): its status, a toggle for the facts and quotes
+ * it cites, and its tools. The line itself prints on the sheet (ResumePaper); the note repeats
+ * its words only on narrow screens, where the notes follow the sheet as a list.
+ */
 export function LineItem({
   resumeId,
   applicationId,
@@ -50,7 +54,7 @@ export function LineItem({
 }: Props) {
   const [editing, setEditing] = useState(false);
   const removal = useAction();
-  const ref = useRef<HTMLLIElement>(null);
+  const ref = useRef<HTMLDivElement>(null);
   const id = useId();
   const cited: CitedFact[] = line.factIds.flatMap((factId) =>
     facts[factId] ? [{ id: factId, ...facts[factId] }] : [],
@@ -63,8 +67,31 @@ export function LineItem({
   }, [line.id, onEditingChange]);
 
   return (
-    <li className="line" ref={ref} tabIndex={-1}>
-      {editing ? (
+    <div className={expanded ? "rs-note is-open" : "rs-note"} ref={ref} tabIndex={-1} data-note-for={line.id}>
+      <div className="rs-note__row rs-note__head">
+        <Badge tone={legacyReview === "pending" ? "edited" : line.status} title={legacyReview === "pending" ? "This older line needs a fresh check against confirmed facts." : LINE_STATUS_HINT[line.status]}>
+          {legacyReview === "pending" ? "Needs review" : legacyReview === "verified" ? "Checked" : LINE_STATUS_LABEL[line.status]}
+        </Badge>
+        <button
+          type="button"
+          className="rs-note__toggle"
+          aria-expanded={expanded}
+          aria-controls={`${id}-evidence`}
+          aria-describedby={`${id}-text`}
+          onClick={() => onToggle(line.id)}
+        >
+          <Glyph name="follows" />
+          <span>
+            {legacyReview === "pending"
+              ? expanded ? "Hide review note" : "Review note"
+              : expanded ? "Hide evidence" : count(cited.length, "fact")}
+          </span>
+        </button>
+      </div>
+      <p className="rs-note__line" id={`${id}-text`}>
+        {roleId === null ? line.text : presentResumeBullet(line.text)}
+      </p>
+      {editing && (
         <LineEditor
           resumeId={resumeId}
           applicationId={applicationId}
@@ -78,75 +105,56 @@ export function LineItem({
           expectedVersion={expectedVersion}
           editingOutdated={editingOutdated}
         />
-      ) : (
-        <p className="line-text" id={`${id}-text`}>
-          {roleId === null ? line.text : presentResumeBullet(line.text)}
-        </p>
       )}
-      <div className="line-tools">
-        <Badge tone={legacyReview === "pending" ? "edited" : line.status} title={legacyReview === "pending" ? "This older line needs a fresh check against confirmed facts." : LINE_STATUS_HINT[line.status]}>
-          {legacyReview === "pending" ? "Needs review" : legacyReview === "verified" ? "Checked" : LINE_STATUS_LABEL[line.status]}
-        </Badge>
-        <button
-          type="button"
-          className="link-button"
-          aria-expanded={expanded}
-          aria-controls={`${id}-evidence`}
-          aria-describedby={editing ? undefined : `${id}-text`}
-          onClick={() => onToggle(line.id)}
-        >
-          {legacyReview === "pending"
-            ? expanded ? "Hide review note" : "Show review note"
-            : expanded ? "Hide evidence" : `Show evidence (${count(cited.length, "fact")})`}
-        </button>
+      <div className="rs-note__evidence" id={`${id}-evidence`} hidden={!expanded}>
+        {legacyReview === "pending"
+          ? <p className="rs-meta">This older line's citations have not been rechecked. Select confirmed facts when reviewing it.</p>
+          : <Evidence facts={cited} />}
         {!editing && !readOnly && (
-          <button
-            type="button"
-            className="link-button"
-            aria-describedby={`${id}-text`}
-            onClick={() => { onEditingChange?.(line.id, true); setEditing(true); }}
-          >
-            {legacyReview === "pending" ? "Review line" : "Edit line"}
-          </button>
-        )}
-        {!editing && !readOnly && (legacyReview || canRemove) && expectedVersion !== undefined && (
-          <button type="button" className="link-button" disabled={removal.pending} aria-describedby={`${id}-text`}
-            onClick={() => void removal.run(async () => {
-              if (legacyReview) await api.removeLegacyLine(resumeId, line.id, expectedVersion);
-              else await api.removeResumeLine(resumeId, line.id, expectedVersion);
-              await reload();
-            })}>
-            {removal.pending ? "Removing…" : "Remove line (keeps earlier versions)"}
-          </button>
+          <div className="rs-note__row">
+            <button
+              type="button"
+              className="rs-linkbtn"
+              aria-describedby={`${id}-text`}
+              onClick={() => { onEditingChange?.(line.id, true); setEditing(true); }}
+            >
+              {legacyReview === "pending" ? "Review line" : "Edit line"}
+            </button>
+            {(legacyReview || canRemove) && expectedVersion !== undefined && (
+              <button type="button" className="rs-linkbtn" disabled={removal.pending} aria-describedby={`${id}-text`}
+                onClick={() => void removal.run(async () => {
+                  if (legacyReview) await api.removeLegacyLine(resumeId, line.id, expectedVersion);
+                  else await api.removeResumeLine(resumeId, line.id, expectedVersion);
+                  await reload();
+                })}>
+                {removal.pending ? "Removing…" : "Remove line (keeps earlier versions)"}
+              </button>
+            )}
+          </div>
         )}
       </div>
       <ActionError message={removal.error} />
-      <div className="evidence" id={`${id}-evidence`} hidden={!expanded}>
-        {legacyReview === "pending"
-          ? <p className="meta">This older line's citations have not been rechecked. Select confirmed facts when reviewing it.</p>
-          : <Evidence facts={cited} />}
-      </div>
-    </li>
+    </div>
   );
 }
 
 function Evidence({ facts }: { facts: CitedFact[] }) {
   if (facts.length === 0)
-    return <p className="meta">This line doesn't cite any facts.</p>;
+    return <p className="rs-meta">This line doesn't cite any facts.</p>;
   return (
-    <ul className="plain-list">
+    <>
       {facts.map((fact) => (
-        <li key={fact.id} className="evidence-item">
-          <p className="evidence-label">Fact</p>
-          <p>{presentResumeBullet(fact.text)}</p>
+        <div key={fact.id} className="rs-note__fact">
+          <p className="rs-note__label">Fact</p>
+          <p className="rs-note__fact-text">{presentResumeBullet(fact.text)}</p>
           {fact.quote ? (
-            <Quote text={fact.quote} caption="The words it came from" />
+            <Quote text={fact.quote} size="sm" caption="The words it came from" />
           ) : (
-            <p className="meta">Your own claim, with no source quote.</p>
+            <p className="rs-meta">Your own claim, with no source quote.</p>
           )}
-        </li>
+        </div>
       ))}
-    </ul>
+    </>
   );
 }
 
