@@ -7,6 +7,12 @@ export function validEvaluationSecretNames(secrets) {
     !["EXTRACTOR", "EXTRACTOR_BY_FORMAT", "EXTRACTOR_EXPERIMENT", "ROLE_UNKNOWN_END_ENABLED"].includes(secret.name),
   );
 }
+/** A staging secret must not shadow the evaluation settings or any variable the staging
+ * configuration reviews, such as PILOT_SHARED_BUDGET or DAILY_SPEND_CAP_USD in a smoke deploy. */
+export function validStagingSecretNames(secrets, vars) {
+  if (!vars || typeof vars !== "object" || Array.isArray(vars)) return false;
+  return validEvaluationSecretNames(secrets) && secrets.every((secret) => !Object.hasOwn(vars, secret.name));
+}
 // Keep this list limited to actual secret values. A new production secret
 // requires a reviewed change here and in the operations documentation.
 const PRODUCTION_SECRET_NAMES = new Set([

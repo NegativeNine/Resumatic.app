@@ -169,6 +169,9 @@
         "SWEEP_DELAY_MS": "60000",
         "INVITE_ONLY": "true",
         "ALLOW_TEST_SIGNIN": "true",
+        // Staging deploys model-free (--smoke-only) until shared budget accounting exists: every
+        // model call and every uncached PDF fails closed. A live staging run sets this to "false".
+        "PILOT_SHARED_BUDGET": "true",
         "TAILOR_MONTHLY_LIMIT": "50",
         "OIDC_CLIENT_ID": "",
         "CF_ACCOUNT_ID": "",

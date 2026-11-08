@@ -42,7 +42,7 @@ jobs:
 
   deploy-staging:
     needs: [test, security-audit]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.STAGING_DEPLOY_ENABLED == 'true'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.STAGING_DEPLOY_ENABLED == 'true' && vars.STAGING_SMOKE_ONLY != 'true'
     runs-on: ubuntu-latest
     environment: staging
     concurrency: staging
@@ -77,4 +77,39 @@ jobs:
             staging-preflight.json
             e2e-report.json
             deletion-manifest.json
+          if-no-files-found: error
+
+  # A model-free staging deploy: test sign-in and synthetic data only, with every model call and
+  # uncached PDF failing closed (PILOT_SHARED_BUDGET). It shows that the build deploys and serves.
+  # It isn't a live check, an end-to-end run or a release gate.
+  deploy-staging-smoke:
+    needs: [test, security-audit]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.STAGING_DEPLOY_ENABLED == 'true' && vars.STAGING_SMOKE_ONLY == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    concurrency: staging
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      STAGING_URL: ${{ vars.STAGING_URL }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/validate-config.mjs --environment staging --purpose deploy --smoke-only --report staging-preflight.json
+      - name: Reject secrets that shadow the staging configuration
+        run: node scripts/check-staging-secrets.mjs
+      - run: npm run build:staging
+      - run: npx wrangler deploy
+      - name: Smoke test the staging origin
+        run: |
+          node --input-type=module -e 'import {httpsOrigin} from "./scripts/lib/config.mjs"; const origin=httpsOrigin(process.env.STAGING_URL); if(!origin) process.exit(1); for (let attempt=0; attempt<6; attempt++) { try { const r=await fetch(`${origin}/api/health`,{redirect:"error",signal:AbortSignal.timeout(15000)}); if(r.ok) process.exit(0); } catch {} await new Promise((done)=>setTimeout(done,10000)); } process.exit(1);'
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: staging-smoke-evidence
+          path: staging-preflight.json
           if-no-files-found: error
