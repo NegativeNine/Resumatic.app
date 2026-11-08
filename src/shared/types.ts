@@ -1,6 +1,7 @@
 import type {
   FactKind,
   Level,
+  LineFinding,
   LineStatus,
   ResumeBody,
   ResumeReport,
@@ -136,6 +137,8 @@ export interface DraftLine {
   text: string;
   factIds: string[];
   status?: LineStatus;
+  /** The first problem the checks found, kept when the line ends up repaired or replaced. */
+  finding?: LineFinding;
 }
 
 export interface Draft {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   count,
+  findingSentence,
   formatBytes,
   formatDate,
   formatDateRange,
@@ -60,5 +61,31 @@ describe("numbers", () => {
     expect(formatBytes(10 * 1024 * 1024)).toBe("10 MB");
     expect(formatBytes(1.5 * 1024 * 1024)).toBe("1.5 MB");
     expect(formatBytes(300)).toBe("1 KB");
+  });
+});
+
+describe("findings", () => {
+  it("says what the check found, then what happened to the line", () => {
+    expect(findingSentence({ kind: "numbers", values: ["40%"] }, "repaired")).toBe(
+      "The draft said 40%. Your facts don't include that number. Resumatic rewrote it once to match its facts.",
+    );
+    expect(findingSentence({ kind: "names", values: ["Kafka", "Flink", "Spark"] }, "replaced")).toBe(
+      "The draft named Kafka, Flink and Spark. Your facts don't mention them. This line uses your fact's own words instead.",
+    );
+    expect(findingSentence({ kind: "scope", claimed: "owned", allowed: "implemented" }, "repaired")).toBe(
+      "The draft said you owned it, which is more than your facts show. Resumatic rewrote it once to match its facts.",
+    );
+    expect(findingSentence({ kind: "citation" }, "replaced")).toBe(
+      "The draft cited a fact it couldn't use for this line. This line uses your fact's own words instead.",
+    );
+    expect(findingSentence({ kind: "unsupported" }, "repaired")).toBe(
+      "The check found wording its facts don't support. Resumatic rewrote it once to match its facts.",
+    );
+  });
+
+  it("stays general when a stored finding has no usable values", () => {
+    expect(findingSentence({ kind: "numbers", values: [] }, "replaced")).toBe(
+      "The draft used a number your facts don't include. This line uses your fact's own words instead.",
+    );
   });
 });

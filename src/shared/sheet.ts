@@ -23,6 +23,19 @@ export function formatRoleDates(startDate: string | null, endDate: string | null
   return [start, end].filter(Boolean).join(" – ");
 }
 
+/**
+ * The body without its findings: what a resume says, for readers outside the app such as a
+ * connected app. A finding explains a line in the margin and can quote what a rejected draft said.
+ */
+export function withoutFindings(body: ResumeBody): ResumeBody {
+  const line = ({ finding: _finding, ...rest }: ResumeLine): ResumeLine => rest;
+  return {
+    ...body,
+    summary: body.summary ? line(body.summary) : null,
+    sections: body.sections.map((section) => ({ ...section, lines: section.lines.map(line) })),
+  };
+}
+
 export interface SheetLine {
   /** The line as stored, for its note and its evidence. */
   line: ResumeLine;

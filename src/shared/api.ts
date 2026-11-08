@@ -227,11 +227,26 @@ export interface ApplicationView {
   resumes: { id: string; state: ResumeState; createdAt: number; dispatchUncertain?: boolean; cancellationPending?: boolean }[];
 }
 
+/**
+ * Why a line was repaired or replaced, as Resumatic's own checks found it. It never holds model
+ * text: `values` are the numbers or names the draft used that its facts don't contain, at most
+ * three, each short. The client words it ("The draft said 40%. Your facts don't include that
+ * number."). Resumes tailored before findings existed have none.
+ */
+export type LineFinding =
+  | { kind: "numbers"; values: string[] }
+  | { kind: "names"; values: string[] }
+  | { kind: "scope"; claimed: Level; allowed: Level }
+  | { kind: "citation" }
+  | { kind: "unsupported" };
+
 export interface ResumeLine {
   id: string;
   text: string;
   factIds: string[];
   status: LineStatus;
+  /** Only on a repaired or replaced line, until the person edits it. */
+  finding?: LineFinding;
 }
 
 export interface ResumeSection {

@@ -23,11 +23,14 @@ export function mergeRefinementEvidence(
     if (!before || !after || before.id !== after.id || seen.has(before.id) || !Array.isArray(after.factIds)) throw conflict();
     seen.add(before.id);
     if (JSON.stringify(before) !== JSON.stringify(after)) {
-      if (!after.factIds.length || !["kept", "repaired", "replaced"].includes(after.status)) throw conflict();
+      // A changed line never carries a finding: it was about the earlier wording.
+      if (!after.factIds.length || !["kept", "repaired", "replaced"].includes(after.status) || after.finding !== undefined)
+        throw conflict();
       for (const id of after.factIds) changed.add(id);
       before.text = after.text;
       before.factIds = [...after.factIds];
       before.status = after.status;
+      delete before.finding;
     } else {
       for (const id of before.factIds) unchanged.add(id);
     }

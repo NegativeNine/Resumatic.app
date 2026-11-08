@@ -15,6 +15,12 @@ import type {
 import { isInstruction } from "./extract/verify";
 import { analyzeJob, selectFacts, verifyDraft, verifyExactLine } from "./tailor";
 
+/** A changed line drops its finding, which was about the earlier wording. */
+function rewritten(line: ResumeLine, change: Pick<ResumeLine, "text" | "factIds" | "status">): ResumeLine {
+  const { finding: _earlier, ...rest } = line;
+  return { ...rest, ...change };
+}
+
 export type DocumentKind = "refine" | "letter" | "prep" | "questions";
 export interface DocumentQuestion {
   id: string;
@@ -352,7 +358,7 @@ export async function verifyDocument(
         throw new AppError("invalid", "This edit couldn't be checked against the facts it cites. Change the wording or the facts, then try again.");
       const body = structuredClone(input.base!);
       const update = (line: ResumeLine): ResumeLine =>
-        line.id === candidate.id ? { ...line, text: candidate.text, factIds: candidate.factIds, status: "kept" } : line;
+        line.id === candidate.id ? rewritten(line, { text: candidate.text, factIds: candidate.factIds, status: "kept" }) : line;
       if (body.summary) body.summary = update(body.summary);
       for (const section of body.sections) section.lines = section.lines.map(update);
       return {
@@ -375,7 +381,7 @@ export async function verifyDocument(
     const update = (line: ResumeLine): ResumeLine => {
       const next = updates.get(line.id);
       return next && next.text !== line.text
-        ? { ...line, text: next.text, status: next.status! }
+        ? rewritten(line, { text: next.text, factIds: line.factIds, status: next.status! })
         : line;
     };
     if (body.summary) body.summary = update(body.summary);

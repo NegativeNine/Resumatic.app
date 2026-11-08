@@ -1,5 +1,12 @@
-/** Test-only helper to reconstruct a Vault schema before incarnation fencing. */
+/** Test-only helper to reconstruct a Vault schema before upload digests, the latest migration. */
+export function removeSourceDigestMigration(sql: SqlStorage): void {
+  sql.exec(`DROP INDEX IF EXISTS sources_sha256`);
+  sql.exec(`ALTER TABLE sources DROP COLUMN sha256`);
+}
+
+/** Test-only helper to reconstruct a Vault schema before incarnation fencing, and so before every later migration. */
 export function removeIncarnationMigration(sql: SqlStorage): void {
+  removeSourceDigestMigration(sql);
   for (const table of ["facts", "roles"])
     for (const suffix of ["capacity", "insert", "delete", "id", "update_capacity", "update"])
       sql.exec(`DROP TRIGGER IF EXISTS ${table}_incarnation_${suffix}`);

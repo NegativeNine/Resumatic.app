@@ -1,4 +1,4 @@
-import type { FactKind, Level, LineStatus, ResumeState, ReviewState, RoleKind } from "../shared/api";
+import type { FactKind, Level, LineFinding, LineStatus, ResumeState, ReviewState, RoleKind } from "../shared/api";
 
 // Dates follow the voice guide whatever the browser's locale: "Nov 2026", "7 Nov 2026",
 // "7 Nov 2026, 9:42 AM". The app is written in English, and the PDF template uses the same
@@ -122,6 +122,53 @@ export const LINE_STATUS_LABEL: Record<LineStatus, string> = {
 export const LINE_STATUS_HINT: Record<LineStatus, string> = {
   kept: "Passed every check as written",
   repaired: "Fixed once so that it matches its facts",
-  replaced: "The draft wording could not be verified, so this line uses the wording of a confirmed fact",
+  replaced: "The draft wording couldn't be verified, so this line uses the wording of a confirmed fact",
   edited: "Changed by you",
 };
+
+/** What a level of ownership says about the work, as the end of "The draft said you …". */
+const LEVEL_CLAIM: Record<Level, string> = {
+  contributed: "contributed to it",
+  implemented: "implemented it",
+  led: "led it",
+  owned: "owned it",
+  founded: "founded it",
+};
+
+/** "40%", "40% and 3x", "Kafka, Flink and Spark". */
+function listOf(values: string[]): string {
+  return values.length < 2 ? values.join("") : `${values.slice(0, -1).join(", ")} and ${values[values.length - 1]}`;
+}
+
+/**
+ * Why the checks changed a repaired or replaced line, in the interface's own words. The values are
+ * the numbers or names the rejected draft used, which is the only part that comes from the draft.
+ */
+export function findingSentence(finding: LineFinding, status: LineStatus): string {
+  const values = "values" in finding && Array.isArray(finding.values) && finding.values.length > 0 &&
+    finding.values.every((value) => typeof value === "string") ? finding.values : null;
+  let reason: string;
+  switch (finding.kind) {
+    case "numbers":
+      reason = values
+        ? `The draft said ${listOf(values)}. Your facts don't include ${values.length === 1 ? "that number" : "those numbers"}.`
+        : "The draft used a number your facts don't include.";
+      break;
+    case "names":
+      reason = values
+        ? `The draft named ${listOf(values)}. Your facts don't mention ${values.length === 1 ? "it" : "them"}.`
+        : "The draft named something your facts don't mention.";
+      break;
+    case "scope":
+      reason = `The draft said you ${LEVEL_CLAIM[finding.claimed] ?? "led it"}, which is more than your facts show.`;
+      break;
+    case "citation":
+      reason = "The draft cited a fact it couldn't use for this line.";
+      break;
+    default:
+      reason = "The check found wording its facts don't support.";
+  }
+  if (status === "repaired") return `${reason} Resumatic rewrote it once to match its facts.`;
+  if (status === "replaced") return `${reason} This line uses your fact's own words instead.`;
+  return reason;
+}

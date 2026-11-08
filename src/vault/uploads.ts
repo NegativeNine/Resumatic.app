@@ -24,10 +24,15 @@ export interface UploadDescriptor {
   contentType: string;
   origin?: "upload" | "ocr";
   parentSourceId?: string;
+  /**
+   * SHA-256 of the file's bytes alone, as lowercase hex. The Worker computes it from the bytes it
+   * stores. The Vault uses it to refuse a second copy of a file; it isn't part of the intent.
+   */
+  sha256?: string;
 }
 export interface UploadIntent extends Omit<
   UploadDescriptor,
-  "origin" | "parentSourceId"
+  "origin" | "parentSourceId" | "sha256"
 > {
   sourceId: string;
   origin: "upload" | "ocr";
@@ -401,4 +406,11 @@ export async function uploadDescriptorDigest(
       }),
     ),
   );
+}
+
+/** SHA-256 of an upload's bytes alone, as lowercase hex, for refusing a second copy of a file. */
+export async function uploadBodyDigest(body: ArrayBuffer): Promise<string> {
+  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", body)), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
 }

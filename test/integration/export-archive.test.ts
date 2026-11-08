@@ -12,8 +12,8 @@ function identity(user: User) {
   return JSON.parse(new TextDecoder().decode(fromBase64url(payload))) as { uid: string; vid: string; gen: number; epoch?: string };
 }
 
-async function source(user: User) {
-  const response = await user.upload("../../resume.pdf", "original synthetic bytes");
+async function source(user: User, content = "original synthetic bytes") {
+  const response = await user.upload("../../resume.pdf", content);
   expect(response.status).toBe(201);
   const { sourceId } = await response.json() as { sourceId: string };
   const s = identity(user);
@@ -156,7 +156,8 @@ describe("portable vault archive", () => {
     const response = await user.fetch("/api/export/archive");
     expect(response.status).toBe(200);
     await user.send("PUT", "/api/profile", { name: "After snapshot" });
-    const later = await source(user);
+    // A second copy of the same file is refused, so the later upload is a different file.
+    const later = await source(user, "later synthetic bytes");
     const entries = unzipSync(new Uint8Array(await response.arrayBuffer()));
     const data = JSON.parse(new TextDecoder().decode(entries["vault.json"]!));
     expect(data.profile.name).toBe("Before snapshot");

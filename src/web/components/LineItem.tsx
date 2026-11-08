@@ -7,7 +7,7 @@ import {
 } from "../../shared/api";
 import { presentResumeBullet } from "../../shared/resume-presentation";
 import { api } from "../api";
-import { count, LINE_STATUS_HINT, LINE_STATUS_LABEL } from "../format";
+import { count, findingSentence, LINE_STATUS_HINT, LINE_STATUS_LABEL } from "../format";
 import { useAction, type Reload } from "../hooks";
 import { sessionEndNote, useSession } from "../session";
 import { ActionError, Badge, CharCount, Glyph, Quote } from "./ui";
@@ -107,8 +107,11 @@ export function LineItem({
         />
       )}
       <div className="rs-note__evidence" id={`${id}-evidence`} hidden={!expanded}>
+        {!legacyReview && line.finding && (line.status === "repaired" || line.status === "replaced") && (
+          <p className="rs-meta">{findingSentence(line.finding, line.status)}</p>
+        )}
         {legacyReview === "pending"
-          ? <p className="rs-meta">This older line's citations have not been rechecked. Select confirmed facts when reviewing it.</p>
+          ? <p className="rs-meta">This older line's citations haven't been rechecked. Select confirmed facts when reviewing it.</p>
           : <Evidence facts={cited} />}
         {!editing && !readOnly && (
           <div className="rs-note__row">
