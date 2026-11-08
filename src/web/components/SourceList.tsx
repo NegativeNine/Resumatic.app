@@ -7,7 +7,7 @@ import { sourceReviewSummaries, type Vault } from "../vault";
 import { useSession } from "../session";
 import { rasterizeResume } from "../scan";
 import { ApiError } from "../api";
-import { ActionError, Badge } from "./ui";
+import { ActionError, Badge, Glyph } from "./ui";
 import { sourceErrorMessage } from "../source-error";
 
 export function SourceList({
@@ -28,14 +28,11 @@ export function SourceList({
   );
 
   return (
-    <section className="section" aria-labelledby="sources-heading">
-      <h2 id="sources-heading">Your sources</h2>
+    <>
       {sources.length === 0 ? (
-        <p className="empty">
-          No sources yet. Upload your current resume above to get started.
-        </p>
+        <p className="rs-empty">No sources yet. Upload your current resume to get started.</p>
       ) : (
-        <ul className="plain-list source-list">
+        <ul className="rs-sources rs-panel app-source-panel">
           {sources.map((source) => (
             <SourceRow
               key={source.id}
@@ -51,7 +48,7 @@ export function SourceList({
           ))}
         </ul>
       )}
-    </section>
+    </>
   );
 }
 
@@ -75,34 +72,31 @@ function SourceRow({
   ocrEnabled: boolean;
 }) {
   return (
-    <li className="source" tabIndex={-1}>
-      <div className="row-between">
-        <div>
-          <p className="source-name">
-            {source.origin === "ocr"
-              ? source.filename.replace(/\.ocr\.json$/i, "")
-              : source.filename}
-          </p>
-          <p className="meta">
-            Uploaded {formatDate(source.createdAt)} ·{" "}
-            <a href={api.sourceFileUrl(source.id)}>
-              {source.origin === "ocr" ? "Download image inputs (JSON)" : "Download source"}
-            </a>
-            {source.origin === "ocr" && source.parentSourceId && (
-              <> · <a href={api.sourceFileUrl(source.parentSourceId)}>Download original PDF</a></>
-            )}
-          </p>
-          {source.origin === "ocr" && (
-            <p className="meta">
-              <Badge tone="queued">Image transcription</Badge> · Check proposed
-              facts against the original PDF.
-              {source.conversionImageCount != null &&
-                ` ${source.conversionImageCount} image${source.conversionImageCount === 1 ? "" : "s"} submitted.`}
-            </p>
-          )}
-        </div>
+    <li className="rs-source" tabIndex={-1}>
+      <Glyph name="file" />
+      <p className="rs-source__name">
+        {source.origin === "ocr" ? source.filename.replace(/\.ocr\.json$/i, "") : source.filename}
+      </p>
+      <p className="rs-source__meta app-meta-row">
         <SourceStatus source={source} proposedRoles={proposedRoles} proposedFacts={proposedFacts} visibleItems={visibleItems} />
-      </div>
+      </p>
+      <p className="rs-source__meta app-meta-row">
+        <span>Uploaded {formatDate(source.createdAt)}</span>
+        <a href={api.sourceFileUrl(source.id)}>
+          {source.origin === "ocr" ? "Download image inputs (JSON)" : "Download source"}
+        </a>
+        {source.origin === "ocr" && source.parentSourceId && (
+          <a href={api.sourceFileUrl(source.parentSourceId)}>Download original PDF</a>
+        )}
+      </p>
+      {source.origin === "ocr" && (
+        <p className="rs-source__meta">
+          <Badge tone="queued">Image transcription</Badge> Check proposed facts against the original PDF.
+          {source.conversionImageCount != null &&
+            ` ${source.conversionImageCount} image${source.conversionImageCount === 1 ? "" : "s"} submitted.`}
+        </p>
+      )}
+      <div className="rs-source__extra app-source-extra">
       {source.state === "queued" && source.cancellationPending && (
         <p className="source-error" role="status">
           Cancellation is pending. Reading may still start or continue; please check back.
@@ -151,6 +145,7 @@ function SourceRow({
         /\.pdf$/i.test(source.filename) && (
           <ScanRecovery sourceId={source.id} reload={reload} />
         )}
+      </div>
     </li>
   );
 }
@@ -276,9 +271,13 @@ function SourceStatus({ source, proposedRoles, proposedFacts, visibleItems }: {
         proposedFacts ? count(proposedFacts, "fact") : "",
       ].filter(Boolean).join(" and ");
       return (
-        <Badge tone="ready">
-          {pending ? `Ready · ${pending} to review` : visibleItems ? "Ready · review complete" : "Ready · no items shown"}
-        </Badge>
+        <>
+          <Badge tone="ready">
+            <Glyph name="check" />
+            Ready
+          </Badge>
+          <span>{pending ? `${pending} to review` : visibleItems ? "Review complete" : "No items shown"}</span>
+        </>
       );
     }
   }

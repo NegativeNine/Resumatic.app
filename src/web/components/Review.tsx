@@ -9,6 +9,8 @@ import { FactList } from "./FactItem";
 import { REVIEW_HEADING_ID } from "./ReviewButtons";
 import { RoleForm } from "./RoleForm";
 import { RoleGroup } from "./RoleGroup";
+import { ReviewQueue } from "./ReviewQueue";
+import { EmptyState } from "./ui";
 
 const FILTERS: readonly ReviewState[] = ["proposed", "confirmed", "rejected"];
 
@@ -44,6 +46,9 @@ export function Review({ vault, reload }: { vault: Vault; reload: () => Promise<
   const filenames = useMemo(() => new Map(displayed.sources.map((s) => [s.id, s.filename] as const)), [displayed.sources]);
   const counts = countByState(displayed);
   const groups = groupByRole(displayed, filter);
+  /** Facts still proposed under a role or its copies, whatever the filter shows. */
+  const proposedUnder = (roleIds: string[]) =>
+    displayed.facts.filter((f) => f.state === "proposed" && f.roleId !== null && roleIds.includes(f.roleId)).length;
 
   async function showAdded(factId: string) {
     const next = await reload();
@@ -68,13 +73,13 @@ export function Review({ vault, reload }: { vault: Vault; reload: () => Promise<
         <AddRole reload={reload} onAdded={() => showFilter("confirmed")} />
       </div>
       {held && <p role="status" className="hint">The review list is paused while you edit. New changes appear when you close the editor. Your draft will be lost if you leave or reload this page.</p>}
-      <fieldset className="segmented" disabled={!!held}>
-        <legend className="visually-hidden">Show</legend>
+      <fieldset className="rs-filter app-review-filter" disabled={!!held}>
+        <legend>Show</legend>
         {FILTERS.map((state) => (
           <label key={state}>
             <input type="radio" name="review-filter" checked={filter === state} onChange={() => setFilter(state)} />
-            <span className="option">
-              {STATE_LABEL[state]} <span className="count">{counts[state]}</span>
+            <span className="rs-filter__opt">
+              {STATE_LABEL[state]} <span className="rs-filter__count">{counts[state]}</span>
             </span>
           </label>
         ))}
@@ -82,7 +87,8 @@ export function Review({ vault, reload }: { vault: Vault; reload: () => Promise<
       {groups.length === 0 ? (
         <EmptyReview filter={filter} vault={displayed} />
       ) : (
-        groups.map((group) =>
+        <ReviewQueue>
+        {groups.map((group) =>
           group.role ? (
             <RoleGroup
               key={group.role.id}
@@ -95,11 +101,13 @@ export function Review({ vault, reload }: { vault: Vault; reload: () => Promise<
               reload={reload}
               reviewLocked={!!held}
               onEditingChange={editingChanged}
+              proposedUnder={proposedUnder([group.role.id, ...(group.duplicates ?? []).map((copy) => copy.id)])}
             />
           ) : (
             <LooseFacts key="loose" facts={group.facts} roles={displayed.roles} filenames={filenames} reload={reload} reviewLocked={!!held} onEditingChange={editingChanged} />
           ),
-        )
+        )}
+        </ReviewQueue>
       )}
     </section>
   );
@@ -135,31 +143,41 @@ function AddRole({ reload, onAdded }: { reload: Reload; onAdded: () => void }) {
 
 function LooseFacts(props: { facts: FactView[]; roles: RoleView[]; filenames: ReadonlyMap<string, string>; reload: Reload; reviewLocked: boolean; onEditingChange: (id: string, active: boolean) => void }) {
   return (
-    <section className="card group" tabIndex={-1} aria-labelledby="loose-facts-heading">
-      <h3 id="loose-facts-heading">Not tied to a role</h3>
-      <p className="meta">Skills, credentials and other facts that stand on their own.</p>
-      <FactList {...props} />
+    <section className="rs-role" tabIndex={-1} aria-labelledby="loose-facts-heading" data-review-group="">
+      <div className="rs-role__head">
+        <span aria-hidden="true" />
+        <div>
+          <h3 className="rs-role__title" id="loose-facts-heading">
+            Not tied to a role
+          </h3>
+          <p className="rs-role__detail">Skills, credentials and other facts that stand on their own.</p>
+        </div>
+      </div>
+      <FactList className="rs-role__facts" {...props} />
     </section>
   );
 }
 
 function EmptyReview({ filter, vault }: { filter: ReviewState; vault: Vault }) {
   if (filter === "confirmed") {
-    return <p className="empty">No confirmed facts yet. Confirm the proposed facts that are true, and your resumes will use them.</p>;
+    return (
+      <EmptyState title="No confirmed facts yet">
+        Confirm the proposed facts that are true, and your resumes will use them.
+      </EmptyState>
+    );
   }
   if (filter === "rejected") {
-    return <p className="empty">Nothing rejected. Anything you reject is kept here and never used.</p>;
+    return <EmptyState title="Nothing rejected">Anything you reject is kept here and never used.</EmptyState>;
   }
   if (isReading(vault)) {
-    return <p className="empty">Resumatic is reading your upload. Its roles and facts will appear here for review.</p>;
+    return <EmptyState>Resumatic is reading your upload. Its roles and facts will appear here for review.</EmptyState>;
   }
   if (vault.roles.length === 0 && vault.facts.length === 0) {
-    return <p className="empty">Nothing to review yet. Upload a resume or CV above, or add a fact yourself.</p>;
+    return <EmptyState>Nothing to review yet. Upload a resume or CV, or add a fact yourself.</EmptyState>;
   }
   return (
-    <p className="empty">
-      You're all caught up: nothing is waiting for review. Next, <a href={href.jobs}>add a job</a> and tailor
-      a resume to it.
-    </p>
+    <EmptyState title="You're all caught up">
+      Nothing is waiting for review. Next, <a href={href.jobs}>add a job</a> and tailor a resume to it.
+    </EmptyState>
   );
 }
