@@ -96,7 +96,7 @@ describe("tailoring and document concurrency", () => {
         const { applicationId } = await instance.addApplication(who, "A detailed description for an engineering position.");
         const questionKey = crypto.randomUUID();
         const questions = await instance.startDocument(who, applicationId, { kind: "questions" }, questionKey);
-        await expect(instance.tailor(who, applicationId)).rejects.toThrow(/document is already being generated/);
+        await expect(instance.tailor(who, applicationId)).rejects.toThrow(/Another resume or document is still being made/);
         // A genuine replay remains available even when the document is running.
         expect(await instance.startDocument(who, applicationId, { kind: "questions" }, questionKey)).toEqual(questions);
         expect((await instance.me(who)).quota).toMatchObject({ used: 0, reserved: 0 });

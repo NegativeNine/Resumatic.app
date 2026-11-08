@@ -349,7 +349,7 @@ export async function verifyDocument(
       if (candidates.length !== 1 || !candidate ||
           candidate.text !== input.manualText ||
           !(await verifyExactLine(models, candidate, plan.selection, input.facts)))
-        throw new AppError("invalid", "the edit could not be verified against its cited facts");
+        throw new AppError("invalid", "This edit couldn't be checked against the facts it cites. Change the wording or the facts, then try again.");
       const body = structuredClone(input.base!);
       const update = (line: ResumeLine): ResumeLine =>
         line.id === candidate.id ? { ...line, text: candidate.text, factIds: candidate.factIds, status: "kept" } : line;

@@ -27,7 +27,7 @@ export function Shell({
   const shownKey = useRef(routeKey);
 
   useEffect(() => {
-    document.title = `${title} · Resumatic`;
+    document.title = `${title} – Resumatic`;
   }, [title]);
 
   useEffect(() => {

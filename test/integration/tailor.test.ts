@@ -181,7 +181,7 @@ describe("Tailor", () => {
     const applicationId = await newApplication(user);
     const resume = await tailor(user, applicationId);
     expect(resume.state).toBe("failed");
-    expect(resume.error).toBe("Confirm some facts before tailoring a resume");
+    expect(resume.error).toBe("Confirm some facts before tailoring a resume.");
     expect(resume.body).toBeNull();
     expect((await user.json("/api/me")).quota.used).toBe(0);
   });
@@ -210,7 +210,7 @@ describe("Tailor", () => {
     const body = (await res.json()) as { error: string; message: string };
     expect(body.error).toBe("quota");
     expect(body.message).toMatch(
-      /^you have used all 3 tailored resumes for this month; more on [A-Z][a-z]+ 1$/,
+      /^You've used all 3 tailored resumes for [A-Z][a-z]{2} \d{4}\. You can tailor more from 1 [A-Z][a-z]{2} \d{4}\.$/,
     );
     // The analysis is reused for later resumes of the same application.
     expect(options.calls?.analyze).toBe(1);

@@ -145,7 +145,7 @@ describe("uncertain workflow starts", () => {
         state.storage.sql.exec(`UPDATE resumes SET created_at = 1 WHERE id = ?`, resumeId);
         expect(await instance.getResume(who, resumeId)).toMatchObject({ state: "running", dispatchUncertain: true });
         expect((await instance.listApplications(who))[0]?.resumes[0]).toMatchObject({ id: resumeId, dispatchUncertain: true });
-        await expect(instance.tailor(who, applicationId)).rejects.toThrow(/already being generated/);
+        await expect(instance.tailor(who, applicationId)).rejects.toThrow(/Resumatic works on one at a time/);
         expect(await instance.getResume(who, resumeId)).toMatchObject({ state: "running", dispatchUncertain: true });
         await instance.claimRun(resumeId, { kind: "tailor", targetId: resumeId });
         expect(await instance.getResume(who, resumeId)).toMatchObject({ dispatchUncertain: false });

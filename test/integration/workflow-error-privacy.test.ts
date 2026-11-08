@@ -39,7 +39,7 @@ describe("Workflow error privacy", () => {
     }
     const privateDetail = `model provider HTTP 403 ${privateText}`;
     const forged = await caught(once(async () => { throw new AppError("unavailable", privateDetail); }));
-    expect(forged.message).toBe("unavailable: the service is temporarily unavailable");
+    expect(forged.message).toBe("unavailable: Resumatic is busy right now. Try again in a few minutes.");
     expect(forged.message).not.toContain(privateText);
   });
 
@@ -57,19 +57,21 @@ describe("Workflow error privacy", () => {
   });
 
   it("retains reviewed guidance and retry behavior without retaining arbitrary details", async () => {
-    const expected = await caught(once(async () => { throw new AppError("invalid", "confirm some facts before tailoring a resume"); }));
+    const expected = await caught(once(async () => { throw new AppError("invalid", "Confirm some facts before tailoring a resume."); }));
     expect(expected).toBeInstanceOf(NonRetryableError);
-    expect(userMessage(expected, "Fallback.")).toBe("Confirm some facts before tailoring a resume");
-    expect(userMessage(new AppError("conflict", "experience changed while this draft was being made; generate it again"), "Fallback.")).toBe("Experience changed while this draft was being made; generate it again");
+    expect(userMessage(expected, "Fallback.")).toBe("Confirm some facts before tailoring a resume.");
+    expect(userMessage(new AppError("conflict", "Your facts changed while this draft was being made. Create it again."), "Fallback.")).toBe("Your facts changed while this draft was being made. Create it again.");
+    // A detail that isn't reviewed falls back to its code's wording, still as a sentence.
+    expect(userMessage(new AppError("conflict", "the resume changed; refresh and try again"), "Fallback.")).toBe("Something changed while Resumatic was working. Try again.");
 
     const transient = await caught(retrySafely(async () => { throw new Error(`unavailable: ${privateText}`); }));
     expect(transient).not.toBeInstanceOf(NonRetryableError);
     expect(errorCode(transient)).toBe("unavailable");
     expect(transient.message).not.toContain(privateText);
     expect(userMessage(transient, "Fallback.")).toBe("Fallback.");
-    expect(sourceFailureMessage(transient)).toBe("Reading is temporarily unavailable. Please try again later.");
-    expect(sourceFailureMessage(new Error(privateText))).toBe("We couldn't finish reading this file. Please try again later.");
-    expect(sourceFailureMessage(new AppError("invalid", "no text could be read from this file"))).toBe("No text could be read from this file");
+    expect(sourceFailureMessage(transient)).toBe("Reading isn't available right now. Try again in a few minutes.");
+    expect(sourceFailureMessage(new Error(privateText))).toBe("Resumatic couldn't finish reading this file. Try again in a few minutes.");
+    expect(sourceFailureMessage(new AppError("invalid", "No text could be read from this file."))).toBe("No text could be read from this file.");
 
     for (const wrap of [once, retrySafely]) {
       const terminal = await caught(wrap(async () => { throw new NonRetryableError(privateText); }));
@@ -102,7 +104,7 @@ describe("Workflow error privacy", () => {
       }
     }
     expect((await caught(once(async () => { throw coded; }))).message)
-      .toContain("conflict: the requested item changed; try again");
+      .toContain("conflict: Something changed while Resumatic was working. Try again.");
   });
 
   it.each(["list", "start", "status"] as const)("does not expose a fleet %s failure to the Workflow step", async (failAt) => {

@@ -241,12 +241,12 @@ describe("Distill", () => {
   });
 
   it("records a failure the user can read when the file cannot be read", async () => {
-    options.toMarkdownError = "no text could be read from this file";
+    options.toMarkdownError = "No text could be read from this file.";
     const user = await signIn();
     const sourceId = await uploadResume(user);
     const source = await waitForSource(user, sourceId);
     expect(source.state).toBe("failed");
-    expect(source.error).toBe("No text could be read from this file");
+    expect(source.error).toBe("No text could be read from this file.");
     expect((await user.json("/api/facts")).facts).toEqual([]);
   });
 });

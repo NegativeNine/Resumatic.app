@@ -91,7 +91,7 @@ describe("generation snapshots and concurrent review", () => {
       25_000,
     );
     expect(result.state).toBe("failed");
-    expect(result.error).toMatch(/experience changed/i);
+    expect(result.error).toMatch(/Your facts changed while this draft was being made/);
     expect(result.body).toBeNull();
     expect((await user.json("/api/me")).quota.used).toBe(0);
     expect((await user.json(`/api/resumes/${id}/versions`)).versions).toEqual(

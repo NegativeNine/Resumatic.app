@@ -21,7 +21,7 @@
       "id": "src-cv",
       "filename": "sam-rivera-cv.docx",
       "state": "failed",
-      "error": "No text could be read from this file",
+      "error": "No text could be read from this file.",
       "createdAt": 1793888400000,
       "proposed": 0
     },
@@ -437,7 +437,7 @@
       "applicationId": "app-tailspin",
       "state": "failed",
       "step": "select",
-      "error": "None of your confirmed facts match this job yet",
+      "error": "None of your confirmed facts match this job yet. Add facts that cover its requirements, then tailor a new version.",
       "version": 1,
       "createdAt": 1793888400000,
       "body": null,

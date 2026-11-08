@@ -116,7 +116,7 @@ export async function toMarkdown(
   if (result.format === "error")
     throw new AppError(
       "invalid",
-      "could not read this file; try a DOCX or text-based PDF",
+      "This file couldn't be read. Try a Word file (.docx) or a PDF with selectable text.",
     );
   return result.data;
 }

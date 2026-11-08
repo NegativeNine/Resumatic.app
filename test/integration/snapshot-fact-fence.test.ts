@@ -23,7 +23,7 @@ it("requires captured facts and rechecks their complete verification inputs", as
     sql.exec(`INSERT INTO facts(id,role_id,kind,text,origin,state,updated_at) VALUES (?, ?, 'accomplishment', 'Built a service', 'user', 'confirmed', 1)`, factId, roleId);
     captureItem(sql, runId, "role", roleId, JSON.stringify(role));
     const body: ResumeBody = { summary: { id: "line", text: fact.text, factIds: [factId], status: "kept" }, skills: [], sections: [] };
-    const reject = () => expect(() => snapshots.assertCurrent(runId, body)).toThrow("experience changed");
+    const reject = () => expect(() => snapshots.assertCurrent(runId, body)).toThrow("Your facts changed while this draft was being made");
     reject();
     for (const corrupt of ["null", "{", JSON.stringify({ ...fact, id: "different" }), JSON.stringify({ ...fact, revision: 0 }), JSON.stringify({ ...fact, origin: undefined }), JSON.stringify({ ...fact, text: "" })]) {
       captureItem(sql, runId, "fact", factId, corrupt);
@@ -92,11 +92,11 @@ it("requires every printed skill to have a captured, still-confirmed skill fact"
     const skill: FactRecord = { id: factId, revision: 1, roleId: null, kind: "skill", text: "TypeScript", origin: "user", level: null, quote: null, levelExplicit: false };
     const body: ResumeBody = { summary: null, sections: [], skills: ["TypeScript"] };
     sql.exec(`INSERT INTO facts(id,kind,text,origin,state,updated_at) VALUES (?, 'skill', 'TypeScript', 'user', 'confirmed', 1)`, factId);
-    expect(() => snapshots.assertCurrent(runId, body)).toThrow("experience changed");
+    expect(() => snapshots.assertCurrent(runId, body)).toThrow("Your facts changed while this draft was being made");
     captureItem(sql, runId, "fact", factId, JSON.stringify(skill));
     expect(() => snapshots.assertCurrent(runId, body)).not.toThrow();
     sql.exec(`UPDATE facts SET state='rejected' WHERE id=?`, factId);
-    expect(() => snapshots.assertCurrent(runId, body)).toThrow("experience changed");
+    expect(() => snapshots.assertCurrent(runId, body)).toThrow("Your facts changed while this draft was being made");
     const duplicateId = crypto.randomUUID();
     const duplicate = { ...skill, id: duplicateId };
     sql.exec(`INSERT INTO facts(id,kind,text,origin,state,updated_at) VALUES (?, 'skill', 'TypeScript', 'user', 'confirmed', 1)`, duplicateId);
@@ -105,11 +105,11 @@ it("requires every printed skill to have a captured, still-confirmed skill fact"
     expect(() => snapshots.assertCurrent(runId, body)).not.toThrow();
     // Cited lines, unlike skill strings, must still use their exact fact ID.
     const cited: ResumeBody = { ...body, summary: { id: "line", text: "TypeScript", factIds: [factId], status: "kept" } };
-    expect(() => snapshots.assertCurrent(runId, cited)).toThrow("experience changed");
+    expect(() => snapshots.assertCurrent(runId, cited)).toThrow("Your facts changed while this draft was being made");
     sql.exec(`UPDATE facts SET text='Go' WHERE id=?`, duplicateId);
-    expect(() => snapshots.assertCurrent(runId, body)).toThrow("experience changed");
+    expect(() => snapshots.assertCurrent(runId, body)).toThrow("Your facts changed while this draft was being made");
     sql.exec(`UPDATE facts SET text='TypeScript',state='rejected' WHERE id=?`, duplicateId);
-    expect(() => snapshots.assertCurrent(runId, body)).toThrow("experience changed");
+    expect(() => snapshots.assertCurrent(runId, body)).toThrow("Your facts changed while this draft was being made");
   });
 });
 
@@ -133,9 +133,9 @@ it("accepts a duplicate skill only when its captured role remains confirmed and 
     sql.exec(`UPDATE roles SET state='rejected' WHERE id=?`, roles[0]!.id);
     expect(() => snapshots.assertCurrent(runId, body)).not.toThrow();
     sql.exec(`UPDATE roles SET org='Changed' WHERE id=?`, roles[1]!.id);
-    expect(() => snapshots.assertCurrent(runId, body)).toThrow("experience changed");
+    expect(() => snapshots.assertCurrent(runId, body)).toThrow("Your facts changed while this draft was being made");
     sql.exec(`UPDATE roles SET org='Example' WHERE id=?`, roles[1]!.id);
-    expect(() => snapshots.assertCurrent(runId, body)).toThrow("experience changed");
+    expect(() => snapshots.assertCurrent(runId, body)).toThrow("Your facts changed while this draft was being made");
     runId = crypto.randomUUID();
     captureItem(sql, runId, "role", roles[1]!.id, JSON.stringify(roles[1]));
     captureItem(sql, runId, "fact", facts[1]!.id, JSON.stringify(facts[1]));

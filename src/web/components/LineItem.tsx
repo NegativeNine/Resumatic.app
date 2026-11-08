@@ -224,18 +224,18 @@ function LineEditor({
           setCheckingMessage(null);
           setError(doc.error === "conflict"
             ? "The resume or its facts changed. Refresh the resume, then try your edit again."
-            : "We couldn't verify that wording against its evidence. Confirm or add the relevant facts, then try again.");
+            : "That wording couldn't be verified against its evidence. Confirm or add the facts it needs, then try again.");
           void refreshMe();
           return;
         }
         setCheckingMessage(doc.dispatchUncertain
-          ? "Your check was requested, but we can't yet confirm it started. Please keep this page open."
+          ? "Your check was requested, but Resumatic can't confirm yet that it started. Keep this page open."
           : "Checking your wording against the cited facts…");
       } catch (e) {
         if (stopped) return;
         const note = sessionEndNote(e);
         if (note) { endSession(note); return; }
-        setCheckingMessage("We couldn't check the status. We'll keep trying; your wording is still here.");
+        setCheckingMessage("The check's status couldn't be loaded. Resumatic will keep trying, and your wording is still here.");
       }
       if (!stopped) timer = window.setTimeout(check, 2000);
     }
@@ -289,7 +289,7 @@ function LineEditor({
       {!hasEvidence && (
         <fieldset disabled={pending || !!documentId}>
           <legend>Supporting facts{roleId ? " for this role" : ""}</legend>
-          {factsError && <p className="alert" role="alert">We couldn't load confirmed facts. Close this editor and try again.</p>}
+          {factsError && <p className="alert" role="alert">Your confirmed facts couldn't be loaded. Close this editor, then try again.</p>}
           {!factsError && availableFacts === null && <p className="meta">Loading confirmed facts…</p>}
           {availableFacts?.length === 0 && <p className="meta">No confirmed facts are available for this line. Add or confirm a relevant fact under Facts first.</p>}
           {availableFacts?.map((fact) => (

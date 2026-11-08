@@ -8,6 +8,7 @@ import { ActionError, ErrorNote, Loading, PageHeader } from "../components/ui";
 import { formatDateTime } from "../format";
 import { useAction, useResource, type Reload } from "../hooks";
 import { href } from "../router";
+import { resumeErrorMessage } from "../source-error";
 import { useTailor } from "../tailor";
 import { useSession } from "../session";
 
@@ -202,7 +203,7 @@ function TailorFailed({ resume }: { resume: ResumeView }) {
     <section className="card" aria-labelledby="failed-heading">
       <h2 id="failed-heading">This resume couldn't be finished</h2>
       <p className="failed-reason">
-        {resume.error ?? "Something went wrong while tailoring it."}
+        {resumeErrorMessage(resume.error)}
       </p>
       <p className="meta">
         Resumatic never shows lines that haven't passed its checks, so there's

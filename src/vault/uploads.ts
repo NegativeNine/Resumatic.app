@@ -129,12 +129,12 @@ export class UploadStore {
       if (queued + pending >= this.options.maxQueued)
         throw new AppError(
           "conflict",
-          "wait for your other uploads to finish reading",
+          "Resumatic is still reading your other sources. Wait for one to finish, then upload this file.",
         );
       if (total + pending >= this.options.maxSources)
         throw new AppError(
           "quota",
-          `you can keep at most ${this.options.maxSources} uploads`,
+          `You can keep up to ${this.options.maxSources} sources during the beta. Email support@resumatic.app if you need more.`,
         );
       const createdAt = this.now();
       this.sql.exec(

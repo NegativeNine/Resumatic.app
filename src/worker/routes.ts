@@ -77,12 +77,11 @@ type C = Context<AppEnv>;
 
 export const app = new Hono<AppEnv>();
 
-const tooLarge = (c: Context) =>
-  c.json({ error: "too_large", message: "the request body is too large" }, 413);
-const JSON_LIMIT = bodyLimit({ maxSize: 64 * 1024, onError: tooLarge });
+const tooLarge = (message: string) => (c: Context) => c.json({ error: "too_large", message }, 413);
+const JSON_LIMIT = bodyLimit({ maxSize: 64 * 1024, onError: tooLarge("This request is too large to process.") });
 const UPLOAD_LIMIT = bodyLimit({
   maxSize: MAX_UPLOAD_BYTES + 64 * 1024,
-  onError: tooLarge,
+  onError: tooLarge("Files can be up to 10 MB."),
 });
 
 app.onError((err, c) => {
@@ -526,17 +525,17 @@ api.post("/sources", UPLOAD_LIMIT, async (c) => {
   if (!(file instanceof File))
     throw new AppError("invalid", 'attach the file as the "file" field');
   if (file.name.length > 8192)
-    throw new AppError("invalid", "the filename is too long");
+    throw new AppError("invalid", "This file's name is too long. Rename it, then upload it again.");
   const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
   const contentType = ALLOWED_UPLOADS[extension];
   if (!contentType)
     throw new AppError(
       "invalid",
-      "upload a PDF, DOCX, or LinkedIn export ZIP file",
+      "Upload a PDF, a Word file (.docx) or a LinkedIn data export (.zip).",
     );
-  if (file.size === 0) throw new AppError("invalid", "the file is empty");
+  if (file.size === 0) throw new AppError("invalid", "This file is empty.");
   if (file.size > MAX_UPLOAD_BYTES)
-    throw new AppError("too_large", "files can be at most 10 MB");
+    throw new AppError("too_large", "Files can be up to 10 MB.");
 
   await myVault(c).checkSession(c.get("who"));
   const bytes = await file.arrayBuffer();
@@ -573,7 +572,7 @@ api.get("/sources/:id/text", async (c) =>
 );
 api.post(
   "/sources/:id/ocr",
-  bodyLimit({ maxSize: 12 * 1024 * 1024, onError: tooLarge }),
+  bodyLimit({ maxSize: 12 * 1024 * 1024, onError: tooLarge("These page images are too large. Upload a Word file (.docx) or a smaller PDF.") }),
   async (c) => {
     if (!c.env.MODEL_TRANSCRIBE)
       throw new AppError(
@@ -947,10 +946,10 @@ api.get("/export/archive", async (c) => {
     let bytes = snapshot.manifest.jsonBytes;
     for (const file of snapshot.manifest.files) {
       const head = await archivePreflight(c.req.raw.signal, () => c.env.FILES.head(file.key));
-      if (!head) throw new AppError("conflict", "an original file is missing; download the available files individually");
+      if (!head) throw new AppError("conflict", "An original file is missing from your vault. Download the JSON and the available files one at a time.");
       const fileLimit = file.origin === "ocr" ? 12 * 1024 * 1024 + 1024 : MAX_UPLOAD_BYTES;
       if (!Number.isSafeInteger(head.size) || head.size < 0 || head.size > fileLimit || head.size > MAX_ARCHIVE_BYTES - bytes)
-        throw new AppError("too_large", "the export exceeds the archive size limit; download the originals individually");
+        throw new AppError("too_large", "Your vault is too large for one archive. Download the JSON and the original files one at a time.");
       bytes += head.size;
       const etag = head.etag;
       entries.push({
@@ -1046,7 +1045,7 @@ api.get("/documents/:id/docx", async (c) => {
   if (doc.kind !== "letter" && doc.kind !== "prep")
     throw new AppError("invalid", "only cover letters and interview preparation can be exported as documents");
   if (doc.state !== "ready" || !doc.result)
-    throw new AppError("conflict", "the document is not ready");
+    throw new AppError("conflict", "This document isn't ready yet. Wait for it to finish, then try again.");
   const paragraphs =
     doc.kind === "prep"
       ? doc.result.questions.flatMap((q, i) => [
@@ -1268,7 +1267,7 @@ api.post("/billing/portal", async (c) =>
 );
 app.post(
   "/billing/webhook",
-  bodyLimit({ maxSize: 1024 * 1024, onError: tooLarge }),
+  bodyLimit({ maxSize: 1024 * 1024, onError: tooLarge("This request is too large to process.") }),
   async (c) => {
     const cfg = billingConfig(c.env);
     if (!cfg) throw new AppError("unavailable", "billing is not configured");

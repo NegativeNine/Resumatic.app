@@ -1,13 +1,295 @@
 /*
- * The app's own layout and the glue between its pages and the rs- components. Loaded last, so it
- * wins over the v1 rules in styles.css while those are being replaced.
+ * The app's own styles: the page's base elements, its layout, and the glue between its pages and
+ * the rs- components. Loaded last.
  */
+
+/* Base */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--desk);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+p,
+figure,
+blockquote,
+dl,
+dd {
+  margin: 0;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+h1 {
+  font-size: 1.75rem;
+  letter-spacing: -0.015em;
+}
+
+h2 {
+  font-size: 1.2rem;
+}
+
+h3 {
+  font-size: 1.05rem;
+}
+
+a {
+  color: var(--ballpoint);
+  text-underline-offset: 0.18em;
+}
+
+a:hover {
+  color: var(--ballpoint);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+[tabindex="-1"]:focus:not(:focus-visible),
+main:focus {
+  outline: none;
+}
+
+.skip-link {
+  position: absolute;
+  top: -4rem;
+  left: 1rem;
+  z-index: 10;
+  padding: 0.5rem 1rem;
+  background: var(--paper);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-md);
+}
+
+.skip-link:focus {
+  top: 1rem;
+}
+
+.plain-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row-between {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+}
+
+.stack > * + * {
+  margin-top: 1.25rem;
+}
 
 /* Page frame: the header, main and footer share the design system's app width. */
 
 .page {
+  display: block;
   max-width: var(--layout-app);
+  margin: 0 auto;
   padding: var(--space-12) var(--space-6) var(--space-16);
+}
+
+.page-head {
+  margin-bottom: 2rem;
+}
+
+.section {
+  margin-top: 2.75rem;
+}
+
+.section > h2 {
+  margin-bottom: 0.9rem;
+}
+
+.section-intro {
+  max-width: 44rem;
+  margin: -0.4rem 0 1.1rem;
+  color: var(--ink-muted);
+}
+
+.back-link {
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+}
+
+/* Cards: the v1 panel that pages without an rs- panel still use */
+
+.card {
+  padding: 1.35rem 1.5rem;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+}
+
+.card > h2 {
+  margin-bottom: 0.5rem;
+}
+
+.card-text {
+  max-width: 44rem;
+  margin-bottom: 1rem;
+}
+
+@media (max-width: 600px) {
+  .card {
+    padding: 1.1rem;
+  }
+}
+
+/* Facts: confirming a whole source, and adding roles and facts */
+
+.confirm-all {
+  margin-top: 0.8rem;
+}
+
+.confirm-panel {
+  margin-top: 0.75rem;
+  padding: 0.9rem 1rem;
+  background: var(--paper-sunken);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+}
+
+.confirm-panel .actions {
+  margin-top: 0.7rem;
+}
+
+.add-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.75rem;
+}
+
+.add-row > .add-fact:has(form) {
+  flex-basis: 100%;
+}
+
+.add-fact {
+  margin-bottom: 1.25rem;
+}
+
+.add-fact-form > .meta {
+  margin-bottom: 1rem;
+}
+
+/* Jobs: a job's resumes */
+
+.application + .application {
+  margin-top: 1rem;
+}
+
+.resume-list {
+  margin-top: 1rem;
+  border-top: 1px solid var(--rule);
+}
+
+.resume-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.resume-list li:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.resume-list-empty {
+  margin-top: 0.9rem;
+}
+
+/* Resume: why tailoring stopped */
+
+.failed-reason {
+  margin: 0.25rem 0 0.5rem;
+}
+
+/* Account */
+
+.option-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem 1.5rem;
+  padding: 0.9rem 0;
+  border-top: 1px solid var(--rule);
+}
+
+.card > h2 + .option-row {
+  padding-top: 0.4rem;
+  border-top: 0;
+}
+
+.danger-card {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--paper));
+}
+
+.danger-card h2 {
+  color: var(--danger);
+}
+
+.danger-card input {
+  max-width: 22rem;
+}
+
+/* The beta's privacy notice and terms */
+
+.legal {
+  max-width: 44rem;
+}
+
+.legal h1 {
+  margin-bottom: 0.25rem;
+}
+
+.legal h2 {
+  margin: 1.75rem 0 0.5rem;
+  font-size: 1.15rem;
+}
+
+.legal ul {
+  padding-left: 1.25rem;
+}
+
+.legal li + li {
+  margin-top: 0.4rem;
+}
+
+.legal .draft-note {
+  margin: 1rem 0 1.5rem;
+}
+
+.legal-page {
+  padding-top: 2rem;
 }
 
 /* Header (AppHeader) */

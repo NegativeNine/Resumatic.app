@@ -19,7 +19,7 @@ describe("progress poll failures", () => {
     const error = await api.sources().catch((value: unknown) => value);
     expect(error).toBeInstanceOf(ApiNetworkError);
     expect(isTransientReadError(error)).toBe(true);
-    expect(describeError(error)).toMatch(/couldn't reach/);
+    expect(describeError(error)).toMatch(/couldn't be reached/);
     expect(isTransientReadError(new TypeError("application bug"))).toBe(false);
     expect(isTransientReadError(new SyntaxError("invalid JSON"))).toBe(false);
   });
