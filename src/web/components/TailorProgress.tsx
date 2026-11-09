@@ -24,7 +24,7 @@ export function TailorProgress({ step, dispatchUncertain, cancellationPending }:
       <section className="card" aria-labelledby="progress-heading">
         <h2 id="progress-heading">Tailoring your resume</h2>
         <p role="status">
-          Your request was saved, but Resumatic can't confirm that tailoring started.
+          Your request was saved, but Resumatic can’t confirm that tailoring started.
           It may still begin, so check back soon.
         </p>
       </section>

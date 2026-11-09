@@ -120,7 +120,7 @@ describe("the keyboard queue", () => {
     expect(reviewCalls(api)).toHaveLength(0);
   });
 
-  it("names each button's key for assistive technology", async () => {
+  it("names each button’s key for assistive technology", async () => {
     await openFacts();
     const fact = factItem("Led the migration of 40 services from Heroku to Kubernetes.");
     expect(within(fact).getByRole("button", { name: "Confirm" })).toHaveAttribute("aria-keyshortcuts", "C");

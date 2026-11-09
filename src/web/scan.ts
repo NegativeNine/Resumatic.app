@@ -55,7 +55,7 @@ export async function rasterizeResume(
     throw new ApiError(
       422,
       "invalid",
-      "This PDF couldn't be opened for image reading. Try an unlocked PDF or a Word file (.docx).",
+      "This PDF couldn’t be opened for image reading. Try an unlocked PDF or a Word file (.docx).",
     );
   } finally {
     await task.destroy();

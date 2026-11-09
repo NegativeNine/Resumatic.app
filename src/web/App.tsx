@@ -91,7 +91,7 @@ function OwnerApp() {
     case "unavailable":
       return (
         <SignInFrame>
-          <h1>Resumatic couldn't load your account.</h1>
+          <h1>Resumatic couldn’t load your account.</h1>
           <ErrorNote message={auth.message} onRetry={loadMe} />
         </SignInFrame>
       );
@@ -174,7 +174,7 @@ function Page({ route }: { route: Route }) {
     case "notFound":
       return (
         <>
-          <PageHeader title="Page not found">There's nothing at this address.</PageHeader>
+          <PageHeader title="Page not found">There’s nothing at this address.</PageHeader>
           <EmptyState title="Looking for something?">
             Your <a href={href.facts}>facts</a> and <a href={href.jobs}>jobs</a> are where you left them.
           </EmptyState>

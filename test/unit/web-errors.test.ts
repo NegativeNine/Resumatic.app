@@ -9,7 +9,7 @@ describe("describeError", () => {
       '"cv.pdf" is too large. Files can be up to 10 MB.',
     );
     expect(describeError(tooLarge)).toBe("Files can be up to 10 MB.");
-    expect(describeError(new ApiError(404, "not_found", ""))).toBe("This couldn't be found. It may have been removed.");
+    expect(describeError(new ApiError(404, "not_found", ""))).toBe("This couldn’t be found. It may have been removed.");
   });
 
   it("shows a server message as sentences", () => {

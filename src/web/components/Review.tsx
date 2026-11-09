@@ -65,7 +65,7 @@ export function Review({ vault, reload }: { vault: Vault; reload: () => Promise<
         Review roles and facts
       </h2>
       <p className="section-intro">
-        Check each one against the words it came from. Confirm what's true, edit what's nearly right, and reject the
+        Check each one against the words it came from. Confirm what’s true, edit what’s nearly right, and reject the
         rest.
       </p>
       <div className="add-row">
@@ -176,7 +176,7 @@ function EmptyReview({ filter, vault }: { filter: ReviewState; vault: Vault }) {
     return <EmptyState>Nothing to review yet. Upload a resume or CV, or add a fact yourself.</EmptyState>;
   }
   return (
-    <EmptyState title="You're all caught up">
+    <EmptyState title="You’re all caught up">
       Nothing is waiting for review. Next, <a href={href.jobs}>add a job</a> and tailor a resume to it.
     </EmptyState>
   );

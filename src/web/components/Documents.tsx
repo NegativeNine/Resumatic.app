@@ -175,7 +175,7 @@ function ApplicationDocumentsForUser({
           <Field
             id={`${id}-instruction`}
             label={`Refine resume version ${resume.version}`}
-            hint="Describe a change in wording or emphasis. A rewrite your facts don't support keeps your current text, and an unchanged resume uses no output."
+            hint="Describe a change in wording or emphasis. A rewrite your facts don’t support keeps your current text, and an unchanged resume uses no output."
           >
             <textarea
               id={`${id}-instruction`}
@@ -260,7 +260,7 @@ function DocumentCard({ doc, reload, retry, retryDisabled }: {
       )}
       {doc.state === "running" && doc.dispatchUncertain && !doc.cancellationPending && (
         <p className="rs-meta" role="status">
-          Your request was saved, but Resumatic can't confirm that preparation started.
+          Your request was saved, but Resumatic can’t confirm that preparation started.
           It may still begin, so check back soon.
         </p>
       )}
@@ -335,8 +335,8 @@ function DocumentContent({ doc }: { doc: DocumentView }) {
                   </ul>
                 ) : (
                   <p className="app-letter__none">
-                    Your selected facts don't support an answer yet. Use a true example from your experience, or
-                    say that this is something you're still learning.
+                    Your selected facts don’t support an answer yet. Use a true example from your experience, or
+                    say that this is something you’re still learning.
                   </p>
                 )}
               </section>
@@ -523,7 +523,7 @@ function GapAnswer({
         });
       }}
     >
-      {previouslyAnswered && <p className="rs-meta">You've already saved an answer to this question. You can add another.</p>}
+      {previouslyAnswered && <p className="rs-meta">You’ve already saved an answer to this question. You can add another.</p>}
       <Field id={`${id}-answer`} label={question}>
         <textarea
           id={`${id}-answer`}
@@ -580,8 +580,8 @@ function documentError(code: string | null): string {
   if (code === "conflict")
     return "The resume or facts changed while this document was being prepared. Review the current version, then try again.";
   if (code === "quota")
-    return "This document stopped at a usage limit, so it doesn't count toward your outputs.";
+    return "This document stopped at a usage limit, so it doesn’t count toward your outputs.";
   if (code === "invalid")
-    return "Your confirmed facts aren't enough to finish this document. Confirm the facts it needs, then try again.";
-  return "This document couldn't be finished, so it doesn't count toward your outputs. Try again with the buttons above.";
+    return "Your confirmed facts aren’t enough to finish this document. Confirm the facts it needs, then try again.";
+  return "This document couldn’t be finished, so it doesn’t count toward your outputs. Try again with the buttons above.";
 }

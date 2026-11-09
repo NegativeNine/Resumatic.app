@@ -148,10 +148,10 @@ export function ResumeSheet({
             {(!review.headersReady || !review.skillsReady) && (
               <p className="notice">
                 {!review.headersReady && !review.skillsReady
-                  ? "Some headings and skills don't match confirmed records."
+                  ? "Some headings and skills don’t match confirmed records."
                   : !review.headersReady
-                    ? "Some headings don't match confirmed roles."
-                    : "Some skills don't match confirmed facts."}{" "}
+                    ? "Some headings don’t match confirmed roles."
+                    : "Some skills don’t match confirmed facts."}{" "}
                 Review your confirmed experience in <a href={href.facts}>Facts</a>, then return and refresh this page.
                 You can also remove a section or skill from this review version below.
               </p>

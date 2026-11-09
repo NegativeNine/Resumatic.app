@@ -21,7 +21,7 @@ export function LegalPage({ doc }: { doc: LegalDoc }) {
       <p className="meta">Last updated {UPDATED}</p>
       <p className="notice draft-note">
         This is a draft for the private beta. It describes how Resumatic works today, and it may change after legal
-        review. If it changes in a way that matters, we'll tell you in the app first.
+        review. If it changes in a way that matters, we’ll tell you in the app first.
       </p>
       {doc === "privacy" ? <Privacy /> : <Terms />}
       <p className="meta">
@@ -46,7 +46,7 @@ function Privacy() {
     <>
       <Section title="What we keep">
         <ul>
-          <li>Your Google account's email address and account ID, so you can sign in.</li>
+          <li>Your Google account’s email address and account ID, so you can sign in.</li>
           <li>The profile details you enter: name, email, phone, location and links.</li>
           <li>
             The files you upload, the text read from them, and the roles and facts found in that text, each with the
@@ -62,7 +62,7 @@ function Privacy() {
       </Section>
       <Section title="Where it is kept">
         <p>
-          Your career data lives in a database of its own, separate from every other user's, on Cloudflare. It is
+          Your career data lives in a database of its own, separate from every other user’s, on Cloudflare. It is
           created in a Cloudflare region near where you first sign in. Your uploads and downloaded PDFs are stored
           with it in Cloudflare R2. A separate directory holds only your email address, your sign-in ID and the ID of
           your database. The beta does not yet guarantee that data stays in your country.
@@ -73,7 +73,7 @@ function Privacy() {
           Cloudflare Workers AI turns your uploads into text and indexes your facts. Language models from providers
           such as Anthropic and OpenAI find facts in your uploads, read job descriptions, write resume lines and check
           each line against your facts. They are reached through Cloudflare AI Gateway with request logging turned off,
-          and each one receives only the text its step needs: your upload's text, a job description, or the facts
+          and each one receives only the text its step needs: your upload’s text, a job description, or the facts
           chosen for one resume. Resume lines are checked against your confirmed facts, and a line those facts do not
           support is never shown to you.
         </p>
@@ -109,7 +109,7 @@ function Terms() {
       <Section title="The beta">
         <p>
           Resumatic is in a private beta, open by invitation. Features will change, things may break, and we may pause
-          or end the beta. If we end it, we'll give you notice and time to export your data.
+          or end the beta. If we end it, we’ll give you notice and time to export your data.
         </p>
       </Section>
       <Section title="Your content">
@@ -127,8 +127,8 @@ function Terms() {
       </Section>
       <Section title="Fair use">
         <ul>
-          <li>Don't try to reach other people's data, get around limits, or disrupt the service.</li>
-          <li>Don't upload malware or content you have no right to share.</li>
+          <li>Don’t try to reach other people’s data, get around limits, or disrupt the service.</li>
+          <li>Don’t upload malware or content you have no right to share.</li>
           <li>
             Each account has a monthly limit on tailored resumes and a limit on stored uploads. Your current use is
             shown at the top of the app.
@@ -137,7 +137,7 @@ function Terms() {
       </Section>
       <Section title="Ending">
         <p>
-          You can delete your account at any time. We may suspend an account that breaks these terms, and we'll tell
+          You can delete your account at any time. We may suspend an account that breaks these terms, and we’ll tell
           you why unless the law prevents it.
         </p>
       </Section>
@@ -149,7 +149,7 @@ function Terms() {
       </Section>
       <Section title="Feedback">
         <p>
-          We'd like to hear what works and what doesn't: <a href={feedbackHref}>send feedback</a>.
+          We’d like to hear what works and what doesn’t: <a href={feedbackHref}>send feedback</a>.
         </p>
       </Section>
     </>

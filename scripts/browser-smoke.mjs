@@ -318,7 +318,7 @@ if (!browser?.startsWith("/")) {
     await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to review'`);
     stage = "poll_recovery";
     state.sourceRunning = true; await call("Page.reload");
-    await wait(`document.body?.innerText.includes("Resumatic can't confirm that reading started")`);
+    await wait(`document.body?.innerText.includes("Resumatic can’t confirm that reading started")`);
     await evalPage(`window.__syntheticVaultPushes = 0; window.addEventListener('resumatic:vault-change', () => window.__syntheticVaultPushes++)`);
     state.sourcePollFailures = 2;
     for (let i = 0; i < 100 && !state.sourcePollFailureCount; i++) await delay(100);
@@ -333,7 +333,7 @@ if (!browser?.startsWith("/")) {
     if (state.sourceReads !== readsAfterReady) throw new Error("POLL_DID_NOT_STOP_AT_READY");
     stage = "poll_forbidden";
     state.sourceRunning = true; await call("Page.reload");
-    await wait(`document.body?.innerText.includes("Resumatic can't confirm that reading started")`);
+    await wait(`document.body?.innerText.includes("Resumatic can’t confirm that reading started")`);
     await evalPage(`window.__syntheticVaultPushes = 0; window.addEventListener('resumatic:vault-change', () => window.__syntheticVaultPushes++)`);
     state.sourceForbiddenFailures = 1;
     for (let i = 0; i < 100 && !state.sourceForbiddenSeen; i++) await delay(100);
@@ -347,7 +347,7 @@ if (!browser?.startsWith("/")) {
     await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to review'`);
     stage = "uncertain_source_cancellation";
     state.sourceRunning = true; await call("Page.reload");
-    await wait(`document.body?.innerText.includes("Resumatic can't confirm that reading started")`);
+    await wait(`document.body?.innerText.includes("Resumatic can’t confirm that reading started")`);
     await clickText("button", "Cancel reading");
     await wait(`document.body?.innerText.includes('Cancellation is pending')`);
     if (!state.sourceCancel) throw new Error("SOURCE_CANCEL_NOT_SENT");
@@ -559,7 +559,7 @@ if (!browser?.startsWith("/")) {
     await clickText("button", "Track and prepare");
     await wait(`!![...document.querySelectorAll('summary')].find(x => x.textContent.trim() === 'Read experience questions')`);
     await clickText("summary", "Read experience questions");
-    await wait(`document.body?.innerText.includes("You've already saved an answer to this question.")`);
+    await wait(`document.body?.innerText.includes("You’ve already saved an answer to this question.")`);
     stage = "answer_submission_lock";
     await evalPage(`document.querySelector('.gap-answer textarea').focus()`);
     await call("Input.insertText", { text: "Improved reliability with monitoring" });
@@ -573,7 +573,7 @@ if (!browser?.startsWith("/")) {
     stage = "uncertain_document_cancellation";
     state.documents.push({ id: "document-2", applicationId: "application-1", kind: "prep", state: "running", dispatchUncertain: true, createdAt: 2, result: null, facts: {} });
     await clickText("button", "Close workspace"); await clickText("button", "Track and prepare");
-    await wait(`document.body?.innerText.includes("Resumatic can't confirm that preparation started")`);
+    await wait(`document.body?.innerText.includes("Resumatic can’t confirm that preparation started")`);
     await clickText("button", "Cancel generation");
     await wait(`document.body?.innerText.includes("Cancellation is pending")`);
     if (!state.documents.find((d) => d.id === "document-2")?.cancellationPending) throw new Error("DOCUMENT_CANCEL_NOT_SENT");
@@ -608,7 +608,7 @@ if (!browser?.startsWith("/")) {
     await clickText("button", "Edit line");
     await evalPage(`(() => { const e = document.querySelector('.rs-note textarea'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(e, 'Built 12 reliable payment services'); e.dispatchEvent(new Event('input', {bubbles:true})); })()`);
     await clickText("button", "Check and save");
-    await wait(`document.body?.innerText.includes("couldn't be verified against its evidence")`);
+    await wait(`document.body?.innerText.includes("couldn’t be verified against its evidence")`);
     if (!await evalPage(`document.querySelector('.rs-note textarea')?.value === 'Built 12 reliable payment services'`)) throw new Error("MANUAL_TEXT_LOST");
     await clickText("button", "Check and save");
     await wait(`document.querySelector('[aria-label="Resume preview"]')?.innerText.includes('Built 12 reliable payment services') && !document.querySelector('.rs-note textarea')`);
@@ -626,7 +626,7 @@ if (!browser?.startsWith("/")) {
     state.resumeNeedsGroundingReview = true; await call("Page.reload");
     await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Start review')`);
     await clickText("button", "Start review");
-    await wait(`document.body?.innerText.includes('0 of 2 lines checked') && document.body?.innerText.includes("headings and skills don't match")`);
+    await wait(`document.body?.innerText.includes('0 of 2 lines checked') && document.body?.innerText.includes("headings and skills don’t match")`);
     await evalPage(`(() => { const line = [...document.querySelectorAll('.rs-note')].find(x => x.textContent.includes('Unsupported historical line')); const button = [...line.querySelectorAll('button')].find(x => x.textContent.trim() === 'Remove line (keeps earlier versions)'); button.click(); })()`);
     await wait(`document.body?.innerText.includes('0 of 1 lines checked') && !document.body?.innerText.includes('Unsupported historical line')`);
     if (state.legacyExtraLine) throw new Error("LEGACY_REMOVE_NOT_SENT");
@@ -664,7 +664,7 @@ if (!browser?.startsWith("/")) {
     state.resumeLineRemoved = false;
     stage = "uncertain_resume_cancellation";
     state.resumeRunning = true; await call("Page.reload");
-    await wait(`document.body?.innerText.includes("Resumatic can't confirm that tailoring started")`);
+    await wait(`document.body?.innerText.includes("Resumatic can’t confirm that tailoring started")`);
     await clickText("button", "Cancel tailoring");
     await wait(`document.body?.innerText.includes("Cancellation is pending")`);
     if (!state.resumeCancel) throw new Error("RESUME_CANCEL_NOT_SENT");
@@ -715,11 +715,11 @@ if (!browser?.startsWith("/")) {
     if (!await evalPage(`import('/test/support/resource-browser.tsx').then(m => m.checkResourceReload())`)) throw new Error("RESOURCE_RELOAD_DID_NOT_SETTLE");
     stage = "share_retry";
     await call("Page.navigate", { url: `${origin}/share#synthetic-share` });
-    await wait(`document.body?.innerText.includes("This copy couldn't be opened")`);
+    await wait(`document.body?.innerText.includes("This copy couldn’t be opened")`);
     if (await evalPage(`location.hash !== ''`) || state.shareSessions !== 1) throw new Error("SHARE_TOKEN_OR_FIRST_ATTEMPT");
     await clickText("button", "Try again");
     for (let i = 0; i < 100 && !state.shareReads; i++) await delay(100);
-    await wait(`document.body?.innerText.includes("This copy couldn't be opened")`);
+    await wait(`document.body?.innerText.includes("This copy couldn’t be opened")`);
     if (state.shareSessions !== 2 || state.shareReads !== 1) throw new Error("SHARE_EXCHANGE_RETRY");
     await clickText("button", "Try again");
     await wait(`document.body?.innerText.includes('Shared career snapshot')`);

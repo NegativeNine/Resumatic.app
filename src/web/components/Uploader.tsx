@@ -16,10 +16,10 @@ function problemWith(file: File): string | null {
   const supported =
     name.endsWith(".pdf") || name.endsWith(".docx") || name.endsWith(".zip");
   if (!supported)
-    return `"${file.name}" isn't a PDF, Word (.docx) or LinkedIn data export (.zip). Choose one of those formats.`;
+    return `“${file.name}” isn’t a PDF, Word (.docx) or LinkedIn data export (.zip). Choose one of those formats.`;
   if (file.size > MAX_UPLOAD_BYTES)
-    return `"${file.name}" is ${formatBytes(file.size)}. Files can be up to ${LIMIT}.`;
-  if (file.size === 0) return `"${file.name}" is empty.`;
+    return `“${file.name}” is ${formatBytes(file.size)}. Files can be up to ${LIMIT}.`;
+  if (file.size === 0) return `“${file.name}” is empty.`;
   return null;
 }
 
@@ -54,7 +54,7 @@ export function Uploader({ onUploaded, size = "rail" }: { onUploaded: Reload; si
         await onUploaded();
       },
       {
-        too_large: `"${file.name}" is too large. Files can be up to ${LIMIT}.`,
+        too_large: `“${file.name}” is too large. Files can be up to ${LIMIT}.`,
       },
     );
     setUploading(null);

@@ -31,10 +31,10 @@ export function SignedOut({ note, error }: { note: string | null; error: string 
 
   return (
     <SignInFrame>
-      <h1>Tailored resumes, built only from what you've done.</h1>
+      <h1>Tailored resumes, built only from what you’ve done.</h1>
       <p className="rs-lede">
         Resumatic turns your resumes and CVs into facts, each backed by the exact words it came from. Then it tailors a
-        resume to every job you apply for, using only the facts you've confirmed.
+        resume to every job you apply for, using only the facts you’ve confirmed.
       </p>
       {note && (
         <p className="rs-msg rs-msg--info" role="status">

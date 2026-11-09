@@ -104,7 +104,7 @@ function SourceRow({
       )}
       {source.state === "queued" && source.dispatchUncertain && !source.cancellationPending && (
         <p className="source-error" role="status">
-          Your upload was saved, but Resumatic can't confirm that reading started. It
+          Your upload was saved, but Resumatic can’t confirm that reading started. It
           may still begin, so check back soon.
         </p>
       )}
@@ -201,7 +201,7 @@ function ScanRecovery({
         throw new ApiError(
           response.status,
           "unavailable",
-          "The source file couldn't be opened. Try again.",
+          "The source file couldn’t be opened. Try again.",
         );
       setProgress("Preparing all pages as images…");
       const images = await rasterizeResume(await response.blob());

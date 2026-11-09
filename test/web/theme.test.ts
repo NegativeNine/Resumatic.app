@@ -14,7 +14,7 @@ describe("public/theme.js", () => {
     expect(runThemeScript()).toBe("dark");
   });
 
-  it("falls back to light for no choice or a value it doesn't know", () => {
+  it("falls back to light for no choice or a value it doesn’t know", () => {
     expect(runThemeScript()).toBe("light");
     window.localStorage.setItem(THEME_KEY, "sepia");
     expect(runThemeScript()).toBe("light");

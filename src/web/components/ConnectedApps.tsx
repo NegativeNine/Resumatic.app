@@ -21,7 +21,7 @@ export function ConnectedApps() {
       setGrants(data.grants);
       setError("");
     } catch {
-      setError("Connected apps couldn't be loaded. Check your connection, then reload the page.");
+      setError("Connected apps couldn’t be loaded. Check your connection, then reload the page.");
     }
   }, []);
   useEffect(() => {
@@ -37,7 +37,7 @@ export function ConnectedApps() {
       if (!response.ok) throw new Error();
       await load();
     } catch {
-      setError("This app's access couldn't be removed. Try again to finish removing its credentials.");
+      setError("This app’s access couldn’t be removed. Try again to finish removing its credentials.");
     } finally {
       setBusy(null);
     }

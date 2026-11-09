@@ -10,7 +10,14 @@ This plan brings the Resumatic design system into the web app (`src/web`), along
 
 ## Status
 
-All nine pull requests are open as a stack, each based on the one before: #3, #4, #5, #6, #7, #8, #9, #10 and #11. Merge them in that order. CI and the local browser smoke (`npm run check:browser-local`) pass on each.
+All nine pull requests (#3 to #11) are merged into main.
+
+Two follow-ups came out of a review of main after the merge:
+
+- **#13, polish.** The screens the redesign only restyled through the adapter now use the design system's components: application documents, the job board, the plan, share links and connected apps on Account, and the shared copy at `/share`. It also adds structure checks with axe-core over every page (`test/web/accessibility.test.tsx`), which found and fixed invalid list markup on the board.
+- **#14, typography.** The interface's copy uses typographic apostrophes and quotation marks, and server messages are typeset on display (`typeset` in `src/web/format.ts`).
+
+#12 adds a staging deploy that needs no model credentials. It waits on the staging Cloudflare account ID.
 
 Where the build departed from this plan:
 
@@ -21,7 +28,7 @@ Where the build departed from this plan:
 - **Duplicate uploads (PR 8).** The Vault checks the hash before the upload is reserved, so a refused copy never reaches R2. A copy under another name is refused too ("You've already uploaded this file as …"). Retry upload appears only when it isn't clear whether the file arrived.
 - **Sizes.** Client JS is 372.5 kB (113.8 kB gzipped), 9.6 kB gzipped over the baseline. Client CSS is 48.2 kB (9.8 kB gzipped), most of it the component bundle.
 
-Still open: the keyboard and screen reader passes with VoiceOver and NVDA, and a staging run once `STAGING_DEPLOY_ENABLED` is set.
+Still open: the keyboard and screen reader passes with VoiceOver and NVDA (the axe-core checks cover structure only, not contrast or reading order), and a staging run once `STAGING_DEPLOY_ENABLED` is set.
 
 ## Summary
 

@@ -102,7 +102,7 @@ export function JobsPage() {
     <>
       <PageHeader title="Jobs">
         Paste a job description, then tailor a resume to it. Every line comes
-        from facts you've confirmed under{" "}
+        from facts you’ve confirmed under{" "}
         <a href={href.facts}>Facts</a>.
       </PageHeader>
       {/* On small screens the quota leaves the header for the top of Jobs. */}
@@ -170,7 +170,7 @@ export function JobsPage() {
         {!list.data && !list.error && (
           <Loading>Loading your jobs…</Loading>
         )}
-        {extraWorkspace && <p className="hint" role="status">Open workspaces stay visible even when their status doesn't match the filter.</p>}
+        {extraWorkspace && <p className="hint" role="status">Open workspaces stay visible even when their status doesn’t match the filter.</p>}
         {list.data &&
           (applications.length === 0 ? (
             <p className="empty">

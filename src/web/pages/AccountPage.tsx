@@ -12,7 +12,7 @@ import { getThemeChoice, setThemeChoice, type ThemeChoice } from "../theme";
 
 const CONFIRM_PHRASE = "delete my account";
 const DELETION_NOTE =
-  "Your account is being deleted. You've been signed out, and your uploads, facts, applications and resumes are being removed.";
+  "Your account is being deleted. You’ve been signed out, and your uploads, facts, applications and resumes are being removed.";
 
 export function AccountPage() {
   const { me } = useSession();
@@ -276,14 +276,14 @@ function SignOutCard() {
   const signOut = () =>
     here.run(async () => {
       await api.logout();
-      endSession("You've signed out.");
+      endSession("You’ve signed out.");
     });
 
   const signOutEverywhere = () =>
     everywhere.run(async () => {
       await api.signOutEverywhere();
       await api.logout().catch(() => undefined);
-      endSession("You've been signed out on every device.");
+      endSession("You’ve been signed out on every device.");
     });
 
   return (
@@ -302,7 +302,7 @@ function SignOutCard() {
       <div className="rs-setting">
         <p className="rs-setting__text">
           <strong>Every device</strong>
-          <span>Sign out on every device where you're signed in, including this one.</span>
+          <span>Sign out on every device where you’re signed in, including this one.</span>
         </p>
         <button
           type="button"
@@ -329,7 +329,7 @@ function DeleteAccount() {
       <h2 id="delete-heading">Delete account</h2>
       <p className="card-text">
         This permanently deletes your account and everything in your vault:
-        uploaded files, roles, facts, applications and resumes. It can't be
+        uploaded files, roles, facts, applications and resumes. It can’t be
         undone. Before deleting, download your vault data and any original files
         you want to keep from <a href={href.facts}>Facts</a>.
       </p>

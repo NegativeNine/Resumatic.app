@@ -21,7 +21,7 @@ export function renderWithSession(ui: ReactNode, me: Me): RenderResult & Session
   return { ...render(<Session>{ui}</Session>), ended };
 }
 
-/** Points the app's hash router at a route, as following a link would. */
+/** Points the app’s hash router at a route, as following a link would. */
 export function goTo(hash: string): void {
   window.history.replaceState(null, "", hash.startsWith("#") ? `/${hash}` : hash);
   window.dispatchEvent(new HashChangeEvent("hashchange"));

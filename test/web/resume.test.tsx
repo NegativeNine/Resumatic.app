@@ -24,7 +24,7 @@ describe("the resume sheet", () => {
     expect(within(sheet()).getByText("sam.rivera@example.com · Waterloo, ON · linkedin.com/in/samrivera")).toBeInTheDocument();
   });
 
-  it("prints the contact details captured with the version, not today's", async () => {
+  it("prints the contact details captured with the version, not today’s", async () => {
     const state = fixtures();
     state.resumes["res-ready"]!.profile = { ...state.me.profile, name: "Samantha Rivera", location: "Toronto, ON" };
     await openResume(state);
@@ -52,7 +52,7 @@ describe("the resume sheet", () => {
 });
 
 describe("the margin", () => {
-  it("opens a line's note from the sheet or its toggle, and says so", async () => {
+  it("opens a line’s note from the sheet or its toggle, and says so", async () => {
     await openResume();
     const toggles = screen.getAllByRole("button", { name: /^\d+ facts?$|^Hide evidence$/ });
     expect(toggles.length).toBe(7);
@@ -61,16 +61,16 @@ describe("the margin", () => {
     expect(screen.getByRole("button", { name: "Hide evidence" })).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("says why a repaired or replaced line changed, in Resumatic's own words", async () => {
+  it("says why a repaired or replaced line changed, in Resumatic’s own words", async () => {
     await openResume();
     const note = (lineId: string) => document.querySelector<HTMLElement>(`[data-note-for="${lineId}"]`)!;
     await userEvent.click(within(note("line-latency")).getByRole("button", { name: /^\d+ facts?$/ }));
     expect(within(note("line-latency")).getByText(
-      "The draft said 85%. Your facts don't include that number. Resumatic rewrote it once to match its facts.",
+      "The draft said 85%. Your facts don’t include that number. Resumatic rewrote it once to match its facts.",
     )).toBeVisible();
     await userEvent.click(within(note("line-mentoring")).getByRole("button", { name: /^\d+ facts?$/ }));
     expect(within(note("line-mentoring")).getByText(
-      "The draft said you led it, which is more than your facts show. This line uses your fact's own words instead.",
+      "The draft said you led it, which is more than your facts show. This line uses your fact’s own words instead.",
     )).toBeVisible();
     // A kept line has nothing to explain.
     expect(note("line-migration").textContent).not.toMatch(/The draft/);
@@ -93,7 +93,7 @@ describe("the margin", () => {
 });
 
 describe("closing a gap", () => {
-  it("asks for the person's own words, not a bare yes", async () => {
+  it("asks for the person’s own words, not a bare yes", async () => {
     const api = await openResume();
     await userEvent.click(screen.getByRole("button", { name: "Add a fact for Terraform" }));
     const answer = screen.getByLabelText("Terraform: describe what you did, in your own words");
@@ -120,7 +120,7 @@ describe("closing a gap", () => {
 });
 
 describe("placeNotes", () => {
-  it("keeps each note level with its line when there's room", () => {
+  it("keeps each note level with its line when there’s room", () => {
     expect(placeNotes([0, 100, 200], [40, 40, 40], 8)).toEqual([0, 100, 200]);
     expect(placeNotes([0, 100], [40, 40])).toEqual([0, 100]);
   });
