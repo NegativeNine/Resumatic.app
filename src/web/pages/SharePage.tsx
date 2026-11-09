@@ -78,7 +78,11 @@ export function SharePage() {
       <ShareFrame>
         <div className="app-share__card">
           <h1>Share unavailable</h1>
-          <p>This link has expired or been revoked. Ask the person who sent it for a new one.</p>
+          <p>
+            If you had this copy open before, open the link from your message again. A copy stays open for an hour
+            at a time. If the link doesn’t work either, it has expired or been revoked, and the person who sent it
+            can make a new one.
+          </p>
         </div>
       </ShareFrame>
     );
