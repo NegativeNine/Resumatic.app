@@ -137,6 +137,7 @@ if (!browser?.startsWith("/")) {
       if (state.trackingReadFailures > 0) { state.trackingReadFailures--; return send(res, 503, { error: "unavailable" }); }
       return send(res, 200, { applications: state.applications });
     }
+    if (path === "/api/applications/duplicates" && req.method === "POST") return send(res, 200, { duplicate: null });
     if (path === "/api/v2/applications" && req.method === "POST") {
       const body = JSON.parse((await read(req)).toString("utf8"));
       if (typeof body.jdText !== "string" || body.jdText.length < 40) return send(res, 400, { error: "invalid" });

@@ -8,6 +8,7 @@ import { api, ApiError } from "../api";
 import { useAction, type Reload } from "../hooks";
 import { trackingWriteObserved } from "../tracker-save";
 import { ApplicationDocuments } from "./Documents";
+import { JobPosting } from "./JobPosting";
 import { ActionError, Field } from "./ui";
 import "./workspace.css";
 
@@ -80,6 +81,7 @@ export function ApplicationWorkspace({
   }
   return (
     <div className="application-workspace">
+      <JobPosting application={application} revision={revision} onRevision={setRevision} onSaved={onSaved} />
       <form
         className="workspace-section"
         onSubmit={(event) => {

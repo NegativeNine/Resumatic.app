@@ -179,16 +179,38 @@ export function Quote({
   );
 }
 
-export function Field({ id, label, hint, children }: { id: string; label: string; hint?: string; children: ReactNode }) {
+export function Field({
+  id,
+  label,
+  hint,
+  optional,
+  error,
+  children,
+}: {
+  id: string;
+  label: string;
+  hint?: string;
+  /** Marks a field that can be left empty, beside its label. */
+  optional?: boolean;
+  /** What is wrong with the value, shown under the control as `${id}-error`. */
+  error?: string;
+  children: ReactNode;
+}) {
   return (
     <div className="rs-field field">
       <label className="rs-label" htmlFor={id}>
         {label}
+        {optional && <span className="rs-label__optional"> (optional)</span>}
       </label>
       {children}
       {hint && (
         <p className="rs-hint" id={`${id}-hint`}>
           {hint}
+        </p>
+      )}
+      {error && (
+        <p className="rs-inline-error" id={`${id}-error`}>
+          {error}
         </p>
       )}
     </div>

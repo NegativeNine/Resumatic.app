@@ -1,6 +1,8 @@
 import { GenerationKeys } from "./generation-keys";
 import type {
   ApiErrorBody,
+  ApplicationDetail,
+  ApplicationRef,
   ApplicationView,
   ApplicationStatus,
   FactPatch,
@@ -217,16 +219,28 @@ export const api = {
     request<void>("PATCH", `/api/facts/${encodeURIComponent(id)}`, patch),
   review: (r: ReviewRequest) => request<void>("POST", "/api/review", r),
 
-  addApplication: (jdText: string) =>
-    generate<{ applicationId: string }>("/api/v2/applications", { jdText }, ["applicationId"]),
+  addApplication: (jdText: string, url?: string) =>
+    generate<{ applicationId: string }>("/api/v2/applications", url ? { jdText, url } : { jdText }, ["applicationId"]),
+  /** The saved job with the same posting, if there is one. Saves nothing. */
+  duplicateApplication: (jdText: string) =>
+    request<{ duplicate: ApplicationRef | null }>("POST", "/api/applications/duplicates", { jdText }),
   applications: () =>
     request<{ applications: ApplicationView[] }>("GET", "/api/applications"),
+  application: (id: string) =>
+    request<ApplicationDetail>("GET", `/api/applications/${encodeURIComponent(id)}`),
+  deleteApplication: (id: string) =>
+    request<void>("DELETE", `/api/applications/${encodeURIComponent(id)}`),
   updateApplication: (
     id: string,
     patch: {
       status?: ApplicationStatus;
       appliedAt?: string | null;
       notes?: string;
+      /** An empty string clears a name or the link. */
+      title?: string;
+      company?: string;
+      url?: string;
+      jdText?: string;
       expectedRevision?: number;
     },
   ) =>

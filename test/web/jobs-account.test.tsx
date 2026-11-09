@@ -49,7 +49,7 @@ describe("Jobs", () => {
     const state = fixtures();
     installFakeApi(state);
     renderWithSession(<JobsPage />, state.me);
-    await screen.findByText(/The title and company appear once a resume has been tailored/);
+    await screen.findByText(/it’s read from the posting when a resume is tailored/);
     for (const meta of document.querySelectorAll(".app-job-meta")) expect(meta.textContent).not.toContain("·");
   });
 });

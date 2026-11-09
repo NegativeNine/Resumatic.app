@@ -1,8 +1,12 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import {
   APPLICATION_STATUSES,
   MAX_JD_CHARS,
+  MAX_URL_CHARS,
+  MIN_JD_CHARS,
+  isWebUrl,
+  type ApplicationRef,
   type ApplicationStatus,
   type ApplicationView,
   type ResumeState,
@@ -17,6 +21,7 @@ import {
   Badge,
   CharCount,
   ErrorNote,
+  Field,
   Glyph,
   Loading,
   PageHeader,
@@ -197,20 +202,41 @@ export function JobsPage() {
 
 function JobForm({ onSaved }: { onSaved: Reload }) {
   const [text, setText] = useState("");
+  const [link, setLink] = useState("");
   const [saved, setSaved] = useState(false);
+  /** The saved job with this same posting, once the person has been asked about it. */
+  const [duplicate, setDuplicate] = useState<ApplicationRef | null>(null);
+  /** The posting last sent to be saved. A retry of it isn't a second copy, so it isn't checked again. */
+  const attempted = useRef<string | null>(null);
   const { run, pending, error } = useAction();
   const id = useId();
   const length = text.trim().length;
   const tooLong = length > MAX_JD_CHARS;
+  const url = link.trim();
+  const badLink = url !== "" && !isWebUrl(url);
 
-  async function save() {
+  async function save(anyway = false) {
     setSaved(false);
-    const ok = await run(async () => {
-      await api.addApplication(text.trim());
+    const posting = text.trim();
+    let added = false;
+    await run(async () => {
+      if (!anyway && attempted.current !== posting) {
+        const found = (await api.duplicateApplication(posting)).duplicate;
+        if (found) {
+          setDuplicate(found);
+          return;
+        }
+      }
+      setDuplicate(null);
+      attempted.current = posting;
+      await api.addApplication(posting, url || undefined);
+      added = true;
       await onSaved();
     });
-    if (ok) {
+    if (added) {
+      attempted.current = null;
       setText("");
+      setLink("");
       setSaved(true);
     }
   }
@@ -236,16 +262,51 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
         onChange={(e) => {
           setText(e.target.value);
           setSaved(false);
+          setDuplicate(null);
         }}
         aria-describedby={`${id}-hint ${id}-count`}
         aria-invalid={tooLong}
       />
-      <div className="row-between form-foot">
-        <CharCount id={`${id}-count`} length={length} max={MAX_JD_CHARS} />
+      <CharCount id={`${id}-count`} length={length} max={MAX_JD_CHARS} />
+      <Field
+        id={`${id}-link`}
+        label="Link to the posting"
+        optional
+        error={badLink ? "Enter a web address that starts with https://" : undefined}
+      >
+        <input
+          id={`${id}-link`}
+          type="url"
+          inputMode="url"
+          autoComplete="off"
+          spellCheck={false}
+          maxLength={MAX_URL_CHARS}
+          value={link}
+          readOnly={pending}
+          placeholder="https://"
+          onChange={(e) => setLink(e.target.value)}
+          aria-invalid={badLink}
+          aria-describedby={badLink ? `${id}-link-error` : undefined}
+        />
+      </Field>
+      {duplicate && (
+        <div className="rs-msg rs-msg--info app-msg-block" role="status">
+          <Glyph name="info" />
+          <p className="rs-msg__text">
+            You’ve already saved this posting{duplicate.title || duplicate.company
+              ? ` as ${[duplicate.title, duplicate.company].filter(Boolean).join(" at ")}`
+              : ""}, on {formatDate(duplicate.createdAt)}.
+          </p>
+          <button type="button" className="rs-btn rs-btn--sm" disabled={pending} onClick={() => void save(true)}>
+            Save it again
+          </button>
+        </div>
+      )}
+      <div className="form-foot app-job-form__foot">
         <button
           type="submit"
           className="primary"
-          disabled={pending || length < 40 || tooLong}
+          disabled={pending || length < MIN_JD_CHARS || tooLong || badLink}
         >
           {pending ? "Saving…" : "Save job"}
         </button>
@@ -301,7 +362,12 @@ function ApplicationCard({
           <p className="rs-meta app-meta-row app-job-meta">
             <Badge tone="status">{APPLICATION_LABELS[application.status ?? "saved"]}</Badge>
             <span>Added {formatDate(application.createdAt)}</span>
-            {unnamed && <span>The title and company appear once a resume has been tailored.</span>}
+            {application.url && (
+              <a href={application.url} target="_blank" rel="noreferrer noopener">
+                Original posting
+              </a>
+            )}
+            {unnamed && <span>Name it under Track and prepare, or it’s read from the posting when a resume is tailored.</span>}
           </p>
         </div>
         <button

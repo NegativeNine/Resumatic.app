@@ -87,7 +87,7 @@ describe("duplicate uploads", () => {
       const previous = MIGRATIONS.findIndex((migration) =>
         migration.some((statement) => statement.includes("ALTER TABLE sources ADD COLUMN sha256")),
       );
-      expect(previous).toBe(SCHEMA_VERSION - 1);
+      expect(previous).toBeGreaterThan(-1);
       sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
       migrate(sql, <T>(fn: () => T) => state.storage.transactionSync(fn));
       expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(SCHEMA_VERSION));

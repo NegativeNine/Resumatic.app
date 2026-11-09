@@ -26,7 +26,11 @@
 //   PATCH  /api/facts/:id              FactPatch -> 204          (new wording, another role, or both)
 //   POST   /api/review                 ReviewRequest -> 204   (role or fact IDs)
 //   POST   /api/applications           { jdText } -> 201 { applicationId }
-//   POST   /api/v2/applications        same, with an idempotency key
+//   POST   /api/v2/applications        { jdText, url? } with an idempotency key
+//   POST   /api/applications/duplicates   { jdText } -> { duplicate: ApplicationRef | null }
+//   GET    /api/applications/:id       ApplicationDetail          (the whole posting)
+//   PATCH  /api/applications/:id       tracking and details -> 204
+//   DELETE /api/applications/:id       204                  (only a job with no resumes or documents)
 //   GET    /api/applications           { applications: ApplicationView[] }
 //   POST   /api/applications/:id/resumes   202 { resumeId }
 //   GET    /api/resumes/:id            ResumeView               (poll while state is "running")
@@ -79,6 +83,11 @@ export const DATE_PATTERN = /^\d{4}(-(0[1-9]|1[0-2]))?$/;
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 export const MAX_JD_CHARS = 20_000;
+/** The shortest text that can be a job description. */
+export const MIN_JD_CHARS = 40;
+/** A job's title or company, typed by the person. */
+export const MAX_JOB_NAME_CHARS = 160;
+export const MAX_URL_CHARS = 2000;
 export const MAX_FACT_CHARS = 600;
 export const MAX_LINE_CHARS = 300;
 
@@ -224,7 +233,41 @@ export interface ApplicationView {
   /** The start of the job description, at most about 100 characters. */
   excerpt: string;
   createdAt: number;
+  /** Where the posting lives, when the person saved a link with it. */
+  url?: string | null;
   resumes: { id: string; state: ResumeState; createdAt: number; dispatchUncertain?: boolean; cancellationPending?: boolean }[];
+}
+
+/** One job with its whole posting, for the person who saved it. */
+export interface ApplicationDetail extends ApplicationView {
+  jdText: string;
+  /** False once the job has a resume or a document: those are kept, so the job is closed instead. */
+  canDelete: boolean;
+}
+
+/** Enough of a saved job to name it, as in "You've already saved this posting". */
+export interface ApplicationRef {
+  id: string;
+  company: string | null;
+  title: string | null;
+  excerpt: string;
+  createdAt: number;
+}
+
+/** A link a person saved with a job: http or https, and nothing a browser would run. */
+export function isWebUrl(value: string): boolean {
+  if (value.length > MAX_URL_CHARS || /\s/.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") && url.hostname.includes(".") && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+/** Two postings are the same when their text matches once runs of white space are collapsed. */
+export function normalizePosting(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
 }
 
 /**
