@@ -6,6 +6,7 @@ import { JobsPage } from "../../src/web/pages/JobsPage";
 import { SignedOut } from "../../src/web/pages/SignedOut";
 import { THEME_KEY } from "../../src/web/theme";
 import { installFakeApi } from "./api-fake";
+import { permissions } from "../../src/web/components/ConnectedApps";
 import { ShareSnapshotContent } from "../../src/web/components/ShareSnapshotContent";
 import { fixtures, fullVault, sharedView } from "./fixtures";
 import { renderWithSession } from "./render";
@@ -127,6 +128,16 @@ describe("account tools", () => {
     expect(within(app).getByText("Connected")).toBeInTheDocument();
     expect(within(app).getByText(/Can read your facts and create documents\./)).toBeInTheDocument();
     expect(within(screen.getByText("Old Tool").closest("li")!).getByRole("button", { name: "Remove credentials" })).toBeEnabled();
+  });
+});
+
+describe("what a connected app may do", () => {
+  it("is one sentence for each combination of permissions", () => {
+    expect(permissions(["vault:read"])).toBe("Can read your facts.");
+    expect(permissions(["vault:read", "offline_access"])).toBe("Can read your facts.");
+    expect(permissions(["vault:read", "vault:generate"])).toBe("Can read your facts and create documents.");
+    expect(permissions(["vault:read", "vault:jobs"])).toBe("Can read your facts and saved jobs, and add jobs.");
+    expect(permissions(["vault:read", "vault:generate", "vault:jobs"])).toBe("Can read your facts and saved jobs, add jobs and create documents.");
   });
 });
 

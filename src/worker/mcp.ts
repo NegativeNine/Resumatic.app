@@ -10,6 +10,7 @@ import {
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
+import { MAX_JD_CHARS, MAX_URL_CHARS, MIN_JD_CHARS, isWebUrl } from "../shared/api";
 import { errorCode } from "../shared/errors";
 import {
   MCP_GRANT_TTL_MS,
@@ -41,6 +42,12 @@ export interface McpVault {
     input: { query?: string; limit?: number },
   ): Promise<unknown>;
   mcpResume(claims: McpClaims, id: string, version?: number): Promise<unknown>;
+  mcpJobs(claims: McpClaims, input: { limit?: number }): Promise<unknown>;
+  mcpAddJob(
+    claims: McpClaims,
+    input: { description: string; url: string | null },
+    requestKey: string,
+  ): Promise<unknown>;
   mcpTailor(
     claims: McpClaims,
     applicationId: string,
@@ -220,10 +227,13 @@ function consentPage(details: ConsentDescription, handle: string): string {
   const generate = details.scope.includes("vault:generate")
     ? '<p><label><input type="checkbox" name="scope" value="vault:generate"> Generate resumes using my plan quota</label></p>'
     : "";
+  const jobs = details.scope.includes("vault:jobs")
+    ? '<p><label><input type="checkbox" name="scope" value="vault:jobs"> See my saved jobs and add new ones</label></p>'
+    : "";
   const offline = details.scope.includes("offline_access")
     ? '<p><label><input type="checkbox" name="scope" value="offline_access"> Keep access for up to 30 days</label></p>'
     : "";
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect an app · Resumatic</title><main><h1>Connect ${escapeHtml(details.clientName)}</h1><p>${domain} Access returns to <strong>${escapeHtml(details.redirectHost)}</strong>.</p>${details.redirectIsLoopback ? "<p><strong>This connects an app on your computer.</strong> Continue only if you started this connection.</p>" : ""}<p>The app can read your confirmed facts and finished resumes. Original uploads, evidence quotes and private application notes are excluded. You can revoke access in Account.</p><form method="post"><input type="hidden" name="handle" value="${escapeHtml(handle)}"><p><label><input type="checkbox" name="scope" value="vault:read" checked required> Read confirmed facts and finished resumes</label></p>${generate}${offline}<p><button name="decision" value="approve">Connect app</button> <button name="decision" value="deny" formnovalidate>Cancel</button></p></form></main></html>`;
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect an app · Resumatic</title><main><h1>Connect ${escapeHtml(details.clientName)}</h1><p>${domain} Access returns to <strong>${escapeHtml(details.redirectHost)}</strong>.</p>${details.redirectIsLoopback ? "<p><strong>This connects an app on your computer.</strong> Continue only if you started this connection.</p>" : ""}<p>The app can read your confirmed facts and finished resumes. Original uploads, evidence quotes and private application notes are excluded. You can revoke access in Account.</p><form method="post"><input type="hidden" name="handle" value="${escapeHtml(handle)}"><p><label><input type="checkbox" name="scope" value="vault:read" checked required> Read confirmed facts and finished resumes</label></p>${jobs}${generate}${offline}<p><button name="decision" value="approve">Connect app</button> <button name="decision" value="deny" formnovalidate>Cancel</button></p></form></main></html>`;
 }
 
 async function handleHash(handle: string): Promise<string> {
@@ -349,7 +359,7 @@ async function authorize(
   };
   if (form.get("decision") !== "approve")
     return finish((await oauth.denyConsent(request, handle)).headers);
-  const scopes = z.array(Scope).max(3).safeParse(form.getAll("scope"));
+  const scopes = z.array(Scope).max(MCP_SCOPES.length).safeParse(form.getAll("scope"));
   if (
     !scopes.success ||
     !scopes.data.includes("vault:read") ||
@@ -470,12 +480,50 @@ function serverFor(env: Env, claims: McpClaims): McpServer {
         localVault(env, claims.vid).mcpResume(claims, id, version),
       ),
   );
+  if (claims.scopes.includes("vault:jobs")) {
+    server.registerTool(
+      "list_jobs",
+      {
+        description:
+          "List saved jobs, newest first, with each job's resumes. Use a job's id with start_tailoring and a resume's id with get_resume. Private notes and the full posting are not included.",
+        inputSchema: z.object({
+          limit: z.number().int().min(1).max(100).default(50),
+        }),
+        annotations: { readOnlyHint: true },
+      },
+      ({ limit }) =>
+        run("vault:jobs", () =>
+          localVault(env, claims.vid).mcpJobs(claims, { limit }),
+        ),
+    );
+    server.registerTool(
+      "add_job",
+      {
+        description:
+          "Save a job from its description, the whole posting as text. If the same posting is already saved, that job is returned and nothing is added. Reuse requestKey when retrying the same request.",
+        inputSchema: z.object({
+          description: z.string().trim().min(MIN_JD_CHARS).max(MAX_JD_CHARS),
+          url: z.string().trim().max(MAX_URL_CHARS).refine(isWebUrl, "must be an http or https address").optional(),
+          requestKey: z.uuid(),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
+      },
+      ({ description, url, requestKey }) =>
+        run("vault:jobs", () =>
+          localVault(env, claims.vid).mcpAddJob(claims, { description, url: url ?? null }, requestKey),
+        ),
+    );
+  }
   if (claims.scopes.includes("vault:generate"))
     server.registerTool(
       "start_tailoring",
       {
         description:
-          "Generate a resume for an existing application. Uses the account's generation quota. Reuse requestKey when retrying the same request.",
+          "Generate a resume for a saved job: applicationId is the job's id, as list_jobs returns it. Uses the account's generation quota. Reuse requestKey when retrying the same request.",
         inputSchema: z.object({
           applicationId: z.uuid(),
           requestKey: z.uuid(),

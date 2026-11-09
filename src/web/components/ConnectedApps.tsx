@@ -4,6 +4,16 @@ import { formatDate } from "../format";
 import { Badge, EmptyState, Glyph } from "./ui";
 import "./workspace.css";
 
+/** What an app was allowed to do, as one sentence. */
+export function permissions(scopes: readonly string[]): string {
+  const jobs = scopes.includes("vault:jobs");
+  const generate = scopes.includes("vault:generate");
+  if (jobs && generate) return "Can read your facts and saved jobs, add jobs and create documents.";
+  if (jobs) return "Can read your facts and saved jobs, and add jobs.";
+  if (generate) return "Can read your facts and create documents.";
+  return "Can read your facts.";
+}
+
 /** AI tools the person has let read their facts, each with what it may do and a way to end it. */
 export function ConnectedApps() {
   const [grants, setGrants] = useState<McpGrant[] | null>(null);
@@ -82,9 +92,7 @@ export function ConnectedApps() {
                     )}
                   </strong>
                   <span>
-                    {grant.scopes.includes("vault:generate")
-                      ? "Can read your facts and create documents."
-                      : "Can read your facts."}
+                    {permissions(grant.scopes)}
                     {!inactive && !pending ? ` Access ends ${formatDate(grant.expiresAt)}.` : ""}
                   </span>
                 </p>
