@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { ShareSnapshotContent } from "../components/ShareSnapshotContent";
+import { ShareFrame, ShareSnapshotContent } from "../components/ShareSnapshotContent";
+import { Loading } from "../components/ui";
+import "../components/share.css";
 import type { SharedView } from "../../shared/sharing";
 
 // Capture once before React effects/router/telemetry, then remove the bearer from browser history.
@@ -73,26 +75,30 @@ export function SharePage() {
   }, [attempt]);
   if (failed === "unavailable")
     return (
-      <main className="page">
-        <h1>Share unavailable</h1>
-        <p>This link may have expired or been revoked. Ask the owner for a new link.</p>
-      </main>
+      <ShareFrame>
+        <div className="app-share__card">
+          <h1>Share unavailable</h1>
+          <p>This link has expired or been revoked. Ask the person who sent it for a new one.</p>
+        </div>
+      </ShareFrame>
     );
   if (failed === "temporary")
     return (
-      <main className="page">
-        <h1>Couldn't open this share</h1>
-        <p>Check your connection and try again.</p>
-        <button type="button" onClick={() => { setFailed(null); setAttempt((value) => value + 1); }}>
-          Try again
-        </button>
-      </main>
+      <ShareFrame>
+        <div className="app-share__card">
+          <h1>This copy couldn't be opened</h1>
+          <p>Check your connection, then try again.</p>
+          <button type="button" className="rs-btn rs-btn--primary" onClick={() => { setFailed(null); setAttempt((value) => value + 1); }}>
+            Try again
+          </button>
+        </div>
+      </ShareFrame>
     );
   if (!view)
     return (
-      <main className="page">
-        <p role="status">Opening shared snapshot…</p>
-      </main>
+      <ShareFrame>
+        <Loading>Opening the shared copy…</Loading>
+      </ShareFrame>
     );
   return <ShareSnapshotContent view={view} />;
 }

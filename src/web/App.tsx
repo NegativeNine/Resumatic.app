@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { Me } from "../shared/api";
 import { api, ApiError } from "./api";
 import { Shell } from "./components/Shell";
-import { ErrorNote, Loading, PageHeader } from "./components/ui";
+import { EmptyState, ErrorNote, Loading, PageHeader } from "./components/ui";
 import { describeError, signInErrorMessage } from "./errors";
 import { AccountPage } from "./pages/AccountPage";
 import { JobsPage } from "./pages/JobsPage";
@@ -173,10 +173,12 @@ function Page({ route }: { route: Route }) {
       return <LegalPage doc={route.page} />;
     case "notFound":
       return (
-        <PageHeader title="Page not found">
-          There's nothing at this address. Go to <a href={href.facts}>Facts</a> or{" "}
-          <a href={href.jobs}>Jobs</a>.
-        </PageHeader>
+        <>
+          <PageHeader title="Page not found">There's nothing at this address.</PageHeader>
+          <EmptyState title="Looking for something?">
+            Your <a href={href.facts}>facts</a> and <a href={href.jobs}>jobs</a> are where you left them.
+          </EmptyState>
+        </>
       );
   }
 }

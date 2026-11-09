@@ -60,7 +60,7 @@ function RunningResume({ resume, reload }: { resume: ResumeView; reload: Reload 
     <>
       <TailorProgress step={resume.step} dispatchUncertain={resume.dispatchUncertain} cancellationPending={resume.cancellationPending} />
       {!resume.cancellationPending && (
-        <button type="button" className="small" disabled={cancel.pending} onClick={() => void cancel.run(async () => {
+        <button type="button" className="small app-cancel-run" disabled={cancel.pending} onClick={() => void cancel.run(async () => {
           await api.cancelResume(resume.id);
           await reload();
         })}>
@@ -160,6 +160,7 @@ function ReadyResume({
             applicationId={resume.applicationId}
             resume={resume}
             onUpdated={refresh}
+            panel
           />
         </>
       ) : (

@@ -21,8 +21,11 @@ import {
   CharCount,
   ErrorNote,
   Field,
+  Glyph,
   Loading,
+  Message,
   Quote,
+  Success,
 } from "./ui";
 import "./workspace.css";
 
@@ -37,6 +40,8 @@ type ApplicationDocumentsProps = {
   applicationId: string;
   resume?: ResumeView;
   onUpdated?: Reload;
+  /** On the resume page the section stands alone, so it gets its own panel. */
+  panel?: boolean;
 };
 
 export function ApplicationDocuments(props: ApplicationDocumentsProps) {
@@ -48,6 +53,7 @@ function ApplicationDocumentsForUser({
   applicationId,
   resume,
   onUpdated,
+  panel = false,
 }: ApplicationDocumentsProps) {
   const list = useResource(
     () => api.documents(applicationId),
@@ -118,13 +124,13 @@ function ApplicationDocumentsForUser({
   }
 
   return (
-    <section className="workspace-section" aria-labelledby={`${id}-heading`}>
+    <section className={panel ? "rs-panel app-documents" : "workspace-section app-documents"} aria-labelledby={`${id}-heading`}>
       <h3 id={`${id}-heading`}>Prepare your application</h3>
-      <p className="hint">
-        Letters and interview answers use confirmed facts. Each completed new
-        document uses one output; experience questions are free.
+      <p className="rs-meta">
+        Letters and interview answers are written from your confirmed facts. Each finished document uses one
+        output. Experience questions are free.
       </p>
-      <div className="actions">
+      <div className="actions app-documents__start">
         <button
           type="button"
           onClick={() => void start({ kind: "letter" })}
@@ -148,10 +154,10 @@ function ApplicationDocumentsForUser({
         </button>
       </div>
       {available === 0 && (
-        <p className="hint">
-          Your available output allowance is used or reserved. You can still
-          review documents and answer experience questions.
-        </p>
+        <Message tone="info" live={false}>
+          Your outputs for this period are used or held for work in progress. You can still read your documents
+          and answer experience questions.
+        </Message>
       )}
       {resume?.state === "ready" && (
         <form
@@ -169,7 +175,7 @@ function ApplicationDocumentsForUser({
           <Field
             id={`${id}-instruction`}
             label={`Refine resume version ${resume.version}`}
-            hint="Describe a change in wording or emphasis. Unsupported rewrites keep your current text; an unchanged resume uses no output."
+            hint="Describe a change in wording or emphasis. A rewrite your facts don't support keeps your current text, and an unchanged resume uses no output."
           >
             <textarea
               id={`${id}-instruction`}
@@ -194,15 +200,15 @@ function ApplicationDocumentsForUser({
             >
               Refine wording
             </button>
-            <span className="meta">Your saved versions remain available.</span>
+            <span className="rs-meta">Your saved versions stay available.</span>
           </div>
         </form>
       )}
       <ActionError message={action.error} />
       {list.error && <ErrorNote message={list.error} onRetry={list.reload} />}
       {unseenDocument && !list.error && (
-        <p className="hint" role="status">
-          Your document was started. <button type="button" className="link-button" onClick={() => void list.reload()}>Refresh its status</button> before starting another.
+        <p className="rs-meta" role="status">
+          Your document was started. <button type="button" className="rs-linkbtn" onClick={() => void list.reload()}>Refresh its status</button> before starting another.
         </p>
       )}
       {!list.data && !list.error && <Loading>Loading your documents…</Loading>}
@@ -232,32 +238,34 @@ function DocumentCard({ doc, reload, retry, retryDisabled }: {
   const cancel = useAction();
   return (
     <li className="document-card">
-      <div className="row-between">
+      <div className="app-doc-head">
         <div>
           <h4>{LABELS[doc.kind]}</h4>
-          <p className="meta">{formatDateTime(doc.createdAt)}</p>
+          <p className="rs-meta">{formatDateTime(doc.createdAt)}</p>
         </div>
         <Badge tone={doc.state}>
+          {doc.state === "ready" && <Glyph name="check" />}
+          {doc.state === "failed" && <Glyph name="alert" />}
           {doc.state === "running"
             ? doc.cancellationPending ? "Cancellation pending" : doc.dispatchUncertain ? "Start unconfirmed" : "Preparing"
             : doc.state === "ready"
               ? "Ready"
-              : "Not completed"}
+              : "Not finished"}
         </Badge>
       </div>
       {doc.state === "running" && doc.cancellationPending && (
-        <p role="status">
+        <p className="rs-meta" role="status">
           Cancellation is pending. Preparation may still start or carry on for a moment, so check back soon.
         </p>
       )}
       {doc.state === "running" && doc.dispatchUncertain && !doc.cancellationPending && (
-        <p role="status">
+        <p className="rs-meta" role="status">
           Your request was saved, but Resumatic can't confirm that preparation started.
           It may still begin, so check back soon.
         </p>
       )}
       {doc.state === "running" && !doc.cancellationPending && (
-        <>
+        <div className="app-doc-running">
           {!doc.dispatchUncertain && <Loading>Preparing and checking your document…</Loading>}
           <button
             type="button"
@@ -273,13 +281,14 @@ function DocumentCard({ doc, reload, retry, retryDisabled }: {
             {cancel.pending ? "Stopping…" : "Cancel generation"}
           </button>
           <ActionError message={cancel.error} />
-        </>
+        </div>
       )}
       {doc.state === "failed" && (
-        <div>
-          <p className="alert" role="status">{documentError(doc.error)}</p>
+        <div className="rs-msg rs-msg--error app-doc-failed" role="status">
+          <Glyph name="alert" />
+          <p className="rs-msg__text">{documentError(doc.error)}</p>
           {doc.retryRunId && (
-            <button type="button" className="small" disabled={retryDisabled} onClick={() => void retry(doc.retryRunId!)}>
+            <button type="button" className="rs-btn rs-btn--sm" disabled={retryDisabled} onClick={() => void retry(doc.retryRunId!)}>
               Retry {LABELS[doc.kind].toLowerCase()}
             </button>
           )}
@@ -303,60 +312,64 @@ function DocumentContent({ doc }: { doc: DocumentView }) {
     (a, b) => a - b,
   );
   return (
-    <div className="document-content stack">
+    <div className="document-content">
       {doc.kind === "refine" && (
-        <p className="hint">
-          The current resume has been updated where a supported improvement was
-          found. Earlier versions remain in its version history.
+        <p className="rs-meta">
+          The current resume was updated wherever your facts supported an improvement. Earlier versions stay in
+          its version history.
         </p>
       )}
-      {doc.kind === "prep"
-        ? result.questions.map((question, index) => (
-            <section key={`${index}-${question.requirement}`}>
-              <h4>{question.question}</h4>
-              {result.units.some((unit) => unit.group === index) ? (
-                <ul>
-                  {result.units
-                    .filter((unit) => unit.group === index)
-                    .map((unit) => (
-                      <li key={unit.id}>{unit.text}</li>
-                    ))}
-                </ul>
-              ) : (
-                <p className="hint">
-                  No answer is supported by the selected facts yet. Use a true
-                  example from your experience, or explain that this is an area
-                  you are still learning.
-                </p>
-              )}
-            </section>
-          ))
-        : groups.map((group) => (
-            <p key={group}>
-              {result.units
-                .filter((unit) => unit.group === group)
-                .map((unit) => unit.text)
-                .join(" ")}
-            </p>
-          ))}
+      {/* What gets sent is shown on white paper, like the resume. */}
+      <div className="app-letter">
+        {doc.kind === "prep"
+          ? result.questions.map((question, index) => (
+              <section key={`${index}-${question.requirement}`}>
+                <h4>{question.question}</h4>
+                {result.units.some((unit) => unit.group === index) ? (
+                  <ul>
+                    {result.units
+                      .filter((unit) => unit.group === index)
+                      .map((unit) => (
+                        <li key={unit.id}>{unit.text}</li>
+                      ))}
+                  </ul>
+                ) : (
+                  <p className="app-letter__none">
+                    Your selected facts don't support an answer yet. Use a true example from your experience, or
+                    say that this is something you're still learning.
+                  </p>
+                )}
+              </section>
+            ))
+          : groups.map((group) => (
+              <p key={group}>
+                {result.units
+                  .filter((unit) => unit.group === group)
+                  .map((unit) => unit.text)
+                  .join(" ")}
+              </p>
+            ))}
+      </div>
       <DocumentDownload doc={doc} />
       <details className="evidence">
         <summary>Evidence behind these sentences</summary>
-        <ul className="plain-list">
+        <ul className="plain-list app-doc-evidence">
           {result.units.map((unit) => (
             <li className="evidence-item" key={unit.id}>
-              <p>{unit.text}</p>
+              <p className="app-doc-evidence__text">{unit.text}</p>
               {unit.status === "edited" && (
-                <p className="hint">Your own wording.</p>
+                <p className="rs-meta">Your own wording.</p>
               )}
               {unit.factIds.map((factId) => {
                 const fact = doc.facts[factId];
                 return fact ? (
-                  <div key={factId}>
-                    <p className="evidence-label">Confirmed fact</p>
+                  <div className="rs-note__fact" key={factId}>
+                    <p className="rs-meta">Fact</p>
                     <p>{fact.text}</p>
-                    {fact.quote && (
-                      <Quote text={fact.quote} caption="Source evidence" />
+                    {fact.quote ? (
+                      <Quote text={fact.quote} size="sm" />
+                    ) : (
+                      <p className="rs-meta">Your own claim, with no source quote.</p>
                     )}
                   </div>
                 ) : null;
@@ -409,11 +422,12 @@ function DocumentDownload({ doc }: { doc: DocumentView }) {
       <div className="actions">
         {(doc.kind === "letter" || doc.kind === "prep") && (
           <a
-            className="button small"
+            className="rs-btn rs-btn--sm"
             href={api.documentDocxUrl(doc.id)}
             download={doc.kind === "letter" ? "cover-letter.docx" : "interview-preparation.docx"}
             referrerPolicy="no-referrer"
           >
+            <Glyph name="download" />
             Download Word
           </a>
         )}
@@ -433,11 +447,7 @@ function DocumentDownload({ doc }: { doc: DocumentView }) {
         >
           Copy text
         </button>
-        {copied && (
-          <span className="success inline" role="status">
-            Copied.
-          </span>
-        )}
+        {copied && <Success>Copied.</Success>}
       </div>
       <ActionError message={copy.error} />
     </div>
@@ -456,15 +466,13 @@ function GapQuestions({
   const roles = useResource(api.roles);
   if (!questions.length)
     return (
-      <p className="success">
-        No gaps were identified in the selected requirements.
-      </p>
+      <Success>No gaps were found in the requirements that were checked.</Success>
     );
   return (
     <div className="document-content stack">
-      <p className="hint">
-        Answer only from your own experience. Saving an answer adds your words
-        as a confirmed fact in your Career Vault.
+      <p className="rs-meta">
+        Answer only from your own experience. Saving an answer adds your words to your facts as a confirmed
+        fact.
       </p>
       {roles.error && (
         <ErrorNote message={roles.error} onRetry={roles.reload} />
@@ -515,7 +523,7 @@ function GapAnswer({
         });
       }}
     >
-      {previouslyAnswered && <p className="hint">You previously saved an answer to this question. You can add another below.</p>}
+      {previouslyAnswered && <p className="rs-meta">You've already saved an answer to this question. You can add another.</p>}
       <Field id={`${id}-answer`} label={question}>
         <textarea
           id={`${id}-answer`}
@@ -556,17 +564,13 @@ function GapAnswer({
           disabled={action.pending || saved || !answer.trim()}
         >
           {saved
-            ? "Saved to your vault"
+            ? "Saved to your facts"
             : action.pending
               ? "Saving…"
               : "Save my answer as a fact"}
         </button>
       </div>
-      {saved && (
-        <p className="success" role="status">
-          Saved. Generate a new document to use this experience.
-        </p>
-      )}
+      {saved && <Success>Saved. Create a new document to use this experience.</Success>}
       <ActionError message={action.error} />
     </form>
   );

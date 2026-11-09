@@ -264,7 +264,12 @@ function SourceStatus({ source, proposedRoles, proposedFacts, visibleItems }: {
         </Badge>
       );
     case "failed":
-      return <Badge tone="failed">Reading stopped</Badge>;
+      return (
+        <Badge tone="failed">
+          <Glyph name="alert" />
+          Reading stopped
+        </Badge>
+      );
     case "ready": {
       const pending = [
         proposedRoles ? count(proposedRoles, "role") : "",

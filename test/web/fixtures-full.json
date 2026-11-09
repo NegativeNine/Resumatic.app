@@ -1,0 +1,386 @@
+{
+  "documents": [
+    {
+      "id": "doc-letter",
+      "applicationId": "app-litware",
+      "kind": "letter",
+      "state": "ready",
+      "version": 1,
+      "createdAt": 1794040920000,
+      "error": null,
+      "result": {
+        "kind": "letter",
+        "questions": [],
+        "report": {
+          "kept": 4,
+          "repaired": 0,
+          "replaced": 0,
+          "dropped": 0,
+          "gaps": []
+        },
+        "units": [
+          {
+            "id": "u1",
+            "roleId": null,
+            "text": "I'm writing to apply for the Platform Engineer role at Litware.",
+            "factIds": [],
+            "group": 0,
+            "status": "edited"
+          },
+          {
+            "id": "u2",
+            "roleId": "role-northwind",
+            "text": "At Northwind Logistics I led the migration of 40 services from Heroku to Kubernetes.",
+            "factIds": [
+              "fact-migration"
+            ],
+            "group": 1
+          },
+          {
+            "id": "u3",
+            "roleId": "role-northwind",
+            "text": "I also reduced p95 API latency from 900 ms to 210 ms by moving hot paths to Redis.",
+            "factIds": [
+              "fact-latency"
+            ],
+            "group": 1
+          },
+          {
+            "id": "u4",
+            "roleId": null,
+            "text": "I'd welcome the chance to talk about how that experience fits your fleet.",
+            "factIds": [],
+            "group": 2,
+            "status": "edited"
+          }
+        ]
+      },
+      "facts": {
+        "fact-migration": {
+          "text": "Led the migration of 40 services from Heroku to Kubernetes.",
+          "quote": "Led migration of 40 services from Heroku to Kubernetes"
+        },
+        "fact-latency": {
+          "text": "Reduced p95 API latency from 900 ms to 210 ms by moving hot paths to Redis.",
+          "quote": "Cut p95 API latency from 900ms to 210ms by moving hot paths to Redis"
+        }
+      }
+    },
+    {
+      "id": "doc-prep",
+      "applicationId": "app-litware",
+      "kind": "prep",
+      "state": "ready",
+      "version": 1,
+      "createdAt": 1794037320000,
+      "error": null,
+      "result": {
+        "kind": "prep",
+        "report": {
+          "kept": 2,
+          "repaired": 0,
+          "replaced": 0,
+          "dropped": 0,
+          "gaps": []
+        },
+        "questions": [
+          {
+            "id": "q1",
+            "requirement": "Run Kubernetes in production",
+            "question": "Tell me about a time you ran Kubernetes in production."
+          },
+          {
+            "id": "q2",
+            "requirement": "Terraform",
+            "question": "How have you used Terraform?"
+          }
+        ],
+        "units": [
+          {
+            "id": "p1",
+            "roleId": "role-northwind",
+            "text": "Led the migration of 40 services from Heroku to Kubernetes.",
+            "factIds": [
+              "fact-migration"
+            ],
+            "group": 0
+          }
+        ]
+      },
+      "facts": {
+        "fact-migration": {
+          "text": "Led the migration of 40 services from Heroku to Kubernetes.",
+          "quote": "Led migration of 40 services from Heroku to Kubernetes"
+        }
+      }
+    },
+    {
+      "id": "doc-questions",
+      "applicationId": "app-litware",
+      "kind": "questions",
+      "state": "ready",
+      "version": 1,
+      "createdAt": 1794035520000,
+      "error": null,
+      "result": {
+        "kind": "questions",
+        "units": [],
+        "report": {
+          "kept": 0,
+          "repaired": 0,
+          "replaced": 0,
+          "dropped": 0,
+          "gaps": []
+        },
+        "questions": [
+          {
+            "id": "g1",
+            "requirement": "Terraform",
+            "question": "Have you managed infrastructure with Terraform? Describe what you did."
+          },
+          {
+            "id": "g2",
+            "requirement": "On-call leadership",
+            "question": "Have you led an on-call rotation? Describe what you did."
+          }
+        ]
+      },
+      "facts": {},
+      "answeredQuestionIds": [
+        "g2"
+      ]
+    },
+    {
+      "id": "doc-failed",
+      "applicationId": "app-litware",
+      "kind": "letter",
+      "state": "failed",
+      "version": 1,
+      "createdAt": 1793871720000,
+      "error": "invalid",
+      "result": null,
+      "facts": {},
+      "retryRunId": "run-1"
+    },
+    {
+      "id": "doc-running",
+      "applicationId": "app-litware",
+      "kind": "prep",
+      "state": "running",
+      "version": 1,
+      "createdAt": 1794044460000,
+      "error": null,
+      "result": null,
+      "facts": {}
+    }
+  ],
+  "shares": [
+    {
+      "id": "sh-1",
+      "epoch": "e",
+      "createdAt": 1793958120000,
+      "expiresAt": 2740124520000,
+      "revokedAt": null,
+      "factCount": 6,
+      "resumeCount": 1,
+      "available": true
+    },
+    {
+      "id": "sh-2",
+      "epoch": "e",
+      "createdAt": 1793266920000,
+      "expiresAt": 1793871720000,
+      "revokedAt": null,
+      "factCount": 3,
+      "resumeCount": 0
+    },
+    {
+      "id": "sh-3",
+      "epoch": "e",
+      "createdAt": 1793612520000,
+      "expiresAt": 2740124520000,
+      "revokedAt": 1793698920000,
+      "factCount": 12,
+      "resumeCount": 2
+    }
+  ],
+  "mcpGrants": [
+    {
+      "id": "g-1",
+      "clientId": "c1",
+      "clientName": "Claude",
+      "scopes": [
+        "vault:read",
+        "vault:generate"
+      ],
+      "expiresAt": 2740124520000,
+      "epoch": "e",
+      "gen": 1,
+      "createdAt": 1793958120000,
+      "revokedAt": null,
+      "oauthGrantId": "o1",
+      "state": "active"
+    },
+    {
+      "id": "g-2",
+      "clientId": "c2",
+      "clientName": "Career Notebook",
+      "scopes": [
+        "vault:read"
+      ],
+      "expiresAt": 2740124520000,
+      "epoch": "e",
+      "gen": 1,
+      "createdAt": 1793871720000,
+      "revokedAt": null,
+      "oauthGrantId": null,
+      "state": "pending"
+    },
+    {
+      "id": "g-3",
+      "clientId": "c3",
+      "clientName": "Old Tool",
+      "scopes": [
+        "vault:read"
+      ],
+      "expiresAt": 1793958120000,
+      "epoch": "e",
+      "gen": 1,
+      "createdAt": 1790588520000,
+      "revokedAt": null,
+      "oauthGrantId": "o3",
+      "state": "active"
+    }
+  ],
+  "shared": {
+    "grantId": "sh-1",
+    "expiresAt": 1794562920000,
+    "snapshot": {
+      "schemaVersion": 1,
+      "createdAt": 1793958120000,
+      "facts": [
+        {
+          "id": "f1",
+          "kind": "accomplishment",
+          "text": "Led the migration of 40 services from Heroku to Kubernetes.",
+          "level": "led",
+          "origin": "extracted",
+          "role": {
+            "id": "role-northwind",
+            "kind": "job",
+            "org": "Northwind Logistics",
+            "title": "Senior Backend Engineer",
+            "startDate": "2021-03",
+            "endDate": null
+          }
+        },
+        {
+          "id": "f2",
+          "kind": "accomplishment",
+          "text": "Reduced p95 API latency from 900 ms to 210 ms by moving hot paths to Redis.",
+          "level": "implemented",
+          "origin": "extracted",
+          "role": {
+            "id": "role-northwind",
+            "kind": "job",
+            "org": "Northwind Logistics",
+            "title": "Senior Backend Engineer",
+            "startDate": "2021-03",
+            "endDate": null
+          }
+        },
+        {
+          "id": "f3",
+          "kind": "skill",
+          "text": "Python",
+          "level": null,
+          "origin": "user",
+          "role": null
+        }
+      ],
+      "resumes": [
+        {
+          "id": "res-ready",
+          "version": 2,
+          "verification": "mixed",
+          "profile": {
+            "name": "Sam Rivera",
+            "email": "sam.rivera@example.com",
+            "phone": "",
+            "location": "Waterloo, ON",
+            "links": [
+              "linkedin.com/in/samrivera"
+            ]
+          },
+          "summary": {
+            "id": "s",
+            "text": "Backend engineer who builds and runs Python services on Kubernetes.",
+            "verification": "verified"
+          },
+          "sections": [
+            {
+              "id": "role-northwind",
+              "kind": "job",
+              "org": "Northwind Logistics",
+              "title": "Senior Backend Engineer",
+              "startDate": "2021-03",
+              "endDate": null,
+              "lines": [
+                {
+                  "id": "l1",
+                  "text": "Led the migration of 40 services from Heroku to Kubernetes",
+                  "verification": "verified"
+                },
+                {
+                  "id": "l2",
+                  "text": "Reduced p95 API latency from 900 ms to 210 ms with Redis",
+                  "verification": "verified"
+                },
+                {
+                  "id": "l3",
+                  "text": "Mentored two junior engineers through their first on-call rotations",
+                  "verification": "user-authored"
+                }
+              ]
+            },
+            {
+              "id": "role-contoso",
+              "kind": "job",
+              "org": "Contoso Health",
+              "title": "Backend Engineer",
+              "startDate": "2018-06",
+              "endDate": "2021-02",
+              "lines": [
+                {
+                  "id": "l4",
+                  "text": "Built internal admin pages in Django",
+                  "verification": "verified"
+                }
+              ]
+            }
+          ],
+          "skills": [
+            "Python",
+            "Kubernetes",
+            "Redis",
+            "PostgreSQL"
+          ]
+        }
+      ]
+    }
+  },
+  "billing": {
+    "enabled": true,
+    "plans": [
+      {
+        "id": "plus",
+        "generationLimit": 60
+      },
+      {
+        "id": "pro",
+        "generationLimit": 200
+      }
+    ],
+    "current": null
+  }
+}

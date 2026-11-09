@@ -67,13 +67,20 @@ export function JobsPage() {
       return next;
     });
   }
+  // Column headings and empty slots are list items too: a list may only hold list items, and a
+  // heading inside one still reads as a heading.
   // Keep one keyed parent for cards in both views. Moving a card to a new
   // board column or changing the filter must not unmount an open workspace.
   const content: ReactNode[] = [];
   if (view === "board") for (const [index, value] of columns.entries()) {
-    content.push(<li className="application-column-heading" role="presentation" key={`column:${value}`} style={{ gridColumn: index + 1, gridRow: 1 }}>
+    const count = visible.filter((application) => statusOf(application) === value).length;
+    content.push(<li className="application-column-heading" key={`column:${value}`} style={{ gridColumn: index + 1, gridRow: 1 }}>
       <h3 id={`${filterId}-column-${value}`}>{APPLICATION_LABELS[value]}</h3>
-      {!visible.some((application) => statusOf(application) === value) && <p className="meta">No applications.</p>}
+      <span className="app-column-count" aria-hidden="true">{count}</span>
+    </li>);
+    // The empty slot sits in the cards' row, so every column's first card starts level.
+    if (count === 0) content.push(<li className="app-column-empty" key={`empty:${value}`} style={{ gridColumn: index + 1, gridRow: 2 }}>
+      <p className="meta">No jobs.</p>
     </li>);
   }
   for (const application of applications) {
@@ -124,7 +131,7 @@ export function JobsPage() {
                 }
               >
                 <option value="all">
-                  All applications ({applications.length})
+                  All jobs ({applications.length})
                 </option>
                 {APPLICATION_STATUSES.map((value) => (
                   <option value={value} key={value}>
@@ -163,7 +170,7 @@ export function JobsPage() {
         {!list.data && !list.error && (
           <Loading>Loading your jobs…</Loading>
         )}
-        {extraWorkspace && <p className="hint" role="status">Open workspaces remain visible even when their status does not match the filter.</p>}
+        {extraWorkspace && <p className="hint" role="status">Open workspaces stay visible even when their status doesn't match the filter.</p>}
         {list.data &&
           (applications.length === 0 ? (
             <p className="empty">
@@ -338,7 +345,7 @@ function ApplicationCard({
           aria-controls={`${headingId}-workspace`}
           onClick={onToggleWorkspace}
         >
-          {open ? "Close workspace" : "Track & prepare"}
+          {open ? "Close workspace" : "Track and prepare"}
         </button>
       </div>
       {open && (

@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import type { McpGrant } from "../../shared/mcp";
 import { formatDate } from "../format";
+import { Badge, EmptyState, Glyph } from "./ui";
+import "./workspace.css";
 
+/** AI tools the person has let read their facts, each with what it may do and a way to end it. */
 export function ConnectedApps() {
-  const [grants, setGrants] = useState<McpGrant[]>([]);
+  const [grants, setGrants] = useState<McpGrant[] | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const id = useId();
   const load = useCallback(async () => {
     try {
       const response = await fetch("/api/mcp/grants", {
@@ -17,75 +21,81 @@ export function ConnectedApps() {
       setGrants(data.grants);
       setError("");
     } catch {
-      setError("Connected apps couldn't be loaded.");
+      setError("Connected apps couldn't be loaded. Check your connection, then reload the page.");
     }
   }, []);
   useEffect(() => {
     void load();
   }, [load]);
-  const revoke = async (id: string) => {
-    setBusy(id);
+  const revoke = async (grantId: string) => {
+    setBusy(grantId);
     try {
       const response = await fetch(
-        `/api/mcp/grants/${encodeURIComponent(id)}`,
+        `/api/mcp/grants/${encodeURIComponent(grantId)}`,
         { method: "DELETE", credentials: "same-origin" },
       );
       if (!response.ok) throw new Error();
       await load();
     } catch {
-      setError(
-        "Could not finish revoking this app. Retry to finish removing its credentials.",
-      );
+      setError("This app's access couldn't be removed. Try again to finish removing its credentials.");
     } finally {
       setBusy(null);
     }
   };
+  const address = typeof window === "undefined" ? "/mcp" : `${window.location.origin}/mcp`;
   return (
-    <section>
-      <h2>Connected apps</h2>
-      <p>
-        Connect an AI tool using{" "}
-        <code>
-          {typeof window === "undefined"
-            ? "/mcp"
-            : `${window.location.origin}/mcp`}
-        </code>
-        . Approve each app's permissions when it asks. Access expires after 30
-        days.
+    <section className="card" aria-labelledby={`${id}-title`}>
+      <h2 id={`${id}-title`}>Connected apps</h2>
+      <p className="card-text">
+        Connect an AI tool with the address below. Each app asks for its permissions, and its access ends after
+        30 days.
       </p>
-      {error && <p role="alert">{error}</p>}
-      {!grants.length && !error && <p>No connected apps.</p>}
-      <ul>
-        {grants.map((grant) => {
-          const inactive =
-            grant.revokedAt !== null || grant.expiresAt <= Date.now();
-          return (
-            <li key={grant.id}>
-              <strong>{grant.clientName}</strong>,{" "}
-              {grant.scopes.includes("vault:generate")
-                ? "read and generate"
-                : "read only"}
-              :{" "}
-              {inactive
-                ? "access ended"
-                : grant.state === "pending"
-                  ? "awaiting connection"
-                  : `expires ${formatDate(grant.expiresAt)}`}{" "}
-              <button
-                type="button"
-                disabled={busy === grant.id}
-                onClick={() => void revoke(grant.id)}
-              >
-                {busy === grant.id
-                  ? "Revoking…"
-                  : inactive
-                    ? "Remove credentials"
-                    : "Revoke"}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+      <p className="app-address">
+        <code>{address}</code>
+      </p>
+      {error && (
+        <div className="rs-msg rs-msg--error app-msg-block" role="alert">
+          <Glyph name="alert" />
+          <p className="rs-msg__text">{error}</p>
+        </div>
+      )}
+      {grants?.length === 0 && !error && <EmptyState>No connected apps.</EmptyState>}
+      {grants && grants.length > 0 && (
+        <ul className="plain-list app-share-links">
+          {grants.map((grant) => {
+            const inactive = grant.revokedAt !== null || grant.expiresAt <= Date.now();
+            const pending = !inactive && grant.state === "pending";
+            return (
+              <li className="rs-setting" key={grant.id}>
+                <p className="rs-setting__text">
+                  <strong>
+                    {grant.clientName}{" "}
+                    {inactive ? (
+                      <Badge tone="rejected">Access ended</Badge>
+                    ) : pending ? (
+                      <Badge tone="proposed">Waiting to connect</Badge>
+                    ) : (
+                      <Badge tone="ready">
+                        <Glyph name="check" />
+                        Connected
+                      </Badge>
+                    )}
+                  </strong>
+                  <span>
+                    {grant.scopes.includes("vault:generate")
+                      ? "Can read your facts and create documents."
+                      : "Can read your facts."}
+                    {!inactive && !pending ? ` Access ends ${formatDate(grant.expiresAt)}.` : ""}
+                  </span>
+                </p>
+                <button type="button" className="small" disabled={busy === grant.id} onClick={() => void revoke(grant.id)}>
+                  {busy === grant.id ? "Removing…" : inactive ? "Remove credentials" : "Revoke access"}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </section>
   );
 }
