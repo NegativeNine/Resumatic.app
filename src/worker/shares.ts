@@ -3,6 +3,16 @@ import { AppError } from "../shared/errors";
 import { signToken, verifyToken } from "./crypto";
 
 export const SHARE_COOKIE = "__Host-share";
+/**
+ * Each shared copy has a cookie of its own, so a reader with two copies open (a coach with two
+ * clients) reloads the right one. SHARE_COOKIE is the single cookie used before that: it is still
+ * set, and still read when a request doesn't say which copy it wants.
+ */
+export function shareCookieName(grantId: string): string {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(grantId))
+    throw new AppError("gone", "this share link is unavailable or expired");
+  return `${SHARE_COOKIE}-${grantId.toLowerCase()}`;
+}
 export const SHARE_SESSION_TTL_MS = 60 * 60 * 1000;
 const Claims = z
   .object({
@@ -48,6 +58,7 @@ export async function createShareSession(
   secret: string,
   link: ShareClaims,
   now = Date.now(),
+  name: string = SHARE_COOKIE,
 ): Promise<string> {
   configured(secret);
   if (link.kind !== "coach-link" || link.exp <= now)
@@ -59,7 +70,7 @@ export async function createShareSession(
     exp,
   });
   const seconds = Math.max(0, Math.floor((exp - now) / 1000));
-  return `${SHARE_COOKIE}=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${seconds}`;
+  return `${name}=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${seconds}`;
 }
 
 export function clearShareSession(): string {

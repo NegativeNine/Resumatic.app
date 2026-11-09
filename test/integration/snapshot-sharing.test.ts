@@ -111,7 +111,8 @@ describe("immutable versions and selected coach snapshots", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ token: link.hash.slice(1) }),
     });
-    expect(exchange.status).toBe(204);
+    expect(exchange.status).toBe(200);
+    expect(await exchange.json()).toEqual({ grantId: grant.id });
     const coachCookie = cookieFrom(exchange, "__Host-share")!;
     const snapshot = await call("/share/snapshot", { cookie: coachCookie });
     const before = (await snapshot.json()) as SharedView;

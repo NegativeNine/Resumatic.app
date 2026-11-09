@@ -1,6 +1,9 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import {
+  MAX_SHARE_BYTES,
+  SHARE_DETAIL_MIGRATIONS,
+  SHARE_READ_INTERVAL_MS,
   SHARE_MIGRATIONS,
   SHARE_TTL_MS,
   ShareStore,
@@ -11,6 +14,7 @@ import {
   createShareSession,
   createShareToken,
   readShareToken,
+  shareCookieName,
   shareLink,
   SHARE_COOKIE,
 } from "../../src/worker/shares";
@@ -93,7 +97,7 @@ function store() {
       return { toArray: () => values };
     },
   } as unknown as SqlStorage;
-  for (const migration of SHARE_MIGRATIONS) sql.exec(migration);
+  for (const migration of [...SHARE_MIGRATIONS, ...SHARE_DETAIL_MIGRATIONS]) sql.exec(migration);
   db.exec(`CREATE TABLE resume_versions (resume_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL)`);
   const resume = selection().resumes[0]!;
   db.prepare(`INSERT INTO resume_versions (resume_id,version,data) VALUES (?,?,?)`).run(resume.id, resume.render.version, JSON.stringify(resume));
@@ -285,6 +289,147 @@ describe("coach share snapshots", () => {
   });
 });
 
+describe("what a copy says about its owner and its jobs", () => {
+  const read = (shares: ShareStore, grant: { id: string; epoch: string }, at = now) =>
+    shares.read({ grantId: grant.id, epoch: grant.epoch }, at);
+
+  it("names nobody and no job unless the owner asked", () => {
+    const { shares, db } = store();
+    try {
+      const grant = shares.create(who, selection(), now + 10_000, now);
+      const view = read(shares, grant);
+      expect(view.snapshot).toMatchObject({ schemaVersion: 2, owner: null });
+      expect(view.snapshot.resumes[0]!.job).toBeNull();
+      // The job the resume was written for stays in the vault.
+      expect(JSON.stringify(view)).not.toContain("private");
+      expect(grant).toMatchObject({ label: null, lastReadAt: null });
+    } finally { db.close(); }
+  });
+
+  it("carries the owner's name and each resume's job when asked, and keeps the label for the owner", () => {
+    const { shares, db } = store();
+    try {
+      const grant = shares.create(who, selection(), now + 10_000, now, {
+        label: "  For Dana  ",
+        owner: { name: "  Avery Example " },
+        jobs: { resume1: { title: "Staff Engineer", company: "Litware" }, another: { title: "Not shared", company: null } },
+      });
+      expect(grant.label).toBe("For Dana");
+      const view = read(shares, grant);
+      expect(view.snapshot.owner).toEqual({ name: "Avery Example" });
+      expect(view.snapshot.resumes[0]!.job).toEqual({ title: "Staff Engineer", company: "Litware" });
+      // The reader gets the copy and when it ends. The label is the owner's own note.
+      expect(Object.keys(view).sort()).toEqual(["expiresAt", "grantId", "snapshot"]);
+      expect(JSON.stringify(view)).not.toContain("Dana");
+      expect(JSON.stringify(view)).not.toContain("Not shared");
+      expect(shares.list(who, now)[0]).toMatchObject({ label: "For Dana", lastReadAt: null, available: true });
+      expect(shares.export(who)[0]).toMatchObject({ label: "For Dana", snapshot: { owner: { name: "Avery Example" } } });
+    } finally { db.close(); }
+  });
+
+  it("refuses a label that is long or runs over a line, and drops an empty one", () => {
+    const { shares, db } = store();
+    try {
+      expect(() => shares.create(who, selection(), now + 10_000, now, { label: "x".repeat(81) })).toThrow("one short line");
+      for (const label of ["For Dana\nand Sam", "For Dana\tand Sam", "For Dana\u0000"])
+        expect(() => shares.create(who, selection(), now + 10_000, now, { label })).toThrow("one short line");
+      expect(shares.create(who, selection(), now + 10_000, now, { label: "   " }).label).toBeNull();
+      expect(shares.create(who, selection(), now + 10_000, now, { label: "x".repeat(80) }).label).toHaveLength(80);
+      expect(shares.list(who, now)).toHaveLength(2);
+    } finally { db.close(); }
+  });
+
+  it("still opens a copy made before names and jobs were added", () => {
+    const { shares, db } = store();
+    try {
+      const grant = shares.create(who, selection(), now + 10_000, now);
+      const earlier = snapshotSelection(selection(), now);
+      expect(earlier.schemaVersion).toBe(1);
+      db.prepare(`UPDATE share_grants SET snapshot = ? WHERE id = ?`).run(JSON.stringify(earlier), grant.id);
+      const view = read(shares, grant);
+      expect(view.snapshot).toEqual(earlier);
+      expect(view.snapshot.owner).toBeUndefined();
+      // An earlier copy never carried a job, so one that claims to is not what was saved.
+      const forged = { ...earlier, resumes: [{ ...earlier.resumes[0]!, job: { title: "Added later", company: null } }] };
+      db.prepare(`UPDATE share_grants SET snapshot = ? WHERE id = ?`).run(JSON.stringify(forged), grant.id);
+      expect(() => read(shares, grant)).toThrow("unavailable");
+    } finally { db.close(); }
+  });
+
+  it("checks a named copy's resume against the saved version, whatever the name and job say", () => {
+    const { shares, db } = store();
+    try {
+      const details = { owner: { name: "Avery Example" }, jobs: { resume1: { title: "Staff Engineer", company: "Litware" } } };
+      const grant = shares.create(who, selection(), now + 10_000, now, details);
+      const saved = () => JSON.parse(db.prepare(`SELECT snapshot FROM share_grants WHERE id = ?`).get(grant.id)!.snapshot as string);
+      const store_ = (value: unknown) => db.prepare(`UPDATE share_grants SET snapshot = ? WHERE id = ?`).run(JSON.stringify(value), grant.id);
+      const original = saved();
+      const changed = saved();
+      changed.resumes[0].summary.text = "Ran the whole company";
+      store_(changed);
+      expect(() => read(shares, grant)).toThrow("unavailable");
+      for (const job of [{ title: "Staff Engineer", company: "Litware", notes: "private" }, { title: 7, company: null }, "Litware", { title: "x".repeat(201), company: null }]) {
+        store_({ ...original, resumes: [{ ...original.resumes[0], job }] });
+        expect(() => read(shares, grant)).toThrow("unavailable");
+      }
+      for (const owner of [undefined, { name: "" }, { name: 7 }, { name: "x".repeat(201) }, "Avery"]) {
+        store_({ ...original, owner });
+        expect(() => read(shares, grant)).toThrow("unavailable");
+      }
+      store_(original);
+      expect(read(shares, grant).snapshot).toEqual(original);
+    } finally { db.close(); }
+  });
+
+  it("counts a copy whose name pushes it past the size limit as too large", () => {
+    const { shares, db } = store();
+    try {
+      const size = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+      const large = selection();
+      large.facts[0]!.text = "";
+      const room = MAX_SHARE_BYTES - size(snapshotSelection(large, now));
+      // The selection alone fits exactly. What a copy adds around it has to fit as well.
+      large.facts[0]!.text = "x".repeat(room);
+      expect(size(snapshotSelection(large, now))).toBe(MAX_SHARE_BYTES);
+      expect(() => shares.create(who, large, now + 10_000, now)).toThrow("too large");
+      // A name is cut to 200 characters. With 100 bytes to spare it doesn't fit, and the copy without it does.
+      large.facts[0]!.text = "x".repeat(room - 100);
+      expect(() => shares.create(who, large, now + 10_000, now, { owner: { name: "n".repeat(500) } })).toThrow("too large");
+      const grant = shares.create(who, large, now + 10_000, now);
+      expect(read(shares, grant).snapshot.owner).toBeNull();
+      large.facts[0]!.text = "x".repeat(room - 300);
+      const named = shares.create(who, large, now + 10_000, now, { owner: { name: "n".repeat(500) } });
+      expect(read(shares, named).snapshot.owner).toEqual({ name: "n".repeat(200) });
+    } finally { db.close(); }
+  });
+
+  it("notes when a copy is opened, and only while it can be opened", () => {
+    const { shares, db } = store();
+    try {
+      const minute = SHARE_READ_INTERVAL_MS;
+      const grant = shares.create(who, selection(), now + 10 * minute, now);
+      // Checking whether a link still works, as the owner's list does, isn't opening it.
+      shares.list(who, now + 1);
+      read(shares, grant, now + 2);
+      expect(shares.list(who, now + 3)[0]!.lastReadAt).toBeNull();
+      shares.recordRead(grant.id, now + 500);
+      expect(shares.list(who, now + 501)[0]!.lastReadAt).toBe(now + 500);
+      // The list shows minutes, so a reload within the minute writes nothing.
+      shares.recordRead(grant.id, now + 900);
+      shares.recordRead(grant.id, now + 499 + minute);
+      expect(shares.list(who, now + minute)[0]!.lastReadAt).toBe(now + 500);
+      shares.recordRead(grant.id, now + 500 + minute);
+      expect(shares.list(who, now + 2 * minute)[0]!.lastReadAt).toBe(now + 500 + minute);
+      // Not once it has expired or been revoked.
+      shares.recordRead(grant.id, now + 10 * minute);
+      expect(shares.export(who)[0]!.lastReadAt).toBe(now + 500 + minute);
+      shares.revoke(who, grant.id, now + 5 * minute);
+      shares.recordRead(grant.id, now + 6 * minute);
+      expect(shares.export(who)[0]).toMatchObject({ lastReadAt: now + 500 + minute, revokedAt: now + 5 * minute });
+    } finally { db.close(); }
+  });
+});
+
 describe("share credential isolation", () => {
   it("keeps link bearer secrets in fragments and rejects wrong-purpose tokens", async () => {
     const token = await createShareToken(secret, claims);
@@ -323,5 +468,17 @@ describe("share credential isolation", () => {
       expect(session!.exp).toBe(Math.min(exp, now + 3_600_000));
       expect(await readShareToken(secret, token, "coach-link", now)).toBeNull();
     }
+  });
+  it("gives each copy a cookie of its own, named only by a well-formed grant", async () => {
+    const name = shareCookieName(claims.grantId.toUpperCase());
+    expect(name).toBe(`__Host-share-${claims.grantId}`);
+    const cookie = await createShareSession(secret, { ...claims, kind: "coach-link" }, now, name);
+    expect(cookie.startsWith(`${name}=`)).toBe(true);
+    expect(cookie).toContain("Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=3600");
+    const session = await readShareToken(secret, cookie.split(";")[0]!.slice(name.length + 1), "coach-session", now);
+    expect(session).toMatchObject({ grantId: claims.grantId, kind: "coach-session" });
+    // Anything else would let a request choose a cookie name, or break the header.
+    for (const bad of ["", "legacy", `${claims.grantId}; Domain=example.com`, `${claims.grantId}=x`, "../../etc", `${claims.grantId} `])
+      expect(() => shareCookieName(bad)).toThrow("unavailable");
   });
 });

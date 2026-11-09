@@ -1,5 +1,12 @@
-/** Test-only helper to reconstruct a Vault schema before job details (a link, and a title the person set), the latest migration. */
+/** Test-only helper to reconstruct a Vault schema before share labels and read times, the latest migration. */
+export function removeShareDetailMigration(sql: SqlStorage): void {
+  sql.exec(`ALTER TABLE share_grants DROP COLUMN label`);
+  sql.exec(`ALTER TABLE share_grants DROP COLUMN last_read_at`);
+}
+
+/** Test-only helper to reconstruct a Vault schema before job details (a link, and a title the person set), and so before every later migration. */
 export function removeJobDetailsMigration(sql: SqlStorage): void {
+  removeShareDetailMigration(sql);
   sql.exec(`ALTER TABLE applications DROP COLUMN url`);
   sql.exec(`ALTER TABLE applications DROP COLUMN details_edited`);
 }

@@ -1,12 +1,14 @@
 import type { FactView, ResumeLine, RoleView } from "../shared/api";
 import { AppError } from "../shared/errors";
-import type {
-  ShareGrant,
-  SharedLine,
-  SharedResume,
-  SharedRole,
-  SharedView,
-  ShareSnapshot,
+import {
+  MAX_SHARE_LABEL_CHARS,
+  type ShareGrant,
+  type SharedJob,
+  type SharedLine,
+  type SharedResume,
+  type SharedRole,
+  type SharedView,
+  type ShareSnapshot,
 } from "../shared/sharing";
 import type { RenderData, Who } from "../shared/types";
 import { assertGroundedResume, type ResumeVersion } from "./snapshots";
@@ -23,6 +25,24 @@ export const SHARE_MIGRATIONS: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS share_expiry ON share_grants(expires_at)`,
 ];
+
+/** How often, at most, a copy's last-opened time is written. */
+export const SHARE_READ_INTERVAL_MS = 60_000;
+
+/** A label for the owner's own list, and when the copy was last opened. */
+export const SHARE_DETAIL_MIGRATIONS: readonly string[] = [
+  `ALTER TABLE share_grants ADD COLUMN label TEXT`,
+  `ALTER TABLE share_grants ADD COLUMN last_read_at INTEGER`,
+];
+
+/** What a version 2 copy adds to the selection: none of it changes what the facts or resumes say. */
+export interface ShareDetails {
+  label?: string | null;
+  /** The owner's name for the top of the copy, or null to leave it off. */
+  owner?: { name: string } | null;
+  /** Each shared resume's job, by resume ID. */
+  jobs?: Readonly<Record<string, SharedJob>>;
+}
 
 export interface ShareSelection {
   facts: FactView[];
@@ -165,6 +185,14 @@ export function snapshotSelection(
   return snapshot;
 }
 
+function validJob(job: unknown): boolean {
+  if (job === null) return true;
+  if (typeof job !== "object" || job === undefined) return false;
+  const { title, company, ...rest } = job as Record<string, unknown>;
+  const name = (value: unknown) => value === null || (typeof value === "string" && value.length <= 200);
+  return Object.keys(rest).length === 0 && name(title) && name(company);
+}
+
 interface GrantRow extends Record<string, SqlStorageValue> {
   id: string;
   epoch: string;
@@ -174,6 +202,8 @@ interface GrantRow extends Record<string, SqlStorageValue> {
   fact_count: number;
   resume_count: number;
   snapshot: string | null;
+  label: string | null;
+  last_read_at: number | null;
 }
 const grantView = (row: GrantRow): ShareGrant => ({
   id: row.id,
@@ -183,6 +213,8 @@ const grantView = (row: GrantRow): ShareGrant => ({
   revokedAt: row.revoked_at,
   factCount: row.fact_count,
   resumeCount: row.resume_count,
+  label: row.label ?? null,
+  lastReadAt: row.last_read_at ?? null,
 });
 
 export class ShareStore {
@@ -200,8 +232,12 @@ export class ShareStore {
     selection: ShareSelection,
     expiresAt = Date.now() + SHARE_TTL_MS,
     now = Date.now(),
+    details: ShareDetails = {},
   ): ShareGrant {
     this.auth.authorizeOwner(who);
+    const label = details.label?.trim() || null;
+    if (label !== null && (label.length > MAX_SHARE_LABEL_CHARS || /[\u0000-\u001f\u007f]/.test(label)))
+      throw new AppError("invalid", "keep the label to one short line");
     if (
       !Number.isSafeInteger(expiresAt) ||
       expiresAt <= now ||
@@ -220,7 +256,22 @@ export class ShareStore {
         "quota",
         "revoke an existing share before creating another",
       );
-    const snapshot = snapshotSelection(selection, now);
+    const core = snapshotSelection(selection, now);
+    // The name and the jobs are added around the checked selection, so what a fact or a resume
+    // says is still exactly what read() rebuilds and compares.
+    const owner = details.owner?.name.trim() ? { name: details.owner.name.trim().slice(0, 200) } : null;
+    const snapshot: ShareSnapshot = {
+      schemaVersion: 2,
+      createdAt: core.createdAt,
+      owner,
+      facts: core.facts,
+      resumes: core.resumes.map((resume) => {
+        const job = details.jobs?.[resume.id];
+        return { ...resume, job: job ? { title: job.title, company: job.company } : null };
+      }),
+    };
+    if (new TextEncoder().encode(JSON.stringify(snapshot)).byteLength > MAX_SHARE_BYTES)
+      throw new AppError("too_large", "share snapshot is too large");
     const grant: ShareGrant = {
       id: crypto.randomUUID(),
       epoch: this.auth.currentEpoch(),
@@ -229,9 +280,11 @@ export class ShareStore {
       revokedAt: null,
       factCount: snapshot.facts.length,
       resumeCount: snapshot.resumes.length,
+      label,
+      lastReadAt: null,
     };
     this.sql.exec(
-      `INSERT INTO share_grants (id, epoch, created_at, expires_at, revoked_at, fact_count, resume_count, snapshot) VALUES (?, ?, ?, ?, NULL, ?, ?, ?)`,
+      `INSERT INTO share_grants (id, epoch, created_at, expires_at, revoked_at, fact_count, resume_count, snapshot, label) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
       grant.id,
       grant.epoch,
       now,
@@ -239,6 +292,7 @@ export class ShareStore {
       grant.factCount,
       grant.resumeCount,
       JSON.stringify(snapshot),
+      label,
     );
     return grant;
   }
@@ -247,7 +301,7 @@ export class ShareStore {
     this.auth.authorizeOwner(who);
     return this.sql
       .exec<GrantRow>(
-        `SELECT id, epoch, created_at, expires_at, revoked_at, fact_count, resume_count FROM share_grants ORDER BY created_at DESC LIMIT 200`,
+        `SELECT id, epoch, created_at, expires_at, revoked_at, fact_count, resume_count, label, last_read_at FROM share_grants ORDER BY created_at DESC LIMIT 200`,
       )
       .toArray()
       .map((row) => {
@@ -306,7 +360,7 @@ export class ShareStore {
     let snapshot: ShareSnapshot;
     try {
       snapshot = JSON.parse(row.snapshot) as ShareSnapshot;
-      if (snapshot.schemaVersion !== 1 || !Array.isArray(snapshot.resumes) || !Array.isArray(snapshot.facts)) throw new Error();
+      if ((snapshot.schemaVersion !== 1 && snapshot.schemaVersion !== 2) || !Array.isArray(snapshot.resumes) || !Array.isArray(snapshot.facts)) throw new Error();
       // Prior grants are immutable copies without citations. Reconstruct each
       // shared resume from its immutable version and require an exact match;
       // this also prevents detached historical edits from reaching a coach.
@@ -317,7 +371,15 @@ export class ShareStore {
         if (!saved) throw new Error();
         const version = JSON.parse(saved.data) as ResumeVersion;
         const expected = snapshotSelection({ facts: [], roles: [], resumes: [{ id: shared.id, ...version }] }, snapshot.createdAt).resumes[0];
-        if (JSON.stringify(expected) !== JSON.stringify(shared)) throw new Error();
+        // A version 2 copy names the resume's job beside it. The job is the owner's label, not
+        // part of what the resume says, so it is set aside before the comparison.
+        const { job, ...core } = shared;
+        if (snapshot.schemaVersion === 1 ? job !== undefined : !validJob(job)) throw new Error();
+        if (JSON.stringify(expected) !== JSON.stringify(core)) throw new Error();
+      }
+      if (snapshot.schemaVersion === 2) {
+        const owner = snapshot.owner;
+        if (owner !== null && (typeof owner?.name !== "string" || !owner.name || owner.name.length > 200)) throw new Error();
       }
     } catch {
       throw new AppError("gone", "this share link is unavailable or expired");
@@ -327,6 +389,20 @@ export class ShareStore {
       expiresAt: row.expires_at,
       snapshot,
     };
+  }
+
+  /**
+   * Notes that the reader opened the copy, for the owner's list. Internal reads don't count. The
+   * time is kept to the minute the list shows, so reloading a copy doesn't write on every request.
+   */
+  recordRead(grantId: string, now = Date.now()): void {
+    this.sql.exec(
+      `UPDATE share_grants SET last_read_at = ? WHERE id = ? AND revoked_at IS NULL AND expires_at > ? AND (last_read_at IS NULL OR last_read_at <= ?)`,
+      now,
+      grantId,
+      now,
+      now - SHARE_READ_INTERVAL_MS,
+    );
   }
 
   /** Call from the Vault alarm; access expiry is enforced even if alarm cleanup is delayed. */

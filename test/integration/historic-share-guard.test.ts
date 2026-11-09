@@ -167,7 +167,7 @@ describe("historical share grounding", () => {
     expect(response.status, await response.clone().text()).toBe(201);
     const { grant, url } = await response.json() as { grant: { id: string }; url: string };
     const exchange = await call("/share/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: new URL(url).hash.slice(1) }) });
-    expect(exchange.status).toBe(204);
+    expect(exchange.status).toBe(200);
     const cookie = cookieFrom(exchange, "__Host-share")!;
     expect((await call("/share/snapshot", { cookie })).status).toBe(200);
     expect((await user.json<{ grants: { id: string; available?: boolean }[] }>("/api/shares")).grants.find((item) => item.id === grant.id)?.available).toBe(true);

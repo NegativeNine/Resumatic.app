@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { formatDate } from "../format";
 import { presentResumeBullet } from "../../shared/resume-presentation";
 import { formatRoleDates } from "../../shared/sheet";
-import type { SharedLine, SharedResume, SharedView } from "../../shared/sharing";
+import type { SharedJob, SharedLine, SharedResume, SharedView } from "../../shared/sharing";
 import { Lockup } from "./Lockup";
 import { Badge, Glyph } from "./ui";
 
@@ -31,12 +31,22 @@ const RESUME_CHECK: Readonly<Record<SharedResume["verification"], { tone: string
 /** Kept separate so the same read-only snapshot can be tested without a browser session. */
 export function ShareSnapshotContent({ view }: { view: SharedView }) {
   const { facts, resumes } = view.snapshot;
+  const owner = view.snapshot.owner?.name || null;
   return (
     <ShareFrame>
       <h1>Shared career snapshot</h1>
       <p className="rs-lede">
-        A fixed copy, chosen by its owner on {formatDate(view.snapshot.createdAt)}. This link works until{" "}
-        {formatDate(view.expiresAt)}.
+        {owner ? (
+          <>
+            From <strong>{owner}</strong>. A fixed copy, chosen on {formatDate(view.snapshot.createdAt)}.
+          </>
+        ) : (
+          <>A fixed copy, chosen by its owner on {formatDate(view.snapshot.createdAt)}.</>
+        )}{" "}
+        This link works until {formatDate(view.expiresAt)}.
+      </p>
+      <p className="rs-meta app-share__opened">
+        {owner ?? "Its owner"} can see when this copy was last opened, but not who opened it.
       </p>
       {facts.length > 0 && (
         <section className="rs-panel app-share__facts" aria-labelledby="share-facts">
@@ -61,8 +71,11 @@ export function ShareSnapshotContent({ view }: { view: SharedView }) {
   );
 }
 
-function SharedResumeSheet({ resume }: { resume: SharedResume }) {
+function SharedResumeSheet({ resume }: { resume: SharedResume & { job?: SharedJob | null } }) {
   const check = RESUME_CHECK[resume.verification];
+  // The job as its owner had it named when the copy was made. An unnamed job says nothing.
+  const job = [resume.job?.title, resume.job?.company].filter(Boolean).join(" at ");
+  const label = `${resume.profile.name || "Resume"}, version ${resume.version}`;
   // The same order and grouping as the sheet model (src/shared/sheet.ts), so the copy reads as the PDF does:
   // contact details with links, every role that isn't education under Experience, then Education.
   const contact = [resume.profile.email, resume.profile.phone, resume.profile.location, ...resume.profile.links].filter(Boolean);
@@ -82,11 +95,12 @@ function SharedResumeSheet({ resume }: { resume: SharedResume }) {
     </>
   );
   return (
-    <section className="app-share__resume" aria-label={`${resume.profile.name || "Resume"}, version ${resume.version}`}>
+    <section className="app-share__resume" aria-label={job ? `${label}, tailored for ${job}` : label}>
       <div className="app-share__resume-head">
-        <h2>
-          {resume.profile.name || "Resume"}, version {resume.version}
-        </h2>
+        <div>
+          <h2>{label}</h2>
+          {job && <p className="rs-meta app-share__job">Tailored for {job}</p>}
+        </div>
         <Badge tone={check.tone}>
           {resume.verification === "verified" && <Glyph name="check" />}
           {check.text}

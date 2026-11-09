@@ -8,6 +8,7 @@ import { THEME_KEY } from "../../src/web/theme";
 import { installFakeApi } from "./api-fake";
 import { permissions } from "../../src/web/components/ConnectedApps";
 import { ShareSnapshotContent } from "../../src/web/components/ShareSnapshotContent";
+import { formatDateTime } from "../../src/web/format";
 import { fixtures, fullVault, sharedView } from "./fixtures";
 import { renderWithSession } from "./render";
 
@@ -108,14 +109,91 @@ describe("account tools", () => {
     const state = fullVault();
     installFakeApi(state);
     renderWithSession(<AccountPage />, state.me);
-    const active = (await screen.findByText("6 facts and 1 resume version")).closest("li")!;
+    // A link with a label goes by it, and says what it holds underneath.
+    const active = (await screen.findByText("Dana Okafor")).closest("li")!;
     expect(within(active).getByText("Active")).toBeInTheDocument();
     expect(within(active).getByRole("button", { name: "Revoke link" })).toBeEnabled();
+    const shares = state.shares!;
+    const opened = shares[0]!.lastReadAt!;
+    expect(active.querySelector(".rs-setting__text > span")!.textContent).toMatch(
+      new RegExp(`^6 facts and 1 resume version\\. Created .+\\. Expires .+\\. Last opened ${formatDateTime(opened)}\\.$`),
+    );
     // A copy with no resumes doesn't mention them.
     const expired = screen.getByText("3 facts").closest("li")!;
     expect(within(expired).getByText("Expired")).toBeInTheDocument();
     expect(within(expired).queryByRole("button")).toBeNull();
-    expect(within(screen.getByText("12 facts and 2 resume versions").closest("li")!).getByText("Revoked")).toBeInTheDocument();
+    expect(expired.querySelector(".rs-setting__text > span")!.textContent).toMatch(/^Created .+\. Expired .+\. Never opened\.$/);
+    const revoked = screen.getByText("12 facts and 2 resume versions").closest("li")!;
+    expect(within(revoked).getByText("Revoked")).toBeInTheDocument();
+    expect(revoked.textContent).toContain(`Last opened ${formatDateTime(shares[2]!.lastReadAt!)}.`);
+  });
+
+  it("says a link hasn’t been opened only when the server keeps that reading", async () => {
+    const state = fullVault();
+    const [first, second, third] = state.shares!;
+    first!.lastReadAt = null;
+    delete second!.lastReadAt;
+    delete third!.lastReadAt;
+    installFakeApi(state);
+    renderWithSession(<AccountPage />, state.me);
+    const active = (await screen.findByText("Dana Okafor")).closest("li")!;
+    expect(active.textContent).toContain("Not opened yet.");
+    for (const text of ["3 facts", "12 facts and 2 resume versions"]) {
+      const row = screen.getByText(text).closest("li")!;
+      expect(row.textContent).not.toMatch(/opened/i);
+    }
+  });
+
+  it("asks who a link is for and what the copy should say, and sends exactly that", async () => {
+    const state = fullVault();
+    const api = installFakeApi(state);
+    renderWithSession(<AccountPage />, state.me);
+    await userEvent.click(await screen.findByRole("button", { name: "Choose what to share" }));
+    const facts = await screen.findByRole("group", { name: /Confirmed facts/ });
+    const name = screen.getByRole("checkbox", { name: "Put my name at the top of the copy" });
+    const jobs = screen.getByRole("checkbox", { name: "Say which job each resume is for" });
+    // The name is offered; where someone is applying is theirs to add, and only a resume has a job.
+    expect(name).toBeChecked();
+    expect(jobs).not.toBeChecked();
+    expect(jobs).toBeDisabled();
+    expect(jobs).toHaveAccessibleDescription(/Choose a resume first/);
+    const fact = within(facts).getAllByRole("checkbox")[0]!;
+    await userEvent.click(fact);
+    const label = screen.getByRole("textbox", { name: /^Who it’s for/ });
+    expect(label).toHaveAttribute("maxlength", "80");
+    expect(label).toHaveAccessibleDescription(/The reader doesn’t see it/);
+    await userEvent.type(label, "  Dana Okafor ");
+    await userEvent.click(name);
+    await userEvent.click(screen.getByRole("button", { name: "Create share link" }));
+    expect(await screen.findByLabelText("Your share link")).toHaveValue("https://resumatic.test/share#synthetic-share-new-1");
+    const sent = api.callsTo("POST", /^\/api\/shares$/)[0]!.body as Record<string, unknown>;
+    expect(sent).toMatchObject({ resumes: [], label: "Dana Okafor", showName: false, showJobs: false });
+    expect(sent.factIds).toHaveLength(1);
+    // The new link heads the list under its label, not opened yet.
+    const row = (await screen.findAllByText("Dana Okafor"))[0]!.closest("li")!;
+    expect(row.textContent).toContain("1 fact. Created");
+    expect(row.textContent).toContain("Not opened yet.");
+  });
+
+  it("offers the job names once a resume is chosen, and leaves the label out when it’s empty", async () => {
+    const state = fullVault();
+    const api = installFakeApi(state);
+    renderWithSession(<AccountPage />, state.me);
+    await userEvent.click(await screen.findByRole("button", { name: "Choose what to share" }));
+    const resumes = await screen.findByRole("group", { name: /Saved resume versions/ });
+    await userEvent.click(within(resumes).getAllByRole("checkbox")[0]!);
+    const jobs = screen.getByRole("checkbox", { name: "Say which job each resume is for" });
+    await waitFor(() => expect(jobs).toBeEnabled());
+    expect(jobs).not.toBeChecked();
+    expect(jobs).toHaveAccessibleDescription(/Leave it off to keep where you’re applying to yourself/);
+    await userEvent.click(jobs);
+    await userEvent.type(screen.getByRole("textbox", { name: /^Who it’s for/ }), "   ");
+    await userEvent.click(screen.getByRole("button", { name: "Create share link" }));
+    await screen.findByLabelText("Your share link");
+    const sent = api.callsTo("POST", /^\/api\/shares$/)[0]!.body as Record<string, unknown>;
+    expect(sent).toMatchObject({ factIds: [], showName: true, showJobs: true });
+    expect(sent.resumes).toHaveLength(1);
+    expect(sent).not.toHaveProperty("label");
   });
 
   it("names plans as words and connected apps by what they may do", async () => {
@@ -149,6 +227,42 @@ describe("the shared copy", () => {
     expect(document.body.textContent).not.toContain(".,");
     expect(document.querySelector(".rs-sheet h1")?.textContent).toBe("Sam Rivera");
     expect(screen.getByText(/A fixed copy, chosen by its owner on 6 Nov 2026\. This link works until 13 Nov 2026\./)).toBeInTheDocument();
+  });
+
+  it("says whose copy it is and which job each resume is for, when the copy carries them", () => {
+    const view = sharedView();
+    view.snapshot.schemaVersion = 2;
+    view.snapshot.owner = { name: "Sam Rivera" };
+    view.snapshot.resumes[0]!.job = { title: "Platform Engineer", company: "Litware" };
+    render(<ShareSnapshotContent view={view} />);
+    expect(document.querySelector(".rs-lede")!.textContent).toBe(
+      "From Sam Rivera. A fixed copy, chosen on 6 Nov 2026. This link works until 13 Nov 2026.",
+    );
+    // A reader is told what opening the copy shows its owner.
+    expect(screen.getByText("Sam Rivera can see when this copy was last opened, but not who opened it.")).toBeInTheDocument();
+    const resume = screen.getByRole("region", { name: "Sam Rivera, version 2, tailored for Platform Engineer at Litware" });
+    expect(within(resume).getByText("Tailored for Platform Engineer at Litware")).toBeInTheDocument();
+    expect(within(resume).getByRole("heading", { level: 2, name: "Sam Rivera, version 2" })).toBeInTheDocument();
+  });
+
+  it("leaves the name and the job out of a copy that doesn’t carry them", () => {
+    const view = sharedView();
+    const first = render(<ShareSnapshotContent view={view} />);
+    expect(screen.getByText("Its owner can see when this copy was last opened, but not who opened it.")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Sam Rivera, version 2" })).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("Tailored for");
+    first.unmount();
+    // A copy that names nobody and an unnamed job say nothing; half a name says the half there is.
+    view.snapshot.schemaVersion = 2;
+    view.snapshot.owner = null;
+    view.snapshot.resumes[0]!.job = { title: null, company: null };
+    const second = render(<ShareSnapshotContent view={view} />);
+    expect(document.querySelector(".rs-lede")!.textContent).toMatch(/^A fixed copy, chosen by its owner on /);
+    expect(document.body.textContent).not.toContain("Tailored for");
+    second.unmount();
+    view.snapshot.resumes[0]!.job = { title: null, company: "Litware" };
+    render(<ShareSnapshotContent view={view} />);
+    expect(screen.getByText("Tailored for Litware")).toBeInTheDocument();
   });
 
   it("prints education under its own heading, with links and bullets as the PDF has them", () => {

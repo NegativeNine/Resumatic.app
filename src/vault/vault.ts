@@ -2842,6 +2842,12 @@ export class Vault extends DurableObject<Env> {
       factIds: string[];
       resumes: { id: string; version: number }[];
       expiresAt?: number;
+      /** The owner's own note of who the link is for. The reader never sees it. */
+      label?: string;
+      /** True puts the owner's name at the top of the copy. */
+      showName?: boolean;
+      /** True says which job each shared resume was tailored for. */
+      showJobs?: boolean;
     },
   ) {
     // Capture the selected facts, roles and resume versions together with the
@@ -2855,14 +2861,27 @@ export class Vault extends DurableObject<Env> {
       if (facts.length !== selection.factIds.length)
         throw new AppError("invalid", "select confirmed facts from your vault");
       const roles = this.readRoles();
-      const resumes = selection.resumes.map(({ id, version }) => ({
-        id,
-        ...this.resumeVersion(this.resumeRow(id), version),
-      }));
+      // The job a resume is for and the owner's name are left off unless the owner asks for them:
+      // where someone is applying is theirs to tell, and a copy of facts alone names nobody.
+      const jobs: Record<string, { title: string | null; company: string | null }> = {};
+      const resumes = selection.resumes.map(({ id, version }) => {
+        const row = this.resumeRow(id);
+        if (selection.showJobs === true) {
+          // Named as the owner has the job now, which is how the list they chose from names it.
+          const job = this.sql
+            .exec<{ title: string | null; company: string | null }>(`SELECT title, company FROM applications WHERE id = ?`, row.application_id)
+            .toArray()[0];
+          if (job && (job.title || job.company)) jobs[id] = { title: job.title, company: job.company };
+        }
+        return { id, ...this.resumeVersion(row, version) };
+      });
+      const name = selection.showName === true ? this.readProfile().name : "";
       return this.shares.create(
         who,
         { facts, roles, resumes },
         selection.expiresAt,
+        undefined,
+        { label: selection.label ?? null, owner: name.trim() ? { name } : null, jobs },
       );
     });
     await this.scheduleRunAlarm(grant.expiresAt);
@@ -2874,8 +2893,11 @@ export class Vault extends DurableObject<Env> {
   async revokeShare(who: Who, id: string) {
     this.shares.revoke(who, id);
   }
-  async readShare(claims: { grantId: string; epoch: string }) {
-    return this.shares.read(claims);
+  /** `opened` is true when the reader's page asks for the copy, not when a link is only exchanged. */
+  async readShare(claims: { grantId: string; epoch: string }, opened = false) {
+    const view = this.shares.read(claims);
+    if (opened) this.shares.recordRead(claims.grantId);
+    return view;
   }
 
   async updateApplication(

@@ -26,6 +26,7 @@ import {
   createShareSession,
   shareLink,
   SHARE_COOKIE,
+  shareCookieName,
 } from "./shares";
 import { renderDocx, textDocx } from "../render/docx";
 import { renderResumeHtml } from "../render/template";
@@ -49,6 +50,7 @@ import {
   type RoleKind,
 } from "../shared/api";
 import { AppError, errorCode, errorDetail, httpStatus } from "../shared/errors";
+import { MAX_SHARE_LABEL_CHARS } from "../shared/sharing";
 import { hintFor, type CfLocation } from "../shared/location";
 import { docxKey, pdfKey, sourceKey } from "../shared/r2";
 import { directoryForSignIn, settleRoutedPlacement } from "../directory/routing";
@@ -1229,6 +1231,15 @@ api.post("/shares", JSON_LIMIT, async (c) => {
         )
         .max(20),
       expiresAt: z.number().int().positive().optional(),
+      // The owner's note of who the link is for: one short line.
+      label: z
+        .string()
+        .trim()
+        .max(MAX_SHARE_LABEL_CHARS)
+        .refine((value) => !/[\u0000-\u001f\u007f]/.test(value), "use a single line")
+        .optional(),
+      showName: z.boolean().optional(),
+      showJobs: z.boolean().optional(),
     }),
   );
   const grant = await myVault(c).createShare(c.get("who"), selection);
@@ -1259,22 +1270,40 @@ app.post("/share/session", JSON_LIMIT, async (c) => {
     grantId: claims.grantId,
     epoch: claims.epoch,
   });
-  c.header("set-cookie", await createShareSession(c.env.SESSION_KEY, claims));
-  return c.body(null, 204);
+  const now = Date.now();
+  // The copy's own cookie, and the single cookie that pages loaded before it existed still send.
+  c.header(
+    "set-cookie",
+    await createShareSession(c.env.SESSION_KEY, claims, now, shareCookieName(claims.grantId)),
+    { append: true },
+  );
+  c.header("set-cookie", await createShareSession(c.env.SESSION_KEY, claims, now), {
+    append: true,
+  });
+  // Not a secret: it only says which of the reader's copies to open.
+  return c.json({ grantId: claims.grantId });
 });
 app.get("/share/snapshot", async (c) => {
+  // A page names the copy it wants, and that copy's own cookie has to open it. A page loaded before
+  // copies had their own cookie names none and sends the single one.
+  const wanted = c.req.query("g");
   const claims = await readShareToken(
     c.env.SESSION_KEY,
-    getCookie(c, SHARE_COOKIE),
+    getCookie(c, wanted === undefined ? SHARE_COOKIE : shareCookieName(wanted)),
     "coach-session",
   );
-  if (!claims)
+  if (
+    !claims ||
+    (wanted !== undefined && claims.grantId.toLowerCase() !== wanted.toLowerCase())
+  )
     throw new AppError("gone", "this share link is unavailable or expired");
+  // The owner looking at their own copy, signed in in the same browser, isn't the copy being opened.
+  const own = await readSession(c.env.SESSION_KEY, getCookie(c, SESSION_COOKIE));
   return c.json(
-    await vault(c.env, claims.vid).readShare({
-      grantId: claims.grantId,
-      epoch: claims.epoch,
-    }),
+    await vault(c.env, claims.vid).readShare(
+      { grantId: claims.grantId, epoch: claims.epoch },
+      own?.vid !== claims.vid,
+    ),
   );
 });
 api.get("/billing", async (c) =>
