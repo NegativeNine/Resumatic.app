@@ -158,6 +158,25 @@ describe("document workflows", () => {
     });
   });
 
+  it("previews fit for free, names the job from the posting, and writes nothing", async () => {
+    const { user, applicationId, factId } = await application();
+    const { documentId } = await start(user, applicationId, { kind: "fit" });
+    const doc = await finished(user, documentId);
+    const requirements = doc.result?.fit?.requirements ?? [];
+    expect(requirements.length).toBeGreaterThan(1);
+    // The Go fact covers the Go requirement, and nothing covers Rust.
+    expect(requirements.find((r) => /Go/.test(r.text))?.factIds).toEqual([factId]);
+    expect(requirements.find((r) => /Rust/.test(r.text))?.factIds).toEqual([]);
+    expect(doc.facts[factId]?.text).toBe(FACT);
+    expect(doc.result?.units).toEqual([]);
+    expect(doc.result?.questions).toEqual([]);
+    expect((await user.json("/api/me")).quota).toMatchObject({ used: 0, reserved: 0 });
+    // What was read is kept on the job, so it has a name before any resume is tailored.
+    const job = await user.json<{ title: string | null; company: string | null; canDelete: boolean }>(`/api/applications/${applicationId}`);
+    expect(job.title ?? job.company).toBeTruthy();
+    expect(job.canDelete).toBe(false);
+  });
+
   it("publishes interview questions with evidence-backed answer outlines", async () => {
     const { user, applicationId, factId } = await application();
     const { documentId } = await start(user, applicationId, { kind: "prep" });

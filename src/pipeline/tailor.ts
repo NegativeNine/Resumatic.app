@@ -70,6 +70,11 @@ export async function selectFacts(
   analysis: Analysis,
   facts: FactRecord[],
   roles: RoleRecord[] = [],
+  /**
+   * Filled, when given, with each requirement and the facts that cover it: the closest three at
+   * or above the gap threshold, best first, or none for a gap. The selection itself is unchanged.
+   */
+  coverage?: Map<string, string[]>,
 ): Promise<Selection> {
   const byId = new Map(facts.map((f) => [f.id, f]));
   const roleKeys = new Map(roles.map((role) => [role.id,
@@ -104,6 +109,7 @@ export async function selectFacts(
       Math.max(...near.map((c) => c.score)) < TAILOR.gapCosine
     ) {
       gaps.push(requirement);
+      coverage?.set(requirement, []);
       continue;
     }
     const scores = await models.rerank(
@@ -114,6 +120,15 @@ export async function selectFacts(
       const score = (scores[i] ?? 0) + c.score;
       if (score > (best.get(c.factId) ?? -Infinity)) best.set(c.factId, score);
     });
+    coverage?.set(
+      requirement,
+      near
+        .map((c, i) => ({ id: c.factId, cosine: c.score, score: (scores[i] ?? 0) + c.score }))
+        .filter((c) => c.cosine >= TAILOR.gapCosine)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3)
+        .map((c) => c.id),
+    );
   }
 
   const ranked = [...best.entries()]

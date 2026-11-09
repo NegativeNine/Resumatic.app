@@ -6,10 +6,17 @@ export const RUN_KINDS = [
   "letter",
   "prep",
   "questions",
+  "fit",
   "reembed",
   "embed",
 ] as const;
 export type RunKind = (typeof RUN_KINDS)[number];
+/** Runs that make an application document. A fit preview is one: it reads the posting and writes nothing. */
+export const DOCUMENT_RUN_KINDS: readonly RunKind[] = ["refine", "letter", "prep", "questions", "fit"];
+/** Runs that read a posting and work from the person's facts: one at a time. */
+export const GENERATION_RUN_KINDS: readonly RunKind[] = ["tailor", ...DOCUMENT_RUN_KINDS];
+/** Document kinds that use no output: they write nothing a person would send. */
+export const FREE_DOCUMENT_KINDS: readonly RunKind[] = ["questions", "fit"];
 export type RunState =
   | "starting"
   | "running"

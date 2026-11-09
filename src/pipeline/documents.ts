@@ -21,7 +21,12 @@ function rewritten(line: ResumeLine, change: Pick<ResumeLine, "text" | "factIds"
   return { ...rest, ...change };
 }
 
-export type DocumentKind = "refine" | "letter" | "prep" | "questions";
+export type DocumentKind = "refine" | "letter" | "prep" | "questions" | "fit";
+/** One requirement read from the posting, and the confirmed facts that cover it (none for a gap). */
+export interface FitRequirement {
+  text: string;
+  factIds: string[];
+}
 export interface DocumentQuestion {
   id: string;
   requirement: string;
@@ -47,6 +52,8 @@ export interface DocumentPlan {
   analysis: Analysis;
   selection: Selection;
   questions: DocumentQuestion[];
+  /** A fit preview's requirements, in the posting's order. */
+  coverage?: FitRequirement[];
 }
 export interface DocumentDraft {
   units: CitedUnit[];
@@ -57,6 +64,8 @@ export interface DocumentResult extends DocumentDraft {
   report: ResumeReport;
   /** Refinement preserves the original structure, record-authored headers and skill list. */
   body?: ResumeBody;
+  /** A fit preview: how the posting's requirements stand against confirmed facts. Nothing is written. */
+  fit?: { requirements: FitRequirement[] };
 }
 export interface DocumentState extends DocumentInput {
   plan?: DocumentPlan;
@@ -123,7 +132,13 @@ export async function planDocument(
     };
   }
   let selection: Selection;
-  if (input.selection) {
+  const covered = new Map<string, string[]>();
+  if (input.kind === "fit") {
+    // Always measured afresh against the captured facts: a fit preview is about now.
+    selection = input.facts.length === 0
+      ? { factIds: [], skillIds: [], gaps: cleanAnalysis.requirements }
+      : await selectFacts(models, search ?? (await localSearch(models, input.facts)), cleanAnalysis, input.facts, input.roles, covered);
+  } else if (input.selection) {
     const available = new Set(input.facts.map((f) => f.id));
     selection = {
       factIds: [...new Set(input.selection.factIds)]
@@ -170,6 +185,13 @@ export async function planDocument(
         ? `What experience, if any, do you have with ${shortRequirement(requirement)}? Describe your own contribution and the outcome.`
         : `How would you discuss your experience relevant to ${shortRequirement(requirement)}?`,
   }));
+  if (input.kind === "fit")
+    return {
+      analysis: cleanAnalysis,
+      selection,
+      questions: [],
+      coverage: cleanAnalysis.requirements.map((text) => ({ text, factIds: covered.get(text) ?? [] })),
+    };
   return { analysis: cleanAnalysis, selection, questions };
 }
 
@@ -179,7 +201,7 @@ export async function writeDocument(
   plan: DocumentPlan,
 ): Promise<DocumentDraft> {
   validateInput(input);
-  if (input.kind === "questions") return { units: [] };
+  if (input.kind === "questions" || input.kind === "fit") return { units: [] };
   const selected = new Set([
     ...plan.selection.factIds,
     ...plan.selection.skillIds,
@@ -322,6 +344,23 @@ export async function verifyDocument(
   plan: DocumentPlan,
   draft: DocumentDraft,
 ): Promise<DocumentResult> {
+  if (input.kind === "fit") {
+    // No model writes anything here: the requirements come from the analysis and the facts are
+    // the person's own, so there is nothing to check a claim against.
+    const known = new Set(input.facts.map((fact) => fact.id));
+    return {
+      kind: input.kind,
+      units: [],
+      questions: [],
+      report: { kept: 0, repaired: 0, replaced: 0, dropped: 0, gaps: plan.selection.gaps },
+      fit: {
+        requirements: (plan.coverage ?? []).map((requirement) => ({
+          text: requirement.text,
+          factIds: requirement.factIds.filter((id) => known.has(id)),
+        })),
+      },
+    };
+  }
   if (input.kind === "questions") {
     return {
       kind: input.kind,
