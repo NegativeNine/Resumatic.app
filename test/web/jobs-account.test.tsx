@@ -238,8 +238,10 @@ describe("the shared copy", () => {
     expect(document.querySelector(".rs-lede")!.textContent).toBe(
       "From Sam Rivera. A fixed copy, chosen on 6 Nov 2026. This link works until 13 Nov 2026.",
     );
-    // A reader is told what opening the copy shows its owner.
-    expect(screen.getByText("Sam Rivera can see when this copy was last opened, but not who opened it.")).toBeInTheDocument();
+    // A reader is told what opening the copy shows its owner, and where the rest is written down.
+    const notice = screen.getByText(/^Sam Rivera can see when this copy was last opened, but not who opened it\./);
+    // From the site's root: a bare "#/privacy" on this page would be taken for a share link.
+    expect(within(notice).getByRole("link", { name: "Privacy notice" })).toHaveAttribute("href", "/#/privacy");
     const resume = screen.getByRole("region", { name: "Sam Rivera, version 2, tailored for Platform Engineer at Litware" });
     expect(within(resume).getByText("Tailored for Platform Engineer at Litware")).toBeInTheDocument();
     expect(within(resume).getByRole("heading", { level: 2, name: "Sam Rivera, version 2" })).toBeInTheDocument();
@@ -248,7 +250,7 @@ describe("the shared copy", () => {
   it("leaves the name and the job out of a copy that doesn’t carry them", () => {
     const view = sharedView();
     const first = render(<ShareSnapshotContent view={view} />);
-    expect(screen.getByText("Its owner can see when this copy was last opened, but not who opened it.")).toBeInTheDocument();
+    expect(screen.getByText(/^Its owner can see when this copy was last opened, but not who opened it\./)).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Sam Rivera, version 2" })).toBeInTheDocument();
     expect(document.body.textContent).not.toContain("Tailored for");
     first.unmount();

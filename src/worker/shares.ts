@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AppError } from "../shared/errors";
+import { SHARE_SESSION_TTL_MS } from "../shared/sharing";
 import { signToken, verifyToken } from "./crypto";
 
 export const SHARE_COOKIE = "__Host-share";
@@ -13,7 +14,7 @@ export function shareCookieName(grantId: string): string {
     throw new AppError("gone", "this share link is unavailable or expired");
   return `${SHARE_COOKIE}-${grantId.toLowerCase()}`;
 }
-export const SHARE_SESSION_TTL_MS = 60 * 60 * 1000;
+export { SHARE_SESSION_TTL_MS };
 const Claims = z
   .object({
     kind: z.enum(["coach-link", "coach-session"]),
