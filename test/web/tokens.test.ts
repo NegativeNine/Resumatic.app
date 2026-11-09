@@ -82,7 +82,7 @@ describe.each([
   });
 });
 
-it("keeps the resume sheet's colors the same in both themes, because they are the PDF's", () => {
+it("keeps the resume sheet’s colors the same in both themes, because they are the PDF’s", () => {
   const light = palette(':root, [data-theme="light"] {');
   const dark = palette('[data-theme="dark"] {');
   for (const name of ["sheet", "sheet-ink", "sheet-ink-muted", "sheet-rule"]) expect(dark[name], name).toBe(light[name]);

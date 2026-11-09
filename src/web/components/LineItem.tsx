@@ -111,7 +111,7 @@ export function LineItem({
           <p className="rs-meta">{findingSentence(line.finding, line.status)}</p>
         )}
         {legacyReview === "pending"
-          ? <p className="rs-meta">This older line's citations haven't been rechecked. Select confirmed facts when reviewing it.</p>
+          ? <p className="rs-meta">This older line’s citations haven’t been rechecked. Select confirmed facts when reviewing it.</p>
           : <Evidence facts={cited} />}
         {!editing && !readOnly && (
           <div className="rs-note__row">
@@ -143,7 +143,7 @@ export function LineItem({
 
 function Evidence({ facts }: { facts: CitedFact[] }) {
   if (facts.length === 0)
-    return <p className="rs-meta">This line doesn't cite any facts.</p>;
+    return <p className="rs-meta">This line doesn’t cite any facts.</p>;
   return (
     <>
       {facts.map((fact) => (
@@ -227,18 +227,18 @@ function LineEditor({
           setCheckingMessage(null);
           setError(doc.error === "conflict"
             ? "The resume or its facts changed. Refresh the resume, then try your edit again."
-            : "That wording couldn't be verified against its evidence. Confirm or add the facts it needs, then try again.");
+            : "That wording couldn’t be verified against its evidence. Confirm or add the facts it needs, then try again.");
           void refreshMe();
           return;
         }
         setCheckingMessage(doc.dispatchUncertain
-          ? "Your check was requested, but Resumatic can't confirm yet that it started. Keep this page open."
+          ? "Your check was requested, but Resumatic can’t confirm yet that it started. Keep this page open."
           : "Checking your wording against the cited facts…");
       } catch (e) {
         if (stopped) return;
         const note = sessionEndNote(e);
         if (note) { endSession(note); return; }
-        setCheckingMessage("The check's status couldn't be loaded. Resumatic will keep trying, and your wording is still here.");
+        setCheckingMessage("The check’s status couldn’t be loaded. Resumatic will keep trying, and your wording is still here.");
       }
       if (!stopped) timer = window.setTimeout(check, 2000);
     }
@@ -292,7 +292,7 @@ function LineEditor({
       {!hasEvidence && (
         <fieldset disabled={pending || !!documentId}>
           <legend>Supporting facts{roleId ? " for this role" : ""}</legend>
-          {factsError && <p className="alert" role="alert">Your confirmed facts couldn't be loaded. Close this editor, then try again.</p>}
+          {factsError && <p className="alert" role="alert">Your confirmed facts couldn’t be loaded. Close this editor, then try again.</p>}
           {!factsError && availableFacts === null && <p className="meta">Loading confirmed facts…</p>}
           {availableFacts?.length === 0 && <p className="meta">No confirmed facts are available for this line. Add or confirm a relevant fact under Facts first.</p>}
           {availableFacts?.map((fact) => (

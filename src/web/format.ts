@@ -122,7 +122,7 @@ export const LINE_STATUS_LABEL: Record<LineStatus, string> = {
 export const LINE_STATUS_HINT: Record<LineStatus, string> = {
   kept: "Passed every check as written",
   repaired: "Fixed once so that it matches its facts",
-  replaced: "The draft wording couldn't be verified, so this line uses the wording of a confirmed fact",
+  replaced: "The draft wording couldn’t be verified, so this line uses the wording of a confirmed fact",
   edited: "Changed by you",
 };
 
@@ -151,24 +151,38 @@ export function findingSentence(finding: LineFinding, status: LineStatus): strin
   switch (finding.kind) {
     case "numbers":
       reason = values
-        ? `The draft said ${listOf(values)}. Your facts don't include ${values.length === 1 ? "that number" : "those numbers"}.`
-        : "The draft used a number your facts don't include.";
+        ? `The draft said ${listOf(values)}. Your facts don’t include ${values.length === 1 ? "that number" : "those numbers"}.`
+        : "The draft used a number your facts don’t include.";
       break;
     case "names":
       reason = values
-        ? `The draft named ${listOf(values)}. Your facts don't mention ${values.length === 1 ? "it" : "them"}.`
-        : "The draft named something your facts don't mention.";
+        ? `The draft named ${listOf(values)}. Your facts don’t mention ${values.length === 1 ? "it" : "them"}.`
+        : "The draft named something your facts don’t mention.";
       break;
     case "scope":
       reason = `The draft said you ${LEVEL_CLAIM[finding.claimed] ?? "led it"}, which is more than your facts show.`;
       break;
     case "citation":
-      reason = "The draft cited a fact it couldn't use for this line.";
+      reason = "The draft cited a fact it couldn’t use for this line.";
       break;
     default:
-      reason = "The check found wording its facts don't support.";
+      reason = "The check found wording its facts don’t support.";
   }
   if (status === "repaired") return `${reason} Resumatic rewrote it once to match its facts.`;
-  if (status === "replaced") return `${reason} This line uses your fact's own words instead.`;
+  if (status === "replaced") return `${reason} This line uses your fact’s own words instead.`;
   return reason;
+}
+
+/**
+ * Typographic quotation marks for text that arrives with straight ones, such as a server message:
+ * it’s, not it's, and “file.pdf”, not "file.pdf". The interface’s own copy is written this way already.
+ */
+export function typeset(text: string): string {
+  return text
+    .replace(/(?<=\p{L})'(?=\p{L})/gu, "’")
+    .replace(/(?<=\p{L})'(?=\s|$|[.,;:!?)])/gu, "’")
+    .replace(/(^|[\s(])"(?=\S)/g, "$1“")
+    .replace(/"/g, "”")
+    .replace(/(^|[\s(“])'(?=\S)/g, "$1‘")
+    .replace(/'/g, "’");
 }

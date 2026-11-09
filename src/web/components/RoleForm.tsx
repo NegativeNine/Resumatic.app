@@ -96,8 +96,8 @@ export function RoleForm({ role, reload, onClose, onAdded, action }: Props) {
     >
       {!role && (
         <p className="meta">
-          Add a job, degree, project or volunteer role your uploads missed. It's
-          your own claim, so it has no source quote, and it's confirmed straight
+          Add a job, degree, project or volunteer role your uploads missed. It’s
+          your own claim, so it has no source quote, and it’s confirmed straight
           away.
         </p>
       )}
@@ -169,8 +169,8 @@ export function RoleForm({ role, reload, onClose, onAdded, action }: Props) {
         {datesLocked
           ? "The saved start date is preserved; date editing is temporarily unavailable."
           : allowUnknownEnd
-            ? "Use year and month, such as 2021-03. Leave the end date empty if you're still there; select unknown when you don't know it."
-            : "Use year and month, such as 2021-03. Leave the end date empty if you're still there."}
+            ? "Use year and month, such as 2021-03. Leave the end date empty if you’re still there; select unknown when you don’t know it."
+            : "Use year and month, such as 2021-03. Leave the end date empty if you’re still there."}
       </p>
       <div className="actions">
         <button

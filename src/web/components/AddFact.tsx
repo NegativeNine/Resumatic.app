@@ -108,7 +108,7 @@ function AddFactForm({ id, roles, onAdded, onClose, action }: Props & { id: stri
           rows={3}
           value={text}
           disabled={pending}
-          placeholder="Write it as you'd want it on a resume."
+          placeholder="Write it as you’d want it on a resume."
           onChange={(e) => {
             setText(e.target.value);
             setAdded(false);

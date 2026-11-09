@@ -129,10 +129,10 @@ function FactItem({
         <p className="hint">The earlier ownership level{fact.previousLevel ? ` (${LEVEL_LABEL[fact.previousLevel]})` : ""} needs your confirmation before it is used.</p>
       )}
       {roleRejected && (
-        <p className="hint">This fact can't be used while its role is rejected. Confirm the role to use it.</p>
+        <p className="hint">This fact can’t be used while its role is rejected. Confirm the role to use it.</p>
       )}
       {role?.state === "proposed" && fact.state === "confirmed" && (
-        <p className="hint">This fact can't be used until its role is confirmed.</p>
+        <p className="hint">This fact can’t be used until its role is confirmed.</p>
       )}
       {fact.reviewReasons?.includes("strategy_disagreement") && (
         <p className="hint">
@@ -314,7 +314,7 @@ function FactEditor(props: {
       <p className="hint" id={`${id}-note`}>
         An edited or moved fact becomes your own claim: resumes use your wording
         and role, and the original quote stays beside it for reference. Changing
-        the wording clears its prior level unless you choose a level again. Only write what's true.
+        the wording clears its prior level unless you choose a level again. Only write what’s true.
       </p>
       <div className="actions">
         <button

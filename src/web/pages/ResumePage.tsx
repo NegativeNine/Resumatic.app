@@ -202,12 +202,12 @@ function TailorFailed({ resume }: { resume: ResumeView }) {
 
   return (
     <section className="card" aria-labelledby="failed-heading">
-      <h2 id="failed-heading">This resume couldn't be finished</h2>
+      <h2 id="failed-heading">This resume couldn’t be finished</h2>
       <p className="failed-reason">
         {resumeErrorMessage(resume.error)}
       </p>
       <p className="meta">
-        Resumatic never shows lines that haven't passed its checks, so there's
+        Resumatic never shows lines that haven’t passed its checks, so there’s
         nothing to review from this attempt.
       </p>
       <div className="actions">

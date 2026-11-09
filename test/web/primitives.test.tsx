@@ -20,8 +20,8 @@ describe("messages", () => {
   it("announces a failed load as an alert, with a way to try again", async () => {
     let resolve!: () => void;
     const onRetry = vi.fn(() => new Promise<void>((r) => (resolve = r)));
-    render(<ErrorNote message="Your jobs couldn't load." onRetry={onRetry} />);
-    expect(screen.getByRole("alert")).toHaveTextContent("Your jobs couldn't load.");
+    render(<ErrorNote message="Your jobs couldn’t load." onRetry={onRetry} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Your jobs couldn’t load.");
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(screen.getByRole("button", { name: "Trying again…" })).toBeDisabled();
     resolve();
@@ -29,7 +29,7 @@ describe("messages", () => {
     expect(onRetry).toHaveBeenCalledOnce();
   });
 
-  it("shows an action's error only when there is one", () => {
+  it("shows an action’s error only when there is one", () => {
     const { rerender, container } = render(<ActionError message={null} />);
     expect(container).toBeEmptyDOMElement();
     rerender(<ActionError message="This file is empty." />);
@@ -39,21 +39,21 @@ describe("messages", () => {
   it("announces information and success as status", () => {
     render(
       <>
-        <Message tone="info">You've used all 20 outputs for Nov 2026.</Message>
+        <Message tone="info">You’ve used all 20 outputs for Nov 2026.</Message>
         <Success>Profile saved.</Success>
       </>,
     );
     const statuses = screen.getAllByRole("status");
-    expect(statuses.map((s) => s.textContent)).toEqual(["You've used all 20 outputs for Nov 2026.", "Profile saved."]);
+    expect(statuses.map((s) => s.textContent)).toEqual(["You’ve used all 20 outputs for Nov 2026.", "Profile saved."]);
   });
 
   it("names the next step in an empty state", () => {
     render(
-      <EmptyState title="You're all caught up">
+      <EmptyState title="You’re all caught up">
         Nothing is waiting for review. Next, <a href="#/jobs">add a job</a>.
       </EmptyState>,
     );
-    expect(screen.getByText("You're all caught up").tagName).toBe("STRONG");
+    expect(screen.getByText("You’re all caught up").tagName).toBe("STRONG");
     expect(screen.getByRole("link", { name: "add a job" })).toHaveAttribute("href", "#/jobs");
   });
 });
@@ -83,7 +83,7 @@ describe("marks and ticks", () => {
 });
 
 describe("Quote", () => {
-  it("highlights the person's words and keeps the source in the caption", () => {
+  it("highlights the person’s words and keeps the source in the caption", () => {
     render(<Quote text="  Led migration of 40 services  " caption="From sam-rivera-2024.pdf" />);
     const mark = screen.getByText("Led migration of 40 services");
     expect(mark.tagName).toBe("MARK");

@@ -85,7 +85,7 @@ describe("accessibility", () => {
   });
 
   it("signing in, and the legal pages", async () => {
-    const signIn = render(<SignedOut note={null} error="Sign-in was cancelled. You can try again whenever you're ready." />);
+    const signIn = render(<SignedOut note={null} error="Sign-in was cancelled. You can try again whenever you’re ready." />);
     expect(await violations()).toEqual([]);
     signIn.unmount();
     for (const doc of ["privacy", "terms"] as const) {

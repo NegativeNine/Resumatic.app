@@ -28,7 +28,7 @@ describe("Jobs", () => {
     installFakeApi(state);
     renderWithSession(<JobsPage />, state.me);
     await screen.findByRole("heading", { name: "Platform Engineer at Litware" });
-    expect(screen.getByText(/You've used all 20/)).toBeInTheDocument();
+    expect(screen.getByText(/You’ve used all 20/)).toBeInTheDocument();
     for (const button of screen.getAllByRole("button", { name: "Tailor a resume" })) expect(button).toBeEnabled();
   });
 
@@ -45,7 +45,7 @@ describe("Jobs", () => {
     expect(screen.getByRole("region", { name: "Jobs by status" })).toBeInTheDocument();
   });
 
-  it("joins a job's meta without middle dots", async () => {
+  it("joins a job’s meta without middle dots", async () => {
     const state = fixtures();
     installFakeApi(state);
     renderWithSession(<JobsPage />, state.me);
@@ -56,14 +56,14 @@ describe("Jobs", () => {
 
 describe("signing in", () => {
   it("puts notes and errors above the button", () => {
-    render(<SignedOut note="You've signed out." error="Sign-in was cancelled. You can try again whenever you're ready." />);
+    render(<SignedOut note="You’ve signed out." error="Sign-in was cancelled. You can try again whenever you’re ready." />);
     const button = screen.getByRole("link", { name: "Sign in with Google" });
     expect(button.textContent).toBe("Sign in with Google");
     const status = screen.getByRole("status");
     const alert = screen.getByRole("alert");
     expect(status.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(alert.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Tailored resumes, built only from what you've done.");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Tailored resumes, built only from what you’ve done.");
   });
 });
 

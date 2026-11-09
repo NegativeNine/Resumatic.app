@@ -45,7 +45,7 @@ export function BillingTools() {
       )}
       {data && !data.enabled && (
         <p className="rs-meta">
-          Plans can't be bought at the moment. The outputs you already have stay available.
+          Plans can’t be bought at the moment. The outputs you already have stay available.
         </p>
       )}
       {data?.enabled && (
@@ -166,7 +166,7 @@ export function CoachSharingTools() {
       <p className="card-text">
         Choose confirmed facts and saved resume versions to share as a fixed copy. Anyone with the link can
         read that copy, including the contact details on the resumes you choose. Later changes to your facts
-        don't change it.
+        don’t change it.
       </p>
       <button
         type="button"
@@ -193,7 +193,7 @@ export function CoachSharingTools() {
           <Field
             id={`${id}-link`}
             label="Your share link"
-            hint="Copy this link now. It's shown only once. You can revoke it below at any time."
+            hint="Copy this link now. It’s shown only once. You can revoke it below at any time."
           >
             <input
               id={`${id}-link`}

@@ -140,7 +140,7 @@ function GapAnswer({ requirement, applicationId, onClose }: { requirement: strin
     return (
       <div className="rs-well app-gap-answer">
         <Success>Fact added.</Success>
-        <p className="rs-meta">It's your own claim, and the next version can use it.</p>
+        <p className="rs-meta">It’s your own claim, and the next version can use it.</p>
         <div className="rs-actions">
           <button type="button" className="rs-btn rs-btn--primary rs-btn--sm" disabled={tailor.pending} onClick={() => void tailor.tailor(applicationId)}>
             {tailor.pending ? "Starting…" : "Tailor a new version"}
@@ -183,7 +183,7 @@ function GapAnswer({ requirement, applicationId, onClose }: { requirement: strin
           onChange={(e) => setText(e.target.value)}
         />
         <p className="rs-hint" id={`${id}-hint`}>
-          A yes on its own can't go on a resume. Write the claim the way you'd want it to read.
+          A yes on its own can’t go on a resume. Write the claim the way you’d want it to read.
         </p>
         <CharCount id={`${id}-count`} length={trimmed.length} max={MAX_FACT_CHARS} />
       </div>

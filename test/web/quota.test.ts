@@ -8,7 +8,7 @@ describe("quotaWords", () => {
     expect(quotaWords({ used: 12, limit: 20, month })).toEqual({ full: false, text: "12 of 20 outputs used this month" });
   });
 
-  it("says when the allowance comes back once it's used up", () => {
+  it("says when the allowance comes back once it’s used up", () => {
     expect(quotaWords({ used: 20, limit: 20, month })).toEqual({ full: true, text: "20 of 20 used. More from 1 Dec" });
     expect(quotaWords({ used: 2, limit: 2, month: "2026-12" }).text).toBe("2 of 2 used. More from 1 Jan");
   });
@@ -21,7 +21,7 @@ describe("quotaWords", () => {
     });
   });
 
-  it("uses a paid plan's renewal date instead of the calendar month", () => {
+  it("uses a paid plan’s renewal date instead of the calendar month", () => {
     const periodEnd = new Date(2026, 10, 18, 12).getTime();
     expect(quotaWords({ used: 3, limit: 50, month, periodEnd }).text).toBe("3 of 50 outputs used until 18 Nov");
     expect(quotaWords({ used: 50, limit: 50, month, periodEnd }).text).toBe("50 of 50 used. More from 18 Nov");
@@ -29,7 +29,7 @@ describe("quotaWords", () => {
 });
 
 describe("quotaTicks", () => {
-  it("draws a tick per output, filled as they're used", () => {
+  it("draws a tick per output, filled as they’re used", () => {
     const ticks = quotaTicks({ used: 3, limit: 5, reserved: 1, month });
     expect(ticks).toEqual(["used", "used", "used", "reserved", "free"]);
   });

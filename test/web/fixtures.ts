@@ -26,12 +26,12 @@ export function fixtures(): Fixtures {
   return structuredClone(data) as unknown as Fixtures;
 }
 
-/** Sam's vault before anything has been uploaded. */
+/** Sam’s vault before anything has been uploaded. */
 export function emptyVault(): Fixtures {
   return { ...fixtures(), sources: [], roles: [], facts: [], applications: [], resumes: {} };
 }
 
-/** Sam's vault with every optional screen filled in: documents in each state, share links, apps, plans. */
+/** Sam’s vault with every optional screen filled in: documents in each state, share links, apps, plans. */
 export function fullVault(): Fixtures {
   const { shared: _shared, ...extras } = structuredClone(full) as unknown as Required<Pick<Fixtures, "documents" | "shares" | "mcpGrants" | "billing">> & { shared: SharedView };
   const state = { ...fixtures(), ...extras };

@@ -67,25 +67,35 @@ describe("numbers", () => {
 describe("findings", () => {
   it("says what the check found, then what happened to the line", () => {
     expect(findingSentence({ kind: "numbers", values: ["40%"] }, "repaired")).toBe(
-      "The draft said 40%. Your facts don't include that number. Resumatic rewrote it once to match its facts.",
+      "The draft said 40%. Your facts don’t include that number. Resumatic rewrote it once to match its facts.",
     );
     expect(findingSentence({ kind: "names", values: ["Kafka", "Flink", "Spark"] }, "replaced")).toBe(
-      "The draft named Kafka, Flink and Spark. Your facts don't mention them. This line uses your fact's own words instead.",
+      "The draft named Kafka, Flink and Spark. Your facts don’t mention them. This line uses your fact’s own words instead.",
     );
     expect(findingSentence({ kind: "scope", claimed: "owned", allowed: "implemented" }, "repaired")).toBe(
       "The draft said you owned it, which is more than your facts show. Resumatic rewrote it once to match its facts.",
     );
     expect(findingSentence({ kind: "citation" }, "replaced")).toBe(
-      "The draft cited a fact it couldn't use for this line. This line uses your fact's own words instead.",
+      "The draft cited a fact it couldn’t use for this line. This line uses your fact’s own words instead.",
     );
     expect(findingSentence({ kind: "unsupported" }, "repaired")).toBe(
-      "The check found wording its facts don't support. Resumatic rewrote it once to match its facts.",
+      "The check found wording its facts don’t support. Resumatic rewrote it once to match its facts.",
     );
   });
 
   it("stays general when a stored finding has no usable values", () => {
     expect(findingSentence({ kind: "numbers", values: [] }, "replaced")).toBe(
-      "The draft used a number your facts don't include. This line uses your fact's own words instead.",
+      "The draft used a number your facts don’t include. This line uses your fact’s own words instead.",
     );
+  });
+});
+
+describe("typeset", () => {
+  it("turns straight apostrophes and quotation marks into typographic ones", async () => {
+    const { typeset } = await import("../../src/web/format");
+    expect(typeset("The resume changed. It can't be saved.")).toBe("The resume changed. It can\u2019t be saved.");
+    expect(typeset('"cv.pdf" is the engineers\' file.')).toBe("\u201ccv.pdf\u201d is the engineers\u2019 file.");
+    expect(typeset("Type 'delete my account' to confirm.")).toBe("Type \u2018delete my account\u2019 to confirm.");
+    expect(typeset("Nothing to change.")).toBe("Nothing to change.");
   });
 });

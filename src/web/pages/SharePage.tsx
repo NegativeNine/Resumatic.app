@@ -86,7 +86,7 @@ export function SharePage() {
     return (
       <ShareFrame>
         <div className="app-share__card">
-          <h1>This copy couldn't be opened</h1>
+          <h1>This copy couldn’t be opened</h1>
           <p>Check your connection, then try again.</p>
           <button type="button" className="rs-btn rs-btn--primary" onClick={() => { setFailed(null); setAttempt((value) => value + 1); }}>
             Try again

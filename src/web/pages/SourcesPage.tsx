@@ -57,7 +57,7 @@ const STEPS = [
     text: "It finds your roles and the facts in each one, and keeps the exact words every fact came from.",
   },
   {
-    title: "You confirm what's true",
+    title: "You confirm what’s true",
     text: "Check each fact against its words. Confirm it, fix it, or reject it. Nothing is used until you confirm it.",
   },
   {

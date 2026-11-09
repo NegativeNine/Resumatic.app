@@ -217,7 +217,7 @@ export class FakeApi {
         if (!application) return notFound("no such application");
         const quota = this.state.me.quota;
         if (quota.used >= quota.limit) {
-          return { status: 429, body: { error: "quota", message: `You've used all ${quota.limit} tailored resumes for Nov 2026. You can tailor more from 1 Dec 2026.` } };
+          return { status: 429, body: { error: "quota", message: `You’ve used all ${quota.limit} tailored resumes for Nov 2026. You can tailor more from 1 Dec 2026.` } };
         }
         quota.used += 1;
         const id = this.id("res");
@@ -261,7 +261,7 @@ export class FakeApi {
     ],
   ];
 
-  /** Keeps SourceView.proposed in step with the facts, as the vault's query does. */
+  /** Keeps SourceView.proposed in step with the facts, as the vault’s query does. */
   private recountSources(): void {
     for (const source of this.state.sources) {
       source.proposed = this.state.facts.filter((f) => f.sourceId === source.id && f.state === "proposed").length;
