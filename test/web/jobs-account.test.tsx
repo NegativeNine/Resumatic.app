@@ -6,7 +6,8 @@ import { JobsPage } from "../../src/web/pages/JobsPage";
 import { SignedOut } from "../../src/web/pages/SignedOut";
 import { THEME_KEY } from "../../src/web/theme";
 import { installFakeApi } from "./api-fake";
-import { fixtures } from "./fixtures";
+import { ShareSnapshotContent } from "../../src/web/components/ShareSnapshotContent";
+import { fixtures, fullVault, sharedView } from "./fixtures";
 import { renderWithSession } from "./render";
 
 describe("Jobs", () => {
@@ -98,5 +99,44 @@ describe("Account", () => {
     expect(remove).toBeDisabled();
     await userEvent.type(screen.getByLabelText(/to confirm/), "delete my account");
     expect(remove).toBeEnabled();
+  });
+});
+
+describe("account tools", () => {
+  it("counts what a share link holds in plain words, and marks its state", async () => {
+    const state = fullVault();
+    installFakeApi(state);
+    renderWithSession(<AccountPage />, state.me);
+    const active = (await screen.findByText("6 facts and 1 resume version")).closest("li")!;
+    expect(within(active).getByText("Active")).toBeInTheDocument();
+    expect(within(active).getByRole("button", { name: "Revoke link" })).toBeEnabled();
+    // A copy with no resumes doesn't mention them.
+    const expired = screen.getByText("3 facts").closest("li")!;
+    expect(within(expired).getByText("Expired")).toBeInTheDocument();
+    expect(within(expired).queryByRole("button")).toBeNull();
+    expect(within(screen.getByText("12 facts and 2 resume versions").closest("li")!).getByText("Revoked")).toBeInTheDocument();
+  });
+
+  it("names plans as words and connected apps by what they may do", async () => {
+    const state = fullVault();
+    installFakeApi(state);
+    renderWithSession(<AccountPage />, state.me);
+    const plans = await screen.findByRole("combobox", { name: "Choose a plan" });
+    expect(within(plans).getByRole("option", { name: "Plus, 60 outputs each billing period" })).toBeInTheDocument();
+    const app = (await screen.findByText("Claude")).closest("li")!;
+    expect(within(app).getByText("Connected")).toBeInTheDocument();
+    expect(within(app).getByText(/Can read your facts and create documents\./)).toBeInTheDocument();
+    expect(within(screen.getByText("Old Tool").closest("li")!).getByRole("button", { name: "Remove credentials" })).toBeEnabled();
+  });
+});
+
+describe("the shared copy", () => {
+  it("shows each fact with its role on a line of its own, and the resume on the sheet", () => {
+    render(<ShareSnapshotContent view={sharedView()} />);
+    const fact = screen.getByText("Led the migration of 40 services from Heroku to Kubernetes.").closest("li")!;
+    expect(within(fact).getByText("Senior Backend Engineer, Northwind Logistics")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(".,");
+    expect(document.querySelector(".rs-sheet h1")?.textContent).toBe("Sam Rivera");
+    expect(screen.getByText(/A fixed copy, chosen by its owner on 6 Nov 2026\. This link works until 13 Nov 2026\./)).toBeInTheDocument();
   });
 });

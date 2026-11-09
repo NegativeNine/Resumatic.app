@@ -283,7 +283,7 @@
 .rs-setting:first-of-type { border-top: 0; }
 .rs-setting__text { flex: 1 1 20rem; margin: 0; }
 .rs-setting__text strong { display: block; font-weight: 600; }
-.rs-setting__text span { display: block; font-size: 14px; line-height: 20px; color: var(--ink-muted); }
+.rs-setting__text > span { display: block; font-size: 14px; line-height: 20px; color: var(--ink-muted); }
 .rs-danger-zone { border-color: var(--danger); }
 .rs-danger-zone .rs-h2 { color: var(--danger); }
 .rs-danger-zone .rs-input { max-width: 22rem; }

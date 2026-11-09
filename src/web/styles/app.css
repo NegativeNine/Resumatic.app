@@ -202,6 +202,10 @@ main:focus {
   margin-top: 1rem;
 }
 
+.application-board .application + .application {
+  margin-top: 0;
+}
+
 .resume-list {
   margin-top: 1rem;
   border-top: 1px solid var(--rule);
@@ -274,6 +278,16 @@ main:focus {
 .legal h2 {
   margin: 1.75rem 0 0.5rem;
   font-size: 1.15rem;
+}
+
+.legal p,
+.legal ul {
+  margin: 0;
+}
+
+.legal section > * + *,
+.legal > p + p {
+  margin-top: 0.75rem;
 }
 
 .legal ul {
@@ -681,6 +695,11 @@ main:focus {
 
 .app-job-meta {
   margin-top: 4px;
+}
+
+/* The board needs the room, so its form is shorter than the list view's. */
+.app-jobs[data-view="board"] .app-jobs__add textarea {
+  height: 7.5rem;
 }
 
 /* A job's status is the person's own tracking, so it's neutral, not a check result. */

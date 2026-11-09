@@ -1,0 +1,30 @@
+/* The shared copy: what a coach sees at /share. No account, no navigation, only the copy. */
+.app-share { min-height: 100vh; background: var(--desk); }
+.app-share__bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); padding: var(--space-4) var(--space-6); background: var(--paper); border-bottom: 1px solid var(--rule); }
+.app-share__lockup { display: block; height: 20px; width: auto; fill: var(--ink); }
+.app-share__bar .rs-meta { margin: 0; }
+.app-share__main { width: 100%; max-width: 864px; margin: 0 auto; padding: var(--space-10) var(--space-6) var(--space-16, 64px); }
+.app-share__main > h1 { margin: 0; }
+.app-share__main > .rs-lede { margin: var(--space-3) 0 var(--space-8); max-width: 60ch; }
+.app-share__facts h2 { margin: 0 0 var(--space-2); }
+.app-share__facts li { padding: var(--space-3) 0; border-top: 1px solid var(--rule); }
+.app-share__facts li:first-child { border-top: 0; }
+.app-share__facts li:last-child { padding-bottom: 0; }
+.app-share__facts p { margin: 0; overflow-wrap: anywhere; }
+.app-share__facts .rs-meta { margin-top: 2px; }
+.app-share__resume { margin-top: var(--space-10); }
+.app-share__resume-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); margin-bottom: var(--space-4); }
+.app-share__resume-head h2 { margin: 0; }
+.app-share__flag { font-size: 0.86em; color: var(--sheet-ink-muted); font-style: italic; }
+.app-share__card { max-width: 30rem; margin: var(--space-10) auto 0; padding: var(--space-8); background: var(--paper); border-radius: var(--radius-paper); box-shadow: var(--shadow-paper); }
+.app-share__card h1 { margin: 0 0 var(--space-3); font-size: 24px; line-height: 30px; }
+.app-share__card p { margin: 0; color: var(--ink-muted); }
+.app-share__card .rs-btn { margin-top: var(--space-5); }
+@media (max-width: 560px) {
+  .app-share__bar, .app-share__main { padding-left: var(--space-4); padding-right: var(--space-4); }
+  .app-share__main { padding-top: var(--space-6); }
+}
+@media print {
+  .app-share__bar { display: none; }
+  .app-share { background: none; }
+}

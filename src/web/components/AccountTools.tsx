@@ -1,11 +1,26 @@
 import { useId, useState } from "react";
 import type { ShareGrant } from "../../shared/sharing";
 import { api } from "../api";
-import { formatDate, formatDateTime } from "../format";
+import { count, formatDate, formatDateTime } from "../format";
 import { useAction, useResource } from "../hooks";
 import { useSession } from "../session";
-import { ActionError, Badge, ErrorNote, Field, Loading } from "./ui";
+import { QuotaMeter } from "./QuotaMeter";
+import { ActionError, Badge, ErrorNote, Field, Glyph, Loading, Message, Success } from "./ui";
 import "./workspace.css";
+
+/** Plan ids are lower-case keys such as "plus"; people read them as names. */
+function planName(id: string): string {
+  return id.charAt(0).toUpperCase() + id.slice(1);
+}
+
+const PLAN_STATUS: Readonly<Record<string, string>> = {
+  active: "Active",
+  trialing: "In trial",
+  past_due: "Payment overdue",
+  canceled: "Cancelled",
+  unpaid: "Payment needed",
+  incomplete: "Payment not finished",
+};
 
 export function BillingTools() {
   const billing = useResource(api.billing);
@@ -19,39 +34,37 @@ export function BillingTools() {
   return (
     <section className="card" aria-labelledby={`${id}-title`}>
       <h2 id={`${id}-title`}>Your plan</h2>
-      <p>
-        {me.quota.used} of {me.quota.limit} outputs used
-        {(me.quota.reserved ?? 0) > 0 &&
-          `, with ${me.quota.reserved} reserved for work in progress`}
-        .
+      <QuotaMeter className="app-plan-quota" />
+      <p className="rs-meta app-plan-note">
+        A tailored resume, cover letter or interview preparation uses one output when it finishes.
+        {me.quota.periodEnd ? ` Your outputs renew on ${formatDate(me.quota.periodEnd)}.` : ""}
       </p>
-      {me.quota.periodEnd && (
-        <p className="meta">
-          Allowance renews {formatDate(me.quota.periodEnd)}.
-        </p>
-      )}
       {!data && !billing.error && <Loading>Loading billing details…</Loading>}
       {billing.error && (
         <ErrorNote message={billing.error} onRetry={billing.reload} />
       )}
       {data && !data.enabled && (
-        <p className="hint">
-          Plan purchases are currently unavailable. Your existing allowance
-          remains available.
+        <p className="rs-meta">
+          Plans can't be bought at the moment. The outputs you already have stay available.
         </p>
       )}
       {data?.enabled && (
         <>
           {data.current && (
-            <div className="option-row">
-              <div>
-                <p>Plan: {data.current.planId}</p>
-                <p className="meta">
+            <div className="rs-setting">
+              <p className="rs-setting__text">
+                <strong>
+                  {planName(data.current.planId)} plan{" "}
+                  <Badge tone={data.current.cancelAtPeriodEnd ? "rejected" : data.current.status === "active" || data.current.status === "trialing" ? "ready" : "failed"}>
+                    {data.current.cancelAtPeriodEnd ? "Ending" : PLAN_STATUS[data.current.status] ?? planName(data.current.status)}
+                  </Badge>
+                </strong>
+                <span>
                   {data.current.cancelAtPeriodEnd
-                    ? `Cancellation scheduled. Access continues through ${formatDate(data.current.validUntil)}.`
-                    : `Status: ${data.current.status}.`}
-                </p>
-              </div>
+                    ? `Cancellation is scheduled. Your plan runs until ${formatDate(data.current.validUntil)}.`
+                    : `Paid until ${formatDate(data.current.validUntil)}.`}
+                </span>
+              </p>
               <button
                 type="button"
                 disabled={action.pending}
@@ -85,15 +98,13 @@ export function BillingTools() {
                 >
                   {data.plans.map((plan) => (
                     <option key={plan.id} value={plan.id}>
-                      {plan.id}: {plan.generationLimit} outputs per billing
-                      period
+                      {planName(plan.id)}, {plan.generationLimit} outputs each billing period
                     </option>
                   ))}
                 </select>
               </Field>
-              <p className="hint">
-                The price and billing terms are shown at secure checkout before
-                you pay.
+              <p className="rs-meta">
+                The price and billing terms are shown at checkout before you pay.
               </p>
               <div className="actions">
                 <button
@@ -101,7 +112,7 @@ export function BillingTools() {
                   className="primary"
                   disabled={action.pending}
                 >
-                  Continue to secure checkout
+                  Continue to checkout
                 </button>
                 <button
                   type="button"
@@ -118,10 +129,10 @@ export function BillingTools() {
               </div>
             </form>
           )}
-          <div className="actions">
+          <div className="actions app-plan-refresh">
             <button
               type="button"
-              className="small"
+              className="rs-linkbtn"
               disabled={action.pending}
               onClick={() =>
                 void action.run(async () => {
@@ -153,9 +164,9 @@ export function CoachSharingTools() {
     <section className="card" aria-labelledby={`${id}-title`}>
       <h2 id={`${id}-title`}>Share with a coach</h2>
       <p className="card-text">
-        Choose confirmed facts and saved resume versions to share as a fixed
-        copy. Anyone with the link can read that copy, including contact details
-        in selected resumes. Later changes to your vault do not change it.
+        Choose confirmed facts and saved resume versions to share as a fixed copy. Anyone with the link can
+        read that copy, including the contact details on the resumes you choose. Later changes to your facts
+        don't change it.
       </p>
       <button
         type="button"
@@ -182,7 +193,7 @@ export function CoachSharingTools() {
           <Field
             id={`${id}-link`}
             label="Your share link"
-            hint="Copy this link now. It is only displayed when created; you can revoke it below."
+            hint="Copy this link now. It's shown only once. You can revoke it below at any time."
           >
             <input
               id={`${id}-link`}
@@ -213,18 +224,14 @@ export function CoachSharingTools() {
               Copy link
             </button>
             <a
-              className="button small"
+              className="rs-btn rs-btn--sm"
               href={created.url}
               target="_blank"
               rel="noreferrer"
             >
               Open shared copy
             </a>
-            {copied && (
-              <span className="success inline" role="status">
-                Copied.
-              </span>
-            )}
+            {copied && <Success>Copied.</Success>}
           </div>
         </div>
       )}
@@ -233,30 +240,39 @@ export function CoachSharingTools() {
       )}
       {!grants.data && !grants.error && <Loading>Loading share links…</Loading>}
       {grants.data?.grants.length === 0 && (
-        <p className="hint">You have no share links.</p>
+        <p className="rs-meta app-share-none">You have no share links.</p>
       )}
       {grants.data && grants.data.grants.length > 0 && (
-        <ul className="plain-list document-list">
+        <ul className="plain-list app-share-links">
           {grants.data.grants.map((grant) => {
             const active =
               grant.revokedAt === null && grant.expiresAt > Date.now();
             return (
-              <li className="option-row" key={grant.id}>
-                <div>
-                  <p>
-                    {grant.factCount} facts and {grant.resumeCount} resume
-                    versions
-                  </p>
-                  <p className="meta">
-                    Created {formatDateTime(grant.createdAt)}, expires{" "}
-                    {formatDateTime(grant.expiresAt)}
-                  </p>
+              <li className="rs-setting" key={grant.id}>
+                <div className="rs-setting__text">
+                  <strong>
+                    {shareContents(grant)}{" "}
+                    {active && grant.available !== false && (
+                      <Badge tone="ready">
+                        <Glyph name="check" />
+                        Active
+                      </Badge>
+                    )}
+                    {!active && (
+                      <Badge tone="rejected">{grant.revokedAt ? "Revoked" : "Expired"}</Badge>
+                    )}
+                  </strong>
+                  <span>
+                    Created {formatDateTime(grant.createdAt)}.{" "}
+                    {grant.revokedAt
+                      ? `Revoked ${formatDateTime(grant.revokedAt)}.`
+                      : `${active ? "Expires" : "Expired"} ${formatDateTime(grant.expiresAt)}.`}
+                  </span>
                   {active && grant.available === false && (
-                    <p className="notice" role="status">
-                      This link is currently unavailable. If it includes a resume,
-                      review that version before creating a new link. You can revoke
-                      this link below.
-                    </p>
+                    <Message tone="info">
+                      This link is currently unavailable. If it includes a resume, review that version before
+                      creating a new link. You can still revoke this one.
+                    </Message>
                   )}
                 </div>
                 {active ? (
@@ -274,11 +290,7 @@ export function CoachSharingTools() {
                   >
                     Revoke link
                   </button>
-                ) : (
-                  <Badge tone="rejected">
-                    {grant.revokedAt ? "Revoked" : "Expired"}
-                  </Badge>
-                )}
+                ) : null}
               </li>
             );
           })}
@@ -287,6 +299,15 @@ export function CoachSharingTools() {
       <ActionError message={action.error} />
     </section>
   );
+}
+
+/** "2 facts and 1 resume version", leaving out whichever the copy doesn't hold. */
+function shareContents(grant: ShareGrant): string {
+  const parts = [
+    grant.factCount > 0 ? count(grant.factCount, "fact") : "",
+    grant.resumeCount > 0 ? count(grant.resumeCount, "resume version") : "",
+  ].filter(Boolean);
+  return parts.length ? parts.join(" and ") : "Empty copy";
 }
 
 function ShareSelection({
@@ -384,7 +405,7 @@ function ShareSelection({
               Confirmed facts ({factIds.size} selected, up to 100)
             </legend>
             {choices.data.facts.length === 0 ? (
-              <p className="meta">No confirmed facts are available.</p>
+              <p className="rs-meta">You have no confirmed facts to share yet.</p>
             ) : (
               <ul className="plain-list selection-list">
                 {choices.data.facts.map((fact) => (
@@ -411,7 +432,7 @@ function ShareSelection({
               Saved resume versions ({resumes.size} selected, up to 20)
             </legend>
             {choices.data.resumes.length === 0 ? (
-              <p className="meta">No completed resumes are available.</p>
+              <p className="rs-meta">You have no finished resumes to share yet.</p>
             ) : (
               <ul className="plain-list selection-list">
                 {choices.data.resumes.map((resume) => (

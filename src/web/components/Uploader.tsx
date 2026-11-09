@@ -16,7 +16,7 @@ function problemWith(file: File): string | null {
   const supported =
     name.endsWith(".pdf") || name.endsWith(".docx") || name.endsWith(".zip");
   if (!supported)
-    return `"${file.name}" isn't a PDF, Word (.docx), or LinkedIn data export (.zip). Choose one of those formats.`;
+    return `"${file.name}" isn't a PDF, Word (.docx) or LinkedIn data export (.zip). Choose one of those formats.`;
   if (file.size > MAX_UPLOAD_BYTES)
     return `"${file.name}" is ${formatBytes(file.size)}. Files can be up to ${LIMIT}.`;
   if (file.size === 0) return `"${file.name}" is empty.`;
@@ -86,7 +86,7 @@ export function Uploader({ onUploaded, size = "rail" }: { onUploaded: Reload; si
         <Glyph name="upload" />
         <p className="rs-drop__title">{size === "first-run" ? "Drop your resume or CV here" : "Drop a resume or CV"}</p>
         <p className="rs-meta">
-          PDF, Word (.docx), or LinkedIn data export (.zip), up to {LIMIT}, one file at a time
+          PDF, Word (.docx) or LinkedIn data export (.zip), up to {LIMIT}, one file at a time
         </p>
         <button
           type="button"

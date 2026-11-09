@@ -61,9 +61,14 @@ export class FakeApi {
   private readonly routes: [string, RegExp, Handler][] = [
     ["GET", /^\/api\/me$/, () => ok(this.state.me)],
     ["GET", /^\/api\/v2\/vault$/, () => ok({ sources: this.state.sources, roles: this.state.roles, facts: this.state.facts })],
-    ["GET", /^\/api\/billing$/, () => ok({ enabled: false, plans: [], current: null })],
-    ["GET", /^\/api\/shares$/, () => ok({ grants: [] })],
-    ["GET", /^\/api\/applications\/([^/]+)\/documents$/, () => ok({ documents: [] })],
+    ["GET", /^\/api\/billing$/, () => ok(this.state.billing ?? { enabled: false, plans: [], current: null })],
+    ["GET", /^\/api\/shares$/, () => ok({ grants: this.state.shares ?? [] })],
+    ["GET", /^\/api\/mcp\/grants$/, () => ok({ grants: this.state.mcpGrants ?? [] })],
+    [
+      "GET",
+      /^\/api\/applications\/([^/]+)\/documents$/,
+      (_call, [id]) => ok({ documents: (this.state.documents ?? []).filter((doc) => doc.applicationId === id) }),
+    ],
     [
       "GET",
       /^\/api\/resumes\/([^/]+)\/versions$/,
