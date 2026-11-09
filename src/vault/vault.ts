@@ -42,7 +42,7 @@ import type {
   SourceState,
   SourceView,
 } from "../shared/api";
-import { DATE_PATTERN, MAX_LINE_CHARS, MAX_UPLOAD_BYTES, isWebUrl, normalizePosting } from "../shared/api";
+import { DATE_PATTERN, MAX_JOB_NAME_CHARS, MAX_LINE_CHARS, MAX_UPLOAD_BYTES, isWebUrl, normalizePosting } from "../shared/api";
 import { AppError } from "../shared/errors";
 import { isMissingWorkflowInstance } from "../shared/workflow-errors";
 import { directoryForUser } from "../shared/stubs";
@@ -659,6 +659,7 @@ export class Vault extends DurableObject<Env> {
         ocr: !!this.env.MODEL_TRANSCRIBE,
         connectedApps: this.env.MCP_ENABLED === "true",
         roleDateUnknownEnd: this.env.ROLE_UNKNOWN_END_ENABLED === "true",
+        postingReader: this.env.POSTING_READER_ENABLED === "true",
       },
     };
   }
@@ -1935,14 +1936,23 @@ export class Vault extends DurableObject<Env> {
     jdText: string,
     requestKey: string,
     url: string | null = null,
+    /** What the posting's page calls the job. The analysis may still rename it, as for any job the person hasn't named. */
+    name: { title: string | null; company: string | null } = { title: null, company: null },
   ): Promise<{ applicationId: string }> {
     this.requireOwner(who);
     if (!/^[a-zA-Z0-9_-]{1,100}$/.test(requestKey))
       throw new AppError("invalid", "invalid request key");
     if (url !== null && !isWebUrl(url)) throw new AppError("invalid", "enter the posting's web address, starting with https://");
-    // A request without a link keeps the digest it had before links existed, so a retry that
-    // spans the upgrade still finds its job.
-    const digest = base64url(await sha256(JSON.stringify(url === null ? [jdText] : [jdText, url])));
+    const title = name.title?.trim() || null;
+    const company = name.company?.trim() || null;
+    if ([title, company].some((value) => value !== null && (value.length > MAX_JOB_NAME_CHARS || /[\r\n]/.test(value))))
+      throw new AppError("invalid", "keep the job's title and company to one line each");
+    // A request without a link, and one without a name, keep the digests they had before each
+    // existed, so a retry that spans the upgrade still finds its job.
+    const named = title !== null || company !== null;
+    const digest = base64url(await sha256(JSON.stringify(
+      named ? [jdText, url, title, company] : url === null ? [jdText] : [jdText, url],
+    )));
     this.requireOwner(who);
     return this.ctx.storage.transactionSync(() => {
       const prior = this.sql.exec<{ input_digest: string; application_id: string }>(
@@ -1955,8 +1965,8 @@ export class Vault extends DurableObject<Env> {
       }
       const id = crypto.randomUUID();
       this.sql.exec(
-        `INSERT INTO applications (id, jd_text, url, created_at) VALUES (?, ?, ?, ?)`,
-        id, jdText, url, Date.now(),
+        `INSERT INTO applications (id, jd_text, url, title, company, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+        id, jdText, url, title, company, Date.now(),
       );
       this.sql.exec(
         `INSERT INTO application_create_requests (request_key, input_digest, application_id) VALUES (?, ?, ?)`,
@@ -2593,10 +2603,11 @@ export class Vault extends DurableObject<Env> {
         resumeId,
       );
     }
-    // A title or company the person typed stays theirs.
+    // A title or company the person typed stays theirs. One the analysis didn't find leaves what
+    // is there, which for a job read from a link is what the posting's own page calls it.
     this.sql.exec(
-      `UPDATE applications SET company = CASE WHEN details_edited = 1 THEN company ELSE ? END,
-         title = CASE WHEN details_edited = 1 THEN title ELSE ? END, requirements = ? WHERE id = ?`,
+      `UPDATE applications SET company = CASE WHEN details_edited = 1 THEN company ELSE COALESCE(?, company) END,
+         title = CASE WHEN details_edited = 1 THEN title ELSE COALESCE(?, title) END, requirements = ? WHERE id = ?`,
       a.company,
       a.title,
       JSON.stringify(a.requirements),

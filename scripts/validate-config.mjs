@@ -125,6 +125,10 @@ export async function validate({
       missing.push("PRODUCTION_MAINTENANCE_FENCE_ACTIVE");
     if (environment === "production" && config.vars?.ROLE_UNKNOWN_END_ENABLED === "true")
       missing.push("ROLE_UNKNOWN_END_ROLLOUT_UNVERIFIED");
+    // The posting reader makes the Worker fetch addresses people give it. Keep it out of
+    // production until its outbound requests have been exercised against a deployed Worker.
+    if (environment === "production" && config.vars?.POSTING_READER_ENABLED === "true")
+      missing.push("POSTING_READER_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.R2_CACHE_FENCE_ENABLED && config.vars.R2_CACHE_FENCE_ENABLED !== "false")
       missing.push("R2_CACHE_FENCE_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.PLACEMENT_FENCE_ENABLED && config.vars.PLACEMENT_FENCE_ENABLED !== "false")

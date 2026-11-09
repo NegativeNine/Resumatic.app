@@ -24,7 +24,7 @@ test("production secrets cannot shadow reviewed variables or activate guarded se
     if (name !== "TEST_SIGNIN_KEY") assert.equal(validEvaluationSecretNames([{ name }]), false);
   }
   assert.equal(validEvaluationSecretNames([{ name: "TEST_SIGNIN_KEY" }]), true);
-  for (const name of ["DAILY_SPEND_CAP_USD", "ACCESS_AUD", "FUTURE_SETTING", "ALLOW_TEST_SIGNIN", "RESTORE_FENCE_IDS", "R2_CACHE_FENCE_ENABLED", "PLACEMENT_FENCE_ENABLED", "DIRECTORY_SHARDS", "INVITE_ONLY", "MCP_ENABLED", "APP_ORIGIN", "PILOT_SHARED_BUDGET", "MODEL_PRICES_JSON", "UNKNOWN_SECRET"]) {
+  for (const name of ["DAILY_SPEND_CAP_USD", "ACCESS_AUD", "FUTURE_SETTING", "ALLOW_TEST_SIGNIN", "RESTORE_FENCE_IDS", "R2_CACHE_FENCE_ENABLED", "PLACEMENT_FENCE_ENABLED", "DIRECTORY_SHARDS", "INVITE_ONLY", "MCP_ENABLED", "APP_ORIGIN", "PILOT_SHARED_BUDGET", "MODEL_PRICES_JSON", "POSTING_READER_ENABLED", "UNKNOWN_SECRET"]) {
     assert.equal(validProductionSecretNames([{ name }], vars), false, name);
   }
   assert.equal(validProductionSecretNames({}, vars), false);
@@ -49,6 +49,22 @@ test("production preflight requires explicit invite-only registration until dele
     await writeFile(path, JSON.stringify(config));
     assert.ok(!(await validate({ environment: "production", purpose: "deploy", configPath: path, env: {} })).missing.includes("PUBLIC_REGISTRATION_ROLLOUT_UNVERIFIED"));
     assert.ok(!(await validate({ environment: "staging", purpose: "deploy", configPath: path, env: {} })).missing.includes("PUBLIC_REGISTRATION_ROLLOUT_UNVERIFIED"));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("the posting reader cannot be enabled in production configuration, and can in staging", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "posting-reader-config-"));
+  try {
+    const path = join(dir, "wrangler.jsonc");
+    const report = async (environment, vars, staging = {}) => {
+      await writeFile(path, JSON.stringify({ name: "example", vars, env: { staging: { vars: staging } } }));
+      return (await validate({ environment, purpose: "deploy", configPath: path, env: {} })).missing;
+    };
+    assert.ok((await report("production", { POSTING_READER_ENABLED: "true" })).includes("POSTING_READER_ROLLOUT_UNVERIFIED"));
+    for (const off of [{}, { POSTING_READER_ENABLED: "false" }, { POSTING_READER_ENABLED: "" }])
+      assert.ok(!(await report("production", off)).includes("POSTING_READER_ROLLOUT_UNVERIFIED"), JSON.stringify(off));
+    // Staging is where it is exercised before the guard is lifted.
+    assert.ok(!(await report("staging", {}, { POSTING_READER_ENABLED: "true" })).includes("POSTING_READER_ROLLOUT_UNVERIFIED"));
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

@@ -19,6 +19,7 @@ import type {
   SourceView,
 } from "../shared/api";
 import type { DocumentView, NewDocument } from "../shared/documents";
+import type { PostingRead } from "../shared/postings";
 import type { ShareGrant } from "../shared/sharing";
 
 export interface BillingView {
@@ -219,8 +220,20 @@ export const api = {
     request<void>("PATCH", `/api/facts/${encodeURIComponent(id)}`, patch),
   review: (r: ReviewRequest) => request<void>("POST", "/api/review", r),
 
-  addApplication: (jdText: string, url?: string) =>
-    generate<{ applicationId: string }>("/api/v2/applications", url ? { jdText, url } : { jdText }, ["applicationId"]),
+  /** `name` is what the posting's own page calls the job, when the text was read from its link. */
+  addApplication: (jdText: string, url?: string, name?: { title: string | null; company: string | null }) =>
+    generate<{ applicationId: string }>(
+      "/api/v2/applications",
+      {
+        jdText,
+        ...(url ? { url } : {}),
+        ...(name?.title ? { title: name.title } : {}),
+        ...(name?.company ? { company: name.company } : {}),
+      },
+      ["applicationId"],
+    ),
+  /** Reads a posting from its page. Saves nothing: the person checks the text first. */
+  readPosting: (url: string) => request<PostingRead>("POST", "/api/postings/read", { url }),
   /** The saved job with the same posting, if there is one. Saves nothing. */
   duplicateApplication: (jdText: string) =>
     request<{ duplicate: ApplicationRef | null }>("POST", "/api/applications/duplicates", { jdText }),

@@ -11,6 +11,7 @@ import {
   type ApplicationView,
   type ResumeState,
 } from "../../shared/api";
+import type { PostingRead } from "../../shared/postings";
 import { api } from "../api";
 import {
   APPLICATION_LABELS,
@@ -24,6 +25,7 @@ import {
   Field,
   Glyph,
   Loading,
+  Message,
   PageHeader,
   type GlyphName,
 } from "../components/ui";
@@ -200,6 +202,14 @@ export function JobsPage() {
   );
 }
 
+/** Why a link gave no posting, and what to do instead. */
+const UNREAD: Readonly<Record<Exclude<PostingRead, { posting: object }>["reason"], string>> = {
+  unreachable: "That page couldn’t be reached. Some job sites block automated reading. Paste the posting’s text instead.",
+  not_a_page: "That link isn’t a web page. Paste the posting’s text instead.",
+  no_posting:
+    "No job posting was found on that page. Some sites only show the posting in a browser. Paste its text instead.",
+};
+
 function JobForm({ onSaved }: { onSaved: Reload }) {
   const [text, setText] = useState("");
   const [link, setLink] = useState("");
@@ -209,11 +219,39 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
   /** The posting last sent to be saved. A retry of it isn't a second copy, so it isn't checked again. */
   const attempted = useRef<string | null>(null);
   const { run, pending, error } = useAction();
+  const reader = useAction();
+  /** What the last read of a link came to: the posting it found, or why it found none. */
+  const [read, setRead] = useState<{ url: string; result: PostingRead } | null>(null);
+  const canRead = useSession().me.capabilities?.postingReader === true;
   const id = useId();
   const length = text.trim().length;
   const tooLong = length > MAX_JD_CHARS;
   const url = link.trim();
   const badLink = url !== "" && !isWebUrl(url);
+  const busy = pending || reader.pending;
+  /** The page's own name for the job goes with it only while the link is the one that was read. */
+  const found = read?.url === url ? read.result.posting : null;
+  /** Text is already there, so reading the link would replace it. The person clears it first. */
+  const wouldReplace = length > 0 && url !== "" && !badLink && !found;
+
+  async function readLink() {
+    setSaved(false);
+    setRead(null);
+    await reader.run(
+      async () => {
+        const result = await api.readPosting(url);
+        setRead({ url, result });
+        if (result.posting) {
+          setText(result.posting.text);
+          setDuplicate(null);
+        }
+      },
+      {
+        invalid: "Use the posting’s public web address, starting with https://.",
+        unavailable: "Reading a posting from a link isn’t available right now. Paste its text instead.",
+      },
+    );
+  }
 
   async function save(anyway = false) {
     setSaved(false);
@@ -229,7 +267,7 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
       }
       setDuplicate(null);
       attempted.current = posting;
-      await api.addApplication(posting, url || undefined);
+      await api.addApplication(posting, url || undefined, found ? { title: found.title, company: found.company } : undefined);
       added = true;
       await onSaved();
     });
@@ -237,6 +275,7 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
       attempted.current = null;
       setText("");
       setLink("");
+      setRead(null);
       setSaved(true);
     }
   }
@@ -244,7 +283,7 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
   return (
     <form
       className="card"
-      aria-busy={pending}
+      aria-busy={busy}
       onSubmit={(e) => {
         e.preventDefault();
         void save();
@@ -252,13 +291,15 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
     >
       <label htmlFor={id}>Job description</label>
       <p className="hint" id={`${id}-hint`}>
-        Paste the whole posting, including the requirements.
+        {canRead
+          ? "Paste the whole posting, including the requirements. Or add its link below and read it from there."
+          : "Paste the whole posting, including the requirements."}
       </p>
       <textarea
         id={id}
         rows={10}
         value={text}
-        readOnly={pending}
+        readOnly={busy}
         onChange={(e) => {
           setText(e.target.value);
           setSaved(false);
@@ -282,13 +323,41 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
           spellCheck={false}
           maxLength={MAX_URL_CHARS}
           value={link}
-          readOnly={pending}
+          readOnly={busy}
           placeholder="https://"
           onChange={(e) => setLink(e.target.value)}
           aria-invalid={badLink}
           aria-describedby={badLink ? `${id}-link-error` : undefined}
         />
       </Field>
+      {canRead && (
+        <div className="app-read-link">
+          <button
+            type="button"
+            className="rs-btn rs-btn--sm"
+            disabled={busy || url === "" || badLink || length > 0}
+            onClick={() => void readLink()}
+            aria-describedby={wouldReplace ? `${id}-read-hint` : undefined}
+          >
+            {reader.pending ? "Reading…" : "Read the posting from this link"}
+          </button>
+          {wouldReplace && (
+            <p className="rs-hint" id={`${id}-read-hint`}>
+              Clear the job description to read it from the link instead.
+            </p>
+          )}
+          {read?.url === url &&
+            (found ? (
+              <Message tone="success">
+                Read from {found.host}. Check the text above against the page before saving.
+                {found.truncated ? " The posting was longer than Resumatic keeps, so the end is cut off." : ""}
+              </Message>
+            ) : (
+              <Message tone="info">{UNREAD[read.result.posting === null ? read.result.reason : "no_posting"]}</Message>
+            ))}
+          <ActionError message={reader.error} />
+        </div>
+      )}
       {duplicate && (
         <div className="rs-msg rs-msg--info app-msg-block" role="status">
           <Glyph name="info" />
@@ -297,7 +366,7 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
               ? ` as ${[duplicate.title, duplicate.company].filter(Boolean).join(" at ")}`
               : ""}, on {formatDate(duplicate.createdAt)}.
           </p>
-          <button type="button" className="rs-btn rs-btn--sm" disabled={pending} onClick={() => void save(true)}>
+          <button type="button" className="rs-btn rs-btn--sm" disabled={busy} onClick={() => void save(true)}>
             Save it again
           </button>
         </div>
@@ -306,7 +375,7 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
         <button
           type="submit"
           className="primary"
-          disabled={pending || length < MIN_JD_CHARS || tooLong || badLink}
+          disabled={busy || length < MIN_JD_CHARS || tooLong || badLink}
         >
           {pending ? "Saving…" : "Save job"}
         </button>

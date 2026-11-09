@@ -21,6 +21,8 @@ interface ResumaticSecrets {
   ROLE_UNKNOWN_END_ENABLED?: string;
   MCP_ENABLED?: string;
   MCP_ALLOWED_ORIGINS?: string;
+  /** "true" lets a signed-in person have the Worker fetch a job posting's page. Off until its outbound requests are exercised in staging. */
+  POSTING_READER_ENABLED?: string;
   OAUTH_KV?: KVNamespace;
   METRICS?: AnalyticsEngineDataset;
   AUTH_LIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };

@@ -1,5 +1,6 @@
 import { vi } from "vitest";
 import type { DocumentView } from "../../src/shared/documents";
+import type { PostingRead } from "../../src/shared/postings";
 import { normalizePosting, type FactPatch, type NewFact, type NewRole, type Profile, type ReviewRequest, type RolePatch } from "../../src/shared/api";
 import type { Fixtures } from "./fixtures";
 
@@ -24,6 +25,9 @@ export class FakeApi {
   private seq = 0;
 
   constructor(readonly state: Fixtures) {}
+
+  /** What reading each link comes to. A link that isn't here can't be reached. */
+  readonly pages = new Map<string, PostingRead>();
 
   /** Whole postings, which the list of jobs doesn't carry. A fixture job's is its excerpt. */
   private readonly postings = new Map<string, string>();
@@ -235,12 +239,17 @@ export class FakeApi {
       "POST",
       /^\/api\/(?:v2\/)?applications$/,
       (call) => {
-        const { jdText, url } = call.body as { jdText: string; url?: string };
+        const { jdText, url, title, company } = call.body as { jdText: string; url?: string; title?: string; company?: string };
         const id = this.id("app");
-        this.state.applications.push({ id, company: null, title: null, excerpt: jdText.slice(0, 100), createdAt: Date.now(), url: url ?? null, revision: 1, resumes: [] });
+        this.state.applications.push({ id, company: company ?? null, title: title ?? null, excerpt: jdText.slice(0, 100), createdAt: Date.now(), url: url ?? null, revision: 1, resumes: [] });
         this.postings.set(id, jdText);
         return { status: 201, body: { applicationId: id } };
       },
+    ],
+    [
+      "POST",
+      /^\/api\/postings\/read$/,
+      (call) => ok(this.pages.get((call.body as { url: string }).url) ?? { posting: null, reason: "unreachable" }),
     ],
     [
       "POST",

@@ -110,7 +110,13 @@ export interface Quota {
 }
 
 export interface Me {
-  capabilities?: { ocr: boolean; connectedApps: boolean; roleDateUnknownEnd?: boolean };
+  capabilities?: {
+    ocr: boolean;
+    connectedApps: boolean;
+    roleDateUnknownEnd?: boolean;
+    /** A posting can be read from its link. */
+    postingReader?: boolean;
+  };
   userId: string;
   profile: Profile;
   quota: Quota;

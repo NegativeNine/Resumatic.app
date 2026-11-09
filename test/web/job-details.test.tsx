@@ -10,8 +10,9 @@ import { renderWithSession } from "./render";
 const POSTING = "Staff Engineer, Wingtip Toys. Lead the payments platform team and own the ledger service end to end.";
 const LINK = "https://jobs.example.com/wingtip/staff-engineer";
 
-function start(): FakeApi {
+function start(reader = false): FakeApi {
   const state = fixtures();
+  if (reader) state.me.capabilities = { ocr: false, connectedApps: false, ...state.me.capabilities, postingReader: true };
   const api = installFakeApi(state);
   renderWithSession(<JobsPage />, state.me);
   return api;
@@ -85,6 +86,114 @@ describe("adding a job", () => {
     // One check, before the first attempt. The retry went straight to saving.
     expect(api.callsTo("POST", /^\/api\/applications\/duplicates$/)).toHaveLength(1);
     expect(added(api)).toHaveLength(2);
+  });
+});
+
+describe("reading a posting from its link", () => {
+  const READ = "Staff Engineer at Wingtip Toys\n\nLead the payments platform team and own the ledger service end to end.";
+  const found = { posting: { text: READ, title: "Staff Engineer", company: "Wingtip Toys", truncated: false, host: "jobs.example.com" } } as const;
+  const button = () => screen.getByRole("button", { name: "Read the posting from this link" });
+
+  it("isn't offered where the reader is switched off", async () => {
+    start();
+    await screen.findByLabelText("Job description");
+    expect(screen.queryByRole("button", { name: "Read the posting from this link" })).toBeNull();
+    expect(screen.getByText("Paste the whole posting, including the requirements.")).toBeInTheDocument();
+  });
+
+  it("fills the description from the page, for the person to check, and saves the job under the page’s name", async () => {
+    const api = start(true);
+    api.pages.set(LINK, found);
+    const description = await screen.findByLabelText("Job description");
+    expect(description).toHaveAccessibleDescription(/Or add its link below and read it from there\./);
+    // Nothing to read until there is a link that could be a page.
+    expect(button()).toBeDisabled();
+    await userEvent.type(screen.getByLabelText(/^Link to the posting/), "jobs.example.com");
+    expect(button()).toBeDisabled();
+    await userEvent.clear(screen.getByLabelText(/^Link to the posting/));
+    await userEvent.type(screen.getByLabelText(/^Link to the posting/), LINK);
+    await userEvent.click(button());
+    await waitFor(() => expect(description).toHaveValue(READ));
+    expect(api.callsTo("POST", /^\/api\/postings\/read$/).map((c) => c.body)).toEqual([{ url: LINK }]);
+    expect(screen.getByRole("status")).toHaveTextContent("Read from jobs.example.com. Check the text above against the page before saving.");
+    // Reading saves nothing. The person saves it, and may change the text first.
+    expect(added(api)).toEqual([]);
+    await userEvent.type(description, " Hybrid, Toronto.");
+    await userEvent.click(screen.getByRole("button", { name: "Save job" }));
+    expect(await screen.findByText("Saved. Tailor a resume to it from the list below.")).toBeInTheDocument();
+    expect(added(api)).toEqual([{ jdText: `${READ} Hybrid, Toronto.`, url: LINK, title: "Staff Engineer", company: "Wingtip Toys" }]);
+    expect(await screen.findByRole("heading", { name: "Staff Engineer at Wingtip Toys" })).toBeInTheDocument();
+    expect(description).toHaveValue("");
+    expect(screen.queryByText(/^Read from/)).toBeNull();
+  });
+
+  it("won’t replace text that is already there", async () => {
+    const api = start(true);
+    api.pages.set(LINK, found);
+    await userEvent.type(await screen.findByLabelText("Job description"), POSTING);
+    await userEvent.type(screen.getByLabelText(/^Link to the posting/), LINK);
+    expect(button()).toBeDisabled();
+    expect(button()).toHaveAccessibleDescription("Clear the job description to read it from the link instead.");
+    await userEvent.click(screen.getByRole("button", { name: "Save job" }));
+    await screen.findByText("Saved. Tailor a resume to it from the list below.");
+    // The pasted text was never read from the page, so the page's name doesn't go with it.
+    expect(added(api)).toEqual([{ jdText: POSTING, url: LINK }]);
+    expect(api.callsTo("POST", /^\/api\/postings\/read$/)).toEqual([]);
+  });
+
+  it("leaves the page’s name behind when the link is changed after reading", async () => {
+    const api = start(true);
+    api.pages.set(LINK, found);
+    const link = screen.getByLabelText(/^Link to the posting/);
+    await userEvent.type(link, LINK);
+    await userEvent.click(button());
+    await waitFor(() => expect(screen.getByLabelText("Job description")).toHaveValue(READ));
+    await userEvent.type(link, "?ref=board");
+    expect(screen.queryByText(/^Read from/)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Save job" }));
+    await screen.findByText("Saved. Tailor a resume to it from the list below.");
+    expect(added(api)).toEqual([{ jdText: READ, url: `${LINK}?ref=board` }]);
+  });
+
+  it("says why a page gave no posting, and what to do instead", async () => {
+    const api = start(true);
+    const link = await screen.findByLabelText(/^Link to the posting/);
+    const cases = [
+      [`${LINK}/a`, { posting: null, reason: "unreachable" }, "That page couldn’t be reached. Some job sites block automated reading. Paste the posting’s text instead."],
+      [`${LINK}/b`, { posting: null, reason: "not_a_page" }, "That link isn’t a web page. Paste the posting’s text instead."],
+      [`${LINK}/c`, { posting: null, reason: "no_posting" }, "No job posting was found on that page. Some sites only show the posting in a browser. Paste its text instead."],
+    ] as const;
+    for (const [url, result, message] of cases) {
+      api.pages.set(url, result);
+      await userEvent.clear(link);
+      await userEvent.type(link, url);
+      await userEvent.click(button());
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(screen.getByLabelText("Job description")).toHaveValue("");
+    }
+    // The posting can still be pasted and saved with the link.
+    await userEvent.type(screen.getByLabelText("Job description"), POSTING);
+    await userEvent.click(screen.getByRole("button", { name: "Save job" }));
+    await screen.findByText("Saved. Tailor a resume to it from the list below.");
+    expect(added(api)).toEqual([{ jdText: POSTING, url: `${LINK}/c` }]);
+  });
+
+  it("explains an address it won’t read, a long posting it cut, and the reader being off", async () => {
+    const api = start(true);
+    const link = await screen.findByLabelText(/^Link to the posting/);
+    await userEvent.type(link, "https://wiki.corp/jobs/1");
+    api.fail("POST", /^\/api\/postings\/read$/, 422, "invalid", "use the posting's public web address, starting with https://");
+    await userEvent.click(button());
+    expect(await screen.findByText("Use the posting’s public web address, starting with https://.")).toBeInTheDocument();
+    api.fail("POST", /^\/api\/postings\/read$/, 503, "unavailable", "reading a posting from a link is not enabled");
+    await userEvent.click(button());
+    expect(await screen.findByText("Reading a posting from a link isn’t available right now. Paste its text instead.")).toBeInTheDocument();
+    api.pages.set(LINK, { posting: { ...found.posting, truncated: true } });
+    await userEvent.clear(link);
+    await userEvent.type(link, LINK);
+    await userEvent.click(button());
+    expect(await screen.findByText(/The posting was longer than Resumatic keeps, so the end is cut off\./)).toBeInTheDocument();
+    expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false }, region: { enabled: false } } })).violations).toEqual([]);
   });
 });
 
