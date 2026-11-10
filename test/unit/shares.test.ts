@@ -2,7 +2,9 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import {
   MAX_SHARE_BYTES,
+  MAX_SHARE_DOCUMENTS,
   SHARE_DETAIL_MIGRATIONS,
+  SHARE_DOCUMENT_MIGRATIONS,
   SHARE_READ_INTERVAL_MS,
   SHARE_MIGRATIONS,
   SHARE_TTL_MS,
@@ -19,6 +21,7 @@ import {
   SHARE_COOKIE,
 } from "../../src/worker/shares";
 import { signToken } from "../../src/worker/crypto";
+import type { FactRecord } from "../../src/shared/types";
 
 const now = 1_800_000_000_000;
 const who = { userId: "owner", gen: 1 };
@@ -97,8 +100,10 @@ function store() {
       return { toArray: () => values };
     },
   } as unknown as SqlStorage;
-  for (const migration of [...SHARE_MIGRATIONS, ...SHARE_DETAIL_MIGRATIONS]) sql.exec(migration);
+  for (const migration of [...SHARE_MIGRATIONS, ...SHARE_DETAIL_MIGRATIONS, ...SHARE_DOCUMENT_MIGRATIONS]) sql.exec(migration);
   db.exec(`CREATE TABLE resume_versions (resume_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL)`);
+  db.exec(`CREATE TABLE documents (id TEXT PRIMARY KEY, kind TEXT NOT NULL, state TEXT NOT NULL)`);
+  db.exec(`CREATE TABLE document_versions (document_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL)`);
   const resume = selection().resumes[0]!;
   db.prepare(`INSERT INTO resume_versions (resume_id,version,data) VALUES (?,?,?)`).run(resume.id, resume.render.version, JSON.stringify(resume));
   const security = { open: true, epoch: "epoch-one" };
@@ -426,6 +431,171 @@ describe("what a copy says about its owner and its jobs", () => {
       shares.revoke(who, grant.id, now + 5 * minute);
       shares.recordRead(grant.id, now + 6 * minute);
       expect(shares.export(who)[0]).toMatchObject({ lastReadAt: now + 500 + minute, revokedAt: now + 5 * minute });
+    } finally { db.close(); }
+  });
+});
+
+describe("cover letters and interview preparation in a copy", () => {
+  const SENTENCE = "Built the API";
+  const QUESTION = "How would you discuss your experience relevant to API design?";
+  /** A saved document version as the vault writes one now, with the full record of the fact it cites. */
+  const saved = (kind: "letter" | "prep") => ({
+    result: {
+      kind,
+      units: [{ id: "u1", roleId: "r1", text: SENTENCE, factIds: ["f1"], group: 0, status: "kept" }],
+      questions: kind === "prep" ? [{ id: "q1", requirement: "private requirement from the posting", question: QUESTION }] : [],
+    },
+    facts: { f1: { text: SENTENCE, quote: "private original quote" } },
+    evidence: { f1: { id: "f1", revision: 1, origin: "extracted", roleId: "r1", kind: "accomplishment", text: SENTENCE, level: "implemented", quote: "private original quote" } as FactRecord },
+    profile: { name: "A User", email: "private@example.test" },
+  });
+  function withDocuments() {
+    const made = store();
+    for (const [id, kind] of [["letter1", "letter"], ["prep1", "prep"]] as const) {
+      made.db.prepare(`INSERT INTO documents (id, kind, state) VALUES (?, ?, 'ready')`).run(id, kind);
+      made.db.prepare(`INSERT INTO document_versions (document_id, version, data) VALUES (?, 1, ?)`).run(id, JSON.stringify(saved(kind)));
+    }
+    const chosen = (id: "letter1" | "prep1") => ({ id, version: 1, kind: id === "letter1" ? "letter" : "prep", data: saved(id === "letter1" ? "letter" : "prep") });
+    const snapshotOf = (grantId: string) => JSON.parse(made.db.prepare(`SELECT snapshot FROM share_grants WHERE id = ?`).get(grantId)!.snapshot as string);
+    const rewrite = (grantId: string, value: unknown) => made.db.prepare(`UPDATE share_grants SET snapshot = ? WHERE id = ?`).run(JSON.stringify(value), grantId);
+    return { ...made, chosen, snapshotOf, rewrite };
+  }
+  const none = { facts: [], roles: [], resumes: [] };
+
+  it("can be the whole copy, as their words alone", () => {
+    const { shares, chosen, db } = withDocuments();
+    try {
+      const grant = shares.create(who, { ...none, documents: [chosen("letter1"), chosen("prep1")] }, now + 10_000, now, {
+        documentJobs: { letter1: { title: "Staff Engineer", company: "Litware" }, other: { title: "Not shared", company: null } },
+      });
+      expect(grant).toMatchObject({ factCount: 0, resumeCount: 0, documentCount: 2 });
+      const view = shares.read({ grantId: grant.id, epoch: grant.epoch }, now);
+      expect(view.snapshot).toEqual({
+        schemaVersion: 3, createdAt: now, owner: null, facts: [], resumes: [],
+        documents: [
+          { id: "letter1", version: 1, kind: "letter", paragraphs: [SENTENCE], questions: [], job: { title: "Staff Engineer", company: "Litware" } },
+          { id: "prep1", version: 1, kind: "prep", paragraphs: [], questions: [{ question: QUESTION, points: [SENTENCE] }], job: null },
+        ],
+      });
+      // Not the quote, the posting's requirement, the contact details, nor another document's job.
+      expect(JSON.stringify(view)).not.toContain("private");
+      expect(JSON.stringify(view)).not.toContain("Not shared");
+      expect(shares.list(who, now)[0]).toMatchObject({ documentCount: 2, available: true });
+      expect(shares.export(who)[0]).toMatchObject({ documentCount: 2, snapshot: { schemaVersion: 3 } });
+    } finally { db.close(); }
+  });
+
+  it("sits beside facts and resumes, and a copy without documents is as it was", () => {
+    const { shares, chosen, db } = withDocuments();
+    try {
+      const mixed = shares.create(who, { ...selection(), documents: [chosen("letter1")] }, now + 10_000, now);
+      expect(mixed).toMatchObject({ factCount: 1, resumeCount: 1, documentCount: 1 });
+      const view = shares.read({ grantId: mixed.id, epoch: mixed.epoch }, now);
+      expect(view.snapshot.schemaVersion).toBe(3);
+      expect(view.snapshot.facts).toHaveLength(1);
+      expect(view.snapshot.resumes).toHaveLength(1);
+      const plain = shares.create(who, selection(), now + 10_000, now);
+      const without = shares.read({ grantId: plain.id, epoch: plain.epoch }, now).snapshot;
+      expect(without.schemaVersion).toBe(2);
+      expect(without).not.toHaveProperty("documents");
+      expect(plain.documentCount).toBe(0);
+      expect(() => shares.create(who, { ...none, documents: [] }, now + 10_000, now)).toThrow("select at least one fact, resume or document");
+    } finally { db.close(); }
+  });
+
+  it("refuses a document that can't be checked, a repeat, and more than a copy holds", () => {
+    const { shares, chosen, db } = withDocuments();
+    try {
+      const old = chosen("letter1");
+      delete (old.data as { evidence?: unknown }).evidence;
+      expect(() => shares.create(who, { ...none, documents: [old] }, now + 10_000, now)).toThrow("can't be shared as it is");
+      expect(() => shares.create(who, { ...none, documents: [{ ...chosen("letter1"), kind: "questions" }] }, now + 10_000, now)).toThrow("can't be shared as it is");
+      expect(() => shares.create(who, { ...none, documents: [chosen("letter1"), chosen("letter1")] }, now + 10_000, now)).toThrow("duplicate share selection");
+      const many = Array.from({ length: MAX_SHARE_DOCUMENTS + 1 }, (_, i) => ({ ...chosen("letter1"), id: `letter${i}` }));
+      expect(() => shares.create(who, { ...none, documents: many }, now + 10_000, now)).toThrow("too many items");
+      expect(() => shares.create(who, { ...none, documents: many.slice(1) }, now + 10_000, now)).not.toThrow();
+      // The size limit counts the documents with everything else.
+      const long = chosen("prep1");
+      long.data.result.questions = [{ id: "q1", requirement: "r", question: "How would you discuss it?" }];
+      long.data.result.units = Array.from({ length: 400 }, (_, i) => ({ id: `u${i}`, roleId: "r1", text: SENTENCE, factIds: ["f1"], group: 0, status: "kept" }));
+      const large = selection();
+      large.facts[0]!.text = "x".repeat(MAX_SHARE_BYTES - 5_000);
+      expect(() => shares.create(who, { ...large, documents: [long] }, now + 10_000, now)).toThrow("too large");
+      expect(shares.list(who, now)).toHaveLength(1);
+    } finally { db.close(); }
+  });
+
+  it("is rebuilt from the saved document every time the copy is read", () => {
+    const { shares, chosen, db, snapshotOf, rewrite } = withDocuments();
+    try {
+      const grant = shares.create(who, { ...none, documents: [chosen("letter1"), chosen("prep1")] }, now + 10_000, now);
+      const read = () => shares.read({ grantId: grant.id, epoch: grant.epoch }, now);
+      const original = snapshotOf(grant.id);
+      expect(read().snapshot).toEqual(original);
+      // The stored copy says something the saved document doesn't.
+      for (const change of [
+        (copy: typeof original) => { copy.documents[0].paragraphs[0] = "Ran the whole company"; },
+        (copy: typeof original) => { copy.documents[1].questions[0].points.push("Founded the company"); },
+        (copy: typeof original) => { copy.documents[1].questions[0].question = "Why are you the best?"; },
+        (copy: typeof original) => { copy.documents[0].kind = "prep"; },
+        (copy: typeof original) => { copy.documents[0].version = 2; },
+        (copy: typeof original) => { copy.documents[0].id = "missing"; },
+        (copy: typeof original) => { copy.documents[0].notes = "private"; },
+        (copy: typeof original) => { copy.documents[0].job = { title: "Staff Engineer", company: "Litware", notes: "private" }; },
+        (copy: typeof original) => { delete copy.documents[0].job; },
+        // Documents belong to a version 3 copy, and a version 3 copy has some.
+        (copy: typeof original) => { copy.schemaVersion = 2; },
+        (copy: typeof original) => { copy.documents = []; },
+        (copy: typeof original) => { delete copy.documents; },
+        (copy: typeof original) => { copy.documents = "letter1"; },
+        (copy: typeof original) => { copy.schemaVersion = 4; },
+        (copy: typeof original) => { copy.owner = { name: "" }; },
+      ]) {
+        const copy = structuredClone(original);
+        change(copy);
+        rewrite(grant.id, copy);
+        expect(read, JSON.stringify(copy).slice(0, 120)).toThrow("unavailable");
+      }
+      rewrite(grant.id, original);
+      expect(read().snapshot).toEqual(original);
+      expect(shares.list(who, now)[0]!.available).toBe(true);
+
+      // The saved document no longer says what the copy holds, or is no longer there to check.
+      const letter = saved("letter");
+      letter.result.units[0]!.text = "Built the API and the billing system";
+      db.prepare(`UPDATE document_versions SET data = ? WHERE document_id = 'letter1'`).run(JSON.stringify(letter));
+      expect(read).toThrow("unavailable");
+      expect(shares.list(who, now)[0]!.available).toBe(false);
+      db.prepare(`UPDATE document_versions SET data = ? WHERE document_id = 'letter1'`).run(JSON.stringify(saved("letter")));
+      expect(read().snapshot).toEqual(original);
+      const withoutEvidence = saved("prep") as { evidence?: unknown };
+      delete withoutEvidence.evidence;
+      db.prepare(`UPDATE document_versions SET data = ? WHERE document_id = 'prep1'`).run(JSON.stringify(withoutEvidence));
+      expect(read).toThrow("unavailable");
+      db.prepare(`UPDATE document_versions SET data = ? WHERE document_id = 'prep1'`).run(JSON.stringify(saved("prep")));
+      db.prepare(`UPDATE documents SET state = 'failed' WHERE id = 'prep1'`).run();
+      expect(read).toThrow("unavailable");
+      db.prepare(`UPDATE documents SET state = 'ready' WHERE id = 'prep1'`).run();
+      db.prepare(`DELETE FROM document_versions WHERE document_id = 'letter1'`).run();
+      expect(read).toThrow("unavailable");
+      // The owner's stored copy is untouched by any of this.
+      expect(shares.export(who)[0]!.snapshot).toEqual(original);
+    } finally { db.close(); }
+  });
+
+  it("gives a copy without documents no way to carry one", () => {
+    const { shares, db, snapshotOf, rewrite } = withDocuments();
+    try {
+      const grant = shares.create(who, selection(), now + 10_000, now);
+      const copy = snapshotOf(grant.id);
+      copy.documents = [{ id: "letter1", version: 1, kind: "letter", paragraphs: [SENTENCE], questions: [], job: null }];
+      rewrite(grant.id, copy);
+      expect(() => shares.read({ grantId: grant.id, epoch: grant.epoch }, now)).toThrow("unavailable");
+      // Nor a copy from before names and jobs.
+      const earlier = snapshotSelection(selection(), now) as unknown as Record<string, unknown>;
+      earlier.documents = copy.documents;
+      rewrite(grant.id, earlier);
+      expect(() => shares.read({ grantId: grant.id, epoch: grant.epoch }, now)).toThrow("unavailable");
     } finally { db.close(); }
   });
 });

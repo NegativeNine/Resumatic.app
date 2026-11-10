@@ -32,17 +32,46 @@ export interface SharedResume {
   skills: string[];
   verification: "verified" | "user-authored" | "mixed" | "unverified";
 }
-/** The job a shared resume was tailored for, as the owner had it named when the copy was made. */
+/**
+ * A cover letter or interview preparation in a copy: its words only, as they were checked against
+ * confirmed facts when it was written. Neither the facts cited nor the posting come with it.
+ */
+export interface SharedDocument {
+  id: string;
+  version: number;
+  kind: "letter" | "prep";
+  /** A letter's paragraphs, in order. Empty for interview preparation. */
+  paragraphs: string[];
+  /** Interview preparation: each question with the points prepared for it. Empty for a letter. */
+  questions: { question: string; points: string[] }[];
+}
+/** A finished cover letter or interview preparation, as the list to choose from needs it. */
+export interface ShareableDocument {
+  id: string;
+  kind: "letter" | "prep";
+  applicationId: string;
+  version: number;
+  createdAt: number;
+  /** False for one written before its evidence was kept: it has to be written again to be shared. */
+  shareable: boolean;
+}
+/** The job a shared resume or document was made for, as the owner had it named when the copy was made. */
 export interface SharedJob {
   title: string | null;
   company: string | null;
 }
 export interface ShareSnapshot {
-  /** Version 2 adds the owner's name and each resume's job. A version 1 copy has neither. */
-  schemaVersion: 1 | 2;
+  /**
+   * Version 2 adds the owner's name and each resume's job. A version 1 copy has neither.
+   * Version 3 is a version 2 copy that also holds documents, so code that predates them refuses it
+   * instead of serving a part it never checked.
+   */
+  schemaVersion: 1 | 2 | 3;
   createdAt: number;
   facts: SharedFact[];
   resumes: (SharedResume & { job?: SharedJob | null })[];
+  /** Cover letters and interview preparation. Present, and not empty, only in a version 3 copy. */
+  documents?: (SharedDocument & { job?: SharedJob | null })[];
   /** Whose copy this is, when they chose to put their name on it. */
   owner?: { name: string } | null;
 }
@@ -63,6 +92,8 @@ export interface ShareGrant {
   revokedAt: number | null;
   factCount: number;
   resumeCount: number;
+  /** Cover letters and interview preparation in the copy. Absent from a server that predates them. */
+  documentCount?: number;
   /** Whether an unexpired, unrevoked snapshot can currently be delivered. */
   available?: boolean;
   /** The owner's own note of who the link is for. Never shown to the reader. */

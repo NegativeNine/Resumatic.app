@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { formatDate } from "../format";
 import { presentResumeBullet } from "../../shared/resume-presentation";
 import { formatRoleDates } from "../../shared/sheet";
-import type { SharedJob, SharedLine, SharedResume, SharedView } from "../../shared/sharing";
+import type { SharedDocument, SharedJob, SharedLine, SharedResume, SharedView } from "../../shared/sharing";
 import { Lockup } from "./Lockup";
 import { Badge, Glyph } from "./ui";
 
@@ -31,7 +31,13 @@ const RESUME_CHECK: Readonly<Record<SharedResume["verification"], { tone: string
 /** Kept separate so the same read-only snapshot can be tested without a browser session. */
 export function ShareSnapshotContent({ view }: { view: SharedView }) {
   const { facts, resumes } = view.snapshot;
+  const documents = view.snapshot.documents ?? [];
   const owner = view.snapshot.owner?.name || null;
+  /** Several letters, say, are told apart by number when nothing else does it. */
+  const numbered = (document: SharedDocument, index: number) =>
+    documents.filter((other) => other.kind === document.kind).length > 1
+      ? documents.slice(0, index + 1).filter((other) => other.kind === document.kind).length
+      : null;
   return (
     <ShareFrame>
       <h1>Shared career snapshot</h1>
@@ -71,7 +77,54 @@ export function ShareSnapshotContent({ view }: { view: SharedView }) {
       {resumes.map((resume) => (
         <SharedResumeSheet resume={resume} key={`${resume.id}:${resume.version}`} />
       ))}
+      {documents.map((document, index) => (
+        <SharedDocumentSheet document={document} number={numbered(document, index)} key={`${document.id}:${document.version}`} />
+      ))}
     </ShareFrame>
+  );
+}
+
+const DOCUMENT_NAMES: Readonly<Record<SharedDocument["kind"], string>> = {
+  letter: "Cover letter",
+  prep: "Interview preparation",
+};
+
+/** A cover letter's body, or interview questions with the points prepared for each. */
+function SharedDocumentSheet({ document, number }: { document: SharedDocument & { job?: SharedJob | null }; number: number | null }) {
+  const job = [document.job?.title, document.job?.company].filter(Boolean).join(" at ");
+  const name = number === null ? DOCUMENT_NAMES[document.kind] : `${DOCUMENT_NAMES[document.kind]} ${number}`;
+  return (
+    <section className="app-share__resume" aria-label={job ? `${name}, for ${job}` : name}>
+      <div className="app-share__resume-head">
+        <div>
+          <h2>{name}</h2>
+          {job && <p className="rs-meta app-share__job">For {job}</p>}
+        </div>
+        <Badge tone="ready">
+          <Glyph name="check" />
+          Every sentence checked against confirmed facts
+        </Badge>
+      </div>
+      {/* Paper like the resume's, but text to read at its own size, not a page scaled to fit. */}
+      <article className="app-share__paper">
+        {document.kind === "letter"
+          ? document.paragraphs.map((paragraph, index) => <p key={index}>{paragraph}</p>)
+          : document.questions.map((item, index) => (
+              <div className="app-share__question" key={index}>
+                <h3>{item.question}</h3>
+                {item.points.length > 0 ? (
+                  <ul>
+                    {item.points.map((point, at) => (
+                      <li key={at}>{point}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="app-share__flag">Nothing prepared for this question.</p>
+                )}
+              </div>
+            ))}
+      </article>
+    </section>
   );
 }
 

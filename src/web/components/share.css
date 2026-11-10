@@ -19,6 +19,14 @@
 .app-share__resume-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); margin-bottom: var(--space-4); }
 .app-share__resume-head h2 { margin: 0; }
 .app-share__flag { font-size: 0.86em; color: var(--sheet-ink-muted); font-style: italic; }
+.app-share__paper { max-width: 816px; padding: clamp(20px, 6vw, 56px) clamp(18px, 7vw, 64px); font-family: var(--font-paper); font-size: 15px; line-height: 1.5; color: var(--sheet-ink); background: var(--sheet); border-radius: var(--radius-paper); box-shadow: var(--shadow-paper); overflow-wrap: anywhere; }
+.app-share__paper > p { margin: 0 0 0.9em; }
+.app-share__paper > p:last-child { margin-bottom: 0; }
+.app-share__question + .app-share__question { margin-top: 1.3em; }
+.app-share__question h3 { margin: 0 0 0.3em; font-size: 1em; line-height: 1.4; font-weight: 700; color: inherit; }
+.app-share__question ul { margin: 0 0 0 1.3em; padding: 0; }
+.app-share__question li { margin: 0 0 0.2em; }
+.app-share__question p { margin: 0; }
 .app-share__card { max-width: 30rem; margin: var(--space-10) auto 0; padding: var(--space-8); background: var(--paper); border-radius: var(--radius-paper); box-shadow: var(--shadow-paper); }
 .app-share__card h1 { margin: 0 0 var(--space-3); font-size: 24px; line-height: 30px; }
 .app-share__card p { margin: 0; color: var(--ink-muted); }

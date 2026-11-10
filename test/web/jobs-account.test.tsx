@@ -116,7 +116,7 @@ describe("account tools", () => {
     const shares = state.shares!;
     const opened = shares[0]!.lastReadAt!;
     expect(active.querySelector(".rs-setting__text > span")!.textContent).toMatch(
-      new RegExp(`^6 facts and 1 resume version\\. Created .+\\. Expires .+\\. Last opened ${formatDateTime(opened)}\\.$`),
+      new RegExp(`^6 facts, 1 resume version and 1 document\\. Created .+\\. Expires .+\\. Last opened ${formatDateTime(opened)}\\.$`),
     );
     // A copy with no resumes doesn't mention them.
     const expired = screen.getByText("3 facts").closest("li")!;
@@ -151,12 +151,12 @@ describe("account tools", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Choose what to share" }));
     const facts = await screen.findByRole("group", { name: /Confirmed facts/ });
     const name = screen.getByRole("checkbox", { name: "Put my name at the top of the copy" });
-    const jobs = screen.getByRole("checkbox", { name: "Say which job each resume is for" });
+    const jobs = screen.getByRole("checkbox", { name: "Say which job each resume and document is for" });
     // The name is offered; where someone is applying is theirs to add, and only a resume has a job.
     expect(name).toBeChecked();
     expect(jobs).not.toBeChecked();
     expect(jobs).toBeDisabled();
-    expect(jobs).toHaveAccessibleDescription(/Choose a resume first/);
+    expect(jobs).toHaveAccessibleDescription(/Choose a resume or a document first/);
     const fact = within(facts).getAllByRole("checkbox")[0]!;
     await userEvent.click(fact);
     const label = screen.getByRole("textbox", { name: /^Who it’s for/ });
@@ -175,6 +175,64 @@ describe("account tools", () => {
     expect(row.textContent).toContain("Not opened yet.");
   });
 
+  it("offers finished cover letters and interview preparation, and sends the ones chosen", async () => {
+    const state = fullVault();
+    const api = installFakeApi(state);
+    renderWithSession(<AccountPage />, state.me);
+    await userEvent.click(await screen.findByRole("button", { name: "Choose what to share" }));
+    const group = await screen.findByRole("group", { name: /^Cover letters and interview preparation \(0 selected, up to 20\)/ });
+    // Finished letters and preparation only: not gap questions, nor one that failed or is still running.
+    expect(within(group).getAllByRole("checkbox")).toHaveLength(2);
+    const letter = within(group).getByRole("checkbox", { name: /^Cover letter for Platform Engineer at Litware, / });
+    expect(within(group).getByRole("checkbox", { name: /^Interview preparation for Platform Engineer at Litware, / })).toBeEnabled();
+    const jobs = screen.getByRole("checkbox", { name: "Say which job each resume and document is for" });
+    expect(jobs).toBeDisabled();
+    expect(jobs).toHaveAccessibleDescription(/Choose a resume or a document first/);
+    const create = screen.getByRole("button", { name: "Create share link" });
+    expect(create).toBeDisabled();
+    await userEvent.click(letter);
+    expect(screen.getByRole("group", { name: /\(1 selected, up to 20\)/ })).toBe(group);
+    // A document was written for a job too, so it can say which.
+    expect(jobs).toBeEnabled();
+    await userEvent.click(jobs);
+    await userEvent.click(create);
+    await screen.findByLabelText("Your share link");
+    expect(api.callsTo("POST", /^\/api\/shares$/)[0]!.body).toMatchObject({
+      factIds: [], resumes: [], documents: [{ id: "doc-letter", version: 1 }], showName: true, showJobs: true,
+    });
+    expect((await screen.findByText("1 document")).closest("li")!.textContent).toContain("Not opened yet.");
+  });
+
+  it("won’t offer a document whose sentences can’t be checked again, and says what to do", async () => {
+    const state = fullVault();
+    const api = installFakeApi(state);
+    api.unshareable.add("doc-prep");
+    renderWithSession(<AccountPage />, state.me);
+    await userEvent.click(await screen.findByRole("button", { name: "Choose what to share" }));
+    const group = await screen.findByRole("group", { name: /^Cover letters and interview preparation/ });
+    const preparation = within(group).getByRole("checkbox", { name: /^Interview preparation for Platform Engineer at Litware, / });
+    expect(preparation).toBeDisabled();
+    expect(preparation.closest("li")!.textContent).toContain("Written before documents could be shared. Write a new one to share it.");
+    expect(within(group).getByRole("checkbox", { name: /^Cover letter for/ })).toBeEnabled();
+  });
+
+  it("has no documents to offer against a server without the list, and says so when the list fails", async () => {
+    const state = fullVault();
+    const api = installFakeApi(state);
+    api.fail("GET", /^\/api\/documents$/, 404, "not_found", "no such route");
+    renderWithSession(<AccountPage />, state.me);
+    await userEvent.click(await screen.findByRole("button", { name: "Choose what to share" }));
+    const group = await screen.findByRole("group", { name: /^Cover letters and interview preparation/ });
+    expect(within(group).getByText("You have no finished cover letters or interview preparation yet.")).toBeInTheDocument();
+    // The rest of the form is there to use.
+    expect(within(screen.getByRole("group", { name: /^Confirmed facts/ })).getAllByRole("checkbox").length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole("button", { name: "Close selection" }));
+    api.fail("GET", /^\/api\/documents$/, 503, "unavailable", "busy");
+    await userEvent.click(screen.getByRole("button", { name: "Choose what to share" }));
+    expect(await screen.findByText("Resumatic is busy right now. Try again in a minute.")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: /^Cover letters/ })).toBeNull();
+  });
+
   it("offers the job names once a resume is chosen, and leaves the label out when it’s empty", async () => {
     const state = fullVault();
     const api = installFakeApi(state);
@@ -182,7 +240,7 @@ describe("account tools", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Choose what to share" }));
     const resumes = await screen.findByRole("group", { name: /Saved resume versions/ });
     await userEvent.click(within(resumes).getAllByRole("checkbox")[0]!);
-    const jobs = screen.getByRole("checkbox", { name: "Say which job each resume is for" });
+    const jobs = screen.getByRole("checkbox", { name: "Say which job each resume and document is for" });
     await waitFor(() => expect(jobs).toBeEnabled());
     expect(jobs).not.toBeChecked();
     expect(jobs).toHaveAccessibleDescription(/Leave it off to keep where you’re applying to yourself/);
@@ -265,6 +323,55 @@ describe("the shared copy", () => {
     view.snapshot.resumes[0]!.job = { title: null, company: "Litware" };
     render(<ShareSnapshotContent view={view} />);
     expect(screen.getByText("Tailored for Litware")).toBeInTheDocument();
+  });
+
+  it("prints a cover letter as its paragraphs and interview preparation as questions with their points", () => {
+    const view = sharedView();
+    view.snapshot.schemaVersion = 3;
+    view.snapshot.owner = null;
+    view.snapshot.documents = [
+      { id: "doc-letter", version: 1, kind: "letter", paragraphs: ["Led the migration of 40 services from Heroku to Kubernetes.", "Mentored two junior engineers."], questions: [], job: { title: "Platform Engineer", company: "Litware" } },
+      {
+        id: "doc-prep", version: 1, kind: "prep", paragraphs: [], job: null,
+        questions: [
+          { question: "How would you discuss your experience relevant to Kubernetes in production?", points: ["Led the migration of 40 services from Heroku to Kubernetes."] },
+          { question: "How would you discuss your experience relevant to Terraform?", points: [] },
+        ],
+      },
+    ];
+    render(<ShareSnapshotContent view={view} />);
+    const letter = screen.getByRole("region", { name: "Cover letter, for Platform Engineer at Litware" });
+    expect(within(letter).getByRole("heading", { level: 2, name: "Cover letter" })).toBeInTheDocument();
+    expect(within(letter).getByText("For Platform Engineer at Litware")).toBeInTheDocument();
+    expect(within(letter).getByText("Every sentence checked against confirmed facts")).toBeInTheDocument();
+    expect([...letter.querySelectorAll("article > p")].map((p) => p.textContent)).toEqual([
+      "Led the migration of 40 services from Heroku to Kubernetes.",
+      "Mentored two junior engineers.",
+    ]);
+    const preparation = screen.getByRole("region", { name: "Interview preparation" });
+    expect(within(preparation).queryByText(/^For /)).toBeNull();
+    const questions = within(preparation).getAllByRole("heading", { level: 3 });
+    expect(questions.map((heading) => heading.textContent)).toEqual([
+      "How would you discuss your experience relevant to Kubernetes in production?",
+      "How would you discuss your experience relevant to Terraform?",
+    ]);
+    expect(within(questions[0]!.parentElement!).getByRole("listitem")).toHaveTextContent("Led the migration of 40 services from Heroku to Kubernetes.");
+    // A question the vault has nothing for says so, instead of sitting empty.
+    expect(within(questions[1]!.parentElement!).getByText("Nothing prepared for this question.")).toBeInTheDocument();
+  });
+
+  it("numbers several documents of a kind, and shows none for a copy without them", () => {
+    const view = sharedView();
+    const empty = render(<ShareSnapshotContent view={view} />);
+    expect(screen.queryByRole("region", { name: /Cover letter|Interview preparation/ })).toBeNull();
+    empty.unmount();
+    view.snapshot.schemaVersion = 3;
+    const letter = (id: string, text: string) => ({ id, version: 1, kind: "letter" as const, paragraphs: [text], questions: [], job: null });
+    view.snapshot.documents = [letter("a", "First letter."), { id: "p", version: 1, kind: "prep", paragraphs: [], questions: [{ question: "Why this role?", points: [] }], job: null }, letter("b", "Second letter.")];
+    render(<ShareSnapshotContent view={view} />);
+    expect(within(screen.getByRole("region", { name: "Cover letter 1" })).getByText("First letter.")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Cover letter 2" })).getByText("Second letter.")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Interview preparation" })).toBeInTheDocument();
   });
 
   it("prints education under its own heading, with links and bullets as the PDF has them", () => {

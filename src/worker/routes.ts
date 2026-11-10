@@ -1232,6 +1232,10 @@ api.post(
     );
   },
 );
+// The finished letters and preparation a copy can be made from, without their text.
+api.get("/documents", async (c) =>
+  c.json({ documents: await myVault(c).listShareableDocuments(c.get("who")) }),
+);
 api.get("/documents/:id", async (c) =>
   c.json(await myVault(c).getDocument(c.get("who"), c.req.param("id"))),
 );
@@ -1251,6 +1255,16 @@ api.post("/shares", JSON_LIMIT, async (c) => {
           }),
         )
         .max(20),
+      // Finished cover letters and interview preparation.
+      documents: z
+        .array(
+          z.object({
+            id: z.string().max(100),
+            version: z.number().int().positive(),
+          }),
+        )
+        .max(20)
+        .optional(),
       expiresAt: z.number().int().positive().optional(),
       // The owner's note of who the link is for: one short line.
       label: z
