@@ -113,6 +113,38 @@ const SEPARATOR = /[\s\u2014]/u;
 const OPENERS = new Set(["(", "[", "{", '"', "'", "\u2018", "\u201C", "\u00AB"]);
 const CLOSERS = new Set([")", "]", "}", '"', "'", "\u2019", "\u201D", "\u00BB", ",", ";", ":", ".", "!", "?"]);
 
+/** One run of a line: a stretch with no space in it, and the core left without the punctuation that wraps it. */
+export interface LineRun {
+  start: number;
+  /** Where the run's own characters start, after any opening brackets or quotes. */
+  coreStart: number;
+  /** Where they end, before any closing brackets, quotes or sentence punctuation. */
+  coreEnd: number;
+  end: number;
+}
+
+/** The runs of a line, in order. A run of nothing but punctuation is its own core. */
+export function lineRuns(line: string): LineRun[] {
+  const runs: LineRun[] = [];
+  let at = 0;
+  while (at < line.length) {
+    if (SEPARATOR.test(line[at]!)) {
+      at++;
+      continue;
+    }
+    let stop = at;
+    while (stop < line.length && !SEPARATOR.test(line[stop]!)) stop++;
+    let core = at;
+    while (core < stop && OPENERS.has(line[core]!)) core++;
+    let coreEnd = stop;
+    while (coreEnd > core && CLOSERS.has(line[coreEnd - 1]!)) coreEnd--;
+    // Nothing but punctuation: taken whole or not at all.
+    runs.push(coreEnd === core ? { start: at, coreStart: at, coreEnd: stop, end: stop } : { start: at, coreStart: core, coreEnd, end: stop });
+    at = stop;
+  }
+  return runs;
+}
+
 export interface RangeEdges {
   /** starts[i] is 1 where a range may start at i. */
   starts: Uint8Array;
@@ -124,28 +156,9 @@ export interface RangeEdges {
 export function rangeEdges(line: string): RangeEdges {
   const starts = new Uint8Array(line.length + 1);
   const ends = new Uint8Array(line.length + 1);
-  let at = 0;
-  while (at < line.length) {
-    if (SEPARATOR.test(line[at]!)) {
-      at++;
-      continue;
-    }
-    let stop = at;
-    while (stop < line.length && !SEPARATOR.test(line[stop]!)) stop++;
-    // [at, stop) is one run. Its core is what is left without the punctuation that wraps it.
-    let core = at;
-    while (core < stop && OPENERS.has(line[core]!)) core++;
-    let coreEnd = stop;
-    while (coreEnd > core && CLOSERS.has(line[coreEnd - 1]!)) coreEnd--;
-    if (coreEnd === core) {
-      // Nothing but punctuation: taken whole or not at all.
-      starts[at] = 1;
-      ends[stop] = 1;
-    } else {
-      for (let i = at; i <= core; i++) starts[i] = 1;
-      for (let i = coreEnd; i <= stop; i++) ends[i] = 1;
-    }
-    at = stop;
+  for (const run of lineRuns(line)) {
+    for (let i = run.start; i <= run.coreStart; i++) starts[i] = 1;
+    for (let i = run.coreEnd; i <= run.end; i++) ends[i] = 1;
   }
   return { starts, ends };
 }
