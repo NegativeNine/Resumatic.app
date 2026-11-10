@@ -65,6 +65,11 @@ test("the posting reader cannot be enabled in production configuration, and can 
       assert.ok(!(await report("production", off)).includes("POSTING_READER_ROLLOUT_UNVERIFIED"), JSON.stringify(off));
     // Staging is where it is exercised before the guard is lifted.
     assert.ok(!(await report("staging", {}, { POSTING_READER_ENABLED: "true" })).includes("POSTING_READER_ROLLOUT_UNVERIFIED"));
+    // The same for dividing lines in shadow: staging only, until it has been measured.
+    assert.ok((await report("production", { SPLIT_SHADOW_ENABLED: "true" })).includes("SPLIT_SHADOW_ROLLOUT_UNVERIFIED"));
+    for (const off of [{}, { SPLIT_SHADOW_ENABLED: "false" }, { SPLIT_SHADOW_ENABLED: "" }])
+      assert.ok(!(await report("production", off)).includes("SPLIT_SHADOW_ROLLOUT_UNVERIFIED"), JSON.stringify(off));
+    assert.ok(!(await report("staging", {}, { SPLIT_SHADOW_ENABLED: "true" })).includes("SPLIT_SHADOW_ROLLOUT_UNVERIFIED"));
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

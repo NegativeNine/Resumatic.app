@@ -43,7 +43,7 @@ import type {
   SourceView,
 } from "../shared/api";
 import { DATE_PATTERN, MAX_JOB_NAME_CHARS, MAX_LINE_CHARS, MAX_UPLOAD_BYTES, isWebUrl, normalizePosting } from "../shared/api";
-import { AppError } from "../shared/errors";
+import { AppError, errorCode } from "../shared/errors";
 import { isMissingWorkflowInstance } from "../shared/workflow-errors";
 import { directoryForUser } from "../shared/stubs";
 import type {
@@ -81,7 +81,7 @@ import { validateTailorCheckpoint, validateTailorPublication } from "./tailor-pu
 import { finalLegacyEvidence, legacyReceipt, legacyReview } from "./legacy-remediation";
 import { RunStore } from "./runs";
 import { RecordStore } from "./record";
-import type { RecordExport } from "../shared/record";
+import type { NewPart, RecordExport } from "../shared/record";
 import { ShareStore } from "./shares";
 import { billingConfig } from "../shared/billing";
 import { stripeClient, type Entitlement } from "../worker/billing";
@@ -330,7 +330,7 @@ export class Vault extends DurableObject<Env> {
     return new SnapshotStore(this.sql);
   }
 
-  /** Parts of a line, tags and links. Nothing writes them yet; they are exported with the vault. */
+  /** Parts of a line, tags and links. Only divisions kept in shadow are written so far; all are exported with the vault. */
   private get record(): RecordStore {
     return new RecordStore(this.sql, (fn) => this.ctx.storage.transactionSync(fn));
   }
@@ -1430,6 +1430,59 @@ export class Vault extends DurableObject<Env> {
       }
     });
     this.vectorCache = null;
+  }
+
+  /** The run reading this upload, still at work. Every call a reading makes on a vault proves it is that run. */
+  private requireReading(sourceId: string, runId: string | undefined): void {
+    this.requireOpen();
+    if (!runId) throw new AppError("invalid", "workflow identity is required");
+    if (this.sourceRow(sourceId).run_id !== runId)
+      throw new AppError("conflict", "this attempt was superseded");
+    const run = this.workflowRun(runId, "distill", sourceId);
+    if (!["starting", "running"].includes(run.state))
+      throw new AppError("conflict", "this run no longer accepts work");
+  }
+
+  /** The lines a reading proposed that could divide into more than one claim. A skill is one item. */
+  async splitCandidates(sourceId: string, runId?: string): Promise<{ id: string; text: string }[]> {
+    this.requireReading(sourceId, runId);
+    return this.sql
+      .exec<{ id: string; text: string }>(
+        `SELECT id, text FROM facts WHERE source_id = ? AND origin = 'extracted' AND kind <> 'skill' ORDER BY rowid LIMIT 300`,
+        sourceId,
+      )
+      .toArray();
+  }
+
+  /**
+   * Keeps divisions of this upload's lines in shadow: stored to be measured, shown to nobody and
+   * read by nothing else. A division worked out against wording a line no longer has is left out.
+   */
+  async saveShadowSplits(
+    sourceId: string,
+    runId: string | undefined,
+    made: { model: string; method: string },
+    splits: { factId: string; line: string; parts: NewPart[] }[],
+  ): Promise<{ stored: number }> {
+    this.requireReading(sourceId, runId);
+    let stored = 0;
+    for (const split of splits) {
+      if (!this.sql.exec(`SELECT id FROM facts WHERE id = ? AND source_id = ?`, split.factId, sourceId).toArray().length)
+        throw new AppError("conflict", "fact is not part of this source");
+      try {
+        this.record.proposeSplit({
+          factId: split.factId,
+          line: split.line,
+          parts: split.parts,
+          stamp: { proposedBy: "model", model: made.model, method: made.method, taxonomyVersion: null, confidence: null, shadow: true },
+        });
+        stored++;
+      } catch (error) {
+        // The line changed, or the record refused the parts: either way the line stays whole.
+        if (!["conflict", "invalid", "not_found"].includes(errorCode(error) ?? "")) throw error;
+      }
+    }
+    return { stored };
   }
 
   // ---------------------------------------------------------------- roles and facts (user)

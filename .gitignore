@@ -30,6 +30,7 @@ worker-configuration.d.ts
 
 # Eval output
 eval-report.json
+split-eval-report.json
 extract-report.json
 extract-report.md
 seeded-report.json

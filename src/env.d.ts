@@ -24,6 +24,12 @@ interface ResumaticSecrets {
   /** "true" lets a signed-in person have the Worker fetch a job posting's page. Off until its outbound requests are exercised in staging. */
   POSTING_READER_ENABLED?: string;
   OAUTH_KV?: KVNamespace;
+  /**
+   * "true" has the reading of an upload also work out how its lines divide, and keep what passes
+   * every check in shadow: stored to be measured, shown to nobody. Off everywhere by default. It
+   * adds model calls to every upload, and a failure in it leaves the upload as it is read today.
+   */
+  SPLIT_SHADOW_ENABLED?: string;
   /** The combined ESCO and O*NET taxonomy, in a D1 database of its own. Optional: nothing reads it where it isn't bound. */
   TAXONOMY?: D1Database;
   METRICS?: AnalyticsEngineDataset;
