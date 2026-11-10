@@ -1,6 +1,6 @@
 # Pipelines around the taxonomy: design
 
-**Status: proposal. Nothing here is built except the taxonomy itself ([taxonomy.md](taxonomy.md)). No pipeline code changes until this is agreed.**
+**Status: agreed by the owner on 10 November 2026, with the three starting rules under "Decided" below. Nothing here is built yet except the taxonomy itself ([taxonomy.md](taxonomy.md)). Each step still ships switched off and is measured before anyone is shown its results.**
 
 The aim, in the owner's words: rearchitect around the taxonomy; merge duplicates; and break a single-line experience into its constituent parts without inventing anything or changing its meaning.
 
@@ -147,9 +147,15 @@ Each step is a pull request, off by default, with its own tests. Steps 3 onward 
 
 These need real resumes with consent, as the existing extraction evals do. Synthetic lines can exercise the checks but cannot set a threshold.
 
-## Open questions for the owner
+## Decided
 
-1. **Qualified lines.** The first version does not split a line that contains a hedge or a negation. That is the safe rule and it leaves some lines whole that a person would split. Is that acceptable to start?
-2. **Who sees parts.** Proposed here: the owner reviews parts as they review facts, and a coach's copy shows the line, not its parts. Agreed?
-3. **Automatic merging.** Proposed here: only identical wording merges without asking. Everything else is offered. Agreed?
-4. **Languages.** The first build is English. ESCO is published in 28 languages and O\*NET in English only, so other languages would have skills and occupations from ESCO but no activities or software.
+The owner agreed these on 10 November 2026. Each is a starting rule: it can be loosened once the measurements above say it is safe to.
+
+1. **Qualified lines stay whole.** The first version does not split a line that contains a hedge, a negation or an intention. It leaves some lines whole that a person would split.
+2. **A coach sees the line, not its parts.** The owner reviews parts as they review facts. A shared copy shows the line.
+3. **Only identical wording merges without asking.** In a role confirmed to be the same one. Everything else is offered.
+
+## Still open
+
+- **Languages.** The first build is English. ESCO is published in 28 languages and O\*NET in English only, so other languages would have skills and occupations from ESCO but no activities or software.
+- **Who may see the private card.** Its preview is built from confirmed tags; its sharing rules need their own decision.

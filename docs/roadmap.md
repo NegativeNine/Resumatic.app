@@ -27,7 +27,7 @@ The last two were on the roadmap as Now from the start and do not depend on tagg
 
 ## Taxonomy pipeline work
 
-The [pipeline design](taxonomy-pipelines-design.md) remains a proposal. The real-data build's [manifest](taxonomy-build-2026-11-10.json) is available; no reading or tailoring pipeline uses the taxonomy yet.
+The [pipeline design](taxonomy-pipelines-design.md) is agreed. The real-data build's [manifest](taxonomy-build-2026-11-10.json) is available; no reading or tailoring pipeline uses the taxonomy yet.
 
 1. Load the versioned taxonomy into staging and build its vector index.
 2. Add evidence, parts, tags and links without changing existing records.
@@ -39,4 +39,4 @@ The [pipeline design](taxonomy-pipelines-design.md) remains a proposal. The real
 
 Skills with years and the card preview depend on tagging and belong in this pipeline sequence. Missing or uncertain tags remain unknown; they do not establish missing experience.
 
-The proposed initial defaults remain: qualified lines stay whole; coaches see the original line; only identical wording in a verified identical role merges automatically. These choices have not been recorded as owner approval.
+The owner agreed the design and its three starting rules on 10 November 2026: qualified lines stay whole; coaches see the original line; only identical wording in a verified identical role merges automatically. They are recorded under "Decided" in the design.
