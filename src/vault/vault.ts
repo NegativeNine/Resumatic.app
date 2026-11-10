@@ -2778,6 +2778,42 @@ export class Vault extends DurableObject<Env> {
       provenance: resume.provenance,
     };
   }
+  /**
+   * Saved jobs for a connected app that was given the jobs permission: enough to name each one
+   * and find its resumes. Notes are the person's own, and the posting is long, so neither is sent.
+   */
+  async mcpJobs(claims: McpClaims, input: { limit?: number }) {
+    const who = this.requireMcp(claims, "vault:jobs");
+    const jobs = await this.listApplications(who);
+    this.requireMcp(claims, "vault:jobs");
+    return jobs.slice(0, Math.min(100, Math.max(1, input.limit ?? 50))).map((job) => ({
+      id: job.id,
+      title: job.title,
+      company: job.company,
+      excerpt: job.excerpt,
+      url: job.url ?? null,
+      status: job.status ?? "saved",
+      addedAt: job.createdAt,
+      resumes: job.resumes.map((resume) => ({ id: resume.id, state: resume.state, createdAt: resume.createdAt })),
+    }));
+  }
+
+  /**
+   * Saves a job a connected app found. A posting that is already saved is returned as it is, so
+   * an app that searches every day doesn't fill the list with copies.
+   */
+  async mcpAddJob(claims: McpClaims, input: { description: string; url: string | null }, requestKey: string) {
+    const who = this.requireMcp(claims, "vault:jobs");
+    const key = `mcp_${claims.grantId}_${requestKey}`;
+    // A retry of the request that made a job gets the same answer, not "already saved".
+    const replayed = this.sql.exec(`SELECT 1 FROM application_create_requests WHERE request_key = ?`, key).toArray().length > 0;
+    const existing = replayed ? null : await this.findDuplicateApplication(who, input.description);
+    this.requireMcp(claims, "vault:jobs");
+    if (existing) return { id: existing.id, alreadySaved: true };
+    const { applicationId } = await this.addApplicationIdempotent(who, input.description, key, input.url);
+    return { id: applicationId, alreadySaved: false };
+  }
+
   async mcpTailor(
     claims: McpClaims,
     applicationId: string,

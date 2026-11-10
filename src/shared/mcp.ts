@@ -3,6 +3,9 @@ import { z } from "zod";
 export const MCP_SCOPES = [
   "vault:read",
   "vault:generate",
+  // See saved jobs and add new ones. Separate from reading facts, because a list of jobs shows
+  // where someone is applying.
+  "vault:jobs",
   "offline_access",
 ] as const;
 export type McpScope = (typeof MCP_SCOPES)[number];
@@ -15,7 +18,7 @@ export const McpClaimsSchema = z
     epoch: z.string().min(1).max(128),
     grantId: z.uuid(),
     clientId: z.string().min(1).max(2048),
-    scopes: z.array(z.enum(MCP_SCOPES)).min(1).max(3),
+    scopes: z.array(z.enum(MCP_SCOPES)).min(1).max(MCP_SCOPES.length),
     expiresAt: z.number().int().positive(),
   })
   .strict();
