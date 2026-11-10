@@ -213,10 +213,10 @@ test("production selects top-level configuration and staging its own bindings", 
 test("default model routes use Cloudflare catalog IDs in both environments", async () => {
   for (const environment of ["production", "staging"]) {
     const { config } = await readConfig(environment);
-    assert.equal(config.vars.MODEL_EXTRACT, "anthropic/claude-haiku-5.5");
-    assert.equal(config.vars.MODEL_ANALYZE, "anthropic/claude-haiku-5.5");
-    assert.equal(config.vars.MODEL_WRITE, "anthropic/claude-sonnet-5.5");
-    assert.equal(config.vars.MODEL_JUDGE, "openai/gpt-5");
+    assert.equal(config.vars.MODEL_EXTRACT, environment === "staging" ? "meta/muse-ember-1.0" : "anthropic/claude-haiku-5.5");
+    assert.equal(config.vars.MODEL_ANALYZE, environment === "staging" ? "meta/muse-ember-1.0" : "anthropic/claude-haiku-5.5");
+    assert.equal(config.vars.MODEL_WRITE, environment === "staging" ? "meta/muse-ember-1.0" : "anthropic/claude-sonnet-5.5");
+    assert.equal(config.vars.MODEL_JUDGE, environment === "staging" ? "@cf/cloudflare/clef" : "openai/gpt-5");
   }
 });
 test("live checks cannot pass with credentials but no spend budget", () => {
@@ -513,11 +513,11 @@ test("release gates require passing evidence for the exact candidate commit", as
       mode: "human-audited",
       profile: "full",
       runId: "12345678-1234-4234-8234-123456789abc",
-      environment: "staging",
+      environment: "production",
       strategies: ["llm:default"],
       manifestHash: "a".repeat(64),
       snapshotSha256: "b".repeat(64),
-      configurationHash: extractionConfiguration(["llm:default"], "staging", { root: fileURLToPath(new URL("../", import.meta.url)), priceOverrides: {} }).hash,
+      configurationHash: extractionConfiguration(["llm:default"], "production", { root: fileURLToPath(new URL("../", import.meta.url)), priceOverrides: {} }).hash,
       winner: "llm:default",
       rankingPending: false,
       results: [{
@@ -535,12 +535,12 @@ test("release gates require passing evidence for the exact candidate commit", as
       }],
     },
   });
-  const seededConfig = extractionConfiguration(["llm:default"], "staging", { root: fileURLToPath(new URL("../", import.meta.url)), priceOverrides: {} });
+  const seededConfig = extractionConfiguration(["llm:default"], "production", { root: fileURLToPath(new URL("../", import.meta.url)), priceOverrides: {} });
   Object.assign(evidence.grounding, {
     unsupportedClaims: 0,
     evaluatedLines: 100,
     seeded: {
-      mode: "live", commit, environment: "staging", seedVersion: SEED_VERSION,
+      mode: "live", commit, environment: "production", seedVersion: SEED_VERSION,
       sourceConfigurationHash: seededConfig.hash, configurationHash: "c".repeat(64), datasetHash: "d".repeat(64),
       models: seededConfig.models,
       baseline: { cases: 3, inputLines: 9, outputLines: 7, deterministicViolations: 0 },
