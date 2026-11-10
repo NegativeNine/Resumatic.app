@@ -27,6 +27,7 @@ describe("the privacy notice", () => {
       "Your choices",
     ]);
     const kept = section("What we keep");
+    expect(kept).toContain("The job site sees a request from Resumatic, not from you, and nothing about you is sent with it.");
     for (const item of ["the status you set, the date you applied and your notes", "cover letters, interview preparation", "the label you give it and when it was last opened", "The apps you connect", "We never see your card number"])
       expect(kept).toContain(item);
     // The directory is described by everything it holds, not only what it held before paid plans.

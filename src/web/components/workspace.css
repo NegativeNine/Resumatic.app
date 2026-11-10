@@ -94,6 +94,8 @@
 .app-posting__confirm { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
 .app-posting__confirm p { margin: 0; }
 .app-job-form__foot { display: flex; justify-content: flex-end; }
+.app-read-link { margin-top: var(--space-3); }
+.app-read-link .rs-hint { margin: var(--space-2) 0 0; }
 .app-job-link { display: inline-flex; }
 .card > .rs-count + .field { margin-top: var(--space-4); }
 .app-fit__summary { margin: 0; font-weight: 600; }

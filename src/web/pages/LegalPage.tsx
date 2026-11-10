@@ -57,6 +57,8 @@ function Privacy() {
           </li>
           <li>
             The jobs you save: the posting’s text and link, the status you set, the date you applied and your notes.
+            Where reading a posting from its link is turned on and you ask for it, our servers fetch that page. The
+            job site sees a request from Resumatic, not from you, and nothing about you is sent with it.
           </li>
           <li>The resumes, cover letters, interview preparation and fit previews made from your facts for those jobs.</li>
           <li>

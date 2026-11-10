@@ -28,6 +28,7 @@ import {
   SHARE_COOKIE,
   shareCookieName,
 } from "./shares";
+import { readPosting } from "./postings";
 import { renderDocx, textDocx } from "../render/docx";
 import { renderResumeHtml } from "../render/template";
 import {
@@ -440,6 +441,9 @@ const JobName = z.string().trim().max(MAX_JOB_NAME_CHARS).refine((value) => !/[\
 const NewApplicationBody = z.object({
   jdText: JdText,
   url: WebUrl.optional(),
+  // What the posting's own page calls the job, when it was read from a link.
+  title: JobName.optional(),
+  company: JobName.optional(),
 });
 
 const Ids = z.array(z.string().max(64)).max(1000);
@@ -489,6 +493,8 @@ api.get("/me", async (c) => {
     connectedApps: me.capabilities?.connectedApps ?? false,
     // Both this Worker and the Vault must understand v2 writes.
     roleDateUnknownEnd: c.env.ROLE_UNKNOWN_END_ENABLED === "true" && me.capabilities?.roleDateUnknownEnd === true,
+    // The Worker does the reading, so its own setting decides.
+    postingReader: c.env.POSTING_READER_ENABLED === "true",
   } });
 });
 
@@ -809,8 +815,23 @@ api.post("/applications", JSON_LIMIT, async (c) => {
 
 // Separate route and RPC fail closed if an older deployment cannot honor the key.
 api.post("/v2/applications", JSON_LIMIT, async (c) => {
-  const { jdText, url } = await jsonBody(c, NewApplicationBody);
-  return c.json(await myVault(c).addApplicationIdempotent(c.get("who"), jdText, requestKey(c), url ?? null), 201);
+  const { jdText, url, title, company } = await jsonBody(c, NewApplicationBody);
+  return c.json(
+    await myVault(c).addApplicationIdempotent(c.get("who"), jdText, requestKey(c), url ?? null, {
+      title: title ?? null,
+      company: company ?? null,
+    }),
+    201,
+  );
+});
+
+// Reads a posting from its page for the person to check. Nothing is saved, and the page's text is
+// only ever returned to the person who asked for it.
+api.post("/postings/read", JSON_LIMIT, async (c) => {
+  if (c.env.POSTING_READER_ENABLED !== "true")
+    throw new AppError("unavailable", "reading a posting from a link is not enabled");
+  const { url } = await jsonBody(c, z.object({ url: WebUrl }));
+  return c.json(await readPosting(url, new URL(c.req.url).hostname));
 });
 
 // Read-only: says whether this posting is already saved, so the person can be asked first.

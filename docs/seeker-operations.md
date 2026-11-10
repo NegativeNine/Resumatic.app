@@ -35,6 +35,12 @@ For an isolated, non-model staging smoke deployment, `--smoke-only` is a separat
 
 Normal deployment and staging lifecycle preflight require a finite positive `DAILY_SPEND_CAP_USD` in the selected Worker configuration. The committed value is zero, so paid work remains disabled until the operator sets a cap. Bind all four per-Vault Workflows (`DISTILL`, `TAILOR`, `DOCUMENTS`, `REEMBED`). The public production workflow also refuses configured restore fences; maintenance deploys follow the fenced replacement procedure below.
 
+### Reading a posting from a link
+
+`POSTING_READER_ENABLED=true` lets a signed-in person have the Worker fetch a job posting's page and read the schema.org JobPosting on it. It is absent from every environment, so the feature is off and the app doesn't offer it. `scripts/validate-config.mjs` refuses it in production configuration (`POSTING_READER_ROLLOUT_UNVERIFIED`).
+
+Enable it in staging first by adding the variable to `env.staging.vars`. Before lifting the production guard, confirm against the deployed staging Worker that each of these gives "couldn't be reached" and that nothing inward is contacted: a public name that resolves to a private address, one that resolves to a cloud metadata address, a redirect to each, and an address on this app's own zone. The address rules, redirect handling, size and time limits are covered by unit tests; what the platform's outbound requests can reach is not something a local test can show. The reader identifies itself with a `Resumatic/1.0` user agent and sends no cookies.
+
 ## Billing configuration
 
 Billing stays disabled unless `BILLING_ENABLED=true` and all required values are valid. Provide `APP_ORIGIN`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, an explicit `STRIPE_API_VERSION`, and `BILLING_PLANS_JSON`:
