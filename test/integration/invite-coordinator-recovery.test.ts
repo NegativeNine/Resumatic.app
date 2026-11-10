@@ -19,7 +19,7 @@ it("closes every shard on a timed-out seal, then retries with a fresh attempt ID
     const c = new InviteCoordinator({ sql, storage: ctx.storage,
       transaction: (fn) => ctx.storage.transactionSync(fn),
       epoch: () => Number(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='global_auth_epoch'`).one().value),
-      validate: () => {}, decide: () => { decisions++; }, finish: () => { finished++; }, sealWaitMs: 20,
+      validate: () => {}, decide: () => { decisions++; }, finish: () => { finished++; }, sealWaitMs: 2_000,
       seal: async (shard, _identity, attempt) => {
         if (!attempts.includes(attempt)) attempts.push(attempt);
         if (shard === 0) { if (++calls === 1) await old; else await newer; }
