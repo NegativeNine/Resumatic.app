@@ -128,8 +128,8 @@ function SourceRow({
         )}
       {source.state === "ready" && visibleItems === 0 && (
         <p className="source-error" role="status">
-          No roles or facts from this source are shown. Check the source, try a
-          different format, or add your experience manually below.
+          No roles or facts from this source are shown. Upload the file again,
+          try a different format, or add your experience manually below.
         </p>
       )}
       {proposedIds.length > 0 && (

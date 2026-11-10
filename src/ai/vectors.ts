@@ -2,6 +2,7 @@ import { AppError } from "../shared/errors";
 import { modelAttempt, type ModelObservers } from "./usage";
 import { rerankScores } from "./rerank";
 import { usableEmbedding } from "../shared/embedding";
+import { docxText } from "../pipeline/docx";
 
 const EMBED_MODEL = "@cf/baai/bge-m3";
 const RERANK_MODEL = "@cf/baai/bge-reranker-base";
@@ -96,6 +97,7 @@ export async function toMarkdown(
   blob: Blob,
   observers: ModelObservers = {},
 ): Promise<string> {
+  if (/\.docx$/i.test(name)) return docxText(new Uint8Array(await blob.arrayBuffer()));
   const result = await modelAttempt(
     {
       route: "convert",

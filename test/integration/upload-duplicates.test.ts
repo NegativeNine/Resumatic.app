@@ -77,6 +77,15 @@ describe("duplicate uploads", () => {
     expect((await uploaded(user, "scan.pdf", RESUME)).state).toBe("ready");
   });
 
+  it("accepts a new conversion when the previous reading produced no roles or facts", async () => {
+    const user = await signIn();
+    options.extraction = { roles: [], facts: [] };
+    expect((await uploaded(user, "resume.docx", RESUME)).state).toBe("ready");
+    options.extraction = undefined;
+    expect((await uploaded(user, "resume.docx", RESUME)).state).toBe("ready");
+    expect((await upload(user, "resume.docx", RESUME)).status).toBe(409);
+  });
+
   it("adds the digest column to an existing vault, and older sources never block an upload", async () => {
     const user = await signIn();
     expect((await uploaded(user, "older.pdf", RESUME)).state).toBe("ready");
