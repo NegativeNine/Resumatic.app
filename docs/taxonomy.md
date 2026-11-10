@@ -68,6 +68,8 @@ The builder rewords nothing. It adds four things, each marked so it cannot pass 
 
 Nothing else is inferred. No skill is mapped to an activity. No occupation is matched to another except by the official crosswalk. Rows the builder cannot use (an unrecognised URI, a relation to a concept that isn't in the release) are set aside and counted in the manifest, by kind.
 
+A concept that a file lists more than once is read once, as its first row has it. Each later row is counted as `esco_concept_repeated`, and again as `esco_concept_repeated_differs` when it says something the first row doesn't, so a manifest shows whether a repeat left anything behind.
+
 ## Building it
 
 The builder reads the three official downloads from folders on disk:
@@ -98,7 +100,7 @@ The **Taxonomy build** workflow (`.github/workflows/taxonomy.yml`) does the down
 - **ESCO layout:** the 19 files of the classification package, named `<file>_<language>.csv`. Column names are as published for v1.x.
 - **Crosswalk layout:** its columns are found by name (an O\*NET code, an ESCO URI, a type of match), after the official project's metadata preamble.
 - **Real O\*NET and crosswalk readers checked on 10 November 2026.** O\*NET 31.0 produced 31,201 concepts, 72,687 labels and 104,656 relations, with no reader issues. Its six input row counts matched the published figures: 1,016 occupations, 54,269 job titles, 18,838 task statements, 24,087 task-to-activity rows, 2,087 detailed work activities and 31,821 software rows. The official crosswalk produced 4,253 mappings with no reader issues after fixing preamble handling.
-- **Full real-data build checked on 10 November 2026.** The [manifest](taxonomy-build-2026-11-10.json) records version `esco-1.2.1+onet-31.0+c036f953`, 49,438 concepts, 207,939 labels and 265,406 relations. ESCO's unique counts match 13,939 skills/knowledge concepts and 3,039 occupations; its input contains 25 repeated concept rows. Three of 4,253 crosswalk mappings name occupations absent from the current releases and are set aside, leaving 4,250 mappings. One self-relation and five ambiguous same-label joins are also set aside. All 17 generated SQL files loaded into SQLite, with matching row counts, no orphan references and a successful integrity check. Remote D1 loading, vector indexing and pipeline quality remain pending.
+- **Full real-data build checked on 10 November 2026.** The [manifest](taxonomy-build-2026-11-10.json) records version `esco-1.2.1+onet-31.0+c036f953`, 49,438 concepts, 207,939 labels and 265,406 relations. ESCO's unique counts match 13,939 skills/knowledge concepts and 3,039 occupations; its input contains 25 repeated concept rows. That build did not compare those rows with their first occurrences; the builder now counts the ones that differ, so the next build will say whether any label was left behind. Three of 4,253 crosswalk mappings name occupations absent from the current releases and are set aside, leaving 4,250 mappings. One self-relation and five ambiguous same-label joins are also set aside. All 17 generated SQL files loaded into SQLite, with matching row counts, no orphan references and a successful integrity check. Remote D1 loading, vector indexing and pipeline quality remain pending.
 
 ## Loading it
 

@@ -136,13 +136,31 @@ test("ESCO is read as it is written, with other labels split out and bad rows co
   assert.ok(has(O(1), "broader", "esco:isco:C2512"));
   // A relation to a concept the package doesn't hold is read here and set aside when everything is joined.
   assert.ok(has(O(3), "optional", S(99)));
-  assert.deepEqual(esco.issues, { esco_concept_repeated: 1, esco_relation_type_not_recognised: 1, esco_uri_not_recognised: 1 });
+  // The second row for "manage budgets" says something else, so it is counted twice: as a repeat, and as one that differs.
+  assert.deepEqual(esco.issues, { esco_concept_repeated: 1, esco_concept_repeated_differs: 1, esco_relation_type_not_recognised: 1, esco_uri_not_recognised: 1 });
   assert.deepEqual(esco.files.map((file) => [file.name, file.rows]).slice(0, 3), [["skills_en.csv", 10], ["skillGroups_en.csv", 3], ["occupations_en.csv", 3]]);
 
   assert.equal(withoutQualifier("Python (computer programming)"), "Python");
   assert.equal(withoutQualifier("manage budgets"), null);
   assert.equal(withoutQualifier("(only this)"), null);
   assert.equal(withoutQualifier("C (computer programming)"), null);
+});
+
+test("a concept listed twice is read once, and a repeat that says something else is counted apart", async () => {
+  const files = await escoFiles();
+  const rows = files["occupations_en.csv"].trimEnd().split(/\r?\n(?=Occupation,)/);
+  const budgetAnalyst = rows.at(-1);
+  // The same row again changes nothing and is only a repeat.
+  const exact = readEsco({ ...files, "occupations_en.csv": `${rows.join("\r\n")}\r\n${budgetAnalyst}\r\n` });
+  assert.equal(exact.concepts.filter((concept) => concept.kind === "occupation").length, 3);
+  assert.equal(exact.issues.esco_concept_repeated, 2);
+  assert.equal(exact.issues.esco_concept_repeated_differs, 1);
+  // The same concept with another label is still read once, as its first row has it, and the build says a row differed.
+  const changed = readEsco({ ...files, "occupations_en.csv": `${rows.join("\r\n")}\r\n${budgetAnalyst.replace("budget analyst", "budget officer")}\r\n` });
+  assert.equal(changed.concepts.find((concept) => concept.code === "2411.1.3").label, "budget analyst");
+  assert.equal(changed.labels.some((label) => label.text === "budget officer"), false);
+  assert.equal(changed.issues.esco_concept_repeated, 2);
+  assert.equal(changed.issues.esco_concept_repeated_differs, 2);
 });
 
 test("ESCO stops on a missing file or column, and reads a package named without its language", async () => {
@@ -275,7 +293,7 @@ test("the sources are joined into one set, in a fixed order, with nothing inferr
   assert.deepEqual(bundle.counts.concepts, { activity: 10, knowledge: 4, occupation: 6, "occupation-group": 2, skill: 4, "skill-group": 3, task: 5, tool: 6, "tool-category": 3 });
   assert.deepEqual(bundle.counts.relations, { broader: 19, essential: 4, matches: 4, optional: 3, performs: 5, "same-label": 3, "skill-optional": 1, "task-activity": 6, "task-of": 5, uses: 8 });
   assert.deepEqual(bundle.problems, {
-    esco_concept_repeated: 1, esco_relation_type_not_recognised: 1, esco_uri_not_recognised: 1,
+    esco_concept_repeated: 1, esco_concept_repeated_differs: 1, esco_relation_type_not_recognised: 1, esco_uri_not_recognised: 1,
     onet_software_not_recognised: 1, onet_task_activity_not_recognised: 1, onet_title_for_unknown_occupation: 1,
     relation_repeated: 1, relation_to_unknown_concept: 1,
   });

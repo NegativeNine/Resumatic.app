@@ -1,6 +1,6 @@
 # Product roadmap
 
-Reconciled on 10 November 2026 from the current PRs and the owner's remaining-work list. This is the repository copy; the external roadmap page has not been updated because its content was not accessible.
+Reconciled on 10 November 2026 from the current PRs and the owner's remaining-work list. This is the repository copy. The roadmap page on claude.ai was brought into line with it the same day: capability statuses, the order of work, and a new board for what is in review and the taxonomy pipeline.
 
 ## Open delivery work
 
@@ -20,6 +20,10 @@ An open PR or a local check is not a claim of production release acceptance. The
 - Comments on a shared copy.
 - Suggested wording on a shared copy.
 - Fit preview through connected apps.
+- Sensitive facts: mark a fact so it is never written into a resume, shared, or shown to an app.
+- Preferences: place, job types, availability and a pay floor, kept in the vault.
+
+The last two were on the roadmap as Now from the start and do not depend on tagging. They were left off the first version of this list by mistake.
 
 ## Taxonomy pipeline work
 

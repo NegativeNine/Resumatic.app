@@ -49,7 +49,11 @@ export function readEsco(files, { language = "en" } = {}) {
   const read = [];
   const issues = new Map();
   const issue = (kind) => issues.set(kind, (issues.get(kind) ?? 0) + 1);
-  const known = new Set();
+  // A concept's first row is the one read. What it said is kept, to tell an exact repeat from a
+  // later row that says something else.
+  const known = new Map();
+  const said = (row, kind) =>
+    JSON.stringify([kind, clean(row.preferredLabel), clean(row.code ?? ""), clean(row.description ?? "") || clean(row.definition ?? ""), lines(row.altLabels ?? "").sort(), lines(row.hiddenLabels ?? "").sort()]);
 
   const table = (base, required, optional = []) => {
     const name = pick(files, base, language);
@@ -71,9 +75,10 @@ export function readEsco(files, { language = "en" } = {}) {
     }
     if (known.has(id)) {
       issue("esco_concept_repeated");
+      if (known.get(id) !== said(row, kind)) issue("esco_concept_repeated_differs");
       return null;
     }
-    known.add(id);
+    known.set(id, said(row, kind));
     const status = clean(row.status ?? "");
     concepts.push({
       id,
