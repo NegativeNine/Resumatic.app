@@ -1,0 +1,5 @@
+O*NET Id,O*NET Title,O*NET Description,ESCO or ISCO URI,ESCO or ISCO Title,ESCO or ISCO Description,Type of Match
+99-1001.00,Example Software Developers,,http://data.europa.eu/esco/occupation/00000000-0000-4000-8000-000000000001,software developer,,exactMatch
+99-1002.00,Example Project Management Specialists,,http://data.europa.eu/esco/occupation/00000000-0000-4000-8000-000000000002,ICT project manager,,closeMatch
+99-1003.00,Example Budget Analysts,,http://data.europa.eu/esco/occupation/00000000-0000-4000-8000-000000000003,budget analyst,,broadMatch
+99-1001.00,Example Software Developers,,http://data.europa.eu/esco/isco/C2512,Software developers,,narrowMatch

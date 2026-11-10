@@ -24,6 +24,8 @@ interface ResumaticSecrets {
   /** "true" lets a signed-in person have the Worker fetch a job posting's page. Off until its outbound requests are exercised in staging. */
   POSTING_READER_ENABLED?: string;
   OAUTH_KV?: KVNamespace;
+  /** The combined ESCO and O*NET taxonomy, in a D1 database of its own. Optional: nothing reads it where it isn't bound. */
+  TAXONOMY?: D1Database;
   METRICS?: AnalyticsEngineDataset;
   AUTH_LIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };
   WRITE_LIMIT?: {

@@ -26,6 +26,7 @@
     "src/grounding",
     "src/ai",
     "src/render",
-    "src/shared"
+    "src/shared",
+    "src/taxonomy"
   ]
 }

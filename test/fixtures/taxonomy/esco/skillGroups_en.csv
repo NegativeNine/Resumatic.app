@@ -1,0 +1,4 @@
+conceptType,conceptUri,preferredLabel,altLabels,hiddenLabels,status,modifiedDate,scopeNote,inScheme,description,code
+SkillGroup,http://data.europa.eu/esco/skill/S1,management skills,,,released,2024-01-01T00:00:00.000Z,,http://data.europa.eu/esco/concept-scheme/skills,,S1
+SkillGroup,http://data.europa.eu/esco/skill/S1.1,allocating and controlling resources,,,released,2024-01-01T00:00:00.000Z,,http://data.europa.eu/esco/concept-scheme/skills,,S1.1
+SkillGroup,http://data.europa.eu/esco/isced-f/061,information and communication technologies,,,released,2024-01-01T00:00:00.000Z,,http://data.europa.eu/esco/concept-scheme/skills,,061

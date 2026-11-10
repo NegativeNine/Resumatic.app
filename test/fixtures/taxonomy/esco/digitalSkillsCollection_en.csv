@@ -1,0 +1,4 @@
+conceptType,conceptUri,preferredLabel,status,skillType,reuseLevel,altLabels,description,broaderConceptUri,broaderConceptPT
+KnowledgeSkillCompetence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000003,Python (computer programming),released,knowledge,sector-specific,Python,,http://data.europa.eu/esco/isced-f/061,information and communication technologies
+KnowledgeSkillCompetence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000004,container orchestration,released,knowledge,sector-specific,,,http://data.europa.eu/esco/isced-f/061,information and communication technologies
+KnowledgeSkillCompetence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000008,SQL,released,knowledge,cross-sector,,,,

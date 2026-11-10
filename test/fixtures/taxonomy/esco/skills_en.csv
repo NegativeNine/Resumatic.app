@@ -1,0 +1,15 @@
+﻿conceptType,conceptUri,skillType,reuseLevel,preferredLabel,altLabels,hiddenLabels,status,modifiedDate,scopeNote,definition,inScheme,description
+KnowledgeSkillCompetence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000001,skill/competence,cross-sector,manage budgets,"budget management
+manage a budget",,released,2024-01-01T00:00:00.000Z,,,http://data.europa.eu/esco/concept-scheme/skills,"Plan, monitor and report on the budget.
+Synthetic test row."
+KnowledgeSkillCompetence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000002,skill/competence,transversal,lead a team,"team leadership
+lead teams",,released,2024-01-01T00:00:00.000Z,,,http://data.europa.eu/esco/concept-scheme/skills,"Lead, supervise and motivate a group of people."
+KnowledgeSkillCompetence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000003,knowledge,sector-specific,Python (computer programming),Python,python3,released,2024-01-01T00:00:00.000Z,,,http://data.europa.eu/esco/concept-scheme/skills,The techniques and principles of software development in Python.
+KnowledgeSkillCompetence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000004,knowledge,sector-specific,container orchestration,"Kubernetes
+K8s",,released,2024-01-01T00:00:00.000Z,,,http://data.europa.eu/esco/concept-scheme/skills,"Tools that deploy, scale and run containers. It's a synthetic row, with a comma."
+KnowledgeSkillCompetence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000005,skill/competence,cross-sector,migrate existing data,data migration,,released,2024-01-01T00:00:00.000Z,,,http://data.europa.eu/esco/concept-scheme/skills,Apply migration and conversion methods for existing data.
+KnowledgeSkillCompetence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000006,knowledge,sector-specific,Go (computer programming),Golang,,released,2024-01-01T00:00:00.000Z,,,http://data.europa.eu/esco/concept-scheme/skills,The techniques and principles of software development in Go.
+KnowledgeSkillCompetence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000007,skill/competence,cross-sector,use spreadsheets software,spreadsheet software,,released,2024-01-01T00:00:00.000Z,,,http://data.europa.eu/esco/concept-scheme/skills,Use software tools to create and edit tabular data.
+KnowledgeSkillCompetence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000008,knowledge,cross-sector,SQL,,,released,2024-01-01T00:00:00.000Z,,,http://data.europa.eu/esco/concept-scheme/skills,"The query language ""SQL""."
+KnowledgeSkillCompetence,urn:example:not-esco,skill/competence,,not an ESCO concept,,,released,2024-01-01T00:00:00.000Z,,,http://data.europa.eu/esco/concept-scheme/skills,
+KnowledgeSkillCompetence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000001,skill/competence,,manage budgets again,,,released,2024-01-01T00:00:00.000Z,,,http://data.europa.eu/esco/concept-scheme/skills,
