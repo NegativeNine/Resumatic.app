@@ -759,14 +759,17 @@ export class Vault extends DurableObject<Env> {
   }
   /**
    * A second copy of a file the person already uploaded would only propose the same roles and
-   * facts again. A source that failed to read doesn't count, because its message says to try again.
+   * facts again. Failed readings and completed readings with no evidence may be uploaded again.
    */
   private refuseSecondCopy(input: UploadDescriptor): void {
     const sha256 = uploadSha256(input);
     if (!sha256) return;
     const copy = this.sql
       .exec<{ filename: string }>(
-        `SELECT filename FROM sources WHERE sha256 = ? AND state != 'failed' ORDER BY created_at LIMIT 1`,
+        `SELECT filename FROM sources WHERE sha256 = ? AND state != 'failed'
+         AND NOT (state = 'ready' AND EXISTS (
+           SELECT 1 FROM extraction_commits WHERE source_id = sources.id AND roles = 0 AND facts = 0
+         )) ORDER BY created_at LIMIT 1`,
         sha256,
       )
       .toArray()[0];
