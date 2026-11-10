@@ -1,6 +1,6 @@
 import type { ResumeBody, ResumeReport } from "./api";
 
-export type DocumentKind = "refine" | "letter" | "prep" | "questions";
+export type DocumentKind = "refine" | "letter" | "prep" | "questions" | "fit";
 export interface NewDocument {
   kind: DocumentKind;
   instruction?: string;
@@ -43,6 +43,8 @@ export interface DocumentView {
     }[];
     report: ResumeReport;
     body?: ResumeBody;
+    /** A fit preview: each requirement read from the posting and the facts that cover it. */
+    fit?: { requirements: { text: string; factIds: string[] }[] };
   } | null;
   facts: Record<string, { text: string; quote: string | null }>;
   /** Questions for which the owner has previously saved an answer. */

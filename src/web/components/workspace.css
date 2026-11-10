@@ -92,3 +92,9 @@
 .app-job-form__foot { display: flex; justify-content: flex-end; }
 .app-job-link { display: inline-flex; }
 .card > .rs-count + .field { margin-top: var(--space-4); }
+.app-fit__summary { margin: 0; font-weight: 600; }
+.app-fit > li { display: grid; grid-template-columns: 22px minmax(0, 1fr); column-gap: var(--space-4); padding: var(--space-3) 0; border-top: 1px solid var(--rule); }
+.app-fit > li > .rs-tick { margin-top: 1px; }
+.app-fit__req { margin: 0; overflow-wrap: anywhere; }
+.app-fit__fact { display: flex; align-items: flex-start; gap: 6px; margin: 4px 0 0; }
+.app-fit__fact .rs-g { flex: none; margin-top: 2px; color: var(--ballpoint); }

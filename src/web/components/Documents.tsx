@@ -10,7 +10,7 @@ import type {
   NewDocument,
 } from "../../shared/documents";
 import { api } from "../api";
-import { formatDateTime } from "../format";
+import { count, formatDateTime } from "../format";
 import { forgetDocumentStart, readDocumentStart, rememberDocumentStart } from "../document-starts";
 import { useAction, useResource, type Reload } from "../hooks";
 import { useSession } from "../session";
@@ -26,6 +26,7 @@ import {
   Message,
   Quote,
   Success,
+  Tick,
 } from "./ui";
 import "./workspace.css";
 
@@ -34,7 +35,11 @@ const LABELS: Record<DocumentKind, string> = {
   prep: "Interview preparation",
   questions: "Experience questions",
   refine: "Resume refinement",
+  fit: "Fit preview",
 };
+
+/** Kinds that use no output, so they stay available when the allowance is used up. */
+const FREE: readonly DocumentKind[] = ["questions", "fit"];
 
 type ApplicationDocumentsProps = {
   applicationId: string;
@@ -128,9 +133,16 @@ function ApplicationDocumentsForUser({
       <h3 id={`${id}-heading`}>Prepare your application</h3>
       <p className="rs-meta">
         Letters and interview answers are written from your confirmed facts. Each finished document uses one
-        output. Experience questions are free.
+        output. Checking your fit and experience questions are free.
       </p>
       <div className="actions app-documents__start">
+        <button
+          type="button"
+          onClick={() => void start({ kind: "fit" })}
+          disabled={action.pending || running}
+        >
+          Check your fit
+        </button>
         <button
           type="button"
           onClick={() => void start({ kind: "letter" })}
@@ -220,7 +232,7 @@ function ApplicationDocumentsForUser({
               doc={doc}
               reload={list.reload}
               retry={retry}
-              retryDisabled={action.pending || running || (available === 0 && doc.kind !== "questions")}
+              retryDisabled={action.pending || running || (available === 0 && !FREE.includes(doc.kind))}
             />
           ))}
         </ul>
@@ -308,6 +320,7 @@ function DocumentContent({ doc }: { doc: DocumentView }) {
   const result = doc.result!;
   if (doc.kind === "questions")
     return <GapQuestions documentId={doc.id} questions={result.questions} answeredQuestionIds={doc.answeredQuestionIds ?? []} />;
+  if (doc.kind === "fit") return <FitPreview doc={doc} />;
   const groups = [...new Set(result.units.map((unit) => unit.group))].sort(
     (a, b) => a - b,
   );
@@ -378,6 +391,54 @@ function DocumentContent({ doc }: { doc: DocumentView }) {
           ))}
         </ul>
       </details>
+    </div>
+  );
+}
+
+/**
+ * How the posting's requirements stand against confirmed facts. Nothing here is written by a
+ * model: the requirements are read from the posting, and the facts are the person's own.
+ */
+function FitPreview({ doc }: { doc: DocumentView }) {
+  const requirements = doc.result?.fit?.requirements ?? [];
+  const covered = requirements.filter((requirement) => requirement.factIds.length > 0).length;
+  if (requirements.length === 0)
+    return (
+      <div className="document-content">
+        <p className="rs-meta">No requirements could be read from this posting. Check that the whole posting was pasted.</p>
+      </div>
+    );
+  return (
+    <div className="document-content">
+      <p className="app-fit__summary">
+        Your confirmed facts cover {covered} of {count(requirements.length, "requirement")}.
+      </p>
+      <ul className="plain-list app-fit">
+        {requirements.map((requirement, index) => {
+          const facts = requirement.factIds.map((id) => doc.facts[id]).filter((fact) => fact !== undefined);
+          return (
+            <li key={`${index}-${requirement.text}`}>
+              <Tick state={facts.length > 0 ? "confirmed" : "proposed"} />
+              <div>
+                <p className="app-fit__req">
+                  {requirement.text}
+                  {facts.length === 0 && <span className="rs-meta"> Not covered</span>}
+                </p>
+                {facts.map((fact, i) => (
+                  <p className="rs-meta app-fit__fact" key={i}>
+                    <Glyph name="follows" />
+                    {fact.text}
+                  </p>
+                ))}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="rs-meta">
+        A gap is never filled for you. If you have the experience, add it with Find missing experience, or
+        under Facts.
+      </p>
     </div>
   );
 }

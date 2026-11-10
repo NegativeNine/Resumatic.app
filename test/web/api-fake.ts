@@ -1,4 +1,5 @@
 import { vi } from "vitest";
+import type { DocumentView } from "../../src/shared/documents";
 import { normalizePosting, type FactPatch, type NewFact, type NewRole, type Profile, type ReviewRequest, type RolePatch } from "../../src/shared/api";
 import type { Fixtures } from "./fixtures";
 
@@ -74,6 +75,28 @@ export class FakeApi {
       "GET",
       /^\/api\/applications\/([^/]+)\/documents$/,
       (_call, [id]) => ok({ documents: (this.state.documents ?? []).filter((doc) => doc.applicationId === id) }),
+    ],
+    [
+      "POST",
+      /^\/api\/applications\/([^/]+)\/documents$/,
+      (call, [applicationId]) => {
+        const { kind } = call.body as { kind: DocumentView["kind"] };
+        const id = this.id("doc");
+        const covering = this.state.facts.filter((fact) => fact.state === "confirmed").slice(0, 2);
+        // Only a fit preview is finished at once here: it is the one kind these tests start.
+        const fit = kind === "fit";
+        (this.state.documents ??= []).unshift({
+          id, applicationId, kind, state: fit ? "ready" : "running", version: 1, createdAt: Date.now(), error: null,
+          result: fit
+            ? {
+                kind, units: [], questions: [], report: { kept: 0, repaired: 0, replaced: 0, dropped: 0, gaps: ["Terraform"] },
+                fit: { requirements: [{ text: "Kubernetes in production", factIds: covering.map((fact) => fact.id) }, { text: "Terraform", factIds: [] }] },
+              }
+            : null,
+          facts: Object.fromEntries(covering.map((fact) => [fact.id, { text: fact.text, quote: fact.quote ?? null }])),
+        });
+        return { status: 202, body: { documentId: id, runId: id } };
+      },
     ],
     [
       "GET",

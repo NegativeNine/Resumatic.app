@@ -90,7 +90,7 @@ import type {
   DocumentResult,
 } from "../pipeline/documents";
 import type { NewDocument, DocumentView } from "../shared/documents";
-import { freeQuotaBucket, type RunRecord } from "../shared/runs";
+import { DOCUMENT_RUN_KINDS, FREE_DOCUMENT_KINDS, GENERATION_RUN_KINDS, freeQuotaBucket, type RunRecord } from "../shared/runs";
 import { packVector, toUnit, topMatches, unpackVector } from "./search";
 
 /** A running Tailor row older than this is checked against the Workflow before it blocks a new run. */
@@ -2106,7 +2106,7 @@ export class Vault extends DurableObject<Env> {
     if (
       this.runs
         .listPending()
-        .some((r) => ["tailor", "refine", "letter", "prep", "questions"].includes(r.kind))
+        .some((r) => GENERATION_RUN_KINDS.includes(r.kind))
     ) {
       throw new AppError(
         "conflict",
@@ -2219,7 +2219,7 @@ export class Vault extends DurableObject<Env> {
           return { version: row.version };
       }
       if (row.version !== expectedVersion) throw new AppError("conflict", "This resume changed since you opened it. Refresh the page, then try again.");
-      if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
+      if (this.runs.listPending().some((run) => GENERATION_RUN_KINDS.includes(run.kind)))
         throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
       if (base.provenance !== "snapshot") throw new AppError("conflict", "this resume is already in review");
@@ -2259,7 +2259,7 @@ export class Vault extends DurableObject<Env> {
           return { version: row.version };
       }
       if (row.version !== expectedVersion) throw new AppError("conflict", "This resume changed since you opened it. Refresh the page, then try again.");
-      if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
+      if (this.runs.listPending().some((run) => GENERATION_RUN_KINDS.includes(run.kind)))
         throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
       if (base.provenance !== "legacy") throw new AppError("conflict", "only a review version can remove a line");
@@ -2301,7 +2301,7 @@ export class Vault extends DurableObject<Env> {
           return { version: row.version };
       }
       if (row.version !== expectedVersion) throw new AppError("conflict", "This resume changed since you opened it. Refresh the page, then try again.");
-      if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
+      if (this.runs.listPending().some((run) => GENERATION_RUN_KINDS.includes(run.kind)))
         throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
       if (base.provenance !== "legacy") throw new AppError("conflict", "only a review version can remove a section");
@@ -2339,7 +2339,7 @@ export class Vault extends DurableObject<Env> {
           return { version: row.version };
       }
       if (row.version !== expectedVersion) throw new AppError("conflict", "This resume changed since you opened it. Refresh the page, then try again.");
-      if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
+      if (this.runs.listPending().some((run) => GENERATION_RUN_KINDS.includes(run.kind)))
         throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
       if (base.provenance !== "legacy") throw new AppError("conflict", "only a review version can remove a skill");
@@ -2374,7 +2374,7 @@ export class Vault extends DurableObject<Env> {
           return { version: row.version };
       }
       if (row.version !== expectedVersion) throw new AppError("conflict", "This resume changed since you opened it. Refresh the page, then try again.");
-      if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
+      if (this.runs.listPending().some((run) => GENERATION_RUN_KINDS.includes(run.kind)))
         throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
       // A deletion must never promote a blocked or legacy version into a checked one.
@@ -2425,7 +2425,7 @@ export class Vault extends DurableObject<Env> {
           return { version: row.version };
       }
       if (row.version !== expectedVersion) throw new AppError("conflict", "This resume changed since you opened it. Refresh the page, then try again.");
-      if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
+      if (this.runs.listPending().some((run) => GENERATION_RUN_KINDS.includes(run.kind)))
         throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
       // Removing a skill cannot turn a legacy or otherwise blocked version
@@ -2463,7 +2463,7 @@ export class Vault extends DurableObject<Env> {
           return { version: row.version };
       }
       if (row.version !== expectedVersion) throw new AppError("conflict", "This resume changed since you opened it. Refresh the page, then try again.");
-      if (this.runs.listPending().some((run) => ["tailor", "refine", "letter", "prep", "questions"].includes(run.kind)))
+      if (this.runs.listPending().some((run) => GENERATION_RUN_KINDS.includes(run.kind)))
         throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
       const roles = this.confirmedRoles();
@@ -2981,7 +2981,7 @@ export class Vault extends DurableObject<Env> {
       this.runs
         .listPending()
         .some((r) =>
-          ["tailor", "refine", "letter", "prep", "questions"].includes(r.kind),
+          GENERATION_RUN_KINDS.includes(r.kind),
         )
     )
       throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
@@ -3020,7 +3020,7 @@ export class Vault extends DurableObject<Env> {
         requestKey: key,
         inputDigest: digest,
         steps: ["plan", "write", "verify"],
-        ...(options.kind !== "questions" ? { quota: this.quotaBucket() } : {}),
+        ...(FREE_DOCUMENT_KINDS.includes(options.kind) ? {} : { quota: this.quotaBucket() }),
       },
       () => {
         this.sql.exec(
@@ -3137,6 +3137,24 @@ export class Vault extends DurableObject<Env> {
             JSON.stringify(patch[field]),
             runId,
           );
+      if (patch.plan) {
+        // A fit preview is often the first time a posting is read. Keep what was read, so the job
+        // has its name and tailoring doesn't read the posting a second time. A name the person
+        // typed stays theirs, and a posting already read is left as it was.
+        const request = this.sql
+          .exec<{ application_id: string; kind: string }>(`SELECT application_id, kind FROM document_requests WHERE run_id = ?`, runId)
+          .toArray()[0];
+        if (request?.kind === "fit")
+          this.sql.exec(
+            `UPDATE applications SET company = CASE WHEN details_edited = 1 THEN company ELSE ? END,
+               title = CASE WHEN details_edited = 1 THEN title ELSE ? END, requirements = ?
+             WHERE id = ? AND requirements IS NULL`,
+            patch.plan.analysis.company,
+            patch.plan.analysis.title,
+            JSON.stringify(patch.plan.analysis.requirements),
+            request.application_id,
+          );
+      }
     });
   }
 
@@ -3334,7 +3352,7 @@ export class Vault extends DurableObject<Env> {
       const run = this.runs.get(runId);
       if (
         !run ||
-        !["refine", "letter", "prep", "questions"].includes(run.kind) ||
+        !DOCUMENT_RUN_KINDS.includes(run.kind) ||
         run.targetId !== runId ||
         !["starting", "running"].includes(run.state)
       ) return;
@@ -4432,7 +4450,7 @@ export class Vault extends DurableObject<Env> {
   ): RunRecord {
     const run = this.runs.get(runId);
     if (!run) throw new AppError("not_found", "no such run");
-    const kinds = kind === "document" ? ["refine", "letter", "prep", "questions"] : [kind];
+    const kinds = kind === "document" ? DOCUMENT_RUN_KINDS : [kind];
     if (!kinds.includes(run.kind) || run.targetId !== targetId)
       throw new AppError("conflict", "run does not match this workflow");
     return run;
@@ -4576,7 +4594,7 @@ export class Vault extends DurableObject<Env> {
       );
       return { runId: result.runId, targetId: result.resumeId };
     }
-    if (["refine", "letter", "prep", "questions"].includes(run.kind)) {
+    if (DOCUMENT_RUN_KINDS.includes(run.kind)) {
       const row = this.sql
         .exec<{ application_id: string; options: string }>(
           `SELECT application_id,options FROM document_requests WHERE run_id=?`,
@@ -4769,7 +4787,7 @@ export class Vault extends DurableObject<Env> {
         this.sql.exec(`UPDATE sources SET state='failed', error=? WHERE id=? AND run_id=? AND state='queued'`, "Reading couldn't be started. Try again.", run.targetId, id);
       else if (run.kind === "tailor")
         this.sql.exec(`UPDATE resumes SET state='failed', error=? WHERE id=? AND run_id=? AND state='running'`, "Tailoring couldn't be started. Try again.", run.targetId, id);
-      else if (["refine", "letter", "prep", "questions"].includes(run.kind))
+      else if (DOCUMENT_RUN_KINDS.includes(run.kind))
         this.sql.exec(`UPDATE documents SET state='failed', error=? WHERE id=? AND state='running'`, "This document couldn't be started. Try again.", run.targetId);
       else if (run.kind === "reembed") this.reembeddings.cancel(id);
     });
@@ -4783,7 +4801,7 @@ export class Vault extends DurableObject<Env> {
       await this.env.REEMBED.create({ id: run.id, params: { vaultId: this.vaultId, runId: run.id } });
     else if (run.kind === "distill")
       await this.env.DISTILL.create({ id: run.id, params: { vaultId: this.vaultId, sourceId: run.targetId } });
-    else if (["refine", "letter", "prep", "questions"].includes(run.kind))
+    else if (DOCUMENT_RUN_KINDS.includes(run.kind))
       await this.env.DOCUMENTS.create({ id: run.id, params: { vaultId: this.vaultId, runId: run.id } });
     else throw new AppError("invalid", "unsupported workflow run");
   }
@@ -4826,7 +4844,7 @@ export class Vault extends DurableObject<Env> {
       if (!this.sql.exec(`SELECT id FROM sources WHERE id = ? AND run_id = ? AND state = 'queued'`, run.targetId, id).toArray().length) return null;
     } else if (run.kind === "tailor") {
       if (!this.sql.exec(`SELECT id FROM resumes WHERE id = ? AND run_id = ? AND state = 'running'`, run.targetId, id).toArray().length) return null;
-    } else if (["refine", "letter", "prep", "questions"].includes(run.kind)) {
+    } else if (DOCUMENT_RUN_KINDS.includes(run.kind)) {
       if (run.targetId !== id || !this.sql.exec(`SELECT id FROM documents WHERE id = ? AND state = 'running'`, id).toArray().length) return null;
     } else if (run.kind === "reembed") {
       if (run.targetId !== id || !this.sql.exec(`SELECT id FROM embedding_jobs WHERE id = ? AND state = 'building'`, id).toArray().length) return null;

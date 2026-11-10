@@ -1165,7 +1165,7 @@ api.post("/applications/:id/documents", JSON_LIMIT, async (c) => {
   const options = await jsonBody(
     c,
     z.object({
-      kind: z.enum(["refine", "letter", "prep", "questions"]),
+      kind: z.enum(["refine", "letter", "prep", "questions", "fit"]),
       instruction: z.string().trim().max(2000).optional(),
       resumeId: z.string().max(100).optional(),
       expectedVersion: z.number().int().positive().optional(),

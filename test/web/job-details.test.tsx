@@ -139,3 +139,33 @@ describe("a saved job's posting", () => {
     expect(api.callsTo("DELETE", /^\/api\/applications\/app-unnamed$/)).toHaveLength(1);
   });
 });
+
+describe("checking fit", () => {
+  it("is free to start, and lists each requirement with the facts that cover it", async () => {
+    const api = start();
+    const job = await openWorkspace("Platform Engineer at Litware");
+    await userEvent.click(await within(job).findByRole("button", { name: "Check your fit" }));
+    expect(api.callsTo("POST", /^\/api\/applications\/app-litware\/documents$/).map((c) => c.body)).toEqual([{ kind: "fit" }]);
+    const preview = (await within(job).findByRole("heading", { name: "Fit preview" })).closest("li")!;
+    await userEvent.click(within(preview).getByText("Read fit preview"));
+    expect(within(preview).getByText("Your confirmed facts cover 1 of 2 requirements.")).toBeInTheDocument();
+    const rows = within(preview).getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("Kubernetes in production");
+    // The covering facts are the person's own, shown as they confirmed them.
+    expect(rows[0]!.querySelectorAll(".app-fit__fact")).toHaveLength(2);
+    expect(rows[1]).toHaveTextContent("Terraform Not covered");
+    expect(rows[1]!.querySelector(".rs-tick--proposed")).not.toBeNull();
+    expect((await axe.run(preview, { rules: { "color-contrast": { enabled: false }, region: { enabled: false } } })).violations).toEqual([]);
+  });
+
+  it("stays available when the month's outputs are used up", async () => {
+    const state = fixtures();
+    state.me.quota.used = state.me.quota.limit;
+    installFakeApi(state);
+    renderWithSession(<JobsPage />, state.me);
+    const job = await openWorkspace("Platform Engineer at Litware");
+    expect(await within(job).findByRole("button", { name: "Check your fit" })).toBeEnabled();
+    expect(within(job).getByRole("button", { name: "Create cover letter" })).toBeDisabled();
+  });
+});
