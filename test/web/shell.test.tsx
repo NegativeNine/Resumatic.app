@@ -26,6 +26,20 @@ describe("the header", () => {
     expect(within(nav).getByRole("link", { name: "Jobs" })).not.toHaveAttribute("aria-current");
   });
 
+  it("adds Clients for someone who is a coach, and on the Clients page itself", () => {
+    installFakeApi(fixtures());
+    const coach = { ...fixtures().me, clients: 2 };
+    const first = renderWithSession(<Shell route={parseRoute("#/jobs")} title="Jobs">content</Shell>, coach);
+    const names = () => within(screen.getByRole("navigation", { name: "Main" })).getAllByRole("link").map((a) => a.textContent);
+    expect(names()).toEqual(["Facts", "Jobs", "Clients", "Account"]);
+    expect(screen.getByRole("link", { name: "Clients" })).toHaveAttribute("href", "#/clients");
+    first.unmount();
+    // Someone with no clients who follows a link here still sees where they are.
+    renderWithSession(<Shell route={parseRoute("#/clients")} title="Clients">content</Shell>, { ...fixtures().me, clients: 0 });
+    expect(names()).toEqual(["Facts", "Jobs", "Clients", "Account"]);
+    expect(screen.getByRole("link", { name: "Clients" })).toHaveAttribute("aria-current", "page");
+  });
+
   it("keeps Jobs current on a resume page, because a resume belongs to its job", () => {
     installFakeApi(fixtures());
     renderWithSession(<Shell route={parseRoute("#/resumes/res-ready")} title="Tailored resume">content</Shell>, fixtures().me);

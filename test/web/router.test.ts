@@ -8,7 +8,7 @@ describe("parseRoute", () => {
   });
 
   it("reads each top-level page", () => {
-    for (const page of ["facts", "jobs", "account", "privacy", "terms"] as const) {
+    for (const page of ["facts", "jobs", "account", "clients", "privacy", "terms"] as const) {
       expect(parseRoute(`#/${page}`)).toEqual({ page });
     }
   });

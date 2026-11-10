@@ -69,6 +69,7 @@
 .share-selection .app-share-name input[type="checkbox"] { flex: none; width: 1rem; height: 1rem; margin: .15rem 0 0; }
 .share-selection .app-share-name + .rs-hint { margin: 2px 0 0 1.6rem; }
 .share-selection .app-share-name + .rs-hint + .field { margin-top: var(--space-5); }
+.share-selection > .field + .field { margin-top: var(--space-4); }
 .share-version label { font-weight: 600; }
 .application-board > * { min-width: 0; }
 .rs-panel.app-documents { margin-top: var(--space-6); }

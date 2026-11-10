@@ -82,6 +82,11 @@ export const SHARE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SHARE_SESSION_TTL_MS = 60 * 60 * 1000;
 /** How often, at most, a copy's last-opened time is written. */
 export const SHARE_READ_INTERVAL_MS = 60_000;
+/**
+ * How long a coach's client list keeps an entry after its copy's last day. The copy can't be opened
+ * by then; the entry stays this long so the coach sees that access ended, and then it goes.
+ */
+export const COACH_CLIENT_KEPT_MS = 30 * 24 * 60 * 60 * 1000;
 /** The longest label an owner can give a link, such as "For Dana". */
 export const MAX_SHARE_LABEL_CHARS = 80;
 export interface ShareGrant {
@@ -94,6 +99,8 @@ export interface ShareGrant {
   resumeCount: number;
   /** Cover letters and interview preparation in the copy. Absent from a server that predates them. */
   documentCount?: number;
+  /** The coach this link names, or null for a link anyone reads as nobody in particular. */
+  coach?: ShareCoach | null;
   /** Whether an unexpired, unrevoked snapshot can currently be delivered. */
   available?: boolean;
   /** The owner's own note of who the link is for. Never shown to the reader. */
@@ -105,4 +112,38 @@ export interface SharedView {
   grantId: string;
   expiresAt: number;
   snapshot: ShareSnapshot;
+  /**
+   * How the person reading stands to the coach this copy names. Absent when it names none, or when
+   * the reader is its owner.
+   * - sign-in: nobody is signed in;
+   * - sign-in-again: signed in, but with a session from before the sign-in address was carried;
+   * - other: signed in with a different address;
+   * - you: this is the named coach, who hasn't added the copy to their clients;
+   * - joined: the named coach, with the copy in their clients.
+   */
+  reviewer?: "sign-in" | "sign-in-again" | "other" | "you" | "joined";
+}
+
+/** The coach a copy names, as its owner sees them. */
+export interface ShareCoach {
+  /** The address the owner gave. Only the account that signs in with it can act as the coach. */
+  email: string;
+  /** The coach's name once they have added the copy to their clients, if they have one. */
+  name: string | null;
+  /** When that account added the copy to its clients, or null if it hasn't. */
+  joinedAt: number | null;
+}
+
+/** Someone who shared a copy with this account as their coach, as the coach's client list shows it. */
+export interface CoachClient {
+  grantId: string;
+  /** The owner's name, when they chose to put it on the copy. */
+  ownerName: string | null;
+  addedAt: number;
+  expiresAt: number;
+  /** False once the link has expired or been revoked, or the owner's account is gone. */
+  active: boolean;
+  factCount: number;
+  resumeCount: number;
+  documentCount: number;
 }

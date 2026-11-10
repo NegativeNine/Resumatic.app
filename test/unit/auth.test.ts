@@ -38,6 +38,22 @@ describe("sessions", () => {
     expect(await readSession(SECRET, token)).toBeNull();
   });
 
+  it("carry the sign-in address in lower case, and none when it isn't an address", async () => {
+    const t0 = 1_000_000;
+    const session = (email?: unknown) => createSession(SECRET, { uid: "u1", vid: "v1", gen: 1, email: email as string | undefined }, t0);
+    expect(await readSession(SECRET, await session("  Dana@Example.TEST "), t0)).toEqual({ uid: "u1", vid: "v1", gen: 1, email: "dana@example.test", exp: t0 + SESSION_TTL_MS });
+    // A session from before the address was carried reads as it always did.
+    expect(await readSession(SECRET, await session(), t0)).toEqual({ uid: "u1", vid: "v1", gen: 1, exp: t0 + SESSION_TTL_MS });
+    for (const bad of ["", "dana", "dana@example", "a b@example.test", `${"x".repeat(250)}@example.test`, 7, null, {}])
+      expect(await readSession(SECRET, await session(bad), t0), String(bad)).not.toHaveProperty("email");
+    // A signed token is trusted for who it names, not for the shape of an address inside it.
+    for (const bad of ["Dana@Example.TEST ", "not an address", 7]) {
+      const token = await signToken(SECRET, { uid: "u1", vid: "v1", gen: 1, exp: t0 + 1, email: bad });
+      const read = await readSession(SECRET, token, t0);
+      expect(read?.email, String(bad)).toBe(bad === "Dana@Example.TEST " ? "dana@example.test" : undefined);
+    }
+  });
+
   it("use a host-only cookie that scripts cannot read", () => {
     expect(sessionCookie("t")).toBe("__Host-session=t; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=604800");
   });

@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { MAX_SHARE_LABEL_CHARS, type ShareGrant } from "../../shared/sharing";
+import { MAX_SHARE_LABEL_CHARS, type ShareCoach, type ShareGrant } from "../../shared/sharing";
 import { api, ApiError } from "../api";
 import { count, formatDate, formatDateTime } from "../format";
 import { useAction, useResource } from "../hooks";
@@ -269,6 +269,7 @@ export function CoachSharingTools() {
                       ? `Revoked ${formatDateTime(grant.revokedAt)}.`
                       : `${active ? "Expires" : "Expired"} ${formatDateTime(grant.expiresAt)}.`}{" "}
                     {shareOpened(grant, active)}
+                    {grant.coach && ` ${shareCoach(grant.coach)}`}
                   </span>
                   {active && grant.available === false && (
                     <Message tone="info">
@@ -316,6 +317,12 @@ function shareContents(grant: ShareGrant): string {
 }
 
 const DOCUMENT_NAMES = { letter: "Cover letter", prep: "Interview preparation" } as const;
+
+/** Who the link names as its coach, and whether that account has taken the copy up. */
+function shareCoach(coach: ShareCoach): string {
+  if (coach.joinedAt === null) return `Names ${coach.email} as coach. Not in their client list yet.`;
+  return `${coach.name ?? coach.email} added it to their client list on ${formatDateTime(coach.joinedAt)}.`;
+}
 
 /**
  * When the copy was last opened. A reply without the reading (from a server that doesn't record it)
@@ -383,10 +390,14 @@ function ShareSelection({
   const [documents, setDocuments] = useState(new Map<string, number>());
   const [days, setDays] = useState(7);
   const [label, setLabel] = useState("");
+  const [coachEmail, setCoachEmail] = useState("");
   const [showName, setShowName] = useState(true);
   const [showJobs, setShowJobs] = useState(false);
   const action = useAction();
   const id = useId();
+  const coach = coachEmail.trim();
+  /** Enough of an address to send. The server decides whether it is one. */
+  const badCoach = coach !== "" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(coach);
   /** How many chosen things were made for a job, and so could say which. */
   const forJobs = resumes.size + documents.size;
   function toggleFact(factId: string) {
@@ -435,6 +446,7 @@ function ShareSelection({
             ...(documents.size > 0 ? { documents: [...documents].map(([documentId, version]) => ({ id: documentId, version })) } : {}),
             expiresAt: Date.now() + days * 24 * 60 * 60 * 1000,
             ...(label.trim() ? { label: label.trim() } : {}),
+            ...(coach ? { coachEmail: coach } : {}),
             showName,
             showJobs: showJobs && forJobs > 0,
           });
@@ -572,6 +584,26 @@ function ShareSelection({
               autoComplete="off"
             />
           </Field>
+          <Field
+            id={`${id}-coach`}
+            label="Your coach’s sign-in address"
+            optional
+            hint="If your coach has a Resumatic account, this lets them keep the copy in their client list and open it without the link. Anyone with the link can still read it."
+            error={badCoach ? "Enter a full email address, or leave this empty." : undefined}
+          >
+            <input
+              id={`${id}-coach`}
+              type="email"
+              value={coachEmail}
+              maxLength={254}
+              disabled={action.pending}
+              onChange={(event) => setCoachEmail(event.target.value)}
+              aria-invalid={badCoach}
+              aria-describedby={badCoach ? `${id}-coach-error` : `${id}-coach-hint`}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </Field>
           <label className="app-share-name">
             <input
               type="checkbox"
@@ -615,7 +647,7 @@ function ShareSelection({
             <button
               type="submit"
               className="primary"
-              disabled={action.pending || factIds.size + resumes.size + documents.size === 0}
+              disabled={action.pending || badCoach || factIds.size + resumes.size + documents.size === 0}
             >
               {action.pending ? "Preparing…" : "Create share link"}
             </button>

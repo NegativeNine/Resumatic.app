@@ -4,6 +4,7 @@ import {
   MAX_SHARE_LABEL_CHARS,
   SHARE_READ_INTERVAL_MS,
   SHARE_TTL_MS,
+  type CoachClient,
   type ShareGrant,
   type SharedJob,
   type SharedLine,
@@ -36,6 +37,21 @@ export const SHARE_DETAIL_MIGRATIONS: readonly string[] = [
   `ALTER TABLE share_grants ADD COLUMN last_read_at INTEGER`,
 ];
 
+/** The coach a link names, and the account that took it up. */
+export const SHARE_COACH_MIGRATIONS: readonly string[] = [
+  `ALTER TABLE share_grants ADD COLUMN coach_email TEXT`,
+  `ALTER TABLE share_grants ADD COLUMN coach_user_id TEXT`,
+  `ALTER TABLE share_grants ADD COLUMN coach_name TEXT`,
+  `ALTER TABLE share_grants ADD COLUMN coach_joined_at INTEGER`,
+];
+
+/** A signed-in account as a copy's owner's vault is told of it: who, and the address they signed in with. */
+export interface CoachAccount {
+  userId: string;
+  email: string;
+  name?: string | null;
+}
+
 /** How many cover letters and interview preparations a copy holds. */
 export const SHARE_DOCUMENT_MIGRATIONS: readonly string[] = [
   `ALTER TABLE share_grants ADD COLUMN document_count INTEGER NOT NULL DEFAULT 0`,
@@ -50,6 +66,8 @@ export interface ShareDetails {
   jobs?: Readonly<Record<string, SharedJob>>;
   /** Each shared document's job, by document ID. */
   documentJobs?: Readonly<Record<string, SharedJob>>;
+  /** The sign-in address of the one account that may act as this copy's coach. */
+  coachEmail?: string | null;
 }
 
 export interface ShareSelection {
@@ -215,6 +233,10 @@ interface GrantRow extends Record<string, SqlStorageValue> {
   label: string | null;
   last_read_at: number | null;
   document_count: number | null;
+  coach_email: string | null;
+  coach_user_id: string | null;
+  coach_name: string | null;
+  coach_joined_at: number | null;
 }
 const grantView = (row: GrantRow): ShareGrant => ({
   id: row.id,
@@ -227,7 +249,20 @@ const grantView = (row: GrantRow): ShareGrant => ({
   label: row.label ?? null,
   lastReadAt: row.last_read_at ?? null,
   documentCount: row.document_count ?? 0,
+  coach: row.coach_email
+    ? { email: row.coach_email, name: row.coach_name ?? null, joinedAt: row.coach_user_id ? (row.coach_joined_at ?? null) : null }
+    : null,
 });
+
+/** An address as a grant stores and compares it, or null. The session's address is normalised the same way. */
+function coachAddress(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const email = value.trim().toLowerCase();
+  if (!email) return null;
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+    throw new AppError("invalid", "enter the coach's email address");
+  return email;
+}
 
 export class ShareStore {
   constructor(
@@ -250,6 +285,7 @@ export class ShareStore {
     const label = details.label?.trim() || null;
     if (label !== null && (label.length > MAX_SHARE_LABEL_CHARS || /[\u0000-\u001f\u007f]/.test(label)))
       throw new AppError("invalid", "keep the label to one short line");
+    const coachEmail = coachAddress(details.coachEmail);
     if (
       !Number.isSafeInteger(expiresAt) ||
       expiresAt <= now ||
@@ -306,9 +342,10 @@ export class ShareStore {
       documentCount: documents.length,
       label,
       lastReadAt: null,
+      coach: coachEmail ? { email: coachEmail, name: null, joinedAt: null } : null,
     };
     this.sql.exec(
-      `INSERT INTO share_grants (id, epoch, created_at, expires_at, revoked_at, fact_count, resume_count, snapshot, label, document_count) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
+      `INSERT INTO share_grants (id, epoch, created_at, expires_at, revoked_at, fact_count, resume_count, snapshot, label, document_count, coach_email) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
       grant.id,
       grant.epoch,
       now,
@@ -318,6 +355,7 @@ export class ShareStore {
       JSON.stringify(snapshot),
       label,
       documents.length,
+      coachEmail,
     );
     return grant;
   }
@@ -326,7 +364,7 @@ export class ShareStore {
     this.auth.authorizeOwner(who);
     return this.sql
       .exec<GrantRow>(
-        `SELECT id, epoch, created_at, expires_at, revoked_at, fact_count, resume_count, label, last_read_at, document_count FROM share_grants ORDER BY created_at DESC LIMIT 200`,
+        `SELECT id, epoch, created_at, expires_at, revoked_at, fact_count, resume_count, label, last_read_at, document_count, coach_email, coach_user_id, coach_name, coach_joined_at FROM share_grants ORDER BY created_at DESC LIMIT 200`,
       )
       .toArray()
       .map((row) => {
@@ -431,6 +469,94 @@ export class ShareStore {
       grantId: row.id,
       expiresAt: row.expires_at,
       snapshot,
+    };
+  }
+
+  /** The grant, if it is this one and can be read now. Says the same thing whatever is wrong. */
+  private open(claims: { grantId: string; epoch: string }, now: number): GrantRow {
+    const row = this.sql
+      .exec<GrantRow>(`SELECT * FROM share_grants WHERE id = ? AND epoch = ? AND revoked_at IS NULL AND expires_at > ? LIMIT 1`, claims.grantId, claims.epoch, now)
+      .toArray()[0];
+    // A copy from before the account's sessions were last ended is closed to everyone, as it is to its link.
+    if (!row || row.snapshot === null || row.epoch !== this.auth.currentEpoch()) throw new AppError("gone", "this share link is unavailable or expired");
+    return row;
+  }
+
+  /**
+   * How an account stands to the coach a copy names: "none" when it names nobody, "named" when no
+   * account is given, "other" for a different address, "you" for the named coach who hasn't taken
+   * it up, and "joined" once they have.
+   */
+  reviewer(claims: { grantId: string; epoch: string }, account: CoachAccount | null, now = Date.now()): "none" | "named" | "other" | "you" | "joined" {
+    this.auth.requireOpen();
+    const row = this.open(claims, now);
+    if (!row.coach_email) return "none";
+    if (!account) return "named";
+    if (account.email !== row.coach_email) return "other";
+    return row.coach_user_id === account.userId ? "joined" : "you";
+  }
+
+  /**
+   * Ties the copy to the account its owner named. Only the account that signed in with that address
+   * can do it, and only while holding the link. Returns what that account's client list shows.
+   */
+  join(claims: { grantId: string; epoch: string }, coach: CoachAccount, now = Date.now()): { ownerName: string | null; expiresAt: number } {
+    this.auth.requireOpen();
+    const row = this.open(claims, now);
+    if (!row.coach_email || row.coach_email !== coach.email)
+      throw new AppError("forbidden", "this copy names a different address as its coach");
+    const name = coach.name?.replace(/\s+/g, " ").trim().slice(0, 200) || null;
+    this.sql.exec(
+      `UPDATE share_grants SET coach_joined_at = CASE WHEN coach_user_id = ? THEN COALESCE(coach_joined_at, ?) ELSE ? END, coach_user_id = ?, coach_name = ? WHERE id = ?`,
+      coach.userId, now, now, coach.userId, name, row.id,
+    );
+    return { ownerName: this.ownerName(row), expiresAt: row.expires_at };
+  }
+
+  private ownerName(row: GrantRow): string | null {
+    try {
+      const name = (JSON.parse(row.snapshot ?? "null") as ShareSnapshot | null)?.owner?.name;
+      return typeof name === "string" && name ? name : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The grant as the account that took it up may see it now, or null. Never says why not. */
+  private joined(grantId: string, coach: CoachAccount, now: number): GrantRow | null {
+    const row = this.sql
+      .exec<GrantRow>(`SELECT * FROM share_grants WHERE id = ? AND revoked_at IS NULL AND expires_at > ? LIMIT 1`, grantId, now)
+      .toArray()[0];
+    if (!row || row.snapshot === null || row.epoch !== this.auth.currentEpoch()) return null;
+    if (!row.coach_email || row.coach_email !== coach.email || row.coach_user_id !== coach.userId) return null;
+    return row;
+  }
+
+  /**
+   * Lets the account that took a copy up open it again without the link. It is the same access
+   * the link gives, to the one account the owner named, for as long as the link itself would work.
+   */
+  openForCoach(grantId: string, coach: CoachAccount, now = Date.now()): { epoch: string; expiresAt: number } {
+    this.auth.requireOpen();
+    const row = this.joined(grantId, coach, now);
+    if (!row) throw new AppError("gone", "this share link is unavailable or expired");
+    // The copy has to be one that can be delivered, as when a link is exchanged.
+    this.read({ grantId: row.id, epoch: row.epoch }, now);
+    return { epoch: row.epoch, expiresAt: row.expires_at };
+  }
+
+  /** What a coach's client list shows for one copy. An ended or unknown one is simply not active. */
+  coachStatus(grantId: string, coach: CoachAccount, now = Date.now()): Pick<CoachClient, "active" | "ownerName" | "expiresAt" | "factCount" | "resumeCount" | "documentCount"> | null {
+    this.auth.requireOpen();
+    const row = this.joined(grantId, coach, now);
+    if (!row) return null;
+    return {
+      active: true,
+      ownerName: this.ownerName(row),
+      expiresAt: row.expires_at,
+      factCount: row.fact_count,
+      resumeCount: row.resume_count,
+      documentCount: row.document_count ?? 0,
     };
   }
 

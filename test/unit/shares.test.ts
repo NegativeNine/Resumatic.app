@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_SHARE_BYTES,
   MAX_SHARE_DOCUMENTS,
+  SHARE_COACH_MIGRATIONS,
   SHARE_DETAIL_MIGRATIONS,
   SHARE_DOCUMENT_MIGRATIONS,
   SHARE_READ_INTERVAL_MS,
@@ -100,7 +101,7 @@ function store() {
       return { toArray: () => values };
     },
   } as unknown as SqlStorage;
-  for (const migration of [...SHARE_MIGRATIONS, ...SHARE_DETAIL_MIGRATIONS, ...SHARE_DOCUMENT_MIGRATIONS]) sql.exec(migration);
+  for (const migration of [...SHARE_MIGRATIONS, ...SHARE_DETAIL_MIGRATIONS, ...SHARE_DOCUMENT_MIGRATIONS, ...SHARE_COACH_MIGRATIONS]) sql.exec(migration);
   db.exec(`CREATE TABLE resume_versions (resume_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL)`);
   db.exec(`CREATE TABLE documents (id TEXT PRIMARY KEY, kind TEXT NOT NULL, state TEXT NOT NULL)`);
   db.exec(`CREATE TABLE document_versions (document_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL)`);
@@ -596,6 +597,92 @@ describe("cover letters and interview preparation in a copy", () => {
       earlier.documents = copy.documents;
       rewrite(grant.id, earlier);
       expect(() => shares.read({ grantId: grant.id, epoch: grant.epoch }, now)).toThrow("unavailable");
+    } finally { db.close(); }
+  });
+});
+
+describe("the coach a copy names", () => {
+  const dana = { userId: "u-dana", email: "dana@example.test", name: "  Dana \n Okafor  " };
+  const made = (coachEmail?: string | null) => {
+    const { shares, db, security } = store();
+    const grant = shares.create(who, selection(), now + 10_000, now, { coachEmail, owner: { name: "Sam Rivera" } });
+    return { shares, db, security, grant, claims: { grantId: grant.id, epoch: grant.epoch } };
+  };
+
+  it("is nobody unless an address is given, and an address is kept as accounts compare it", () => {
+    const plain = made();
+    try {
+      expect(plain.grant.coach).toBeNull();
+      expect(plain.shares.reviewer(plain.claims, dana, now)).toBe("none");
+      expect(plain.shares.reviewer(plain.claims, null, now)).toBe("none");
+      expect(() => plain.shares.join(plain.claims, dana, now)).toThrow("names a different address");
+      for (const bad of ["dana", "dana@example", "a b@example.test", "@example.test", `${"x".repeat(250)}@example.test`])
+        expect(() => plain.shares.create(who, selection(), now + 10_000, now, { coachEmail: bad }), bad).toThrow("enter the coach's email address");
+      expect(plain.shares.create(who, selection(), now + 10_000, now, { coachEmail: "  " }).coach).toBeNull();
+      expect(plain.shares.create(who, selection(), now + 10_000, now, { coachEmail: " Dana@Example.TEST " }).coach).toEqual({ email: "dana@example.test", name: null, joinedAt: null });
+    } finally { plain.db.close(); }
+  });
+
+  it("is taken up by the one account with that address, and by no other", () => {
+    const { shares, db, grant, claims } = made("dana@example.test");
+    try {
+      expect(shares.reviewer(claims, null, now)).toBe("named");
+      expect(shares.reviewer(claims, { userId: "u-x", email: "someone@example.test" }, now)).toBe("other");
+      expect(shares.reviewer(claims, dana, now)).toBe("you");
+      expect(() => shares.join(claims, { userId: "u-x", email: "someone@example.test" }, now)).toThrow("names a different address");
+      expect(() => shares.openForCoach(grant.id, dana, now)).toThrow("unavailable");
+      expect(shares.coachStatus(grant.id, dana, now)).toBeNull();
+
+      expect(shares.join(claims, dana, now + 5)).toEqual({ ownerName: "Sam Rivera", expiresAt: now + 10_000 });
+      expect(shares.reviewer(claims, dana, now)).toBe("joined");
+      expect(shares.list(who, now)[0]!.coach).toEqual({ email: "dana@example.test", name: "Dana Okafor", joinedAt: now + 5 });
+      // Taking it up again keeps when it was first taken up.
+      shares.join(claims, { ...dana, name: null }, now + 50);
+      expect(shares.list(who, now)[0]!.coach).toEqual({ email: "dana@example.test", name: null, joinedAt: now + 5 });
+      expect(shares.openForCoach(grant.id, dana, now)).toEqual({ epoch: grant.epoch, expiresAt: now + 10_000 });
+      expect(shares.coachStatus(grant.id, dana, now)).toEqual({ active: true, ownerName: "Sam Rivera", expiresAt: now + 10_000, factCount: 1, resumeCount: 1, documentCount: 0 });
+
+      // The same address under another account, or the same account under another address, is not the coach.
+      for (const other of [{ userId: "u-other", email: dana.email }, { userId: dana.userId, email: "dana@elsewhere.test" }]) {
+        expect(() => shares.openForCoach(grant.id, other, now)).toThrow("unavailable");
+        expect(shares.coachStatus(grant.id, other, now)).toBeNull();
+      }
+      expect(shares.reviewer(claims, { userId: "u-other", email: dana.email }, now)).toBe("you");
+      // An account made again under the address takes the copy up afresh.
+      shares.join(claims, { userId: "u-other", email: dana.email, name: "Dana O." }, now + 90);
+      expect(shares.list(who, now)[0]!.coach).toEqual({ email: "dana@example.test", name: "Dana O.", joinedAt: now + 90 });
+      expect(() => shares.openForCoach(grant.id, dana, now)).toThrow("unavailable");
+      expect(shares.export(who)[0]!.coach).toMatchObject({ email: "dana@example.test", joinedAt: now + 90 });
+    } finally { db.close(); }
+  });
+
+  it("gives the coach nothing once the link has expired, been revoked or stopped being deliverable", () => {
+    const { shares, db, security, grant, claims } = made("dana@example.test");
+    try {
+      // Ending every session on the owner's account closes its copies, to a coach as to a link.
+      security.epoch = "epoch-two";
+      expect(() => shares.join(claims, dana, now)).toThrow("unavailable");
+      expect(() => shares.reviewer(claims, dana, now)).toThrow("unavailable");
+      security.epoch = "epoch-one";
+      shares.join(claims, dana, now);
+      security.epoch = "epoch-two";
+      expect(shares.coachStatus(grant.id, dana, now)).toBeNull();
+      expect(() => shares.openForCoach(grant.id, dana, now)).toThrow("unavailable");
+      security.epoch = "epoch-one";
+      expect(shares.coachStatus(grant.id, dana, now)).toMatchObject({ active: true });
+      expect(() => shares.openForCoach(grant.id, dana, now + 10_000)).toThrow("unavailable");
+      expect(shares.coachStatus(grant.id, dana, now + 10_000)).toBeNull();
+      expect(() => shares.reviewer(claims, dana, now + 10_000)).toThrow("unavailable");
+      expect(() => shares.join(claims, dana, now + 10_000)).toThrow("unavailable");
+      expect(() => shares.join({ ...claims, epoch: "another" }, dana, now)).toThrow("unavailable");
+      // The saved resume no longer matches the copy, so there is nothing to open.
+      db.prepare(`UPDATE resume_versions SET data = ? WHERE resume_id = 'resume1'`).run(JSON.stringify({ render: { profile: {}, body: { summary: null, sections: [], skills: [] } }, facts: {} }));
+      expect(() => shares.openForCoach(grant.id, dana, now)).toThrow("unavailable");
+      shares.revoke(who, grant.id, now + 1);
+      expect(() => shares.openForCoach(grant.id, dana, now + 2)).toThrow("unavailable");
+      expect(shares.coachStatus(grant.id, dana, now + 2)).toBeNull();
+      // The owner's record of who took it up stays with the revoked link.
+      expect(shares.list(who, now + 2)[0]).toMatchObject({ revokedAt: now + 1, coach: { email: "dana@example.test", name: "Dana Okafor", joinedAt: now } });
     } finally { db.close(); }
   });
 });

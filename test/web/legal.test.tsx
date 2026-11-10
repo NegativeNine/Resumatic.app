@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MCP_GRANT_TTL_MS } from "../../src/shared/mcp";
 import { SESSION_TTL_MS } from "../../src/shared/session";
-import { SHARE_READ_INTERVAL_MS, SHARE_SESSION_TTL_MS, SHARE_TTL_MS } from "../../src/shared/sharing";
+import { COACH_CLIENT_KEPT_MS, SHARE_READ_INTERVAL_MS, SHARE_SESSION_TTL_MS, SHARE_TTL_MS } from "../../src/shared/sharing";
 import { LegalPage } from "../../src/web/pages/LegalPage";
 
 const MINUTE = 60_000;
@@ -38,6 +38,12 @@ describe("the privacy notice", () => {
     expect(sharing).toContain("It cannot take back what someone has already read or saved.");
     // Someone reading a copy has no account, so the notice speaks to them where they will look.
     expect(sharing).toContain("If you are reading a copy someone shared with you: we don’t ask who you are.");
+    // A coach is the one reader with an account, and both sides are told what the other sees.
+    expect(kept).toContain("If you name a coach on a link, their sign-in address is kept with it.");
+    expect(kept).toContain("If someone names you as their coach and you add their copy to your client list");
+    expect(sharing).toContain("Naming a coach doesn’t close the link to anyone else who has it.");
+    expect(sharing).toContain("we check whether your sign-in address is the one the copy names as its coach, and keep nothing from that check");
+    expect(sharing).toContain("the owner sees that name and when you added it");
     const apps = section("Connecting an app");
     expect(apps).toContain("never receives your uploaded files, the words a fact came from, or your notes on a job");
     expect(apps).toContain("revoking access does not remove it from there");
@@ -57,6 +63,8 @@ describe("the privacy notice", () => {
     expect(section("Sharing a copy")).toContain("Cookies keep the copy open in your browser for up to an hour.");
     expect(SHARE_READ_INTERVAL_MS).toBe(MINUTE);
     expect(section("Sharing a copy")).toContain("We keep when a copy was last opened, to the minute");
+    expect(COACH_CLIENT_KEPT_MS).toBe(30 * DAY);
+    expect(section("Sharing a copy")).toContain("An entry leaves your list when you remove it, or thirty days after the copy’s last day.");
     expect(MCP_GRANT_TTL_MS).toBe(30 * DAY);
     expect(section("Connecting an app")).toContain("Its access lasts an hour, or up to thirty days if you allow it to continue");
   });

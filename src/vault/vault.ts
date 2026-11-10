@@ -75,6 +75,8 @@ import { vault as vaultStub } from "../shared/stubs";
 import { createSchema, hasSchema, migrate, SCHEMA_VERSION } from "./schema";
 import { assertGroundedResume, evidenceForFacts, evidenceForRoles, SnapshotStore, type ResumeVersion } from "./snapshots";
 import { canShareDocument, SHAREABLE_DOCUMENT_KINDS, type DocumentVersion } from "./document-shares";
+import { CoachClientStore, type CoachClientEntry } from "./coach-clients";
+import type { CoachAccount } from "./shares";
 import type { ShareableDocument } from "../shared/sharing";
 import { mergeRefinementEvidence } from "./refinement-evidence";
 import { validateTailorCheckpoint, validateTailorPublication } from "./tailor-publication";
@@ -228,6 +230,8 @@ export interface VaultExport {
   providerUsage: Record<string, string | number | null>[];
   quotaPeriods: Record<string, string | number | null>[];
   shares: import("../shared/sharing").ShareGrant[];
+  /** Copies other people shared with this account as their coach: whose, and until when. */
+  coachClients: Omit<CoachClientEntry, "ownerVault">[];
   connectedApps: Omit<McpGrant, "oauthGrantId">[];
   billing: Entitlement | null;
   exportedAt: string;
@@ -657,6 +661,7 @@ export class Vault extends DurableObject<Env> {
       userId: who.userId,
       profile: this.readProfile(),
       quota: this.quota(),
+      clients: this.coachClients.count(),
       capabilities: {
         ocr: !!this.env.MODEL_TRANSCRIBE,
         connectedApps: this.env.MCP_ENABLED === "true",
@@ -2844,6 +2849,10 @@ export class Vault extends DurableObject<Env> {
     );
   }
 
+  private get coachClients(): CoachClientStore {
+    return new CoachClientStore(this.sql);
+  }
+
   private get shares(): ShareStore {
     return new ShareStore(this.sql, {
       authorizeOwner: (who) => this.requireOwner(who),
@@ -2866,6 +2875,8 @@ export class Vault extends DurableObject<Env> {
       showJobs?: boolean;
       /** Finished cover letters and interview preparation. */
       documents?: { id: string; version: number }[];
+      /** The sign-in address of the one account that may act as this copy's coach. */
+      coachEmail?: string;
     },
   ) {
     // Capture the selected facts, roles and resume versions together with the
@@ -2917,7 +2928,7 @@ export class Vault extends DurableObject<Env> {
         { facts, roles, resumes, documents },
         selection.expiresAt,
         undefined,
-        { label: selection.label ?? null, owner: name.trim() ? { name } : null, jobs, documentJobs },
+        { label: selection.label ?? null, owner: name.trim() ? { name } : null, jobs, documentJobs, coachEmail: selection.coachEmail ?? null },
       );
     });
     await this.scheduleRunAlarm(grant.expiresAt);
@@ -2952,11 +2963,53 @@ export class Vault extends DurableObject<Env> {
   async revokeShare(who: Who, id: string) {
     this.shares.revoke(who, id);
   }
-  /** `opened` is true when the reader's page asks for the copy, not when a link is only exchanged. */
-  async readShare(claims: { grantId: string; epoch: string }, opened = false) {
+  /**
+   * `opened` is true when the reader's page asks for the copy, not when a link is only exchanged.
+   * `account` is the signed-in reader, if there is one, as the Worker verified them. It decides
+   * only what the copy says about its named coach, never whether the copy can be read.
+   */
+  async readShare(claims: { grantId: string; epoch: string }, opened = false, account: CoachAccount | null = null) {
     const view = this.shares.read(claims);
     if (opened) this.shares.recordRead(claims.grantId);
-    return view;
+    return { ...view, reviewer: this.shares.reviewer(claims, account) };
+  }
+
+  // ---------------------------------------------------------------- coaches
+  // Three calls reach an owner's vault on behalf of a signed-in reader. Each is given the account
+  // the Worker verified, and the grant itself decides whether that account is its named coach.
+
+  async joinShareAsCoach(claims: { grantId: string; epoch: string }, coach: CoachAccount) {
+    return this.shares.join(claims, coach);
+  }
+
+  async openShareForCoach(grantId: string, coach: CoachAccount) {
+    return this.shares.openForCoach(grantId, coach);
+  }
+
+  async coachShareStatus(grantId: string, coach: CoachAccount) {
+    return this.shares.coachStatus(grantId, coach);
+  }
+
+  // The rest are the coach's own list, in the coach's own vault.
+
+  async addCoachClient(who: Who, client: Omit<CoachClientEntry, "addedAt">): Promise<void> {
+    this.requireOwner(who);
+    this.coachClients.add(client);
+  }
+
+  async listCoachClients(who: Who): Promise<CoachClientEntry[]> {
+    this.requireOwner(who);
+    return this.coachClients.list();
+  }
+
+  async coachClient(who: Who, grantId: string): Promise<CoachClientEntry | null> {
+    this.requireOwner(who);
+    return this.coachClients.get(grantId);
+  }
+
+  async removeCoachClient(who: Who, grantId: string): Promise<void> {
+    this.requireOwner(who);
+    this.coachClients.remove(grantId);
   }
 
   async updateApplication(
@@ -3663,6 +3716,7 @@ export class Vault extends DurableObject<Env> {
         )
         .toArray(),
       shares: this.shares.export(who),
+      coachClients: this.coachClients.export(),
       connectedApps: this.mcpGrants
         .list(who)
         .map(({ oauthGrantId: _remote, ...grant }) => grant),
@@ -5058,6 +5112,7 @@ export class Vault extends DurableObject<Env> {
       if (!canContinue()) return;
     }
     this.shares.purgeExpired();
+    this.coachClients.purge();
     this.mcpGrants.purgeExpired();
     this.sql.exec(
       `DELETE FROM refine_cache WHERE created_at <= ?`,
