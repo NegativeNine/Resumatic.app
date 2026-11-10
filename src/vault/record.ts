@@ -228,16 +228,6 @@ function tagView(row: TagRow): ConceptTag {
   };
 }
 
-function linkView(row: LinkRow): RecordLink {
-  return {
-    ...judgement(row),
-    kind: row.kind as LinkKind,
-    from: row.from_id,
-    to: row.to_id,
-    relation: row.relation as LinkRelation,
-  };
-}
-
 /**
  * Reads and writes the record's judgements. It checks what can be checked from the record alone:
  * that a part is whole words of its line as the line now stands, that a tag names a concept in
@@ -289,7 +279,10 @@ export class RecordStore {
         const ids = this.partRows(splitId).map((row) => row.id);
         return { splitId, state, partIds: input.parts.map((_, index) => ids[rank[index]!]!) };
       };
-      if (same && (!owner || same.state === "confirmed")) return answer(same.id, same.state as JudgementState);
+      if (same && (!owner || same.state === "confirmed")) {
+        if (same.state === "proposed") this.restamp("fact_splits", same.id, input.stamp);
+        return answer(same.id, same.state as JudgementState);
+      }
       if (live && live.id !== same?.id) {
         if (live.state === "confirmed" && !owner)
           throw new AppError("conflict", "the owner accepted another way this line divides");
@@ -446,7 +439,8 @@ export class RecordStore {
    * confirmed: `to` stands for both, and nothing about either row changes. Only the owner
    * confirms, with one exception the record checks for itself: a rule may confirm at once that
    * two facts of one kind in one role have the same wording, or that two roles are alike in every
-   * field. A rule or a model never reopens what the owner decided.
+   * field. Outside any role that holds for skills and credentials only. A rule or a model never
+   * reopens what the owner decided.
    */
   proposeLink(input: NewLink): { linkId: string; state: JudgementState } {
     refuse(linkProblem(input));
@@ -460,7 +454,8 @@ export class RecordStore {
         const to = this.fact(input.to);
         // In shadow nothing stands, so nothing is asked of the roles: theirs may be in shadow too.
         if (!shadow) this.requireOneRole(input.from, input.to);
-        if (input.confirm && !(from.kind === to.kind && sameWording(from.text, to.text)))
+        // An accomplishment outside any role has no role that was found to be the same one.
+        if (input.confirm && !(from.kind === to.kind && sameWording(from.text, to.text) && (from.role_id !== null || from.kind !== "accomplishment")))
           throw new AppError("invalid", IDENTICAL_ONLY);
       } else {
         const from = this.role(input.from);
@@ -528,7 +523,7 @@ export class RecordStore {
         options.state ?? null,
       )
       .toArray()
-      .map(linkView);
+      .map((row) => this.linkView(row));
   }
 
   /** The owner accepts a link or turns it down. Turning down a merge separates the two again. */
@@ -620,7 +615,10 @@ export class RecordStore {
         .toArray()
         .map((row) => this.splitView(row)),
       conceptTags: this.sql.exec<TagRow>(`SELECT * FROM record_tags ORDER BY created_at, id`).toArray().map(tagView),
-      recordLinks: this.sql.exec<LinkRow>(`SELECT * FROM record_links ORDER BY created_at, id`).toArray().map(linkView),
+      recordLinks: this.sql
+        .exec<LinkRow>(`SELECT * FROM record_links ORDER BY created_at, id`)
+        .toArray()
+        .map((row) => this.linkView(row)),
     };
   }
 
@@ -690,6 +688,17 @@ export class RecordStore {
       };
     });
     return { ...judgement(row), factId: row.fact_id, parts };
+  }
+
+  private linkView(row: LinkRow): RecordLink {
+    return {
+      ...judgement(row),
+      kind: row.kind as LinkKind,
+      from: row.from_id,
+      to: row.to_id,
+      relation: row.relation as LinkRelation,
+      holds: row.state === "confirmed" && row.shadow === 0 && (row.kind === "role" || this.inOneRole(row.from_id, row.to_id)),
+    };
   }
 
   private fact(id: string): FactItem {

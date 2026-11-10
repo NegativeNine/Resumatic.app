@@ -318,7 +318,8 @@ export interface NewLink {
   stamp: Stamp;
   /**
    * Confirm at once, without asking. Only a rule may, only for "same", and only where the record
-   * itself can see the two are identical: the same wording, or a role alike in every field.
+   * itself can see the two are identical: two facts of one kind with the same wording in one
+   * role, two skills or credentials that stand outside any role, or two roles alike in every field.
    */
   confirm?: boolean;
 }
@@ -328,6 +329,12 @@ export interface RecordLink extends Judgement {
   from: string;
   to: string;
   relation: LinkRelation;
+  /**
+   * True while the link is in effect: confirmed, not in shadow, and, between two facts, while
+   * both sit in one role. A confirmed link between facts stops holding when their roles are
+   * separated and holds again when they are rejoined.
+   */
+  holds: boolean;
 }
 
 /** Links kept on one fact or role, in either direction, whatever was decided about them. */

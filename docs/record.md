@@ -73,7 +73,7 @@ The record checks that the ID is in the taxonomy's own form. It cannot check tha
 
 `fuller` says one fact states everything another does and more. Both stay and neither stands for the other.
 
-- **Facts merge only inside one role.** Two facts can be linked where it shows only if they sit in the same role, in roles that were merged, or in no role. If the owner later separates the roles, the merges between their facts stop holding, and they hold again if the roles are rejoined. No row changes either time.
+- **Facts merge only inside one role.** Two facts can be linked where it shows only if they sit in the same role, in roles that were merged, or in no role. If the owner later separates the roles, the merges between their facts stop holding, and they hold again if the roles are rejoined. No row changes either time; each link says whether it holds.
 - **One at a time.** A fact or role is merged into one other at most, and never in a circle. Two items are joined one way at a time. The owner's own choice replaces an offer nobody had decided; nothing else replaces anything.
 - A fact or role holds at most 128 links.
 
@@ -81,7 +81,7 @@ The record checks that the ID is in the taxonomy's own form. It cannot check tha
 
 One judgement can be confirmed by a rule instead of the owner, and the record checks the grounds itself before it stores it:
 
-- **Two facts** of the same kind, in one role, whose wording is identical once presentation is removed: list markers, paired Markdown marks, runs of spaces, the shape of quotation marks, and one full stop at the very end. Case, numbers, dates, and every other mark must match.
+- **Two facts** of the same kind, in one role, whose wording is identical once presentation is removed: list markers, paired Markdown marks, runs of spaces, the shape of quotation marks, and one full stop at the very end. Case, numbers, dates, and every other mark must match. Outside any role this applies to skills and credentials only: an accomplishment that was read without a job has no role that was found to be the same one, so it is offered instead.
 - **Two roles** alike in every field that names a role: the same kind, organisation and title, the same known start, and the same end or none in both. A missing title, an unknown date, or a date written more exactly in one than the other is not enough.
 
 Anything else a rule or a model finds is stored as an offer. The owner can separate a merge made this way, and the rule will not make it again.

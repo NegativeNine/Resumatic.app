@@ -160,6 +160,12 @@ describe("how a line divides", () => {
     expect(again.partIds).toEqual([first.partIds[3], first.partIds[2], first.partIds[0], first.partIds[1]]);
     expect(count("fact_splits")).toBe(1);
     expect(count("fact_parts")).toBe(4);
+    // Still one proposal, stamped by what proposed it last.
+    expect(record.split("f1")).toMatchObject({ id: first.splitId, state: "proposed", method: "judge/2" });
+    // Once decided, the stamp is what the owner decided about.
+    record.decideSplit(first.splitId, "confirmed");
+    record.proposeSplit({ factId: "f1", line: LINE, parts: DIVISION, stamp: { ...model, method: "judge/3" } });
+    expect(record.split("f1")).toMatchObject({ state: "confirmed", method: "judge/2" });
   });
 
   it("replaces a division nobody has decided, with everything tagged on it", () => {
@@ -365,6 +371,26 @@ describe("merging what says the same thing", () => {
     expect(count("record_links", "kind = 'fact'")).toBe(2);
   });
 
+  it("never merges unasked an accomplishment that stands outside any role", () => {
+    const { record, fact } = vault();
+    // Read twice with no job found for either: nothing says they are from the same one.
+    fact("loose-1", LINE, { role: null });
+    fact("loose-2", LINE, { role: null, source: "upload-2" });
+    expect(refusal(() => record.proposeLink({ kind: "fact", from: "loose-2", to: "loose-1", relation: "same", stamp: rule, confirm: true }))).toBe("invalid");
+    expect(record.proposeLink({ kind: "fact", from: "loose-2", to: "loose-1", relation: "same", stamp: rule }).state).toBe("proposed");
+    expect(record.root("fact", "loose-2")).toBe("loose-2");
+    // A skill or a credential is the same item wherever it is listed.
+    for (const kind of ["skill", "credential"]) {
+      fact(`${kind}-1`, "Kubernetes", { role: null, kind });
+      fact(`${kind}-2`, "Kubernetes", { role: null, kind, source: "upload-2" });
+      expect(record.proposeLink({ kind: "fact", from: `${kind}-2`, to: `${kind}-1`, relation: "same", stamp: rule, confirm: true }).state, kind).toBe("confirmed");
+    }
+    // But a skill is not a credential, and a fact in a role is not one outside it.
+    expect(refusal(() => record.proposeLink({ kind: "fact", from: "skill-1", to: "credential-1", relation: "same", stamp: rule, confirm: true }))).toBe("invalid");
+    fact("placed", "Kubernetes", { kind: "skill" });
+    expect(refusal(() => record.proposeLink({ kind: "fact", from: "placed", to: "skill-1", relation: "same", stamp: rule, confirm: true }))).toBe("conflict");
+  });
+
   it("merges nothing: both rows and both quotes stay as they were", () => {
     const { record, db } = twice();
     const before = JSON.stringify(db.prepare(`SELECT * FROM facts ORDER BY id`).all().concat(db.prepare(`SELECT * FROM evidence ORDER BY id`).all(), db.prepare(`SELECT * FROM roles ORDER BY id`).all()));
@@ -396,15 +422,20 @@ describe("merging what says the same thing", () => {
     const roles = record.proposeLink({ kind: "role", from: "r2", to: "r1", relation: "same", stamp: { ...rule, method: "identical-role/1" }, confirm: true });
     record.proposeLink({ kind: "fact", from: "f2", to: "f1", relation: "same", stamp: rule, confirm: true });
     expect(record.merged("fact", "f1")).toEqual(["f2"]);
+    expect(record.links("fact", "f1")).toMatchObject([{ state: "confirmed", holds: true }]);
     // The owner says these were two different jobs.
     record.decideLink(roles.linkId, "rejected");
     expect(record.root("role", "r2")).toBe("r2");
     expect(record.root("fact", "f2")).toBe("f2");
     expect(record.merged("fact", "f1")).toEqual([]);
     expect(record.evidenceOf("f1")).toHaveLength(1);
+    // The link between the facts is as it was stored. It says of itself that it no longer holds.
+    expect(record.links("fact", "f1")).toMatchObject([{ state: "confirmed", decidedBy: "rule", holds: false }]);
+    expect(record.links("role", "r1")).toMatchObject([{ state: "rejected", holds: false }]);
     record.decideLink(roles.linkId, "confirmed");
     expect(record.root("fact", "f2")).toBe("f1");
     expect(record.evidenceOf("f1")).toHaveLength(2);
+    expect(record.links("fact", "f1")).toMatchObject([{ state: "confirmed", holds: true }]);
     expect(record.links("role", "r1")).toMatchObject([{ state: "confirmed", proposedBy: "rule", decidedBy: "owner" }]);
   });
 
@@ -433,6 +464,7 @@ describe("merging what says the same thing", () => {
     expect(offered.state).toBe("proposed");
     // An offer changes nothing until it is accepted.
     expect(record.root("fact", "f2")).toBe("f2");
+    expect(record.links("fact", "f2")).toMatchObject([{ state: "proposed", holds: false }]);
     record.decideLink(offered.linkId, "confirmed");
     expect(record.root("fact", "f2")).toBe("f1");
     expect(record.links("fact", "f2")).toMatchObject([{ state: "confirmed", proposedBy: "model", decidedBy: "owner" }]);
@@ -532,7 +564,7 @@ describe("merging what says the same thing", () => {
     const hidden = record.proposeLink({ kind: "fact", from: "f2", to: "f1", relation: "same", stamp: shadow(rule) });
     expect(hidden.state).toBe("proposed");
     expect(record.links("fact", "f1")).toEqual([]);
-    expect(record.links("fact", "f1", { shadow: true })).toMatchObject([{ id: hidden.linkId, shadow: true }]);
+    expect(record.links("fact", "f1", { shadow: true })).toMatchObject([{ id: hidden.linkId, shadow: true, holds: false }]);
     expect(record.root("fact", "f2")).toBe("f2");
     expect(record.evidenceOf("f1")).toHaveLength(1);
     expect(refusal(() => record.decideLink(hidden.linkId, "confirmed"))).toBe("not_found");
@@ -690,7 +722,7 @@ describe("the export", () => {
       ["REST API", "proposed", true],
       ["design application interfaces", "rejected", false],
     ]);
-    expect(exported.recordLinks).toMatchObject([{ kind: "fact", from: "f2", to: "f1", relation: "same", state: "confirmed", decidedBy: "rule", method: "identical-wording/1" }]);
+    expect(exported.recordLinks).toMatchObject([{ kind: "fact", from: "f2", to: "f1", relation: "same", state: "confirmed", decidedBy: "rule", method: "identical-wording/1", holds: true }]);
     // Plain data: it goes into the export file as it is.
     expect(JSON.parse(JSON.stringify(exported))).toEqual(exported);
   });
