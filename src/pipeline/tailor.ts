@@ -88,7 +88,7 @@ export async function selectFacts(
     const role = fact.kind === "skill" ? "skill" : fact.roleId === null ? "loose" : (roleKeys.get(fact.roleId) ?? fact.roleId);
     return JSON.stringify([role, fact.kind, cleanExtractedText(fact.text), fact.level]);
   };
-  const queries = await models.embed(analysis.requirements);
+  const queries = await models.embed(analysis.requirements, { purpose: "query" });
   // Fetch extra neighbors so repeated uploads do not fill the entire candidate window.
   const candidates = await search(queries, TAILOR.perRequirement * 4);
 

@@ -182,6 +182,9 @@
         "MODEL_ANALYZE": "meta/muse-ember-1.0",
         "MODEL_WRITE": "meta/muse-ember-1.0",
         "MODEL_JUDGE": "@cf/cloudflare/clef",
+        // Desired rebuild target; each vault retains its active model until activation.
+        "EMBEDDING_MODEL": "@cf/qwen/qwen3-embedding-0.6b",
+        "RERANK_MODEL": "@cf/cloudflare/clef",
         "ACCESS_TEAM_DOMAIN": "",
         "ACCESS_AUD": "",
       },

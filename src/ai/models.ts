@@ -51,7 +51,7 @@ export interface Models {
     referenceDate: string,
   ): Promise<FieldResult>;
   transcribePages?(input: TranscriptionInput): Promise<{ markdown: string }>;
-  embed(texts: string[], opts?: { model?: string }): Promise<number[][]>;
+  embed(texts: string[], opts?: { model?: string; purpose?: "query" | "document" }): Promise<number[][]>;
   /** Relevance scores for texts against the query, in the same order as texts. */
   rerank(query: string, texts: string[]): Promise<number[]>;
   toMarkdown(name: string, blob: Blob): Promise<string>;

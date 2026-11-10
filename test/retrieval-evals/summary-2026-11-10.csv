@@ -1,0 +1,6 @@
+task,variant,positive_queries,best_match_first,ndcg_at_8,median_ms,latency_unit,false_coverage_at_current_cutoff,gap_queries
+embedding,bge-m3,16,0.875,0.9378081997488299,720.4215560000002,batch of 20 queries,1,4
+embedding,qwen-drop-in,16,0.875,0.9380624822237587,1799.7612559999998,batch of 20 queries,4,4
+embedding,qwen-task-aware,16,0.8125,0.9173249138208537,1540.0928749999985,batch of 20 queries,0,4
+reranking,bge-reranker-base,16,0.8125,0.9156273348251276,386.64378799998667,one query / 12 candidates,,
+reranking,clef-relevance,16,1,0.9962151343482695,1658.9387389999974,one query / 12 candidates,,
