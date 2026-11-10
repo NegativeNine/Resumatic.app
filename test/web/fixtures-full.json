@@ -185,7 +185,8 @@
       "resumeCount": 1,
       "available": true,
       "label": "Dana Okafor",
-      "lastReadAt": 1794051720000
+      "lastReadAt": 1794051720000,
+      "documentCount": 1
     },
     {
       "id": "sh-2",
@@ -196,7 +197,8 @@
       "factCount": 3,
       "resumeCount": 0,
       "label": null,
-      "lastReadAt": null
+      "lastReadAt": null,
+      "documentCount": 0
     },
     {
       "id": "sh-3",
@@ -207,7 +209,8 @@
       "factCount": 12,
       "resumeCount": 2,
       "label": null,
-      "lastReadAt": 1793623320000
+      "lastReadAt": 1793623320000,
+      "documentCount": 0
     }
   ],
   "mcpGrants": [

@@ -78,7 +78,7 @@ describe("accessibility", () => {
     expect(await violations()).toEqual([]);
     // The form for a new link: what to share, who it’s for and what the copy should say.
     await userEvent.click(screen.getByRole("button", { name: "Choose what to share" }));
-    await screen.findByRole("checkbox", { name: "Say which job each resume is for" });
+    await screen.findByRole("checkbox", { name: "Say which job each resume and document is for" });
     expect(await violations()).toEqual([]);
   });
 
@@ -92,8 +92,15 @@ describe("accessibility", () => {
     view.snapshot.schemaVersion = 2;
     view.snapshot.owner = { name: "Sam Rivera" };
     view.snapshot.resumes[0]!.job = { title: "Platform Engineer", company: "Litware" };
+    // And with a cover letter and interview preparation beside the resume.
+    view.snapshot.schemaVersion = 3;
+    view.snapshot.documents = [
+      { id: "doc-letter", version: 1, kind: "letter", paragraphs: ["Led the migration of 40 services from Heroku to Kubernetes."], questions: [], job: { title: "Platform Engineer", company: "Litware" } },
+      { id: "doc-prep", version: 1, kind: "prep", paragraphs: [], questions: [{ question: "How would you discuss your experience relevant to Terraform?", points: [] }], job: null },
+    ];
     render(<ShareSnapshotContent view={view} />);
     expect(screen.getByText("Tailored for Platform Engineer at Litware")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Interview preparation" })).toBeInTheDocument();
     expect(await violations()).toEqual([]);
   });
 

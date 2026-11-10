@@ -242,7 +242,7 @@ describe("share details in an existing vault", () => {
       // Rewind this vault to the schema before share details, as an older vault would be.
       removeShareDetailMigration(sql);
       const previous = MIGRATIONS.findIndex((migration) => migration.some((statement) => statement.includes("ALTER TABLE share_grants ADD COLUMN label")));
-      expect(previous).toBe(MIGRATIONS.length - 1);
+      expect(previous).toBeGreaterThan(-1);
       sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
       migrate(sql, <T>(fn: () => T) => state.storage.transactionSync(fn));
       expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(SCHEMA_VERSION));

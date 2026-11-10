@@ -74,6 +74,8 @@ import {
 import { vault as vaultStub } from "../shared/stubs";
 import { createSchema, hasSchema, migrate, SCHEMA_VERSION } from "./schema";
 import { assertGroundedResume, evidenceForFacts, evidenceForRoles, SnapshotStore, type ResumeVersion } from "./snapshots";
+import { canShareDocument, SHAREABLE_DOCUMENT_KINDS, type DocumentVersion } from "./document-shares";
+import type { ShareableDocument } from "../shared/sharing";
 import { mergeRefinementEvidence } from "./refinement-evidence";
 import { validateTailorCheckpoint, validateTailorPublication } from "./tailor-publication";
 import { finalLegacyEvidence, legacyReceipt, legacyReview } from "./legacy-remediation";
@@ -2857,8 +2859,10 @@ export class Vault extends DurableObject<Env> {
       label?: string;
       /** True puts the owner's name at the top of the copy. */
       showName?: boolean;
-      /** True says which job each shared resume was tailored for. */
+      /** True says which job each shared resume or document was made for. */
       showJobs?: boolean;
+      /** Finished cover letters and interview preparation. */
+      documents?: { id: string; version: number }[];
     },
   ) {
     // Capture the selected facts, roles and resume versions together with the
@@ -2874,30 +2878,71 @@ export class Vault extends DurableObject<Env> {
       const roles = this.readRoles();
       // The job a resume is for and the owner's name are left off unless the owner asks for them:
       // where someone is applying is theirs to tell, and a copy of facts alone names nobody.
+      // Named as the owner has the job now, which is how the list they chose from names it.
+      const jobOf = (applicationId: string) => {
+        if (selection.showJobs !== true) return null;
+        const job = this.sql
+          .exec<{ title: string | null; company: string | null }>(`SELECT title, company FROM applications WHERE id = ?`, applicationId)
+          .toArray()[0];
+        return job && (job.title || job.company) ? { title: job.title, company: job.company } : null;
+      };
       const jobs: Record<string, { title: string | null; company: string | null }> = {};
       const resumes = selection.resumes.map(({ id, version }) => {
         const row = this.resumeRow(id);
-        if (selection.showJobs === true) {
-          // Named as the owner has the job now, which is how the list they chose from names it.
-          const job = this.sql
-            .exec<{ title: string | null; company: string | null }>(`SELECT title, company FROM applications WHERE id = ?`, row.application_id)
-            .toArray()[0];
-          if (job && (job.title || job.company)) jobs[id] = { title: job.title, company: job.company };
-        }
+        const job = jobOf(row.application_id);
+        if (job) jobs[id] = job;
         return { id, ...this.resumeVersion(row, version) };
+      });
+      const documentJobs: Record<string, { title: string | null; company: string | null }> = {};
+      const documents = (selection.documents ?? []).map(({ id, version }) => {
+        const row = this.sql
+          .exec<{ kind: string; state: string; application_id: string; data: string | null }>(
+            `SELECT d.kind, d.state, d.application_id, v.data FROM documents d
+             LEFT JOIN document_versions v ON v.document_id = d.id AND v.version = ? WHERE d.id = ?`,
+            version, id,
+          )
+          .toArray()[0];
+        if (!row || row.state !== "ready" || !row.data)
+          throw new AppError("invalid", "select finished cover letters or interview preparation from your vault");
+        const job = jobOf(row.application_id);
+        if (job) documentJobs[id] = job;
+        return { id, version, kind: row.kind, data: JSON.parse(row.data) as DocumentVersion };
       });
       const name = selection.showName === true ? this.readProfile().name : "";
       return this.shares.create(
         who,
-        { facts, roles, resumes },
+        { facts, roles, resumes, documents },
         selection.expiresAt,
         undefined,
-        { label: selection.label ?? null, owner: name.trim() ? { name } : null, jobs },
+        { label: selection.label ?? null, owner: name.trim() ? { name } : null, jobs, documentJobs },
       );
     });
     await this.scheduleRunAlarm(grant.expiresAt);
     return grant;
   }
+  /**
+   * The person's finished cover letters and interview preparation, newest first, and whether each
+   * can go into a copy. One written before its evidence was kept cannot, and has to be written again.
+   */
+  async listShareableDocuments(who: Who): Promise<ShareableDocument[]> {
+    this.requireOwner(who);
+    return this.sql
+      .exec<{ id: string; kind: string; application_id: string; version: number; created_at: number; data: string | null }>(
+        `SELECT d.id, d.kind, d.application_id, d.version, d.created_at, v.data FROM documents d
+         LEFT JOIN document_versions v ON v.document_id = d.id AND v.version = d.version
+         WHERE d.state = 'ready' AND d.kind IN ('letter', 'prep') ORDER BY d.created_at DESC, d.id LIMIT 100`,
+      )
+      .toArray()
+      .map((row) => ({
+        id: row.id,
+        kind: row.kind as ShareableDocument["kind"],
+        applicationId: row.application_id,
+        version: row.version,
+        createdAt: row.created_at,
+        shareable: canShareDocument(row.id, row.version, row.kind, row.data ? (JSON.parse(row.data) as DocumentVersion) : null),
+      }));
+  }
+
   async listShares(who: Who) {
     return this.shares.list(who);
   }
@@ -3351,10 +3396,21 @@ export class Vault extends DurableObject<Env> {
             );
           }
         }
+        // A letter or preparation keeps the full record of each fact it was written from, as a
+        // resume does, so its sentences can be checked again before it is shared. A run whose
+        // captured facts are incomplete still finishes: the document just can't be shared.
+        let evidence: Record<string, FactRecord> | undefined;
+        if ((SHAREABLE_DOCUMENT_KINDS as readonly string[]).includes(options.kind)) {
+          try {
+            evidence = evidenceForFacts(capturedFacts);
+          } catch {
+            evidence = undefined;
+          }
+        }
         this.sql.exec(
           `INSERT INTO document_versions (document_id, version, data, created_at) VALUES (?, 1, ?, ?)`,
           runId,
-          JSON.stringify({ result, facts, profile: input.profile }),
+          JSON.stringify({ result, facts, profile: input.profile, ...(evidence ? { evidence } : {}) }),
           Date.now(),
         );
         this.sql.exec(

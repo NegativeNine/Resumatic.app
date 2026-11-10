@@ -104,15 +104,15 @@ function Privacy() {
       </Section>
       <Section title="Sharing a copy">
         <p>
-          You can share facts and resume versions you choose with someone, such as a coach, by making a link. Anyone
-          who has the link can read that copy, without an account, until it expires or you revoke it. A link lasts
-          seven days at most.
+          You can share facts, resume versions, cover letters and interview preparation you choose with someone,
+          such as a coach, by making a link. Anyone who has the link can read that copy, without an account, until
+          it expires or you revoke it. A link lasts seven days at most.
         </p>
         <ul>
           <li>The copy is fixed when you make it. Later changes to your facts and resumes don’t reach it.</li>
           <li>
             It includes the contact details printed on any resume you choose. It shows your name at the top, or the
-            job a resume was tailored for, only if you choose that.
+            job a resume or document was made for, only if you choose that.
           </li>
           <li>
             Revoking a link removes the copy from our systems at once. It cannot take back what someone has already

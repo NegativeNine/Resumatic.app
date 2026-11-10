@@ -20,7 +20,7 @@ import type {
 } from "../shared/api";
 import type { DocumentView, NewDocument } from "../shared/documents";
 import type { PostingRead } from "../shared/postings";
-import type { ShareGrant } from "../shared/sharing";
+import type { ShareableDocument, ShareGrant } from "../shared/sharing";
 
 export interface BillingView {
   enabled: boolean;
@@ -325,15 +325,18 @@ export const api = {
   cancelCheckout: () => request<void>("POST", "/api/billing/checkout/cancel"),
   billingPortal: () => request<{ url: string }>("POST", "/api/billing/portal"),
   shares: () => request<{ grants: ShareGrant[] }>("GET", "/api/shares"),
+  /** Finished cover letters and interview preparation, and whether each can be shared. */
+  shareableDocuments: () => request<{ documents: ShareableDocument[] }>("GET", "/api/documents"),
   createShare: (selection: {
     factIds: string[];
     resumes: { id: string; version: number }[];
+    documents?: { id: string; version: number }[];
     expiresAt?: number;
     /** The owner's own note of who the link is for. The reader never sees it. */
     label?: string;
     /** True puts the owner's name at the top of the copy. */
     showName?: boolean;
-    /** True says which job each shared resume was tailored for. */
+    /** True says which job each shared resume or document was made for. */
     showJobs?: boolean;
   }) =>
     request<{ grant: ShareGrant; url: string }>(

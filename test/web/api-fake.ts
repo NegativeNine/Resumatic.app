@@ -26,6 +26,9 @@ export class FakeApi {
 
   constructor(readonly state: Fixtures) {}
 
+  /** Documents written before their evidence was kept, which can't go into a copy. */
+  readonly unshareable = new Set<string>();
+
   /** What reading each link comes to. A link that isn't here can't be reached. */
   readonly pages = new Map<string, PostingRead>();
 
@@ -75,13 +78,23 @@ export class FakeApi {
     ["GET", /^\/api\/billing$/, () => ok(this.state.billing ?? { enabled: false, plans: [], current: null })],
     ["GET", /^\/api\/shares$/, () => ok({ grants: this.state.shares ?? [] })],
     [
+      "GET",
+      /^\/api\/documents$/,
+      () =>
+        ok({
+          documents: (this.state.documents ?? [])
+            .filter((doc) => doc.state === "ready" && (doc.kind === "letter" || doc.kind === "prep"))
+            .map((doc) => ({ id: doc.id, kind: doc.kind, applicationId: doc.applicationId, version: doc.version, createdAt: doc.createdAt, shareable: !this.unshareable.has(doc.id) })),
+        }),
+    ],
+    [
       "POST",
       /^\/api\/shares$/,
       (call) => {
-        const { factIds, resumes, expiresAt, label } = call.body as { factIds: string[]; resumes: unknown[]; expiresAt: number; label?: string };
+        const { factIds, resumes, documents, expiresAt, label } = call.body as { factIds: string[]; resumes: unknown[]; documents?: unknown[]; expiresAt: number; label?: string };
         const grant = {
           id: this.id("share"), epoch: "e", createdAt: Date.now(), expiresAt, revokedAt: null,
-          factCount: factIds.length, resumeCount: resumes.length, available: true, label: label ?? null, lastReadAt: null,
+          factCount: factIds.length, resumeCount: resumes.length, documentCount: documents?.length ?? 0, available: true, label: label ?? null, lastReadAt: null,
         };
         (this.state.shares ??= []).unshift(grant);
         return { status: 201, body: { grant, url: `https://resumatic.test/share#synthetic-${grant.id}` } };

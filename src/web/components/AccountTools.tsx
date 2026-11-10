@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { MAX_SHARE_LABEL_CHARS, type ShareGrant } from "../../shared/sharing";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { count, formatDate, formatDateTime } from "../format";
 import { useAction, useResource } from "../hooks";
 import { useSession } from "../session";
@@ -164,9 +164,9 @@ export function CoachSharingTools() {
     <section className="card" aria-labelledby={`${id}-title`}>
       <h2 id={`${id}-title`}>Share with a coach</h2>
       <p className="card-text">
-        Choose confirmed facts and saved resume versions to share as a fixed copy. Anyone with the link can
-        read that copy, including the contact details on the resumes you choose. Later changes to your facts
-        don’t change it.
+        Choose confirmed facts, saved resume versions, cover letters and interview preparation to share as a
+        fixed copy. Anyone with the link can read that copy, including the contact details on the resumes you
+        choose. Later changes to your facts don’t change it.
       </p>
       <button
         type="button"
@@ -303,14 +303,19 @@ export function CoachSharingTools() {
   );
 }
 
-/** "2 facts and 1 resume version", leaving out whichever the copy doesn't hold. */
+/** "2 facts, 1 resume version and 1 document", leaving out whatever the copy doesn't hold. */
 function shareContents(grant: ShareGrant): string {
+  const documents = grant.documentCount ?? 0;
   const parts = [
     grant.factCount > 0 ? count(grant.factCount, "fact") : "",
     grant.resumeCount > 0 ? count(grant.resumeCount, "resume version") : "",
+    documents > 0 ? count(documents, "document") : "",
   ].filter(Boolean);
-  return parts.length ? parts.join(" and ") : "Empty copy";
+  if (parts.length === 0) return "Empty copy";
+  return parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)!}`;
 }
+
+const DOCUMENT_NAMES = { letter: "Cover letter", prep: "Interview preparation" } as const;
 
 /**
  * When the copy was last opened. A reply without the reading (from a server that doesn't record it)
@@ -328,11 +333,22 @@ function ShareSelection({
   onCreated: (value: { grant: ShareGrant; url: string }) => Promise<void>;
 }) {
   const choices = useResource(async () => {
-    const [facts, applications, roles] = await Promise.all([
+    const [facts, applications, roles, documents] = await Promise.all([
       api.facts("confirmed"),
       api.applications(),
       api.roles(),
+      // A server from before documents could be shared has no such list, and so none to offer.
+      api.shareableDocuments().catch((error: unknown) => {
+        if (error instanceof ApiError && error.status === 404) return { documents: [] };
+        throw error;
+      }),
     ]);
+    const jobName = new Map(
+      applications.applications.map((application) => [
+        application.id,
+        [application.title, application.company].filter(Boolean).join(" at ") || application.excerpt,
+      ]),
+    );
     const confirmedRoles = new Set(
       roles.roles
         .filter((role) => role.state === "confirmed")
@@ -355,20 +371,35 @@ function ShareSelection({
             })),
         )
         .sort((a, b) => b.createdAt - a.createdAt),
+      documents: documents.documents.map((document) => ({
+        ...document,
+        title: `${DOCUMENT_NAMES[document.kind]} for ${jobName.get(document.applicationId) ?? "a job"}`,
+      })),
     };
   });
   const [factIds, setFactIds] = useState(new Set<string>());
   const [resumes, setResumes] = useState(new Map<string, number>());
+  /** Chosen documents, each with the version that was listed. */
+  const [documents, setDocuments] = useState(new Map<string, number>());
   const [days, setDays] = useState(7);
   const [label, setLabel] = useState("");
   const [showName, setShowName] = useState(true);
   const [showJobs, setShowJobs] = useState(false);
   const action = useAction();
   const id = useId();
+  /** How many chosen things were made for a job, and so could say which. */
+  const forJobs = resumes.size + documents.size;
   function toggleFact(factId: string) {
     setFactIds((before) => {
       const next = new Set(before);
       if (!next.delete(factId)) next.add(factId);
+      return next;
+    });
+  }
+  function toggleDocument(documentId: string, version: number) {
+    setDocuments((before) => {
+      const next = new Map(before);
+      if (!next.delete(documentId)) next.set(documentId, version);
       return next;
     });
   }
@@ -401,10 +432,11 @@ function ShareSelection({
               id: resumeId,
               version,
             })),
+            ...(documents.size > 0 ? { documents: [...documents].map(([documentId, version]) => ({ id: documentId, version })) } : {}),
             expiresAt: Date.now() + days * 24 * 60 * 60 * 1000,
             ...(label.trim() ? { label: label.trim() } : {}),
             showName,
-            showJobs: showJobs && resumes.size > 0,
+            showJobs: showJobs && forJobs > 0,
           });
           await onCreated(created);
         });
@@ -487,6 +519,42 @@ function ShareSelection({
               </ul>
             )}
           </fieldset>
+          <fieldset>
+            <legend>
+              Cover letters and interview preparation ({documents.size} selected, up to 20)
+            </legend>
+            {choices.data.documents.length === 0 ? (
+              <p className="rs-meta">You have no finished cover letters or interview preparation yet.</p>
+            ) : (
+              <ul className="plain-list selection-list">
+                {choices.data.documents.map((document) => (
+                  <li key={document.id}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={documents.has(document.id)}
+                        disabled={
+                          action.pending ||
+                          !document.shareable ||
+                          (!documents.has(document.id) && documents.size >= 20)
+                        }
+                        onChange={() => toggleDocument(document.id, document.version)}
+                      />
+                      <span>
+                        {document.title}
+                        <span className="meta">
+                          {", "}
+                          {formatDateTime(document.createdAt)}
+                          {/* Its sentences can't be checked again, so it can't go into a copy. */}
+                          {!document.shareable && ". Written before documents could be shared. Write a new one to share it."}
+                        </span>
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </fieldset>
           <Field
             id={`${id}-label`}
             label="Who it’s for"
@@ -520,17 +588,17 @@ function ShareSelection({
           <label className="app-share-name">
             <input
               type="checkbox"
-              checked={showJobs && resumes.size > 0}
-              disabled={action.pending || resumes.size === 0}
+              checked={showJobs && forJobs > 0}
+              disabled={action.pending || forJobs === 0}
               onChange={(event) => setShowJobs(event.target.checked)}
               aria-describedby={`${id}-jobs-hint`}
             />
-            <span>Say which job each resume is for</span>
+            <span>Say which job each resume and document is for</span>
           </label>
           <p className="rs-hint" id={`${id}-jobs-hint`}>
-            {resumes.size === 0
-              ? "Choose a resume first. Each one can show the job title and company it was tailored for."
-              : "Shows the job title and company beside each resume. Leave it off to keep where you’re applying to yourself."}
+            {forJobs === 0
+              ? "Choose a resume or a document first. Each one can show the job title and company it was made for."
+              : "Shows the job title and company beside each resume and document. Leave it off to keep where you’re applying to yourself."}
           </p>
           <Field id={`${id}-expiry`} label="Link expires after">
             <select
@@ -547,7 +615,7 @@ function ShareSelection({
             <button
               type="submit"
               className="primary"
-              disabled={action.pending || factIds.size + resumes.size === 0}
+              disabled={action.pending || factIds.size + resumes.size + documents.size === 0}
             >
               {action.pending ? "Preparing…" : "Create share link"}
             </button>

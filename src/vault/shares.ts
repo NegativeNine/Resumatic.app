@@ -13,11 +13,13 @@ import {
   type ShareSnapshot,
 } from "../shared/sharing";
 import type { RenderData, Who } from "../shared/types";
+import { sharedDocument, type DocumentVersion } from "./document-shares";
 import { assertGroundedResume, type ResumeVersion } from "./snapshots";
 
 export { SHARE_READ_INTERVAL_MS, SHARE_TTL_MS };
 export const MAX_SHARE_FACTS = 100;
 export const MAX_SHARE_RESUMES = 20;
+export const MAX_SHARE_DOCUMENTS = 20;
 export const MAX_SHARE_BYTES = 1024 * 1024;
 export const SHARE_MIGRATIONS: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS share_grants (
@@ -34,6 +36,11 @@ export const SHARE_DETAIL_MIGRATIONS: readonly string[] = [
   `ALTER TABLE share_grants ADD COLUMN last_read_at INTEGER`,
 ];
 
+/** How many cover letters and interview preparations a copy holds. */
+export const SHARE_DOCUMENT_MIGRATIONS: readonly string[] = [
+  `ALTER TABLE share_grants ADD COLUMN document_count INTEGER NOT NULL DEFAULT 0`,
+];
+
 /** What a version 2 copy adds to the selection: none of it changes what the facts or resumes say. */
 export interface ShareDetails {
   label?: string | null;
@@ -41,6 +48,8 @@ export interface ShareDetails {
   owner?: { name: string } | null;
   /** Each shared resume's job, by resume ID. */
   jobs?: Readonly<Record<string, SharedJob>>;
+  /** Each shared document's job, by document ID. */
+  documentJobs?: Readonly<Record<string, SharedJob>>;
 }
 
 export interface ShareSelection {
@@ -54,6 +63,8 @@ export interface ShareSelection {
     evidence?: ResumeVersion["evidence"];
     roleEvidence?: ResumeVersion["roleEvidence"];
   }[];
+  /** Finished cover letters and interview preparation, each with its saved version as stored. */
+  documents?: { id: string; kind: string; version: number; data: DocumentVersion | null }[];
 }
 
 function roleSnapshot(
@@ -79,7 +90,7 @@ export function snapshotSelection(
   now = Date.now(),
 ): ShareSnapshot {
   if (!selection.facts.length && !selection.resumes.length)
-    throw new AppError("invalid", "select at least one fact or resume");
+    throw new AppError("invalid", "select at least one fact, resume or document");
   if (
     selection.facts.length > MAX_SHARE_FACTS ||
     selection.resumes.length > MAX_SHARE_RESUMES
@@ -203,6 +214,7 @@ interface GrantRow extends Record<string, SqlStorageValue> {
   snapshot: string | null;
   label: string | null;
   last_read_at: number | null;
+  document_count: number | null;
 }
 const grantView = (row: GrantRow): ShareGrant => ({
   id: row.id,
@@ -214,6 +226,7 @@ const grantView = (row: GrantRow): ShareGrant => ({
   resumeCount: row.resume_count,
   label: row.label ?? null,
   lastReadAt: row.last_read_at ?? null,
+  documentCount: row.document_count ?? 0,
 });
 
 export class ShareStore {
@@ -255,19 +268,30 @@ export class ShareStore {
         "quota",
         "revoke an existing share before creating another",
       );
-    const core = snapshotSelection(selection, now);
-    // The name and the jobs are added around the checked selection, so what a fact or a resume
-    // says is still exactly what read() rebuilds and compares.
+    const chosen = selection.documents ?? [];
+    if (chosen.length > MAX_SHARE_DOCUMENTS)
+      throw new AppError("too_large", "too many items selected for sharing");
+    if (new Set(chosen.map((document) => document.id)).size !== chosen.length)
+      throw new AppError("invalid", "duplicate share selection");
+    // Each document passes the same gate when the copy is made as it will each time the copy is read.
+    const documents = chosen.map((document) => sharedDocument(document.id, document.version, document.kind, document.data));
+    // A copy can be documents alone. The facts and resumes are checked as they always were.
+    const core: ShareSnapshot = selection.facts.length || selection.resumes.length || !documents.length
+      ? snapshotSelection(selection, now)
+      : { schemaVersion: 1, createdAt: now, facts: [], resumes: [] };
+    // The name and the jobs are added around the checked selection, so what a fact, a resume or a
+    // document says is still exactly what read() rebuilds and compares.
     const owner = details.owner?.name.trim() ? { name: details.owner.name.trim().slice(0, 200) } : null;
+    const named = (job: SharedJob | undefined) => (job ? { title: job.title, company: job.company } : null);
     const snapshot: ShareSnapshot = {
-      schemaVersion: 2,
+      schemaVersion: documents.length ? 3 : 2,
       createdAt: core.createdAt,
       owner,
       facts: core.facts,
-      resumes: core.resumes.map((resume) => {
-        const job = details.jobs?.[resume.id];
-        return { ...resume, job: job ? { title: job.title, company: job.company } : null };
-      }),
+      resumes: core.resumes.map((resume) => ({ ...resume, job: named(details.jobs?.[resume.id]) })),
+      ...(documents.length
+        ? { documents: documents.map((document) => ({ ...document, job: named(details.documentJobs?.[document.id]) })) }
+        : {}),
     };
     if (new TextEncoder().encode(JSON.stringify(snapshot)).byteLength > MAX_SHARE_BYTES)
       throw new AppError("too_large", "share snapshot is too large");
@@ -279,11 +303,12 @@ export class ShareStore {
       revokedAt: null,
       factCount: snapshot.facts.length,
       resumeCount: snapshot.resumes.length,
+      documentCount: documents.length,
       label,
       lastReadAt: null,
     };
     this.sql.exec(
-      `INSERT INTO share_grants (id, epoch, created_at, expires_at, revoked_at, fact_count, resume_count, snapshot, label) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+      `INSERT INTO share_grants (id, epoch, created_at, expires_at, revoked_at, fact_count, resume_count, snapshot, label, document_count) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
       grant.id,
       grant.epoch,
       now,
@@ -292,6 +317,7 @@ export class ShareStore {
       grant.resumeCount,
       JSON.stringify(snapshot),
       label,
+      documents.length,
     );
     return grant;
   }
@@ -300,7 +326,7 @@ export class ShareStore {
     this.auth.authorizeOwner(who);
     return this.sql
       .exec<GrantRow>(
-        `SELECT id, epoch, created_at, expires_at, revoked_at, fact_count, resume_count, label, last_read_at FROM share_grants ORDER BY created_at DESC LIMIT 200`,
+        `SELECT id, epoch, created_at, expires_at, revoked_at, fact_count, resume_count, label, last_read_at, document_count FROM share_grants ORDER BY created_at DESC LIMIT 200`,
       )
       .toArray()
       .map((row) => {
@@ -359,7 +385,12 @@ export class ShareStore {
     let snapshot: ShareSnapshot;
     try {
       snapshot = JSON.parse(row.snapshot) as ShareSnapshot;
-      if ((snapshot.schemaVersion !== 1 && snapshot.schemaVersion !== 2) || !Array.isArray(snapshot.resumes) || !Array.isArray(snapshot.facts)) throw new Error();
+      if (![1, 2, 3].includes(snapshot.schemaVersion) || !Array.isArray(snapshot.resumes) || !Array.isArray(snapshot.facts)) throw new Error();
+      // Only a version 3 copy holds documents, and it always holds at least one.
+      const documents = snapshot.documents;
+      if (snapshot.schemaVersion === 3
+        ? !Array.isArray(documents) || documents.length === 0 || documents.length > MAX_SHARE_DOCUMENTS
+        : documents !== undefined) throw new Error();
       // Prior grants are immutable copies without citations. Reconstruct each
       // shared resume from its immutable version and require an exact match;
       // this also prevents detached historical edits from reaching a coach.
@@ -376,7 +407,20 @@ export class ShareStore {
         if (snapshot.schemaVersion === 1 ? job !== undefined : !validJob(job)) throw new Error();
         if (JSON.stringify(expected) !== JSON.stringify(core)) throw new Error();
       }
-      if (snapshot.schemaVersion === 2) {
+      // Each shared document is rebuilt from its saved version through the same gate as when the
+      // copy was made, and has to come out exactly as it was stored.
+      for (const shared of documents ?? []) {
+        const saved = this.sql.exec<{ kind: string; data: string }>(
+          `SELECT d.kind, v.data FROM documents d JOIN document_versions v ON v.document_id = d.id AND v.version = ? WHERE d.id = ? AND d.state = 'ready'`,
+          shared.version, shared.id,
+        ).toArray()[0];
+        if (!saved) throw new Error();
+        const expected = sharedDocument(shared.id, shared.version, saved.kind, JSON.parse(saved.data) as DocumentVersion);
+        const { job, ...core } = shared;
+        if (!validJob(job)) throw new Error();
+        if (JSON.stringify(expected) !== JSON.stringify(core)) throw new Error();
+      }
+      if (snapshot.schemaVersion !== 1) {
         const owner = snapshot.owner;
         if (owner !== null && (typeof owner?.name !== "string" || !owner.name || owner.name.length > 200)) throw new Error();
       }

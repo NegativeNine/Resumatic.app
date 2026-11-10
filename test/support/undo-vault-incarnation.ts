@@ -1,5 +1,11 @@
-/** Test-only helper to reconstruct a Vault schema before share labels and read times, the latest migration. */
+/** Test-only helper to reconstruct a Vault schema before copies counted their documents, the latest migration. */
+export function removeShareDocumentMigration(sql: SqlStorage): void {
+  sql.exec(`ALTER TABLE share_grants DROP COLUMN document_count`);
+}
+
+/** Test-only helper to reconstruct a Vault schema before share labels and read times, and so before every later migration. */
 export function removeShareDetailMigration(sql: SqlStorage): void {
+  removeShareDocumentMigration(sql);
   sql.exec(`ALTER TABLE share_grants DROP COLUMN label`);
   sql.exec(`ALTER TABLE share_grants DROP COLUMN last_read_at`);
 }

@@ -46,7 +46,7 @@ export interface ResumeVersion {
 }
 
 /** Metadata is usable for rebinding only when every verification-relevant field was captured. */
-function completeEvidence(value: FactRecord | undefined): value is FactRecord {
+export function completeEvidence(value: FactRecord | undefined): value is FactRecord {
   return !!value && typeof value.id === "string" && value.id.length > 0 &&
     Number.isSafeInteger(value.revision) && (value.revision ?? 0) > 0 &&
     (value.origin === "extracted" || value.origin === "user") &&
