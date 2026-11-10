@@ -12,6 +12,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Coach accounts and client list | #26 open | Review and merge; accounts do not include comments or wording suggestions |
 | Taxonomy builder and lookup | #28 open, based on #25 | Real combined build now passes locally after the crosswalk preamble fix; remote D1 loading and vector indexing remain |
 | Shared-copy title test | #29 open | Wait for the asynchronous title effect in the test |
+| The record: parts of a line, tags and links | #30 open, based on #28 | Nothing writes or reads it yet. It and #26 each add the vault's next migration: whichever merges second is rebased to come after the other, and the two branches are not deployed to one environment before then |
 
 An open PR or a local check is not a claim of production release acceptance. The [release status](seeker-release-status.md) records the broader acceptance work.
 
@@ -30,7 +31,7 @@ The last two were on the roadmap as Now from the start and do not depend on tagg
 The [pipeline design](taxonomy-pipelines-design.md) is agreed. The real-data build's [manifest](taxonomy-build-2026-11-10.json) is available, and the vault can hold parts, tags and links ([record.md](record.md)); no reading or tailoring pipeline uses either yet.
 
 1. Load the versioned taxonomy into staging and build its vector index.
-2. Add evidence, parts, tags and links without changing existing records. Written and tested; see "Open delivery work".
+2. Add evidence, parts, tags and links without changing existing records. In review as #30.
 3. Evaluate splitting, tagging and duplicate matching in shadow, using consented labelled examples.
 4. Add owner review of parts, tags and merge proposals.
 5. Add matching and coverage by concept, retaining evidence checks and similarity fallback.
