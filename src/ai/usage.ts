@@ -50,6 +50,8 @@ export async function modelAttempt<T>(
 /** USD per million tokens. Reviewed 2026-11-05; unknown models remain unpriced. */
 export const MODEL_PRICES: Readonly<Record<string, readonly [number, number]>> =
   {
+    "meta/muse-ember-1.0": [0.1, 0.5],
+    "@cf/cloudflare/clef": [0.24, 0],
     "@cf/openai/gpt-oss-120b": [0.35, 0.75],
     "@cf/openai/gpt-oss-20b": [0.2, 0.3],
     "@cf/meta/llama-3.3-70b-instruct-fp8-fast": [0.293, 2.253],

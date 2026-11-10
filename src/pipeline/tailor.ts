@@ -394,7 +394,9 @@ async function judge(
       .filter((f): f is FactRecord => !!f)
       .map((f) => ({ text: f.text, quote: f.quote })),
   }));
-  const out = await models.complete("judge", judgePrompt(items), JudgeOut);
+  const out = models.judge
+    ? await models.judge(items)
+    : await models.complete("judge", judgePrompt(items), JudgeOut);
   for (const v of out.verdicts) {
     const line = aliases.get(v.id.trim());
     if (line && result.has(line.id)) {

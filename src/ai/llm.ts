@@ -131,6 +131,7 @@ async function callOnce(
     : {
         model: cfg.model,
         messages,
+        ...(cfg.model === "meta/muse-ember-1.0" ? { reasoning_effort: "low" } : {}),
         ...(/^(?:anthropic\/claude-(?:haiku|sonnet)-(?:5\.5|5-5)|openai\/gpt-5(?:-\d{4}-\d{2}-\d{2})?)$/.test(
           cfg.model,
         )

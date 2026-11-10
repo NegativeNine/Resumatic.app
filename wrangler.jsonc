@@ -181,7 +181,7 @@
         "MODEL_EXTRACT": "anthropic/claude-haiku-5.5",
         "MODEL_ANALYZE": "anthropic/claude-haiku-5.5",
         "MODEL_WRITE": "anthropic/claude-sonnet-5.5",
-        "MODEL_JUDGE": "openai/gpt-5",
+        "MODEL_JUDGE": "@cf/cloudflare/clef",
         "ACCESS_TEAM_DOMAIN": "",
         "ACCESS_AUD": "",
       },

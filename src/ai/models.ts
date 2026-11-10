@@ -4,6 +4,8 @@ import { embedTexts, rerankTexts, toMarkdown } from "./vectors";
 import { extractFields, type FieldResult, type FieldSpec } from "./fields";
 import type { ModelObservers } from "./usage";
 import { transcribePages, type TranscriptionInput } from "./transcribe";
+import { CLEF_MODEL, decisionJudge } from "./decision-judge";
+import type { JudgeItem, JudgeOut } from "./prompts";
 export type { Usage } from "./usage";
 export type { ModelAttempt, ModelObservers } from "./usage";
 
@@ -35,6 +37,7 @@ export function modelFor(env: Env, route: Route): string {
 
 /** Everything the pipelines need from models. Tests and the eval runner supply their own. */
 export interface Models {
+  judge?(items: JudgeItem[]): Promise<z.infer<typeof JudgeOut>>;
   complete<T>(
     route: Route,
     messages: ChatMessage[],
@@ -64,6 +67,7 @@ export function setModels(factory: ((env: Env) => Models) | null): void {
 export function models(env: Env, opts: ModelObservers = {}): Models {
   if (override) return override(env);
   return {
+    ...(env.MODEL_JUDGE === CLEF_MODEL ? { judge: (items: JudgeItem[]) => decisionJudge(env, items, opts) } : {}),
     complete: (route, messages, schema, callOpts) =>
       chatComplete(
         {

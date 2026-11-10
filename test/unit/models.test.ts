@@ -27,6 +27,11 @@ function replies(...bodies: (string | Response)[]) {
 }
 
 describe("chatComplete", () => {
+  it("uses Muse Ember's Chat Completions contract with bounded reasoning", async () => {
+    const { fetcher, requests } = replies('{"answer":42}');
+    expect(await chatComplete({ ...cfg, model: "meta/muse-ember-1.0" }, [], Schema, fetcher)).toEqual({ answer: 42 });
+    expect(requests[0]!.body).toMatchObject({ model: "meta/muse-ember-1.0", reasoning_effort: "low", response_format: { type: "json_object" } });
+  });
   it.each([["extract", 180_000], ["analyze", 60_000]])(
     "allows %s its full request budget at the gateway and client",
     async (route, milliseconds) => {
