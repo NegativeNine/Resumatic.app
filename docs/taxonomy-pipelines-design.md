@@ -1,6 +1,6 @@
 # Pipelines around the taxonomy: design
 
-**Status: agreed by the owner on 10 November 2026, with the three starting rules under "Decided" below. Built so far: the taxonomy ([taxonomy.md](taxonomy.md)), the record ([record.md](record.md)), dividing lines in shadow ([splitting.md](splitting.md)) and noting identical copies in shadow ([merging.md](merging.md)). Both are switched on nowhere and neither has been measured. Nothing is shown to anyone and tailoring reads none of it. Each step still ships switched off and is measured before anyone is shown its results.**
+**Status: agreed by the owner on 10 November 2026, with the three starting rules under "Decided" below. Built so far: the taxonomy ([taxonomy.md](taxonomy.md)), the record ([record.md](record.md)), dividing lines in shadow ([splitting.md](splitting.md)), and noting identical copies and offers of the same fact in shadow ([merging.md](merging.md)). All are switched on nowhere, none has been run against the real models, and none has been measured. Nothing is shown to anyone and tailoring reads none of it. Each step still ships switched off and is measured before anyone is shown its results.**
 
 The aim, in the owner's words: rearchitect around the taxonomy; merge duplicates; and break a single-line experience into its constituent parts without inventing anything or changing its meaning.
 
@@ -137,7 +137,7 @@ Each step is a pull request, off by default, with its own tests. Steps 3 onward 
 | 3 | The record: evidence per fact, parts, tags, links. No behaviour change | Built: [record.md](record.md) |
 | 4 | Splitting, in shadow, with labelled examples in the extraction evals | 3. Built: [splitting.md](splitting.md). Not yet run against the real models or measured on real lines |
 | 5 | Tagging facts, roles and postings, in shadow | 2, 3 |
-| 6 | Merging roles and facts, in shadow, then offered in review | 3, 5. Built in part: identical roles and facts are found and noted in shadow ([merging.md](merging.md)). Offers of different wordings, which need the judge, are not |
+| 6 | Merging roles and facts, in shadow, then offered in review | 3, 5. Built in shadow: identical roles and facts are found by rule, and two wordings of one thing are put to the judge and kept as offers ([merging.md](merging.md)). Not yet run against the real judge or measured. Offering them in review waits for step 7 |
 | 7 | Review screens: parts under a line, tags, merge offers | 4 to 6 |
 | 8 | Tailoring by concept, coverage by concept, years per skill | 5 |
 
