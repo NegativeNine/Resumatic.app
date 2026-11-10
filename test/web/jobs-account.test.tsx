@@ -139,4 +139,21 @@ describe("the shared copy", () => {
     expect(document.querySelector(".rs-sheet h1")?.textContent).toBe("Sam Rivera");
     expect(screen.getByText(/A fixed copy, chosen by its owner on 6 Nov 2026\. This link works until 13 Nov 2026\./)).toBeInTheDocument();
   });
+
+  it("prints education under its own heading, with links and bullets as the PDF has them", () => {
+    const view = sharedView();
+    const resume = view.snapshot.resumes[0]!;
+    resume.sections.push({
+      id: "role-waterloo", kind: "education", org: "University of Waterloo", title: "BASc, Computer Engineering",
+      startDate: "2014-09", endDate: "2018-04", lines: [{ id: "e1", text: "• Graduated with distinction", verification: "verified" }],
+    });
+    render(<ShareSnapshotContent view={view} />);
+    const sheet = document.querySelector(".rs-sheet")!;
+    const headings = [...sheet.querySelectorAll("h2")].map((h) => h.textContent);
+    expect(headings).toEqual(["Experience", "Education", "Skills"]);
+    const education = [...sheet.querySelectorAll("section")].find((el) => el.querySelector("h2")?.textContent === "Education")!;
+    expect(within(education as HTMLElement).getByText("BASc, Computer Engineering, University of Waterloo")).toBeInTheDocument();
+    expect(within(education as HTMLElement).getByText("Graduated with distinction")).toBeInTheDocument();
+    expect(sheet.querySelector(".rs-sheet__contact")?.textContent).toContain("linkedin.com/in/samrivera");
+  });
 });

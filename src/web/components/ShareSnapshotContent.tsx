@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
-import { formatDate, formatDateRange } from "../format";
+import { formatDate } from "../format";
+import { presentResumeBullet } from "../../shared/resume-presentation";
+import { formatRoleDates } from "../../shared/sheet";
 import type { SharedLine, SharedResume, SharedView } from "../../shared/sharing";
 import { Lockup } from "./Lockup";
 import { Badge, Glyph } from "./ui";
@@ -61,10 +63,16 @@ export function ShareSnapshotContent({ view }: { view: SharedView }) {
 
 function SharedResumeSheet({ resume }: { resume: SharedResume }) {
   const check = RESUME_CHECK[resume.verification];
-  const contact = [resume.profile.email, resume.profile.phone, resume.profile.location].filter(Boolean);
-  const line = (value: SharedLine) => (
+  // The same order and grouping as the sheet model (src/shared/sheet.ts), so the copy reads as the PDF does:
+  // contact details with links, every role that isn't education under Experience, then Education.
+  const contact = [resume.profile.email, resume.profile.phone, resume.profile.location, ...resume.profile.links].filter(Boolean);
+  const groups = [
+    { heading: "Experience", roles: resume.sections.filter((section) => section.kind !== "education") },
+    { heading: "Education", roles: resume.sections.filter((section) => section.kind === "education") },
+  ].filter((group) => group.roles.length > 0);
+  const line = (value: SharedLine, bullet = false) => (
     <>
-      {value.text}
+      {bullet ? presentResumeBullet(value.text) : value.text}
       {value.verification !== "verified" && (
         <small className="app-share__flag">
           {" "}
@@ -89,11 +97,11 @@ function SharedResumeSheet({ resume }: { resume: SharedResume }) {
           {resume.profile.name && <h1>{resume.profile.name}</h1>}
           {contact.length > 0 && <p className="rs-sheet__contact">{contact.join(" · ")}</p>}
           {resume.summary && <p className="rs-sheet__summary">{line(resume.summary)}</p>}
-          {resume.sections.length > 0 && (
-            <section>
-              <h2>Experience</h2>
-              {resume.sections.map((section, index) => {
-                const dates = formatDateRange(section.startDate, section.endDate, section.unknownEndStartDate);
+          {groups.map((group) => (
+            <section key={group.heading}>
+              <h2>{group.heading}</h2>
+              {group.roles.map((section, index) => {
+                const dates = formatRoleDates(section.startDate, section.endDate, section.unknownEndStartDate);
                 return (
                   <div className="rs-sheet__role" key={`${section.id}:${index}`}>
                     <div className="rs-sheet__role-head">
@@ -103,7 +111,7 @@ function SharedResumeSheet({ resume }: { resume: SharedResume }) {
                     {section.lines.length > 0 && (
                       <ul>
                         {section.lines.map((value) => (
-                          <li key={value.id}>{line(value)}</li>
+                          <li key={value.id}>{line(value, true)}</li>
                         ))}
                       </ul>
                     )}
@@ -111,7 +119,7 @@ function SharedResumeSheet({ resume }: { resume: SharedResume }) {
                 );
               })}
             </section>
-          )}
+          ))}
           {resume.skills.length > 0 && (
             <section>
               <h2>Skills</h2>

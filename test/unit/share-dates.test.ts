@@ -53,7 +53,8 @@ describe("shared resume dates", () => {
     const html = renderToStaticMarkup(
       createElement(ShareSnapshotContent, { view: view("2021", null) }),
     );
-    expect(html).toContain("2021 – present");
+    // As the PDF prints it (formatRoleDates in src/shared/sheet.ts).
+    expect(html).toContain("2021 – Present");
   });
   it("shows a supported start with an unknown end without adding present", () => {
     const value = view(null, null);
