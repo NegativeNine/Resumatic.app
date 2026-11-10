@@ -32,12 +32,22 @@ export interface SharedResume {
   skills: string[];
   verification: "verified" | "user-authored" | "mixed" | "unverified";
 }
+/** The job a shared resume was tailored for, as the owner had it named when the copy was made. */
+export interface SharedJob {
+  title: string | null;
+  company: string | null;
+}
 export interface ShareSnapshot {
-  schemaVersion: 1;
+  /** Version 2 adds the owner's name and each resume's job. A version 1 copy has neither. */
+  schemaVersion: 1 | 2;
   createdAt: number;
   facts: SharedFact[];
-  resumes: SharedResume[];
+  resumes: (SharedResume & { job?: SharedJob | null })[];
+  /** Whose copy this is, when they chose to put their name on it. */
+  owner?: { name: string } | null;
 }
+/** The longest label an owner can give a link, such as "For Dana". */
+export const MAX_SHARE_LABEL_CHARS = 80;
 export interface ShareGrant {
   id: string;
   epoch: string;
@@ -48,6 +58,10 @@ export interface ShareGrant {
   resumeCount: number;
   /** Whether an unexpired, unrevoked snapshot can currently be delivered. */
   available?: boolean;
+  /** The owner's own note of who the link is for. Never shown to the reader. */
+  label?: string | null;
+  /** When the copy was last opened, or null if it never has been. */
+  lastReadAt?: number | null;
 }
 export interface SharedView {
   grantId: string;

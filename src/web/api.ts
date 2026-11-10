@@ -316,6 +316,12 @@ export const api = {
     factIds: string[];
     resumes: { id: string; version: number }[];
     expiresAt?: number;
+    /** The owner's own note of who the link is for. The reader never sees it. */
+    label?: string;
+    /** True puts the owner's name at the top of the copy. */
+    showName?: boolean;
+    /** True says which job each shared resume was tailored for. */
+    showJobs?: boolean;
   }) =>
     request<{ grant: ShareGrant; url: string }>(
       "POST",

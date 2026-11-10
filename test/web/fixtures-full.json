@@ -183,7 +183,9 @@
       "revokedAt": null,
       "factCount": 6,
       "resumeCount": 1,
-      "available": true
+      "available": true,
+      "label": "Dana Okafor",
+      "lastReadAt": 1794051720000
     },
     {
       "id": "sh-2",
@@ -192,7 +194,9 @@
       "expiresAt": 1793871720000,
       "revokedAt": null,
       "factCount": 3,
-      "resumeCount": 0
+      "resumeCount": 0,
+      "label": null,
+      "lastReadAt": null
     },
     {
       "id": "sh-3",
@@ -201,7 +205,9 @@
       "expiresAt": 2740124520000,
       "revokedAt": 1793698920000,
       "factCount": 12,
-      "resumeCount": 2
+      "resumeCount": 2,
+      "label": null,
+      "lastReadAt": 1793623320000
     }
   ],
   "mcpGrants": [

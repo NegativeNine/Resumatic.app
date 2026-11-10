@@ -70,6 +70,19 @@ export class FakeApi {
     ["GET", /^\/api\/v2\/vault$/, () => ok({ sources: this.state.sources, roles: this.state.roles, facts: this.state.facts })],
     ["GET", /^\/api\/billing$/, () => ok(this.state.billing ?? { enabled: false, plans: [], current: null })],
     ["GET", /^\/api\/shares$/, () => ok({ grants: this.state.shares ?? [] })],
+    [
+      "POST",
+      /^\/api\/shares$/,
+      (call) => {
+        const { factIds, resumes, expiresAt, label } = call.body as { factIds: string[]; resumes: unknown[]; expiresAt: number; label?: string };
+        const grant = {
+          id: this.id("share"), epoch: "e", createdAt: Date.now(), expiresAt, revokedAt: null,
+          factCount: factIds.length, resumeCount: resumes.length, available: true, label: label ?? null, lastReadAt: null,
+        };
+        (this.state.shares ??= []).unshift(grant);
+        return { status: 201, body: { grant, url: `https://resumatic.test/share#synthetic-${grant.id}` } };
+      },
+    ],
     ["GET", /^\/api\/mcp\/grants$/, () => ok({ grants: this.state.mcpGrants ?? [] })],
     [
       "GET",

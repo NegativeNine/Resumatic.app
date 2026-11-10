@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import type { ShareGrant } from "../../shared/sharing";
+import { MAX_SHARE_LABEL_CHARS, type ShareGrant } from "../../shared/sharing";
 import { api } from "../api";
 import { count, formatDate, formatDateTime } from "../format";
 import { useAction, useResource } from "../hooks";
@@ -251,7 +251,7 @@ export function CoachSharingTools() {
               <li className="rs-setting" key={grant.id}>
                 <div className="rs-setting__text">
                   <strong>
-                    {shareContents(grant)}{" "}
+                    {grant.label || shareContents(grant)}{" "}
                     {active && grant.available !== false && (
                       <Badge tone="ready">
                         <Glyph name="check" />
@@ -263,10 +263,12 @@ export function CoachSharingTools() {
                     )}
                   </strong>
                   <span>
+                    {grant.label ? `${shareContents(grant)}. ` : ""}
                     Created {formatDateTime(grant.createdAt)}.{" "}
                     {grant.revokedAt
                       ? `Revoked ${formatDateTime(grant.revokedAt)}.`
-                      : `${active ? "Expires" : "Expired"} ${formatDateTime(grant.expiresAt)}.`}
+                      : `${active ? "Expires" : "Expired"} ${formatDateTime(grant.expiresAt)}.`}{" "}
+                    {shareOpened(grant, active)}
                   </span>
                   {active && grant.available === false && (
                     <Message tone="info">
@@ -310,6 +312,16 @@ function shareContents(grant: ShareGrant): string {
   return parts.length ? parts.join(" and ") : "Empty copy";
 }
 
+/**
+ * When the copy was last opened. A reply without the reading (from a server that doesn't record it)
+ * says nothing, instead of claiming the copy hasn't been opened.
+ */
+function shareOpened(grant: ShareGrant, active: boolean): string {
+  if (grant.lastReadAt === undefined) return "";
+  if (grant.lastReadAt === null) return active ? "Not opened yet." : "Never opened.";
+  return `Last opened ${formatDateTime(grant.lastReadAt)}.`;
+}
+
 function ShareSelection({
   onCreated,
 }: {
@@ -348,6 +360,9 @@ function ShareSelection({
   const [factIds, setFactIds] = useState(new Set<string>());
   const [resumes, setResumes] = useState(new Map<string, number>());
   const [days, setDays] = useState(7);
+  const [label, setLabel] = useState("");
+  const [showName, setShowName] = useState(true);
+  const [showJobs, setShowJobs] = useState(false);
   const action = useAction();
   const id = useId();
   function toggleFact(factId: string) {
@@ -387,6 +402,9 @@ function ShareSelection({
               version,
             })),
             expiresAt: Date.now() + days * 24 * 60 * 60 * 1000,
+            ...(label.trim() ? { label: label.trim() } : {}),
+            showName,
+            showJobs: showJobs && resumes.size > 0,
           });
           await onCreated(created);
         });
@@ -469,6 +487,51 @@ function ShareSelection({
               </ul>
             )}
           </fieldset>
+          <Field
+            id={`${id}-label`}
+            label="Who it’s for"
+            optional
+            hint="A note for your own list of links, such as a coach’s name. The reader doesn’t see it."
+          >
+            <input
+              id={`${id}-label`}
+              type="text"
+              value={label}
+              maxLength={MAX_SHARE_LABEL_CHARS}
+              disabled={action.pending}
+              onChange={(event) => setLabel(event.target.value)}
+              aria-describedby={`${id}-label-hint`}
+              autoComplete="off"
+            />
+          </Field>
+          <label className="app-share-name">
+            <input
+              type="checkbox"
+              checked={showName}
+              disabled={action.pending}
+              onChange={(event) => setShowName(event.target.checked)}
+              aria-describedby={`${id}-name-hint`}
+            />
+            <span>Put my name at the top of the copy</span>
+          </label>
+          <p className="rs-hint" id={`${id}-name-hint`}>
+            The name from your contact details. A resume you share shows your name either way.
+          </p>
+          <label className="app-share-name">
+            <input
+              type="checkbox"
+              checked={showJobs && resumes.size > 0}
+              disabled={action.pending || resumes.size === 0}
+              onChange={(event) => setShowJobs(event.target.checked)}
+              aria-describedby={`${id}-jobs-hint`}
+            />
+            <span>Say which job each resume is for</span>
+          </label>
+          <p className="rs-hint" id={`${id}-jobs-hint`}>
+            {resumes.size === 0
+              ? "Choose a resume first. Each one can show the job title and company it was tailored for."
+              : "Shows the job title and company beside each resume. Leave it off to keep where you’re applying to yourself."}
+          </p>
           <Field id={`${id}-expiry`} label="Link expires after">
             <select
               id={`${id}-expiry`}

@@ -23,6 +23,7 @@ if (!browser?.startsWith("/")) {
   const role = { id: "role-1", kind: "job", org: "Acme Example", title: "Engineer", startDate: "2021", endDate: null, state: "proposed", quote: "Acme Example — Engineer", sourceId: "source-1", revision: 1 };
   const fact = { id: "fact-1", roleId: "role-1", kind: "accomplishment", text: "Built 12 payment services", level: null, levelNeedsReview: true, previousLevel: "led", origin: "user", state: "proposed", quote: "Built 12 payment services", sourceId: "source-1", revision: 1 };
   const me = { userId: "synthetic-user", profile: { revision: 1, name: "Avery Example", email: "avery@example.test", phone: "", location: "", links: [] }, quota: { used: 0, limit: 3, month: "2026-11" } };
+  const shareGrant = "0653389a-0d6d-4e90-94eb-23cc98b95c19";
   const send = (res, status, value) => { res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" }); res.end(value === undefined ? "" : JSON.stringify(value)); };
   const read = async (req) => { const chunks = []; let bytes = 0; for await (const chunk of req) { bytes += chunk.length; if (bytes > 20_000) throw new Error("request_too_large"); chunks.push(chunk); } return Buffer.concat(chunks); };
   const standin = async (req, res, next) => {
@@ -33,13 +34,15 @@ if (!browser?.startsWith("/")) {
       if (body.token === "synthetic-invalid") return send(res, 410, { error: "gone" });
       if (body.token !== "synthetic-share") return send(res, 400, { error: "invalid" });
       state.shareSessions = (state.shareSessions ?? 0) + 1;
-      return state.shareSessions === 1 ? send(res, 503, { error: "unavailable" }) : send(res, 204);
+      return state.shareSessions === 1 ? send(res, 503, { error: "unavailable" }) : send(res, 200, { grantId: shareGrant });
     }
     if (path === "/share/snapshot" && req.method === "GET") {
+      // The page has to say which copy it wants, as a reader with two open would need it to.
+      if (new URL(req.url, "http://localhost").searchParams.get("g") !== shareGrant) return send(res, 410, { error: "gone" });
       state.shareReads = (state.shareReads ?? 0) + 1;
       return state.shareReads === 1 ? send(res, 503, { error: "unavailable" }) : send(res, 200, {
-        grantId: "synthetic-share", expiresAt: Date.now() + 60_000,
-        snapshot: { schemaVersion: 1, createdAt: Date.now(), facts: [], resumes: [] },
+        grantId: shareGrant, expiresAt: Date.now() + 60_000,
+        snapshot: { schemaVersion: 2, createdAt: Date.now(), owner: { name: "Avery Example" }, facts: [], resumes: [] },
       });
     }
     if (!path.startsWith("/api/")) return next();
@@ -725,10 +728,12 @@ if (!browser?.startsWith("/")) {
     await clickText("button", "Try again");
     await wait(`document.body?.innerText.includes('Shared career snapshot')`);
     if (state.shareSessions !== 2 || state.shareReads !== 2 || await evalPage(`location.hash !== ''`)) throw new Error("SHARE_SNAPSHOT_RETRY");
+    // The address names the copy, so a reload opens the same one, and the tab says whose it is.
+    if (!await evalPage(`location.pathname + location.search === '/share?g=${shareGrant}' && document.title.startsWith('Avery Example, shared copy') && document.body.innerText.includes('From Avery Example.')`)) throw new Error("SHARE_COPY_NOT_NAMED");
     stage = "share_expired";
     await call("Page.navigate", { url: `${origin}/share?invalid=1#synthetic-invalid` });
     await wait(`document.body?.innerText.includes('Share unavailable')`);
-    if (await evalPage(`location.hash !== '' || !![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Try again')`)) throw new Error("EXPIRED_SHARE_NOT_TERMINAL");
+    if (await evalPage(`location.hash !== '' || location.search !== '' || !![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Try again')`)) throw new Error("EXPIRED_SHARE_NOT_TERMINAL");
     console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, sourceRoleOnly: true, sourceEmpty: true, pollRecovery: true, pollNonTransient: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, roleDraftDuringRefresh: true, factDraftDuringRefresh: true, sourceConfirmationDuringDraft: true, secondReviewEditorBlocked: true, reviewLockReleasedOnNavigation: true, roleEditLostResponse: true, factLevelReview: true, factEditLostResponse: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, jobRetryKey: true, profileSubmissionLock: true, profileConcurrentEdit: true, profileLostResponse: true, applicationTracking: true, applicationWorkspaceBoardMove: true, documentRefreshAfterStart: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, resumeDraftDuringRefresh: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, legacySkillRemoval: true, checkedSkillRemoval: true, checkedLineRemoval: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true, stableResourceReload: true, shareRetry: true, expiredShare: true } }));
   } catch {
     console.log(JSON.stringify({ status: "failed", reason: "BROWSER_SMOKE_FAILED", stage, promotionEligible: false })); process.exitCode = 1;

@@ -6,13 +6,22 @@ import type { SharedView } from "../../shared/sharing";
 
 // Capture once before React effects/router/telemetry, then remove the bearer from browser history.
 let initialToken: string | null = null;
-if (typeof window !== "undefined" && window.location.pathname === "/share") {
-  initialToken = window.location.hash.slice(1) || null;
+/**
+ * Which of the reader's copies this page shows, kept in the address as ?g= so a reload opens the
+ * same one when two are open. It isn't a secret: the copy's own cookie is what opens it.
+ */
+let grantId: string | null = null;
+function showAddress(): void {
   window.history.replaceState(
     window.history.state,
     "",
-    window.location.pathname,
+    grantId ? `/share?g=${encodeURIComponent(grantId)}` : "/share",
   );
+}
+if (typeof window !== "undefined" && window.location.pathname === "/share") {
+  initialToken = window.location.hash.slice(1) || null;
+  grantId = new URLSearchParams(window.location.search).get("g") || null;
+  showAddress();
 }
 class ShareUnavailable extends Error {}
 
@@ -45,6 +54,11 @@ function exchangeLink(): Promise<void> {
       throw error;
     }
     initialToken = null;
+    // The reply names the copy. An empty reply is from a server that keeps one copy per browser:
+    // the copy then opens without ?g=, as it always did.
+    const opened = response.status === 204 ? null : ((await response.json().catch(() => null)) as { grantId?: unknown } | null);
+    grantId = typeof opened?.grantId === "string" && opened.grantId ? opened.grantId : null;
+    showAddress();
   })().finally(() => { exchange = null; });
   return exchange;
 }
@@ -58,7 +72,7 @@ export function SharePage() {
     void (async () => {
       try {
         await exchangeLink();
-        const response = await fetch("/share/snapshot", {
+        const response = await fetch(grantId ? `/share/snapshot?g=${encodeURIComponent(grantId)}` : "/share/snapshot", {
           credentials: "same-origin",
           cache: "no-store",
         });
@@ -73,6 +87,11 @@ export function SharePage() {
       active = false;
     };
   }, [attempt]);
+  // A reader with several copies open tells the tabs apart by whose copy each is.
+  const owner = view?.snapshot.owner?.name;
+  useEffect(() => {
+    if (view) document.title = `${owner ? `${owner}, shared copy` : "Shared copy"} – Resumatic`;
+  }, [view, owner]);
   if (failed === "unavailable")
     return (
       <ShareFrame>

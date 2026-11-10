@@ -72,15 +72,28 @@ describe("accessibility", () => {
     const state = fullVault();
     installFakeApi(state);
     renderWithSession(<AccountPage />, state.me);
-    await screen.findByText("6 facts and 1 resume version");
+    await screen.findByText("Dana Okafor");
     await screen.findByText("Career Notebook");
     await screen.findByRole("combobox", { name: "Choose a plan" });
+    expect(await violations()).toEqual([]);
+    // The form for a new link: what to share, who it’s for and what the copy should say.
+    await userEvent.click(screen.getByRole("button", { name: "Choose what to share" }));
+    await screen.findByRole("checkbox", { name: "Say which job each resume is for" });
     expect(await violations()).toEqual([]);
   });
 
   it("the shared copy a coach reads", async () => {
-    render(<ShareSnapshotContent view={sharedView()} />);
+    const view = sharedView();
+    const unnamed = render(<ShareSnapshotContent view={view} />);
     expect(screen.getByRole("heading", { name: "Shared career snapshot" })).toBeInTheDocument();
+    expect(await violations()).toEqual([]);
+    unnamed.unmount();
+    // The same copy with its owner’s name and the job its resume is for.
+    view.snapshot.schemaVersion = 2;
+    view.snapshot.owner = { name: "Sam Rivera" };
+    view.snapshot.resumes[0]!.job = { title: "Platform Engineer", company: "Litware" };
+    render(<ShareSnapshotContent view={view} />);
+    expect(screen.getByText("Tailored for Platform Engineer at Litware")).toBeInTheDocument();
     expect(await violations()).toEqual([]);
   });
 

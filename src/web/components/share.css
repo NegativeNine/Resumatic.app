@@ -5,7 +5,10 @@
 .app-share__bar .rs-meta { margin: 0; }
 .app-share__main { width: 100%; max-width: 864px; margin: 0 auto; padding: var(--space-10) var(--space-6) var(--space-16, 64px); }
 .app-share__main > h1 { margin: 0; }
-.app-share__main > .rs-lede { margin: var(--space-3) 0 var(--space-8); max-width: 60ch; }
+.app-share__main > .rs-lede { margin: var(--space-3) 0 0; max-width: 60ch; }
+.app-share__main > .rs-lede strong { font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.app-share__main > .app-share__opened { margin: var(--space-3) 0 var(--space-8); max-width: 60ch; }
+.app-share__resume-head .app-share__job { margin: 2px 0 0; overflow-wrap: anywhere; }
 .app-share__facts h2 { margin: 0 0 var(--space-2); }
 .app-share__facts li { padding: var(--space-3) 0; border-top: 1px solid var(--rule); }
 .app-share__facts li:first-child { border-top: 0; }
@@ -25,6 +28,6 @@
   .app-share__main { padding-top: var(--space-6); }
 }
 @media print {
-  .app-share__bar { display: none; }
+  .app-share__bar, .app-share__main > .app-share__opened { display: none; }
   .app-share { background: none; }
 }

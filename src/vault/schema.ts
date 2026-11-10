@@ -4,7 +4,7 @@ import { UPLOAD_MIGRATIONS } from "./uploads";
 import { OPERATION_MIGRATIONS } from "./operations";
 import { MCP_MIGRATIONS } from "./mcp-grants";
 import { RUN_MIGRATIONS } from "./runs";
-import { SHARE_MIGRATIONS } from "./shares";
+import { SHARE_DETAIL_MIGRATIONS, SHARE_MIGRATIONS } from "./shares";
 import { EXPORT_CACHE_MIGRATIONS } from "./export-cache";
 // Vault tables. Migrations run in order; schema_version in meta records how far a vault has got.
 // Only init() creates the schema, so a destroyed vault stays empty when it wakes.
@@ -242,6 +242,7 @@ export const MIGRATIONS: readonly string[][] = [
     `ALTER TABLE applications ADD COLUMN url TEXT`,
     `ALTER TABLE applications ADD COLUMN details_edited INTEGER NOT NULL DEFAULT 0`,
   ],
+  [...SHARE_DETAIL_MIGRATIONS],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
