@@ -24,7 +24,7 @@ So one line is one fact, however many things it says. That rule exists for a goo
 Every stage below is held to these. They are what "without inventing or changing meaning" means in code.
 
 1. **The source line is the record.** A fact always points at words copied from the upload. Nothing derived is ever shown as a quote.
-2. **A part is a view of its line, not a new sentence.** A part is a set of character ranges in the line. Its words are those ranges and nothing else. No text is generated when a line is split, so nothing can be invented at that step.
+2. **A part is a view of its line, not a new sentence.** A part is a set of character ranges in the line. Its words are those ranges and nothing else. This prevents new words, but a selection can still change meaning by dropping context. Range checks and the contextual meaning checks below must both pass; ranges alone do not establish entailment.
 3. **When in doubt, the line stays whole.** A split that fails any check is discarded and the line remains one fact, exactly as today.
 4. **A tag never changes a fact's words.** A tag links a fact or a part to a concept chosen from a closed list of candidates taken from the taxonomy. A model can pick or decline; it cannot write a concept.
 5. **A merge never blends.** Two statements become one fact only when each says everything the other says. The wording kept is one source's own. A merged fact that neither source states is never written.
@@ -83,19 +83,19 @@ For a fact or a part:
 
 1. **Candidates** come only from the taxonomy: labels found word for word in the text (`mentions`), concepts near the text in a vector index of the taxonomy, and the usual skills, activities and software of the role's occupation (`profile`) to order them. The occupation's profile never adds a tag by itself.
 2. **A decision per candidate.** The judge is asked a closed question: does this text say the person did this, used this, or knows this? Yes with high confidence makes a proposed tag. Anything else makes none. A weak mention (a short everyday word that is also a label) needs the same yes.
-3. **A skill from a skills list** whose text is exactly one concept's label is tagged without a model.
+3. **A skill from a skills list** whose text unambiguously identifies one concept by its source label can receive a proposed tag without a model. A label shared by multiple concepts, a derived label, or a weak everyday word requires disambiguation; an exact spelling alone does not decide which concept the owner meant.
 
 Roles get their occupations the same way: candidates from the title (ESCO's other labels and O\*NET's job titles) and from the role's facts, then a closed decision, then the owner's confirmation.
 
 ### Merging
 
-Roles first. Two roles are the same when their kind, organisation, title and dates all agree; that is the rule `selectFacts` already applies when it hides repeats. Roles that agree on organisation and overlap in time but differ in title are offered to the owner, never merged alone, because that is also what a promotion looks like.
+Roles first. Automatic identity requires the same kind, organisation and title, and known compatible date anchors (including an explicit ongoing status where applicable). Two absent or unknown dates do not establish identity: those roles are offered to the owner. Roles that agree on organisation and overlap in time but differ in title are offered to the owner, never merged alone, because that is also what a promotion looks like.
 
 Then facts, within one role:
 
 | The new fact, against one already in the record | Result |
 | --- | --- |
-| Same words after cleaning | The same fact. The new upload's quote is added to it as further evidence |
+| Same words after presentation-only cleaning, in a confirmed identical role | The same fact. The new upload's quote is added to it as further evidence. Cleaning cannot remove qualifiers, negation, dates, numbers or meaningful punctuation |
 | Each says everything the other says (judge, both directions, high confidence) | Offered as the same fact. If accepted, one wording is kept and both quotes |
 | One says everything the other says and more | Kept apart and linked as a fuller version. Tailoring prefers the fuller one |
 | Anything else | A new fact |
@@ -105,11 +105,11 @@ Candidates for the judge are found by shared tags, shared numbers and names, and
 ## Tailoring, redesigned
 
 1. The posting's requirements are tagged with concepts by the same candidate-then-decision step, and the posting gets an occupation.
-2. Facts and parts that share a concept with a requirement, or sit directly above or below it in the taxonomy, are chosen first. Embedding similarity remains as the fallback for requirements that match no concept.
-3. Coverage is stated in concepts: which requirement is met by which facts, through which skill, tool or activity. A gap is a required concept no confirmed fact carries.
+2. Facts and parts that share a concept with a requirement, or sit directly above or below it in the taxonomy, are candidates first. Hierarchy and crosswalk links do not establish coverage: a broad skill does not prove a narrower skill, and a related occupation does not prove an individual's experience. The requirement must still be checked against the cited evidence, including level, qualifiers and duration. Embedding similarity remains a fallback, including when tags are absent or uncertain.
+3. Coverage states which requirement is supported by which confirmed facts, with concepts explaining the match. No tag, a failed lookup or an uncertain decision means unknown, not a claim that the person lacks experience. If the available evidence does not support a requirement after the fallback check, describe it as not evidenced in this record. Never infer a confirmed gap solely from an absent concept.
 4. Writing and checking are unchanged: a closed set of facts, citations, deterministic checks, the judge, one repair, then the fact's own words.
 
-Two things fall out of the tags without a model: **years per skill** (the months of the roles whose confirmed facts carry a concept, counted once where roles overlap) and the **coded profile** the private card needs.
+Tags support the **coded profile** the private card needs. **Years per skill** additionally requires an evidenced or owner-confirmed interval for using that skill; a mention in a five-year role does not establish five years of use. Count supported intervals once where they overlap, preserve date precision, and leave duration unknown where no interval is supported. Any role-duration estimate must be explicitly labelled as an estimate and must not satisfy a posting's years requirement as an established fact.
 
 ## Where career text goes
 

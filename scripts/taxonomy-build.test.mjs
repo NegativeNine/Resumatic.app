@@ -225,6 +225,20 @@ test("O*NET stops on an earlier release's layout, and says which release it read
   assert.equal(read.labels.some((label) => label.type === "alternative" && label.kind === "occupation"), false);
 });
 
+test("the crosswalk skips the official metadata preamble before finding its columns", async () => {
+  const csv = await crosswalkText();
+  const preamble = [
+    "\ufeffMapping project name,ESCO-O*NET Crosswalk,,,,,",
+    "Mapping project version,1,,,,,",
+    "Classification 1 Version,O*NET-SOC 2019,,,,,",
+    "Classification 2 Version,v1.1.0,,,,,",
+    ",,,,,,",
+    ",,,,,,",
+  ].join("\r\n");
+  assert.deepEqual(readCrosswalk(`${preamble}\r\n${csv}`), readCrosswalk(csv));
+  assert.throws(() => readCrosswalk(`${preamble}\r\nCode,Uri\r\n1,2\r\n`), /no column found/);
+});
+
 test("the crosswalk is found by what its columns are called", async () => {
   const read = readCrosswalk(await crosswalkText(), "crosswalk.csv");
   assert.deepEqual(read.columns, { onet: "O*NET Id", esco: "ESCO or ISCO URI", type: "Type of Match" });

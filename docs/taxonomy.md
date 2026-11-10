@@ -86,18 +86,19 @@ It writes `concepts.ndjson`, `labels.ndjson` and `relations.ndjson`, the SQL tha
 
 | File | Where | Notes |
 | --- | --- | --- |
-| ESCO classification, CSV, English | [esco.ec.europa.eu, Download](https://esco.ec.europa.eu/en/use-esco/download) | Choose version v1.2.1, content "classification", language "en", file type "csv". ESCO emails a download link; it cannot be fetched without that step |
+| ESCO classification, CSV, English | [Official v1.2.1 English CSV ZIP](https://ec.europa.eu/esco/download/ESCO%20dataset%20-%20v1.2.1%20-%20classification%20-%20en%20-%20csv.zip) | Public package verified on 10 November 2026. No email is required for this URL. For another package, use [ESCO's selector](https://esco.ec.europa.eu/en/use-esco/download) |
 | O\*NET Database, CSV | `https://www.onetcenter.org/dl_files/database/db_31_0_csv.zip` | The 30.3 release renamed and reorganised the files. Earlier releases are not read |
 | O\*NET - ESCO crosswalk (occupations) | [esco.ec.europa.eu, Other crosswalks](https://esco.ec.europa.eu/en/use-esco/other-crosswalks) | One CSV |
 
-The **Taxonomy build** workflow (`.github/workflows/taxonomy.yml`) does the download and the build on GitHub: run it by hand, paste the link ESCO emailed, and it attaches the built taxonomy to the run. It uses no secrets and changes nothing.
+The **Taxonomy build** workflow (`.github/workflows/taxonomy.yml`) does the download and the build on GitHub: run it by hand with the verified default URL, and it attaches the built taxonomy to the run. It uses no secrets and changes nothing. When changing the ESCO version, change the URL too.
 
 ### What has and has not been checked
 
 - **O\*NET layout:** file and column names are those of the O\*NET 31.0 Data Dictionary (`occupation_data`, `job_titles`, `task_statements`, `tasks_to_dwas`, `gwas_to_iwas_to_dwas`, `software_skills`).
 - **ESCO layout:** the 19 files of the classification package, named `<file>_<language>.csv`. Column names are as published for v1.x.
-- **Crosswalk layout:** its columns are found by name (an O\*NET code, an ESCO URI, a type of match), not assumed.
-- **Not checked: a run on the real files.** A column that isn't there stops the build and prints the columns the file has. After the first real build, compare the manifest's input row counts with the sources' own figures: O\*NET 31.0 states 1,016 occupations, 54,269 job titles, 18,838 task statements, 24,087 task-to-activity rows, 2,087 detailed work activities and 31,821 software rows; ESCO v1.2 states 13,939 skills and 3,039 occupations. The crosswalk was made against earlier releases of both, so up to a tenth of its rows may name an occupation a newer release has dropped; more than that stops the build.
+- **Crosswalk layout:** its columns are found by name (an O\*NET code, an ESCO URI, a type of match), after the official project's metadata preamble.
+- **Real O\*NET and crosswalk readers checked on 10 November 2026.** O\*NET 31.0 produced 31,201 concepts, 72,687 labels and 104,656 relations, with no reader issues. Its six input row counts matched the published figures: 1,016 occupations, 54,269 job titles, 18,838 task statements, 24,087 task-to-activity rows, 2,087 detailed work activities and 31,821 software rows. The official crosswalk produced 4,253 mappings with no reader issues after fixing preamble handling.
+- **Full real-data build checked on 10 November 2026.** The [manifest](taxonomy-build-2026-11-10.json) records version `esco-1.2.1+onet-31.0+c036f953`, 49,438 concepts, 207,939 labels and 265,406 relations. ESCO's unique counts match 13,939 skills/knowledge concepts and 3,039 occupations; its input contains 25 repeated concept rows. Three of 4,253 crosswalk mappings name occupations absent from the current releases and are set aside, leaving 4,250 mappings. One self-relation and five ambiguous same-label joins are also set aside. All 17 generated SQL files loaded into SQLite, with matching row counts, no orphan references and a successful integrity check. Remote D1 loading, vector indexing and pipeline quality remain pending.
 
 ## Loading it
 

@@ -19,12 +19,16 @@ const TYPES = [
 export function readCrosswalk(text, file = "crosswalk.csv") {
   const rows = parseCsv(text);
   if (rows.length === 0) throw new Error(`${file}: the file is empty`);
-  const header = rows[0].map((name) => name.trim());
-  const columns = {
+  const identify = (header) => ({
     onet: findColumn(header, [/^o\*?net.*\b(id|code)\b/i, /^o\*?net-soc/i]),
     esco: findColumn(header, [/\besco\b.*\buri\b/i, /\buri\b/i]),
     type: findColumn(header, [/type of match/i, /match type/i, /\bmatch\b/i, /relation/i]),
-  };
+  });
+  // The official CSV starts with project/classification metadata and empty rows.
+  // Locate all three named columns together; metadata must never become mapping rows.
+  const headerAt = rows.findIndex((row) => Object.values(identify(row)).every((name) => name !== null));
+  const header = rows[headerAt < 0 ? 0 : headerAt].map((name) => name.trim());
+  const columns = identify(header);
   const missing = Object.entries(columns).filter(([, name]) => name === null).map(([name]) => name);
   if (missing.length)
     throw new Error(`${file}: no column found for ${missing.join(", ")}. It has: ${header.join(", ")}`);
@@ -34,7 +38,8 @@ export function readCrosswalk(text, file = "crosswalk.csv") {
   const issues = new Map();
   const issue = (kind) => issues.set(kind, (issues.get(kind) ?? 0) + 1);
   const seen = new Set();
-  for (const cells of rows.slice(1)) {
+  const records = rows.slice(headerAt + 1);
+  for (const cells of records) {
     const src = onetOccupationId((cells[at.onet] ?? "").trim());
     const dst = escoId(cells[at.esco] ?? "");
     const stated = (cells[at.type] ?? "").trim();
@@ -47,5 +52,5 @@ export function readCrosswalk(text, file = "crosswalk.csv") {
     seen.add(key);
     edges.push({ src, rel: "matches", dst, meta: { type } });
   }
-  return { edges, files: [{ name: file, rows: rows.length - 1 }], columns, issues: Object.fromEntries([...issues].sort()) };
+  return { edges, files: [{ name: file, rows: records.length }], columns, issues: Object.fromEntries([...issues].sort()) };
 }

@@ -2,14 +2,15 @@ name: Taxonomy build
 
 # Builds the combined ESCO and O*NET taxonomy from the official downloads and attaches it to the
 # run. Started by hand. It uses no secrets, deploys nothing and changes nothing in the repository.
-# docs/taxonomy.md has the whole procedure, including how to get the ESCO link.
+# docs/taxonomy.md has the whole procedure and the verified public ESCO link.
 
 on:
   workflow_dispatch:
     inputs:
       esco_url:
-        description: "Link to the ESCO classification CSV package (ESCO emails it after a download request)"
+        description: "Official ESCO classification CSV package URL; change this with esco_version"
         required: true
+        default: "https://ec.europa.eu/esco/download/ESCO%20dataset%20-%20v1.2.1%20-%20classification%20-%20en%20-%20csv.zip"
         type: string
       esco_version:
         description: "ESCO version of that package"
