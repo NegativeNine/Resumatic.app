@@ -111,6 +111,7 @@ async function callOnce(
   fetcher: Fetcher,
 ): Promise<string> {
   const maxOutputTokens = cfg.maxOutputTokens ?? 8192;
+  const timeoutMs = cfg.timeoutMs ?? (cfg.route === "extract" ? 180_000 : 60_000);
   // Cloudflare lists this model as Responses-only. Other models retain the
   // existing Chat Completions wire contract unless explicitly supported here.
   const responses = cfg.model === "openai/gpt-5.6-sol";
@@ -161,6 +162,7 @@ async function callOnce(
       },
     },
     async () => {
+      const signal = AbortSignal.timeout(timeoutMs);
       const res = await fetcher(
         `https://api.cloudflare.com/client/v4/accounts/${cfg.accountId}/ai/v1/${responses ? "responses" : "chat/completions"}`,
         {
@@ -173,16 +175,18 @@ async function callOnce(
             "cf-aig-gateway-id": cfg.gatewayId,
             "cf-aig-collect-log-payload": "false",
             "cf-aig-skip-cache": "true",
-            "cf-aig-request-timeout": String(cfg.timeoutMs ?? 60_000),
+            "cf-aig-request-timeout": String(timeoutMs),
             // Workflow retries own network retry policy; avoid multiplying hidden gateway attempts.
             "cf-aig-max-attempts": "1",
           },
-          signal: AbortSignal.timeout(cfg.timeoutMs ?? 60_000),
+          signal,
           body: bodyText,
         },
       ).catch(() => {
         logRequestFailure(cfg.route, 0);
-        throw new AppError("unavailable", "model provider network failure");
+        throw new AppError("unavailable", signal.aborted
+          ? "model provider request timed out"
+          : "model provider network failure");
       });
       if (!res.ok) {
         logRequestFailure(cfg.route, res.status);

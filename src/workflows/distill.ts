@@ -81,7 +81,8 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
       );
       const extracted = await step.do(
         "extract",
-        MODEL_STEP,
+        // Two structured-output attempts may each take three minutes.
+        { ...MODEL_STEP, timeout: "7 minutes" },
         once(async () => {
           const progress = await v.sourceProgress(sourceId, event.instanceId);
           if (progress.extraction) {

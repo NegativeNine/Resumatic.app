@@ -27,6 +27,32 @@ function replies(...bodies: (string | Response)[]) {
 }
 
 describe("chatComplete", () => {
+  it.each([["extract", 180_000], ["analyze", 60_000]])(
+    "allows %s its full request budget at the gateway and client",
+    async (route, milliseconds) => {
+      const timeout = vi.spyOn(AbortSignal, "timeout");
+      const { fetcher, requests } = replies('{"answer":42}');
+      try {
+        await chatComplete({ ...cfg, route }, [], Schema, fetcher);
+        expect(timeout).toHaveBeenCalledWith(milliseconds);
+        expect(new Headers(requests[0]!.init.headers).get("cf-aig-request-timeout")).toBe(String(milliseconds));
+      } finally { timeout.mockRestore(); }
+    },
+  );
+
+  it("distinguishes deadline expiry from network errors without exposing exception text", async () => {
+    const controller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(chatComplete({ ...cfg, timeoutMs: 123 }, [], Schema, async () => {
+        controller.abort();
+        throw new Error("private provider text");
+      })).rejects.toThrow("model provider request timed out");
+      expect(timeout).toHaveBeenCalledWith(123);
+    } finally { timeout.mockRestore(); log.mockRestore(); }
+  });
+
   it("logs only an approved route and numeric status for provider and network failures", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
