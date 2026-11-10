@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import type { FactPatch, NewFact, NewRole, Profile, ReviewRequest, RolePatch } from "../../src/shared/api";
+import { normalizePosting, type FactPatch, type NewFact, type NewRole, type Profile, type ReviewRequest, type RolePatch } from "../../src/shared/api";
 import type { Fixtures } from "./fixtures";
 
 export interface Call {
@@ -23,6 +23,12 @@ export class FakeApi {
   private seq = 0;
 
   constructor(readonly state: Fixtures) {}
+
+  /** Whole postings, which the list of jobs doesn't carry. A fixture job's is its excerpt. */
+  private readonly postings = new Map<string, string>();
+  private posting(id: string): string {
+    return this.postings.get(id) ?? this.state.applications.find((a) => a.id === id)?.excerpt ?? "";
+  }
 
   /** Answers the next matching request (or every one, with once: false) with an error. */
   fail(method: string, path: RegExp, status: number, error: string, message: string, once = true): void {
@@ -193,10 +199,41 @@ export class FakeApi {
       "POST",
       /^\/api\/(?:v2\/)?applications$/,
       (call) => {
-        const { jdText } = call.body as { jdText: string };
+        const { jdText, url } = call.body as { jdText: string; url?: string };
         const id = this.id("app");
-        this.state.applications.push({ id, company: null, title: null, excerpt: jdText.slice(0, 100), createdAt: Date.now(), resumes: [] });
+        this.state.applications.push({ id, company: null, title: null, excerpt: jdText.slice(0, 100), createdAt: Date.now(), url: url ?? null, revision: 1, resumes: [] });
+        this.postings.set(id, jdText);
         return { status: 201, body: { applicationId: id } };
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/applications\/duplicates$/,
+      (call) => {
+        const wanted = normalizePosting((call.body as { jdText: string }).jdText);
+        const found = this.state.applications.find((a) => normalizePosting(this.posting(a.id)) === wanted);
+        return ok({ duplicate: found ? { id: found.id, company: found.company, title: found.title, excerpt: found.excerpt, createdAt: found.createdAt } : null });
+      },
+    ],
+    [
+      "GET",
+      /^\/api\/applications\/([^/]+)$/,
+      (_call, [id]) => {
+        const application = this.state.applications.find((a) => a.id === id);
+        if (!application) return notFound("no such application");
+        return ok({ ...application, jdText: this.posting(id), canDelete: application.resumes.length === 0 });
+      },
+    ],
+    [
+      "DELETE",
+      /^\/api\/applications\/([^/]+)$/,
+      (_call, [id]) => {
+        const application = this.state.applications.find((a) => a.id === id);
+        if (!application) return notFound("no such application");
+        if (application.resumes.length > 0)
+          return { status: 409, body: { error: "conflict", message: "This job has resumes or documents, so it can’t be deleted. Mark it Closed instead." } };
+        this.state.applications.splice(this.state.applications.indexOf(application), 1);
+        return { status: 204 };
       },
     ],
     [
@@ -205,7 +242,11 @@ export class FakeApi {
       (call, [id]) => {
         const application = this.state.applications.find((a) => a.id === id);
         if (!application) return notFound("no such application");
-        Object.assign(application, call.body as object);
+        const { expectedRevision: _revision, jdText, ...patch } = call.body as { expectedRevision?: number; jdText?: string; title?: string; company?: string; url?: string };
+        if (jdText !== undefined) this.postings.set(id, jdText);
+        // As the server does: an empty name or link clears it.
+        for (const key of ["title", "company", "url"] as const) if (patch[key] === "") (patch as Record<string, unknown>)[key] = null;
+        Object.assign(application, patch, { revision: (application.revision ?? 1) + 1 });
         return { status: 204 };
       },
     ],

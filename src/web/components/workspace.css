@@ -81,3 +81,14 @@
 .app-share-none { margin: var(--space-4) 0 0; }
 .app-address { margin: 0 0 var(--space-3); }
 .app-address code { display: inline-block; max-width: 100%; padding: 6px 10px; font: 500 13px/20px var(--font-mono, ui-monospace, monospace); overflow-wrap: anywhere; background: var(--paper-sunken); border: 1px solid var(--rule); border-radius: var(--radius-sm); user-select: all; }
+.app-posting__note { margin: var(--space-2) 0 0; }
+.app-posting .rs-success { margin-top: var(--space-2); }
+.app-posting__text { max-height: 22rem; margin-top: var(--space-3); padding: var(--space-4); overflow: auto; font-size: 15px; line-height: 23px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--paper-sunken); border: 1px solid var(--rule); border-radius: var(--radius-md); }
+.app-posting__text:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.app-posting__form { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
+.app-posting__form .field-grid { margin-bottom: 0; }
+.app-posting__confirm { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
+.app-posting__confirm p { margin: 0; }
+.app-job-form__foot { display: flex; justify-content: flex-end; }
+.app-job-link { display: inline-flex; }
+.card > .rs-count + .field { margin-top: var(--space-4); }

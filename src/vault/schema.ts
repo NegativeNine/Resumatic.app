@@ -236,6 +236,12 @@ export const MIGRATIONS: readonly string[][] = [
     `ALTER TABLE sources ADD COLUMN sha256 TEXT`,
     `CREATE INDEX sources_sha256 ON sources (sha256)`,
   ],
+  [
+    // A link to the original posting, and whether the person named the job themselves. Once
+    // they have, reading the posting never replaces their title or company.
+    `ALTER TABLE applications ADD COLUMN url TEXT`,
+    `ALTER TABLE applications ADD COLUMN details_edited INTEGER NOT NULL DEFAULT 0`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

@@ -18,6 +18,8 @@ import { extractorFor, sourceFormat } from "../pipeline/extract";
 import { McpGrantStore } from "./mcp-grants";
 import type { McpClaims, McpScope, McpGrant, NewMcpGrant } from "../shared/mcp";
 import type {
+  ApplicationDetail,
+  ApplicationRef,
   ApplicationView,
   FactKind,
   FactPatch,
@@ -40,7 +42,7 @@ import type {
   SourceState,
   SourceView,
 } from "../shared/api";
-import { DATE_PATTERN, MAX_LINE_CHARS, MAX_UPLOAD_BYTES } from "../shared/api";
+import { DATE_PATTERN, MAX_LINE_CHARS, MAX_UPLOAD_BYTES, isWebUrl, normalizePosting } from "../shared/api";
 import { AppError } from "../shared/errors";
 import { isMissingWorkflowInstance } from "../shared/workflow-errors";
 import { directoryForUser } from "../shared/stubs";
@@ -172,6 +174,8 @@ type ResumeRow = {
   created_at: number;
 };
 type ApplicationRow = {
+  url: string | null;
+  details_edited: number;
   revision: number;
   status: import("../shared/api").ApplicationStatus;
   applied_at: string | null;
@@ -242,6 +246,7 @@ export interface VaultExport {
     company: string | null;
     title: string | null;
     jobDescription: string;
+    url?: string | null;
     createdAt: number;
   }[];
   resumes: {
@@ -1929,11 +1934,15 @@ export class Vault extends DurableObject<Env> {
     who: Who,
     jdText: string,
     requestKey: string,
+    url: string | null = null,
   ): Promise<{ applicationId: string }> {
     this.requireOwner(who);
     if (!/^[a-zA-Z0-9_-]{1,100}$/.test(requestKey))
       throw new AppError("invalid", "invalid request key");
-    const digest = base64url(await sha256(JSON.stringify([jdText])));
+    if (url !== null && !isWebUrl(url)) throw new AppError("invalid", "enter the posting's web address, starting with https://");
+    // A request without a link keeps the digest it had before links existed, so a retry that
+    // spans the upgrade still finds its job.
+    const digest = base64url(await sha256(JSON.stringify(url === null ? [jdText] : [jdText, url])));
     this.requireOwner(who);
     return this.ctx.storage.transactionSync(() => {
       const prior = this.sql.exec<{ input_digest: string; application_id: string }>(
@@ -1946,14 +1955,60 @@ export class Vault extends DurableObject<Env> {
       }
       const id = crypto.randomUUID();
       this.sql.exec(
-        `INSERT INTO applications (id, jd_text, created_at) VALUES (?, ?, ?)`,
-        id, jdText, Date.now(),
+        `INSERT INTO applications (id, jd_text, url, created_at) VALUES (?, ?, ?, ?)`,
+        id, jdText, url, Date.now(),
       );
       this.sql.exec(
         `INSERT INTO application_create_requests (request_key, input_digest, application_id) VALUES (?, ?, ?)`,
         requestKey, digest, id,
       );
       return { applicationId: id };
+    });
+  }
+
+  /** The saved job whose posting has the same text, if there is one. Nothing is written. */
+  async findDuplicateApplication(who: Who, jdText: string): Promise<ApplicationRef | null> {
+    this.requireOwner(who);
+    const wanted = normalizePosting(jdText);
+    const row = this.sql
+      .exec<ApplicationRow>(`SELECT * FROM applications ORDER BY created_at DESC`)
+      .toArray()
+      .find((a) => normalizePosting(a.jd_text) === wanted);
+    return row
+      ? { id: row.id, company: row.company, title: row.title, excerpt: excerptOf(row.jd_text), createdAt: row.created_at }
+      : null;
+  }
+
+  /** One job with its whole posting. */
+  async getApplication(who: Who, id: string): Promise<ApplicationDetail> {
+    const view = (await this.listApplications(who)).find((a) => a.id === id);
+    this.requireOwner(who);
+    const row = this.sql.exec<ApplicationRow>(`SELECT * FROM applications WHERE id = ?`, id).toArray()[0];
+    if (!view || !row) throw new AppError("not_found", "no such application");
+    return { ...view, jdText: row.jd_text, canDelete: !this.applicationHasWork(id) };
+  }
+
+  /** Resumes and documents are kept, so a job that has either can only be closed. */
+  private applicationHasWork(id: string): boolean {
+    return ["resumes", "documents", "document_requests"].some(
+      (table) => this.sql.exec(`SELECT 1 FROM ${table} WHERE application_id = ? LIMIT 1`, id).toArray().length > 0,
+    );
+  }
+
+  /**
+   * Removes a job that has nothing attached to it: a posting pasted by mistake, or a second copy.
+   * A job with a resume or a document is refused, because their history, files and shared copies
+   * would have to go with it; the person marks it Closed instead.
+   */
+  async deleteApplication(who: Who, id: string): Promise<void> {
+    this.requireOwner(who);
+    this.ctx.storage.transactionSync(() => {
+      if (!this.sql.exec(`SELECT 1 FROM applications WHERE id = ?`, id).toArray().length)
+        throw new AppError("not_found", "no such application");
+      if (this.applicationHasWork(id))
+        throw new AppError("conflict", "This job has resumes or documents, so it can't be deleted. Mark it Closed instead.");
+      this.sql.exec(`DELETE FROM application_create_requests WHERE application_id = ?`, id);
+      this.sql.exec(`DELETE FROM applications WHERE id = ?`, id);
     });
   }
 
@@ -1987,6 +2042,7 @@ export class Vault extends DurableObject<Env> {
         title: a.title,
         excerpt: excerptOf(a.jd_text),
         createdAt: a.created_at,
+        url: a.url,
         resumes: resumes
           .filter((r) => r.application_id === a.id)
           .map((r) => ({
@@ -2537,8 +2593,10 @@ export class Vault extends DurableObject<Env> {
         resumeId,
       );
     }
+    // A title or company the person typed stays theirs.
     this.sql.exec(
-      `UPDATE applications SET company = ?, title = ?, requirements = ? WHERE id = ?`,
+      `UPDATE applications SET company = CASE WHEN details_edited = 1 THEN company ELSE ? END,
+         title = CASE WHEN details_edited = 1 THEN title ELSE ? END, requirements = ? WHERE id = ?`,
       a.company,
       a.title,
       JSON.stringify(a.requirements),
@@ -2791,6 +2849,10 @@ export class Vault extends DurableObject<Env> {
       status?: import("../shared/api").ApplicationStatus;
       appliedAt?: string | null;
       notes?: string;
+      title?: string | null;
+      company?: string | null;
+      url?: string | null;
+      jdText?: string;
       expectedRevision?: number;
     },
   ): Promise<void> {
@@ -2807,11 +2869,37 @@ export class Vault extends DurableObject<Env> {
         "conflict",
         "the application changed; refresh and try again",
       );
+    if (patch.url != null && !isWebUrl(patch.url))
+      throw new AppError("invalid", "enter the posting's web address, starting with https://");
+    const named = patch.title !== undefined || patch.company !== undefined;
+    const posting = patch.jdText !== undefined && patch.jdText !== row.jd_text ? patch.jdText : null;
+    if (posting !== null) {
+      // A run reads the posting once at its start and saves what it found afterwards. Changing
+      // the text under it would leave the old posting's requirements beside the new text.
+      const running = this.sql.exec(
+        `SELECT 1 FROM resumes WHERE application_id = ? AND state = 'running' UNION ALL
+         SELECT 1 FROM documents WHERE application_id = ? AND state = 'running' LIMIT 1`, id, id,
+      ).toArray().length > 0;
+      if (running) throw new AppError("conflict", "Work on this job is still in progress. Wait for it to finish, then change the posting.");
+    }
+    // What was read from an earlier posting says nothing about a new one.
+    const stale = posting !== null && row.details_edited !== 1;
+    const title = patch.title !== undefined ? patch.title : stale ? null : row.title;
+    const company = patch.company !== undefined ? patch.company : stale ? null : row.company;
+    // Clearing both names hands the job back to be read from its posting.
+    const edited = (named || row.details_edited === 1) && (title !== null || company !== null);
     this.sql.exec(
-      `UPDATE applications SET status = ?, applied_at = ?, notes = ?, revision = revision + 1 WHERE id = ?`,
+      `UPDATE applications SET status = ?, applied_at = ?, notes = ?, title = ?, company = ?, url = ?,
+         jd_text = ?, requirements = ?, details_edited = ?, revision = revision + 1 WHERE id = ?`,
       patch.status ?? row.status,
       patch.appliedAt === undefined ? row.applied_at : patch.appliedAt,
       patch.notes ?? row.notes,
+      title,
+      company,
+      patch.url === undefined ? row.url : patch.url,
+      posting ?? row.jd_text,
+      posting !== null ? null : row.requirements,
+      edited ? 1 : 0,
       id,
     );
   }
@@ -3462,6 +3550,7 @@ export class Vault extends DurableObject<Env> {
           company: a.company,
           title: a.title,
           jobDescription: a.jd_text,
+          url: a.url,
           createdAt: a.created_at,
           status: a.status,
           appliedAt: a.applied_at,

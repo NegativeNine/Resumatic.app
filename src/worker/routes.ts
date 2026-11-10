@@ -36,6 +36,10 @@ import {
   LEVELS,
   MAX_FACT_CHARS,
   MAX_JD_CHARS,
+  MAX_JOB_NAME_CHARS,
+  MAX_URL_CHARS,
+  MIN_JD_CHARS,
+  isWebUrl,
   MAX_LINE_CHARS,
   MAX_UPLOAD_BYTES,
   ROLE_KINDS,
@@ -425,8 +429,15 @@ const NewFactBody = z.object({
   level: z.enum(LEVELS as [Level, ...Level[]]).nullable(),
 });
 
+const JdText = z.string().trim().min(MIN_JD_CHARS, "paste the whole job description").max(MAX_JD_CHARS);
+const WebUrl = z.string().trim().max(MAX_URL_CHARS).refine(isWebUrl, "enter the posting's web address, starting with https://");
+/** A title or company: one line of the person's own text. An empty line clears it. */
+const JobName = z.string().trim().max(MAX_JOB_NAME_CHARS).refine((value) => !/[\r\n]/.test(value), "use a single line")
+  .transform((value) => value || null);
+
 const NewApplicationBody = z.object({
-  jdText: z.string().trim().min(40, "paste the whole job description").max(MAX_JD_CHARS),
+  jdText: JdText,
+  url: WebUrl.optional(),
 });
 
 const Ids = z.array(z.string().max(64)).max(1000);
@@ -796,13 +807,28 @@ api.post("/applications", JSON_LIMIT, async (c) => {
 
 // Separate route and RPC fail closed if an older deployment cannot honor the key.
 api.post("/v2/applications", JSON_LIMIT, async (c) => {
-  const { jdText } = await jsonBody(c, NewApplicationBody);
-  return c.json(await myVault(c).addApplicationIdempotent(c.get("who"), jdText, requestKey(c)), 201);
+  const { jdText, url } = await jsonBody(c, NewApplicationBody);
+  return c.json(await myVault(c).addApplicationIdempotent(c.get("who"), jdText, requestKey(c), url ?? null), 201);
+});
+
+// Read-only: says whether this posting is already saved, so the person can be asked first.
+api.post("/applications/duplicates", JSON_LIMIT, async (c) => {
+  const { jdText } = await jsonBody(c, z.object({ jdText: JdText }));
+  return c.json({ duplicate: await myVault(c).findDuplicateApplication(c.get("who"), jdText) });
 });
 
 api.get("/applications", async (c) =>
   c.json({ applications: await myVault(c).listApplications(c.get("who")) }),
 );
+
+api.get("/applications/:id", async (c) =>
+  c.json(await myVault(c).getApplication(c.get("who"), c.req.param("id"))),
+);
+
+api.delete("/applications/:id", async (c) => {
+  await myVault(c).deleteApplication(c.get("who"), c.req.param("id"));
+  return c.body(null, 204);
+});
 
 api.post("/applications/:id/resumes", async (c) =>
   c.json(
@@ -1120,6 +1146,10 @@ api.patch("/applications/:id", JSON_LIMIT, async (c) => {
       appliedAt: z.iso.date().refine((date) => !date.startsWith("0000-"))
         .nullable().optional(),
       notes: z.string().max(10000).optional(),
+      title: JobName.optional(),
+      company: JobName.optional(),
+      url: z.union([WebUrl, z.literal("").transform(() => null), z.null()]).optional(),
+      jdText: JdText.optional(),
       expectedRevision: z.number().int().positive().optional(),
     }),
   );
