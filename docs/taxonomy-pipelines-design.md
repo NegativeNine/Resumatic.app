@@ -113,11 +113,16 @@ Two things fall out of the tags without a model: **years per skill** (the months
 
 ## Where career text goes
 
-The taxonomy is public reference data in a database of its own. Looking a line up in it sends the line's words to that database as query values and stores nothing there. The vector index is queried with an embedding of the text, made by the same Workers AI model that already embeds facts. Parts, tags, links and occupations are career data and live in the owner's vault with everything else, are exported with it and are deleted with it. Tags are not shared with a coach or a connected app until that is separately decided.
+The taxonomy is public reference data in a database of its own. Looking a line up in it sends the line's words to that database as query values and stores nothing there. The vector index is queried with an embedding of the text, made on Workers AI as fact embeddings are. Parts, tags, links and occupations are career data and live in the owner's vault with everything else, are exported with it and are deleted with it. Tags are not shared with a coach or a connected app until that is separately decided.
 
 ## Models
 
-The closed questions above are what the typed-decision judge added for staging (`src/ai/decision-judge.ts`) does: a state, a question, named choices, a probability for each, fail closed. Splitting, tagging and merging use it through one small interface, with the existing schema-constrained `judge` route as the fallback where it isn't configured. Proposing ranges for a split uses the extraction route. No stage needs a new kind of model call.
+No stage needs a new kind of model call. The design is written to sit on the model work already open, and changes none of it.
+
+- **Closed decisions.** Splitting, tagging and merging all ask closed questions: a state, a question, named choices, a probability for each, fail closed. That is what the typed-decision judge added for staging does for resume lines (`src/ai/decision-judge.ts`, #25) and what the relevance scorer does for a requirement and a fact (#27). The new stages use the same kind of call through one small interface, with the schema-constrained `judge` route as the fallback where typed decisions aren't configured.
+- **Proposing ranges** for a split uses the extraction route, whichever model it points at.
+- **Embeddings.** #27 makes the embedding model a setting each vault moves to in its own time, and gives requirement searches and stored facts different inputs. The taxonomy's vector index is therefore built with one stated model, recorded with the index. A line is embedded with that model to look concepts up, whatever model the vault's own facts use, and the lookup is a query in #27's sense.
+- **Ranking.** Matching by concept comes before similarity, not instead of it. The reranker, whichever one is configured, still orders the facts that share a concept with a requirement.
 
 ## Order of work
 
