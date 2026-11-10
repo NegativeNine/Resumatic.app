@@ -13,6 +13,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Taxonomy builder and lookup | #28 open, based on #25 | Real combined build now passes locally after the crosswalk preamble fix; remote D1 loading and vector indexing remain |
 | Shared-copy title test | #29 open | Wait for the asynchronous title effect in the test |
 | The record: parts of a line, tags and links | #30 open, based on #28 | Nothing writes or reads it yet. It and #26 each add the vault's next migration: whichever merges second is rebased to come after the other, and the two branches are not deployed to one environment before then |
+| Dividing a line into its claims | #31 open, based on #30 | Off by default, and kept in shadow where switched on. The eval against the real models needs credentials and has not been run; nothing has been measured |
 
 An open PR or a local check is not a claim of production release acceptance. The [release status](seeker-release-status.md) records the broader acceptance work.
 
@@ -32,7 +33,7 @@ The [pipeline design](taxonomy-pipelines-design.md) is agreed. The real-data bui
 
 1. Load the versioned taxonomy into staging and build its vector index.
 2. Add evidence, parts, tags and links without changing existing records. In review as #30.
-3. Evaluate splitting, tagging and duplicate matching in shadow, using consented labelled examples.
+3. Evaluate splitting, tagging and duplicate matching in shadow, using consented labelled examples. Splitting is in review as #31 ([splitting.md](splitting.md)); tagging and matching are not started.
 4. Add owner review of parts, tags and merge proposals.
 5. Add matching and coverage by concept, retaining evidence checks and similarity fallback.
 6. Add skills with years only where skill-use intervals are evidenced or owner-confirmed; role dates alone are insufficient.
