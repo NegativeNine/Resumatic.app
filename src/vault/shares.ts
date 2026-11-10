@@ -2,6 +2,8 @@ import type { FactView, ResumeLine, RoleView } from "../shared/api";
 import { AppError } from "../shared/errors";
 import {
   MAX_SHARE_LABEL_CHARS,
+  SHARE_READ_INTERVAL_MS,
+  SHARE_TTL_MS,
   type ShareGrant,
   type SharedJob,
   type SharedLine,
@@ -13,7 +15,7 @@ import {
 import type { RenderData, Who } from "../shared/types";
 import { assertGroundedResume, type ResumeVersion } from "./snapshots";
 
-export const SHARE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export { SHARE_READ_INTERVAL_MS, SHARE_TTL_MS };
 export const MAX_SHARE_FACTS = 100;
 export const MAX_SHARE_RESUMES = 20;
 export const MAX_SHARE_BYTES = 1024 * 1024;
@@ -25,9 +27,6 @@ export const SHARE_MIGRATIONS: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS share_expiry ON share_grants(expires_at)`,
 ];
-
-/** How often, at most, a copy's last-opened time is written. */
-export const SHARE_READ_INTERVAL_MS = 60_000;
 
 /** A label for the owner's own list, and when the copy was last opened. */
 export const SHARE_DETAIL_MIGRATIONS: readonly string[] = [

@@ -52,34 +52,97 @@ function Privacy() {
             The files you upload, the text read from them, and the roles and facts found in that text, each with the
             words it came from.
           </li>
-          <li>Facts and roles you add or edit, the job descriptions you paste, and the resumes made from them.</li>
-          <li>How many resumes you have tailored this month, for the monthly limit.</li>
+          <li>
+            Facts and roles you add or edit, and your answers to interview questions, which are saved as facts.
+          </li>
+          <li>
+            The jobs you save: the posting’s text and link, the status you set, the date you applied and your notes.
+          </li>
+          <li>The resumes, cover letters, interview preparation and fit previews made from your facts for those jobs.</li>
+          <li>
+            The links you make to share a copy: what each copy holds, the label you give it and when it was last
+            opened.
+          </li>
+          <li>The apps you connect, what you allowed each one to do and when its access ends.</li>
+          <li>How many resumes and documents you have made in the current period, for your plan’s limit.</li>
+          <li>
+            If you choose a paid plan: the plan, its billing period and the IDs Stripe gives your account,
+            subscription, invoices and checkout. Stripe takes the payment. We never see your card number.
+          </li>
         </ul>
         <p>
-          We use one cookie to keep you signed in for up to seven days, and a short-lived one during sign-in. There are
-          no advertising or analytics cookies, and we do not sell or share your data for marketing.
+          We use one cookie to keep you signed in for up to seven days, and a short-lived one during sign-in. Someone
+          who opens a copy you shared gets cookies that keep that copy open in their browser for up to an hour. There
+          are no advertising or analytics cookies, and we do not sell or share your data for marketing.
         </p>
       </Section>
       <Section title="Where it is kept">
         <p>
           Your career data lives in a database of its own, separate from every other user’s, on Cloudflare. It is
           created in a Cloudflare region near where you first sign in. Your uploads and downloaded PDFs are stored
-          with it in Cloudflare R2. A separate directory holds only your email address, your sign-in ID and the ID of
-          your database. The beta does not yet guarantee that data stays in your country.
+          with it in Cloudflare R2. A separate directory holds only your email address, your sign-in ID, the ID of
+          your database and, if you have a paid plan, the Stripe IDs and billing period that tie payments to your
+          account. If you connect an app, the credentials it uses are kept in a separate Cloudflare store until they
+          expire or you revoke them. The beta does not yet guarantee that data stays in your country.
         </p>
       </Section>
       <Section title="How AI is used">
         <p>
           Cloudflare Workers AI turns your uploads into text and indexes your facts. Language models from providers
-          such as Anthropic and OpenAI find facts in your uploads, read job descriptions, write resume lines and check
-          each line against your facts. They are reached through Cloudflare AI Gateway with request logging turned off,
-          and each one receives only the text its step needs: your upload’s text, a job description, or the facts
-          chosen for one resume. Resume lines are checked against your confirmed facts, and a line those facts do not
-          support is never shown to you.
+          such as Anthropic and OpenAI find facts in your uploads, read job descriptions, write resume lines, cover
+          letters and interview preparation, and check each line against your facts. They are reached through
+          Cloudflare AI Gateway with request logging turned off, and each one receives only the text its step needs:
+          your upload’s text, a job description, or the facts chosen for one resume or document. Lines are checked
+          against your confirmed facts, and a line those facts do not support is never shown to you.
         </p>
         <p>
           Our own logs record IDs, counts and error codes. They never record your files, facts, job descriptions or
           resume text.
+        </p>
+      </Section>
+      <Section title="Sharing a copy">
+        <p>
+          You can share facts and resume versions you choose with someone, such as a coach, by making a link. Anyone
+          who has the link can read that copy, without an account, until it expires or you revoke it. A link lasts
+          seven days at most.
+        </p>
+        <ul>
+          <li>The copy is fixed when you make it. Later changes to your facts and resumes don’t reach it.</li>
+          <li>
+            It includes the contact details printed on any resume you choose. It shows your name at the top, or the
+            job a resume was tailored for, only if you choose that.
+          </li>
+          <li>
+            Revoking a link removes the copy from our systems at once. It cannot take back what someone has already
+            read or saved.
+          </li>
+          <li>
+            We keep when a copy was last opened, to the minute, and show you that time. We keep nothing else about
+            the person who opens it, and the copy tells them what you can see.
+          </li>
+        </ul>
+        <p>
+          <strong>If you are reading a copy someone shared with you:</strong> we don’t ask who you are. We keep the
+          time the copy was last opened, which its owner can see, and nothing else about you. Cookies keep the copy
+          open in your browser for up to an hour. To limit abuse, opening a link is rate-limited with a short-lived
+          code made from your network address, which is not kept with the copy.
+        </p>
+      </Section>
+      <Section title="Connecting an app">
+        <p>
+          Where connected apps are turned on, you can let an AI tool work with your account. You approve each
+          connection yourself and choose what the app may do:
+        </p>
+        <ul>
+          <li>read your confirmed facts and finished resumes;</li>
+          <li>see your saved jobs and add new ones;</li>
+          <li>create documents, which count toward your plan’s limit.</li>
+        </ul>
+        <p>
+          A connected app never receives your uploaded files, the words a fact came from, or your notes on a job. Its
+          access lasts an hour, or up to thirty days if you allow it to continue, and you can revoke it at any time
+          under <a href={href.account}>Account</a>. What an app has already read is then held by the company that
+          runs it, under that company’s terms, and revoking access does not remove it from there.
         </p>
       </Section>
       <Section title="Your choices">
@@ -93,8 +156,9 @@ function Privacy() {
             links to your original uploads.
           </li>
           <li>
-            <strong>Delete it:</strong> deleting your account under Account stops any work in progress and erases your
-            database, uploads, PDFs and directory entry. A final sweep of stored files runs within an hour.
+            <strong>Delete it:</strong> deleting your account under Account stops any work in progress, cancels a paid
+            plan, ends every shared copy and app connection, and erases your database, uploads, PDFs and directory
+            entry. A final sweep of stored files runs within an hour.
           </li>
         </ul>
         <p>We keep your data until you delete it, or until the beta ends and we tell you how to export it first.</p>

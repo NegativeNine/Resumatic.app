@@ -46,6 +46,13 @@ export interface ShareSnapshot {
   /** Whose copy this is, when they chose to put their name on it. */
   owner?: { name: string } | null;
 }
+// The privacy notice states these three in words, and a test holds the two together.
+/** The longest a share link can last. */
+export const SHARE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** How long a reader's browser keeps one copy open before the link is needed again. */
+export const SHARE_SESSION_TTL_MS = 60 * 60 * 1000;
+/** How often, at most, a copy's last-opened time is written. */
+export const SHARE_READ_INTERVAL_MS = 60_000;
 /** The longest label an owner can give a link, such as "For Dana". */
 export const MAX_SHARE_LABEL_CHARS = 80;
 export interface ShareGrant {

@@ -1,7 +1,8 @@
+import { SESSION_TTL_MS } from "../shared/session";
 import { signToken, verifyToken } from "./crypto";
 
 export const SESSION_COOKIE = "__Host-session";
-export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export { SESSION_TTL_MS };
 
 /** What the session cookie carries: the user, their vault, the session generation and an expiry. */
 export interface Session {

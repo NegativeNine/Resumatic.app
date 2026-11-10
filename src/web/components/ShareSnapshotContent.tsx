@@ -46,7 +46,11 @@ export function ShareSnapshotContent({ view }: { view: SharedView }) {
         This link works until {formatDate(view.expiresAt)}.
       </p>
       <p className="rs-meta app-share__opened">
-        {owner ?? "Its owner"} can see when this copy was last opened, but not who opened it.
+        {owner ?? "Its owner"} can see when this copy was last opened, but not who opened it.{" "}
+        {/* An address from the site's root: on this page a bare fragment would be read as a share link. */}
+        <a className="rs-link" href="/#/privacy">
+          Privacy notice
+        </a>
       </p>
       {facts.length > 0 && (
         <section className="rs-panel app-share__facts" aria-labelledby="share-facts">
