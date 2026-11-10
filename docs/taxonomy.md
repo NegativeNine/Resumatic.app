@@ -6,9 +6,9 @@ Resumatic describes work in the terms of two public classifications, held as one
 - **O\*NET** (U.S. Department of Labor) supplies what ESCO lacks: about 1,000 occupations described by their **tasks**, **work activities** and **software**, and the **job titles** people hold in them.
 - The **official O\*NET - ESCO crosswalk** joins the two at the level of occupations.
 
-This document says what is in the taxonomy, how it is built and loaded, how the app reads it, and what must be credited. The redesign of the reading and tailoring pipelines that uses it is proposed in [taxonomy-pipelines-design.md](taxonomy-pipelines-design.md).
+This document says what is in the taxonomy, how it is built and loaded, how the app reads it, and what must be credited. The redesign of the reading and tailoring pipelines that uses it is set out in [taxonomy-pipelines-design.md](taxonomy-pipelines-design.md).
 
-**Status: the builder and the lookup exist and are tested on small synthetic files. No taxonomy has been built from the real downloads yet, no deployment binds one, and no pipeline reads one.** The first real build is the check on the layouts described below.
+**Status: the builder and the lookup exist and are tested on small synthetic files, and one build from the real downloads was made and checked on 10 November 2026 (see "What has and has not been checked"). No deployment binds a taxonomy, and no pipeline reads one.**
 
 ## What each source is used for
 
