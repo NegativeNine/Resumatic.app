@@ -23,6 +23,12 @@ export const TRANSFER_TABLES = [
   "documents",
   "document_versions",
   "interview_answers",
+  // Judgements about facts and roles: how a line divides, its concepts, and what was merged.
+  // After the facts and roles they are about, so every row finds its fact on arrival.
+  "fact_splits",
+  "fact_parts",
+  "record_tags",
+  "record_links",
 ] as const;
 export type TransferTable = (typeof TRANSFER_TABLES)[number];
 export type TransferValue = string | number | null | { binary: string };

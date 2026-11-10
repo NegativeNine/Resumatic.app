@@ -27,10 +27,10 @@ The last two were on the roadmap as Now from the start and do not depend on tagg
 
 ## Taxonomy pipeline work
 
-The [pipeline design](taxonomy-pipelines-design.md) is agreed. The real-data build's [manifest](taxonomy-build-2026-11-10.json) is available; no reading or tailoring pipeline uses the taxonomy yet.
+The [pipeline design](taxonomy-pipelines-design.md) is agreed. The real-data build's [manifest](taxonomy-build-2026-11-10.json) is available, and the vault can hold parts, tags and links ([record.md](record.md)); no reading or tailoring pipeline uses either yet.
 
 1. Load the versioned taxonomy into staging and build its vector index.
-2. Add evidence, parts, tags and links without changing existing records.
+2. Add evidence, parts, tags and links without changing existing records. Written and tested; see "Open delivery work".
 3. Evaluate splitting, tagging and duplicate matching in shadow, using consented labelled examples.
 4. Add owner review of parts, tags and merge proposals.
 5. Add matching and coverage by concept, retaining evidence checks and similarity fallback.

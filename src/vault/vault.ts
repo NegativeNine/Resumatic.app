@@ -80,6 +80,8 @@ import { mergeRefinementEvidence } from "./refinement-evidence";
 import { validateTailorCheckpoint, validateTailorPublication } from "./tailor-publication";
 import { finalLegacyEvidence, legacyReceipt, legacyReview } from "./legacy-remediation";
 import { RunStore } from "./runs";
+import { RecordStore } from "./record";
+import type { RecordExport } from "../shared/record";
 import { ShareStore } from "./shares";
 import { billingConfig } from "../shared/billing";
 import { stripeClient, type Entitlement } from "../worker/billing";
@@ -199,7 +201,8 @@ export interface ResumePatch {
   state?: ResumeState;
 }
 
-export interface VaultExport {
+/** RecordExport adds how lines divide, their concepts and what was merged: every judgement held, with what made it. */
+export interface VaultExport extends RecordExport {
   interviewAnswers: Record<string, string | number | null>[];
   generationInputs: Record<string, string | number | null>[];
   generationItems: Record<string, string | number | null>[];
@@ -325,6 +328,11 @@ export class Vault extends DurableObject<Env> {
 
   private get snapshots(): SnapshotStore {
     return new SnapshotStore(this.sql);
+  }
+
+  /** Parts of a line, tags and links. Nothing writes them yet; they are exported with the vault. */
+  private get record(): RecordStore {
+    return new RecordStore(this.sql, (fn) => this.ctx.storage.transactionSync(fn));
   }
 
   private get vaultId(): string {
@@ -3688,6 +3696,7 @@ export class Vault extends DurableObject<Env> {
         })),
       roles: this.readRoles(),
       facts: this.readFacts(),
+      ...this.record.export(),
       applications: this.sql
         .exec<ApplicationRow>(`SELECT * FROM applications ORDER BY created_at`)
         .toArray()

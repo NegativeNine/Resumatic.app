@@ -1,5 +1,13 @@
-/** Test-only helper to reconstruct a Vault schema before copies counted their documents, the latest migration. */
+/** Test-only helper to reconstruct a Vault schema before the record held parts, tags and links, the latest migration. */
+export function removeRecordMigration(sql: SqlStorage): void {
+  for (const trigger of ["fact_deleted", "role_deleted", "split_deleted", "part_deleted", "fact_reworded", "role_retitled", "role_changed"])
+    sql.exec(`DROP TRIGGER IF EXISTS record_${trigger}`);
+  for (const table of ["record_links", "record_tags", "fact_parts", "fact_splits"]) sql.exec(`DROP TABLE IF EXISTS ${table}`);
+}
+
+/** Test-only helper to reconstruct a Vault schema before copies counted their documents, and so before every later migration. */
 export function removeShareDocumentMigration(sql: SqlStorage): void {
+  removeRecordMigration(sql);
   sql.exec(`ALTER TABLE share_grants DROP COLUMN document_count`);
 }
 

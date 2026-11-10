@@ -1,6 +1,6 @@
 # Pipelines around the taxonomy: design
 
-**Status: agreed by the owner on 10 November 2026, with the three starting rules under "Decided" below. Nothing here is built yet except the taxonomy itself ([taxonomy.md](taxonomy.md)). Each step still ships switched off and is measured before anyone is shown its results.**
+**Status: agreed by the owner on 10 November 2026, with the three starting rules under "Decided" below. Built so far: the taxonomy ([taxonomy.md](taxonomy.md)) and the record ([record.md](record.md)). No pipeline proposes or reads anything yet. Each step still ships switched off and is measured before anyone is shown its results.**
 
 The aim, in the owner's words: rearchitect around the taxonomy; merge duplicates; and break a single-line experience into its constituent parts without inventing anything or changing its meaning.
 
@@ -43,6 +43,8 @@ Additions to the vault. Existing rows keep their meaning; nothing is rewritten.
 | Links between facts | "Same as" (merged) and "a fuller version of" (kept apart, shown together) |
 
 Saved resume versions, shared copies and documents capture the facts they used when they were made. They are not affected.
+
+These are built, and [record.md](record.md) says how each is stored and what the record refuses. One choice made there belongs here too. A merged fact's further evidence is not copied onto it: each upload's line stays its own fact with its own quote, and a confirmed "same as" link makes one fact stand for the others. Its evidence is then read as its own quote and theirs. Nothing is moved, so a merge is undone exactly by rejecting the link. Roles are linked the same way, and a merge of two facts holds only while their roles are one.
 
 ## Reading, redesigned
 
@@ -131,8 +133,8 @@ Each step is a pull request, off by default, with its own tests. Steps 3 onward 
 | # | Step | Depends on |
 | --- | --- | --- |
 | 1 | The taxonomy: builder, records, lookup | Done in this change |
-| 2 | First real build, loaded into staging; a vector index of the concepts | The ESCO download link |
-| 3 | The record: evidence per fact, parts, tags, links. No behaviour change | |
+| 2 | First real build (made and checked on 10 November), loaded into staging; a vector index of the concepts | Access to the staging account |
+| 3 | The record: evidence per fact, parts, tags, links. No behaviour change | Built: [record.md](record.md) |
 | 4 | Splitting, in shadow, with labelled examples in the extraction evals | 3 |
 | 5 | Tagging facts, roles and postings, in shadow | 2, 3 |
 | 6 | Merging roles and facts, in shadow, then offered in review | 3, 5 |
