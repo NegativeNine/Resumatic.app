@@ -1366,11 +1366,18 @@ api.get("/shares/comments", async (c) => {
   const threads: OwnerCommentThread[] = await myVault(c).listShareComments(c.get("who"));
   return c.json({ threads });
 });
+// A page from before the v2 path sends no list, and marks every coach's comment seen as it always
+// did. Kept, with its RPC, so such a page or Worker in a mixed rollout still clears the count.
+api.post("/shares/comments/seen", async (c) => {
+  await myVault(c).markShareCommentsSeen(c.get("who"));
+  return c.body(null, 204);
+});
 // The page names the comments it showed as new. Only those are marked, so one a coach writes while
-// the page is open is still counted, and still marked new, the next time the list is read.
-api.post("/shares/comments/seen", JSON_LIMIT, async (c) => {
+// the page is open is still counted, and still marked new, the next time the list is read. A new
+// path and RPC name, so an older Worker or Vault can't drop the list and mark everything.
+api.post("/v2/shares/comments/seen", JSON_LIMIT, async (c) => {
   const { ids } = await jsonBody(c, z.object({ ids: z.array(z.string().max(100)).max(MAX_VAULT_COMMENTS) }));
-  await myVault(c).markShareCommentsSeen(c.get("who"), ids);
+  await myVault(c).markShownShareCommentsSeen(c.get("who"), ids);
   return c.body(null, 204);
 });
 api.post("/shares/comments/:id/replies", JSON_LIMIT, async (c) => {

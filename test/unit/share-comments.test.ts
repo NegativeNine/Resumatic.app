@@ -586,6 +586,13 @@ describe("the owner's side of a thread", () => {
       for (const ids of [undefined, "all", [7], Array.from({ length: MAX_VAULT_COMMENTS + 1 }, () => later.id)])
         expect(refusal(() => comments.markSeen(who, ids as string[], now + 6)), JSON.stringify(ids)?.slice(0, 20)).toBe("invalid");
       expect(comments.unseen()).toBe(1);
+      // A page from before names nothing and marks every coach's comment, as it always did; only for the owner.
+      const reply = comments.replyAsOwner(who, later.id, "Noted", "reply-1", now + 7);
+      expect(refusal(() => comments.markAllSeen({ ...who, userId: "another" }, now + 8))).toBe("forbidden");
+      expect(comments.unseen()).toBe(1);
+      comments.markAllSeen(who, now + 8);
+      expect(comments.unseen()).toBe(0);
+      expect(rows().map((row) => [row.id, row.seen_at])).toEqual([[shown[0], now + 3], [later.id, now + 8], [reply.id, null]]);
     } finally { db.close(); }
   });
 

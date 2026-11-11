@@ -154,7 +154,7 @@ export class FakeApi {
     ["GET", /^\/api\/shares\/comments$/, () => ok({ threads: this.state.shareComments ?? [] })],
     [
       "POST",
-      /^\/api\/shares\/comments\/seen$/,
+      /^\/api\/v2\/shares\/comments\/seen$/,
       (call) => {
         // Only the comments the page names, as the vault does. The count is of what is left.
         const ids = new Set((call.body as { ids: string[] }).ids);

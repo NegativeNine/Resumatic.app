@@ -631,7 +631,7 @@ describe("an owner reading what their coach wrote", () => {
     expect(within(thread(LED)).queryByText("New")).toBeNull();
     // Told once, naming what was shown as new, and the count beside Account is read again afterwards.
     await waitFor(() => expect(refreshed).toHaveBeenCalledTimes(1));
-    expect(api.callsTo("POST", /^\/api\/shares\/comments\/seen$/).map((call) => call.body)).toEqual([{ ids: ["c1", "c3"] }]);
+    expect(api.callsTo("POST", /^\/api\/v2\/shares\/comments\/seen$/).map((call) => call.body)).toEqual([{ ids: ["c1", "c3"] }]);
     expect(state.me.newFromCoach).toBe(0);
     expect(within(thread(LED_LINE)).getAllByText("New")).toHaveLength(2);
     first.unmount();
@@ -640,8 +640,31 @@ describe("an owner reading what their coach wrote", () => {
     render(<Session><OwnerComments /></Session>);
     await screen.findByRole("region", { name: "Comments from your coach" });
     expect(screen.queryByText("New")).toBeNull();
-    expect(api.callsTo("POST", /^\/api\/shares\/comments\/seen$/)).toHaveLength(1);
+    expect(api.callsTo("POST", /^\/api\/v2\/shares\/comments\/seen$/)).toHaveLength(1);
     expect(refreshed).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks nothing and says nothing when a server from before the named list refuses it", async () => {
+    const state = fixtures();
+    state.me.newFromCoach = 1;
+    state.shareComments = [fromDana()];
+    const api = installFakeApi(state);
+    // A Worker from before the v2 path answers it so. Nothing falls back to marking everything.
+    api.fail("POST", /\/seen$/, 404, "not_found", "no such route");
+    const first = renderWithSession(<OwnerComments />, state.me);
+    const section = await screen.findByRole("region", { name: "Comments from your coach" });
+    await waitFor(() => expect(api.calls.filter((call) => call.path.endsWith("/seen"))).toHaveLength(1));
+    expect(api.calls.filter((call) => call.path.endsWith("/seen")).map((call) => call.path)).toEqual(["/api/v2/shares/comments/seen"]);
+    expect(within(section).queryByRole("alert")).toBeNull();
+    expect(within(section).getByText("New")).toBeInTheDocument();
+    expect(state.me.newFromCoach).toBe(1);
+    expect(state.shareComments[0]!.comments[0]!.seen).toBe(false);
+    first.unmount();
+    // The next showing tries again.
+    renderWithSession(<OwnerComments />, state.me);
+    await screen.findByRole("region", { name: "Comments from your coach" });
+    await waitFor(() => expect(state.me.newFromCoach).toBe(0));
+    expect(api.callsTo("POST", /^\/api\/v2\/shares\/comments\/seen$/).map((call) => call.body)).toEqual([{ ids: ["c1"] }, { ids: ["c1"] }]);
   });
 
   it("leaves new a comment written after the list was read", async () => {
@@ -659,8 +682,8 @@ describe("an owner reading what their coach wrote", () => {
     });
     renderWithSession(<OwnerComments />, state.me);
     await screen.findByRole("region", { name: "Comments from your coach" });
-    await waitFor(() => expect(api.callsTo("POST", /^\/api\/shares\/comments\/seen$/)).toHaveLength(1));
-    expect(api.callsTo("POST", /^\/api\/shares\/comments\/seen$/)[0]!.body).toEqual({ ids: ["c1"] });
+    await waitFor(() => expect(api.callsTo("POST", /^\/api\/v2\/shares\/comments\/seen$/)).toHaveLength(1));
+    expect(api.callsTo("POST", /^\/api\/v2\/shares\/comments\/seen$/)[0]!.body).toEqual({ ids: ["c1"] });
     // It was never on the page, so it is still counted, and still new when the list is next read.
     expect(state.me.newFromCoach).toBe(1);
     expect(state.shareComments[0]!.comments.map((item) => [item.id, item.seen])).toEqual([["c1", true], ["c7", false]]);

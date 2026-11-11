@@ -22,6 +22,8 @@ afterEach(() => setModels(null));
 
 const FACT = "Cut deploy time from forty minutes to six";
 const ENDED = "this copy has ended; the person who shared it can share again";
+/** Where the page says which comments it showed. The path without `v2` is the one pages from before that change still use. */
+const SEEN = "/api/v2/shares/comments/seen";
 
 function sessionOf(user: User) {
   const payload = user.cookie.slice("__Host-session=".length).split(".")[0]!;
@@ -152,11 +154,12 @@ describe("comments on a copy that names its coach", () => {
     // The coach reads the thread on the copy: their own words, the owner's answer, and nobody's name or address.
     expect(await coachThreads(dana, grantId)).toEqual([{ target, quote: FACT, comments: [first, second] }]);
 
-    // The page names what it showed. Without that list nothing is marked.
-    expect((await sam.send("POST", "/api/shares/comments/seen")).status).toBe(422);
-    expect((await sam.send("POST", "/api/shares/comments/seen", {})).status).toBe(422);
+    // The page names what it showed, on a path of its own. Without that list nothing is marked.
+    expect((await sam.send("POST", SEEN)).status).toBe(422);
+    expect((await sam.send("POST", SEEN, {})).status).toBe(422);
+    expect((await sam.send("POST", SEEN, { ids: "all" })).status).toBe(422);
     expect(await newFromCoach(sam)).toBe(1);
-    expect((await sam.send("POST", "/api/shares/comments/seen", { ids: [first.id] })).status).toBe(204);
+    expect((await sam.send("POST", SEEN, { ids: [first.id] })).status).toBe(204);
     expect(await newFromCoach(sam)).toBe(0);
     expect(await ownerThreads(sam)).toEqual([{ ...thread, comments: [{ ...first, name: "Dana Okafor", seen: true }, second] }]);
     // A second comment on the fact joins the thread, and is new again.
@@ -166,9 +169,14 @@ describe("comments on a copy that names its coach", () => {
     // One written after the page read its list isn't marked by what the page showed.
     const shown = (await ownerThreads(sam)).flatMap((held) => held.comments).filter((item) => item.seen === false).map((item) => item.id);
     const meanwhile = await comment(dana, grantId, target, "Written while the page was open.");
-    expect((await sam.send("POST", "/api/shares/comments/seen", { ids: shown })).status).toBe(204);
+    expect((await sam.send("POST", SEEN, { ids: shown })).status).toBe(204);
     expect(await newFromCoach(sam)).toBe(1);
     expect((await ownerThreads(sam))[0]!.comments.map((item) => [item.id, item.seen])).toEqual([[first.id, true], [second.id, undefined], [other.id, true], [meanwhile.id, false]]);
+    // A page loaded before that change sends no list, on the path it always used. It still clears
+    // the count as it did then, marking every comment of a coach's seen, until it is reloaded.
+    expect((await sam.send("POST", "/api/shares/comments/seen")).status).toBe(204);
+    expect(await newFromCoach(sam)).toBe(0);
+    expect((await ownerThreads(sam))[0]!.comments.map((item) => [item.id, item.seen])).toEqual([[first.id, true], [second.id, undefined], [other.id, true], [meanwhile.id, true]]);
     expect((await dana.send("DELETE", `${commentsOf(grantId)}/${meanwhile.id}`)).status).toBe(204);
 
     // The coach's own vault holds nothing of it: the words are kept where the copy is.
@@ -247,6 +255,7 @@ describe("comments on a copy that names its coach", () => {
     // Nobody signed in at all.
     expect((await call("/api/shares/comments")).status).toBe(401);
     expect((await call("/api/shares/comments/seen", { method: "POST" })).status).toBe(401);
+    expect((await call(SEEN, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: [made.id] }) })).status).toBe(401);
     expect((await call(`/api/shares/comments/${made.id}`, { method: "DELETE" })).status).toBe(401);
 
     // After all of that the thread is exactly what its two people wrote.

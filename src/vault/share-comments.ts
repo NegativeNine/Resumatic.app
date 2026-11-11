@@ -324,6 +324,15 @@ export class ShareCommentStore {
       this.sql.exec(`UPDATE share_comments SET seen_at = ? WHERE id = ? AND author = 'coach' AND seen_at IS NULL`, now, id);
   }
 
+  /**
+   * Notes that the owner has seen every comment a coach wrote. Only a page from before pages named
+   * what they showed asks for this, and it keeps the race `markSeen` closes until it is reloaded.
+   */
+  markAllSeen(who: Who, now = Date.now()): void {
+    this.authorizeOwner(who);
+    this.sql.exec(`UPDATE share_comments SET seen_at = ? WHERE author = 'coach' AND seen_at IS NULL`, now);
+  }
+
   /** How many of a coach's comments the owner hasn't seen. It checks nobody: call it only for the owner. */
   unseen(): number {
     return this.one(this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM share_comments WHERE author = 'coach' AND seen_at IS NULL`));

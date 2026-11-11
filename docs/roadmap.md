@@ -30,7 +30,7 @@ A merged PR or a local check is not a claim of production release acceptance. Th
 - Suggested wording on a shared copy. Designed; builds on comments.
 - Fit preview through connected apps. Designed; builds on sensitive facts.
 
-Built and merged in #34: comments on a shared copy; sensitive facts; preferences. A low-severity review point on preferences is still open: the test that keeps preferences unread does not see a second way into the store from inside the Vault. The review points on comments are settled on branch `fix/comments-review`, with no migration: the page names the comments it marks seen, a copy that ends under a coach stops offering anything to choose, a 404 from a server without the comment routes is no longer read as a copy that left the list, and a coach's chosen name can no longer pass for the owner's own words.
+Built and merged in #34: comments on a shared copy; sensitive facts; preferences. A low-severity review point on preferences is still open: the test that keeps preferences unread does not see a second way into the store from inside the Vault. The review points on comments are settled on branch `fix/comments-review`, with no migration: the page names the comments it marks seen, on a new path (`POST /api/v2/shares/comments/seen`) beside the old one, which a page loaded before still uses to mark everything until it is reloaded; a copy that ends under a coach stops offering anything to choose; a 404 from a server without the comment routes is no longer read as a copy that left the list; and a coach's chosen name can no longer pass for the owner's own words.
 
 ## Taxonomy pipeline work
 
