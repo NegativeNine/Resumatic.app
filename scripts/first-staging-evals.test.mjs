@@ -347,6 +347,48 @@ test("preflight rejects zero input prices for every required model before creati
     assert.ok(createPilotLedger(dir, 10_000_000, 50).file);
   }));
 
+test("a typed-decision judge is priced on its input alone, and counted once for each fact it checks", () =>
+  temporary(async (dir) => {
+    const { readConfig } = await import("./lib/config.mjs");
+    const staging = (await readConfig("staging")).config.vars;
+    const { MODEL_PRICES } = await import("../src/ai/usage.ts");
+    const clef = "@cf/cloudflare/clef";
+    // Staging asks its judge and ranks its facts by typed decisions, which are priced on input alone.
+    assert.deepEqual([staging.MODEL_JUDGE, staging.RERANK_MODEL, MODEL_PRICES[clef][1]], [clef, clef, 0]);
+    const allocations = [];
+    /** The preflight as far as creating the one-shot ledger, which records what the extraction suite was given. */
+    const dependencies = (vars, knownPrices, goldFacts) => ({
+      ...deps(dir, () => ({ status: 0 })),
+      readConfig: async () => ({ config: { vars: { ...vars, CF_ACCOUNT_ID: env.CF_ACCOUNT_ID, AI_GATEWAY_ID: env.AI_GATEWAY_ID } } }),
+      knownPrices,
+      loadDataset: () => ({ root: dir, cases: goldFacts === undefined ? cases : cases.map((one) => ({ ...one, gold: { roles: [], facts: Array(goldFacts).fill({}) } })) }),
+      createLedger: (_root, _micros, _calls, extractionCalls) => { allocations.push(extractionCalls); throw new Error("ledger reached"); },
+    });
+    const run = (dependenciesFor, extra = {}) => runFirstStagingEvals({ ...input, env: { ...env, ...extra } }, dependenciesFor);
+
+    // With the reviewed prices, staging's models pass the price check: a typed-decision judge
+    // writes nothing that is priced. One judged fact fits the 50 attempts authorized.
+    await assert.rejects(() => run(dependencies(staging, MODEL_PRICES)), /ledger reached/);
+    await assert.rejects(() => run(dependencies(staging, MODEL_PRICES, 1)), /ledger reached/);
+    assert.deepEqual(allocations, [12, 12]);
+    // A typed-decision judge is asked once for each fact. A case a correct reading finds four
+    // facts in needs 30 attempts for extraction and 66 in all, so the campaign must not start.
+    await assert.rejects(() => run(dependencies(staging, MODEL_PRICES, 4)), /PILOT_CALL_BUDGET_TOO_SMALL/);
+    await assert.rejects(() => run(dependencies(staging, MODEL_PRICES, 2)), /PILOT_CALL_BUDGET_TOO_SMALL/);
+    // A chat judge is asked once for all of them, as before.
+    await assert.rejects(() => run(dependencies(vars, prices, 4)), /ledger reached/);
+    assert.deepEqual(allocations, [12, 12, 12]);
+
+    // A price for the typed-decision model's output would leave none of its requests bounded,
+    // so it is refused here and not after the campaign has started.
+    await assert.rejects(() => run(dependencies(staging, MODEL_PRICES), { EVAL_MODEL_PRICES: JSON.stringify({ [clef]: [0.24, 0.24] }) }), /PILOT_MODEL_PRICE_REQUIRED/);
+    // The model that ranks facts is one the pilot calls, so it needs a price whatever the judge is.
+    await assert.rejects(() => run(dependencies({ ...vars, RERANK_MODEL: clef }, prices)), /PILOT_MODEL_PRICE_REQUIRED/);
+    // A chat judge is still held to a price for what it writes.
+    await assert.rejects(() => run(dependencies(vars, { ...prices, "provider/d": [1, 0] })), /PILOT_MODEL_PRICE_REQUIRED/);
+    assert.equal(allocations.length, 3);
+  }));
+
 test("preflight checks remaining shared capacity before creating the one-shot marker", () =>
   temporary(async (dir) => {
     let subprocesses = 0;

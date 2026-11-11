@@ -69,7 +69,7 @@ A person's export includes their shadow divisions, marked as such. No screen sho
 ## What has and has not been measured
 
 - **Tested with stand-in models:** every check, on labelled lines that include wrong divisions made of the line's own words (`test/unit/split.test.ts`); the stage on and off, a failing model and a refused division (`test/integration/split-shadow.test.ts`).
-- **Not run:** the eval against the real models (`npm run evals`, `test/evals/split.eval.ts`). It needs model credentials. It puts every labelled wrong division to the real judge, where none may pass, and reports what the real proposing model does with each line beside the labelled division, with the claim each result was named as the outcome of.
+- **Not run:** the eval against the real models (`npm run evals`, `test/evals/split.eval.ts`). It needs model credentials. It asks the judge the way the Worker does for the configuration it reads: in staging that is one typed decision for each question, held to the Worker's threshold. It puts every labelled wrong division to the real judge, where none may pass, and reports what the real proposing model does with each line beside the labelled division, with the claim each result was named as the outcome of.
 - **Not measured:** how often an accepted division changes a line's meaning. The target is zero on labelled lines, and the labelled lines so far are made up. That needs real resumes given with consent, as the extraction evals do.
 
 Nothing is shown to anyone until that is measured.

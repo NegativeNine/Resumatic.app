@@ -11,11 +11,14 @@ import { rerankScores } from "../../src/ai/rerank";
 import { usableEmbedding } from "../../src/shared/embedding";
 import { embeddingInput } from "../../src/ai/embedding-input";
 import { relevanceScores } from "../../src/ai/relevance";
+import { CLEF_MODEL, decisionJudge } from "../../src/ai/decision-judge";
+import type { JudgeItem } from "../../src/ai/prompts";
 import { EvalBudget, evalBudgetFromEnv } from "../extract-evals/budget";
 import { sharedPilotFromEnv, type SharedPilot } from "./shared-pilot.mjs";
 
 // The real models, called over Cloudflare's REST API from Node, with the same model names the
-// Worker uses (read from wrangler.jsonc) and the same chat client.
+// Worker uses (read from wrangler.jsonc), the same chat client, and the Worker's own typed-decision
+// requests for the judge and for ranking where those are configured.
 
 export interface EvalCredentials {
   accountId: string;
@@ -191,7 +194,28 @@ export function restModels(
     }
     await opts.onUsage?.(observed);
   };
+  // The Worker's typed-decision calls take its AI binding. This stands in for the binding over
+  // REST, so the judge and the ranking here send the requests the Worker sends. The Worker
+  // starts four at once, and the shared ledger admits one unsettled attempt and is frozen for
+  // good by a refusal, so each call here waits for the one before it to be reserved, answered
+  // and settled.
+  let turn: Promise<unknown> = Promise.resolve();
+  const typedDecisions = (route: "judge" | "rerank") =>
+    ({
+      AI_GATEWAY_ID: creds.gatewayId,
+      AI: {
+        run: (model: string, input: unknown) => {
+          const call = () => workersAi<unknown>(creds, model, input, budget, pilot, onUsage, route);
+          const answer = turn.then(call);
+          turn = answer.catch(() => {});
+          return answer;
+        },
+      },
+    }) as unknown as Env;
   return {
+    // Where the judge is a typed decision, the pipelines ask it as the Worker does and never
+    // send it a chat completion, which that model's price cannot bound.
+    ...(vars.MODEL_JUDGE === CLEF_MODEL ? { judge: (items: JudgeItem[]) => decisionJudge(typedDecisions("judge"), items) } : {}),
     complete: (route, messages, schema, callOpts) =>
       chatComplete(
         {
@@ -254,12 +278,7 @@ export function restModels(
     },
     async rerank(query, texts) {
       if (texts.length === 0) return [];
-      if (vars.RERANK_MODEL === "@cf/cloudflare/clef") {
-        const remote = { AI_GATEWAY_ID: creds.gatewayId, AI: {
-          run: (model: string, input: unknown) => workersAi<unknown>(creds, model, input, budget, pilot, onUsage, "rerank"),
-        } } as unknown as Env;
-        return relevanceScores(remote, query, texts);
-      }
+      if (vars.RERANK_MODEL === CLEF_MODEL) return relevanceScores(typedDecisions("rerank"), query, texts);
       if (vars.RERANK_MODEL && vars.RERANK_MODEL !== "@cf/baai/bge-reranker-base") throw new Error("rerank_model_unknown");
       const result = await workersAi<unknown>(
         creds,

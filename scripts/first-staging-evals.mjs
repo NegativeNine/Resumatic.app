@@ -23,6 +23,10 @@ import { gatewayPrivacyObserved } from "./lib/gateway-privacy.mjs";
 
 const PROJECT = fileURLToPath(new URL("../", import.meta.url));
 const TAILORING_CASE = "confirmed-facts tailoring";
+// The model the Worker asks for typed decisions (CLEF_MODEL in src/ai/decision-judge.ts). Where
+// it is the judge or ranks facts it is called through Workers AI, never as a chat completion,
+// and each request is reserved on its input alone.
+const TYPED_DECISION_MODEL = "@cf/cloudflare/clef";
 const validStrategy = (s) =>
   s === "clairic" ||
   s === "llm:default" ||
@@ -55,14 +59,19 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
   // field are needed even for a one-role case. The independent judge uses six
   // further attempts; the judge add-on adds another six. Multiple sections or
   // schema retries may still exhaust the allocation, reported as incomplete.
+  // This is the least any configuration needs. A typed-decision judge needs
+  // more, which is worked out below once the configuration and case are known.
   const judged = options.strategy.startsWith("judge:");
   const baseStrategy = options.strategy.replace(/^judge:/, "");
-  const extractionCalls = (baseStrategy === "clairic" ? 66 : 12) + (judged ? 6 : 0);
+  const leastExtractionCalls = (baseStrategy === "clairic" ? 66 : 12) + (judged ? 6 : 0);
   // Tailoring starts from an independent synthetic confirmed fact. It needs
   // analyze, write and judge, two embedding requests and at least one rerank:
   // six gateway requests of six attempts each, before any retries or repairs.
+  // A typed-decision judge is one request for each line and a typed-decision
+  // ranking one for each candidate fact, so for those this is the minimum
+  // only for a draft of one line from one candidate.
   const tailoringCalls = 36;
-  if (options.maxCalls < extractionCalls + tailoringCalls)
+  if (options.maxCalls < leastExtractionCalls + tailoringCalls)
     fail("PILOT_CALL_BUDGET_TOO_SMALL");
   if (!env.CF_ACCOUNT_ID || !env.CF_AI_TOKEN || !env.AI_GATEWAY_ID)
     fail("PILOT_CREDENTIALS_REQUIRED");
@@ -108,6 +117,19 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
     )
   )
     fail("PILOT_DATASET_INVALID");
+  // A chat judge is asked once about all of a case's facts. A typed-decision
+  // judge is asked once for each fact, at six attempts each, and the pilot's
+  // case says how many facts a correct reading finds. Without this the
+  // campaign would start, use up its one-shot marker and run out of attempts
+  // part-way through the extraction suite.
+  const goldFacts = selectedCases[0].gold?.facts?.length;
+  const judgedFacts =
+    vars.MODEL_JUDGE === TYPED_DECISION_MODEL && Number.isSafeInteger(goldFacts) && goldFacts > 1
+      ? goldFacts
+      : 1;
+  const extractionCalls = leastExtractionCalls + 6 * (judgedFacts - 1) * (judged ? 2 : 1);
+  if (options.maxCalls < extractionCalls + tailoringCalls)
+    fail("PILOT_CALL_BUDGET_TOO_SMALL");
 
   let overrides = {};
   if (env.EVAL_MODEL_PRICES) {
@@ -141,18 +163,22 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
       : baseStrategy === "llm:default"
         ? vars.MODEL_EXTRACT
         : baseStrategy.replace(/^(?:llm|segment):/, "");
+  // A typed-decision judge writes nothing that is priced, so it is not held
+  // to an output price as the chat models are.
   const chatModels = [
     vars.MODEL_EXTRACT,
     vars.MODEL_ANALYZE,
     vars.MODEL_WRITE,
-    vars.MODEL_JUDGE,
+    ...(vars.MODEL_JUDGE === TYPED_DECISION_MODEL ? [] : [vars.MODEL_JUDGE]),
   ];
   if (baseStrategy !== "clairic") chatModels.push(explicit);
   const required = [
     ...chatModels,
+    vars.MODEL_JUDGE,
     "@cf/baai/bge-m3",
     "@cf/baai/bge-reranker-base",
     vars.EMBEDDING_MODEL ?? "@cf/baai/bge-m3",
+    vars.RERANK_MODEL ?? "@cf/baai/bge-reranker-base",
     explicit,
   ];
   if (
@@ -166,7 +192,10 @@ export async function runFirstStagingEvals(options, dependencies = {}) {
         ) ||
         prices[model][0] <= 0,
     ) ||
-    chatModels.some((model) => prices[model][1] <= 0)
+    chatModels.some((model) => prices[model][1] <= 0) ||
+    // A typed decision is reserved with no output bound. A price for its
+    // output would leave every such request refused once the campaign began.
+    (required.includes(TYPED_DECISION_MODEL) && prices[TYPED_DECISION_MODEL][1] !== 0)
   )
     fail("PILOT_MODEL_PRICE_REQUIRED");
   // Receipt is an operator attestation, not a guarantee of provider billing accuracy.
