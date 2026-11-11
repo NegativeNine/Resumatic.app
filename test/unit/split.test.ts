@@ -113,6 +113,13 @@ describe("starting rule 1: a qualified line stays whole", () => {
     // A phrase is the same phrase across a line break, two spaces or a space that does not break.
     ["Reduced latency by up\u00A0to 40% and tripled throughput", "up to"],
     ["Was part  of the team that rebuilt billing\nand shipped it", "part of"],
+    // A character that is not shown can sit inside a word. Text read from a PDF keeps its soft hyphens.
+    ["Ne\u00ADver handled escalations but wrote every runbook", "never"],
+    ["Pro\u200Bposed a redesign of billing and wrote its tests", "proposed"],
+    ["AWS Solutions Architect certification in pro\u00ADgress and three exams passed", "in progress"],
+    ["Didn\u2060\u2019t own on-call but wrote every playbook", "didn't"],
+    // Or stand between two words, which is how it was already read.
+    ["Built services in Python\u200Bor\u200BGo and deployed them daily", "or"],
     // A hyphen of any length where the words of a phrase join, or inside a word, changes nothing.
     ["AWS Solutions Architect certification in-progress and two exams passed", "in progress"],
     ["Thesis is a work‐in‐progress with two chapters drafted", "in progress"],
@@ -156,6 +163,18 @@ describe("starting rule 1: a qualified line stays whole", () => {
     // A hyphen joins only what it touches, and a hyphenated word is read as its parts when it is not a listed word itself.
     expect(qualifiers("Re-proposed the redesign, on - going since March")).toEqual(["proposed"]);
     expect(qualifiers("Python-or-Go services")).toEqual(["or"]);
+  });
+
+  it("reads a line with a character that is not shown as the same words", () => {
+    const plainly = qualifiers("Never handled escalations, and did not answer tickets");
+    expect(plainly).toEqual(["never", "not"]);
+    // Inside a listed word, inside another word, and between two: each is the line a person sees.
+    expect(qualifiers("Ne\u00ADver handled escalations, and did not answer tickets")).toEqual(plainly);
+    expect(qualifiers("Never han\u00ADdled escalations, and did not an\u200Bswer tickets")).toEqual(plainly);
+    expect(qualifiers("Never handled\u200B escalations, and did\uFEFF not answer tickets")).toEqual(plainly);
+    // Read both ways, a line is qualified by everything either reading finds, each once.
+    expect(qualifiers("Never ran Python\u200Bor\u200BGo")).toEqual(["never", "or"]);
+    expect(qualifiers("Kept every tut\u00ADor on the rota")).toEqual(["or"]);
   });
 
   it("is decided before any model is asked", async () => {

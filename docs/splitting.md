@@ -40,6 +40,8 @@ The list is read against the line's words, whichever mark stands for an apostrop
 
 A hyphen where the words of a phrase join, or inside a word, changes nothing either: "in-progress" is *in progress* and "up-coming" is *upcoming*, with a hyphen of any length. A hyphenated phrase counts only where the hyphenated word ends with it, so "work-in-progress" is *in progress* and "up-to-date" is not *up to*.
 
+Nor does a character that is not shown, such as the soft hyphens that text read from a PDF can keep inside its words, or a zero-width space. A line that has one is read as a person sees it, and also with each such character as a space, and it stays whole if either reading has a listed word.
+
 "May 2021" is a month and does not count. A line of fewer than four words or more than eighty is not divided either.
 
 Check 7 is a starting rule of the same kind. A line that states an outcome before what led to it, such as "Doubled sign-ups in 6 weeks by rebuilding the onboarding flow", stays whole when the outcome is marked as a result. A result is put to the judge read after its claim, and that is the line's own order only when the result comes second.

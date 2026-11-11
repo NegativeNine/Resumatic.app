@@ -101,6 +101,9 @@ describe("what to offer about two lines", () => {
       ["AWS Solutions Architect certification", "AWS Solutions Architect certification (in-progress)"],
       ["AWS Solutions Architect certification", "AWS Solutions Architect certification (work‑in‑progress)"],
       ["Led the launch in two regions", "Led the up-coming launch in two regions"],
+      // A listed word with a soft hyphen inside it, as text read from a PDF can have.
+      ["Handled customer escalations", "Ne\u00ADver handled customer escalations"],
+      ["AWS Solutions Architect certification", "AWS Solutions Architect certification (in pro\u00ADgress)"],
       // A listed word run straight into a quotation mark.
       ["Managed releases and hotfixes", "Managed releases, not\u2018hotfixes\u2019"],
       ["Migrated the billing system", "Tried to migrate the billing system"],
@@ -129,6 +132,10 @@ describe("what to offer about two lines", () => {
     const spelt = models();
     expect(await offers(spelt.models, [pair("AWS Solutions Architect certification (in-progress)", "AWS Solutions Architect certification (in progress)")])).toEqual([{ relation: "same", from: "later-1", to: "earlier-1" }]);
     expect(spelt.asked.flat()).toHaveLength(2);
+    // So is a line with a character that is not shown inside one of its words.
+    const unseen = models();
+    expect(await offers(unseen.models, [pair("Helped de\u00ADsign the billing API used by 3 product teams", "Helped design the billing API that 3 product teams use")])).toEqual([{ relation: "same", from: "later-1", to: "earlier-1" }]);
+    expect(unseen.asked.flat()).toHaveLength(2);
     // Where the same words qualify both, a denial of a known action is still settled without asking.
     const denied = models();
     expect(await offers(denied.models, [pair("Did not manage the budget but led the roadmap", "Managed the budget but did not lead the roadmap")])).toEqual([]);

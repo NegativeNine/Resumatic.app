@@ -107,12 +107,27 @@ const WORD = "[\\p{L}\\p{N}]+(?:(?<=n)'t(?!\\p{L}))?";
 /** One word, or several with nothing but a hyphen between each and the next. */
 const HYPHENATED = new RegExp(`${WORD}(?:${HYPHEN}${WORD})*`, "giu");
 
+// A character that is not shown: a soft hyphen, a zero-width space or joiner, a mark of direction.
+const UNSEEN = /\p{Default_Ignorable_Code_Point}/gu;
+
 /**
  * Every hedge, negation, alternative or intention in a line: the phrases in the order they come,
  * then the words in theirs. Two lines qualified in the same way give the same list, however the
  * words were joined or marked.
  */
 export function qualifiers(line: string): string[] {
+  const shown = line.replace(UNSEEN, "");
+  const found = listed(shown);
+  if (shown === line) return found;
+  // An unseen character can sit inside a word ("pro\u00ADposed") or stand between two. The line is
+  // read as a person sees it, and then with each one as a space, which is how it was read before
+  // anything looked for them. It is qualified by whatever either reading finds, each once.
+  const apart = listed(line.replace(UNSEEN, " "));
+  for (const word of found) if (apart.includes(word)) apart.splice(apart.indexOf(word), 1);
+  return [...found, ...apart];
+}
+
+function listed(line: string): string[] {
   // The list is read against the words alone, whichever apostrophe and whatever spacing they came with.
   const text = line.replace(APOSTROPHES, "'").replace(/\s+/gu, " ");
   const found: string[] = [];
