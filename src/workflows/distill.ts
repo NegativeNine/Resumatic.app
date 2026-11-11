@@ -15,6 +15,7 @@ import { validateTranscriptionInput } from "../ai/transcribe";
 import { extractLinkedIn } from "../pipeline/linkedin-extract";
 import { linkedInDocument, linkedInMarkdown } from "../pipeline/linkedin";
 import { AppError, errorCode } from "../shared/errors";
+import { readPastedText } from "../shared/paste";
 import { vault } from "../shared/stubs";
 import { MODEL_STEP, STEP, once, retrySafely, sourceFailureMessage } from "./steps";
 
@@ -62,11 +63,22 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
           }
           const info = await v.sourceInfo(sourceId);
           const object = await this.env.FILES.get(info.r2Key);
+          if (!object && info.origin === "paste")
+            throw new AppError("not_found", "The pasted text is missing. Paste it again.");
           if (!object)
             throw new AppError(
               "not_found",
               "The uploaded file is missing. Upload it again.",
             );
+          // Pasted text is already text: it is read as it was stored, with no conversion and no
+          // model, after the same check the Vault made before storing it.
+          if (info.origin === "paste") {
+            const pasted = readPastedText(await object.arrayBuffer());
+            if (pasted === null)
+              throw new AppError("invalid", "This pasted text couldn't be read. Paste it again.");
+            await v.saveSource(sourceId, { markdown: pasted }, event.instanceId);
+            return { chars: pasted.length };
+          }
           const m = runModels(this.env, vaultId, event.instanceId, "convert", "distill");
           let markdown: string;
           let ocrImageCount: number | undefined;
@@ -117,7 +129,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
             .slice(0, 10);
           let result;
           if (
-            info.origin !== "ocr" &&
+            info.origin === "upload" &&
             info.filename.toLowerCase().endsWith(".zip")
           ) {
             const object = await this.env.FILES.get(info.r2Key);

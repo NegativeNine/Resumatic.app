@@ -10,7 +10,15 @@ import { unwrapResult } from "../shared/result";
 import { rateLimitRequest, httpRoute } from "./limits";
 import { OcrImagesSchema, validateTranscriptionInput } from "../ai/transcribe";
 import { revokeOAuthGrant } from "./mcp";
-import { uploadBodyDigest, uploadDescriptorDigest } from "../vault/uploads";
+import { uploadBodyDigest, uploadDescriptorDigest, type UploadDescriptor } from "../vault/uploads";
+import {
+  MAX_PASTE_BODY_BYTES,
+  MAX_PASTE_CHARS,
+  PASTE_CONTENT_TYPE,
+  hasLoneSurrogate,
+  normalizePastedText,
+  pasteFilename,
+} from "../shared/paste";
 import { renderPdf } from "../render/pdf";
 import { PILOT_IDENTITY_PATHS, PILOT_MAX_CALLS, PILOT_MAX_MICROS } from "./pilot/ledger";
 import { stagingPilotBudget } from "./pilot/access";
@@ -612,19 +620,74 @@ api.post("/sources", UPLOAD_LIMIT, async (c) => {
     r2Key: sourceKey(c.get("session").vid, `${request}-${digest}`),
     sha256: await uploadBodyDigest(bytes),
   };
+  return c.json(await storeReservedSource(c, descriptor, bytes, file.name), 201);
+});
+
+/**
+ * Reserve, write and commit a source the Worker has described, or return the source an earlier
+ * request with the same key already made. Shared by uploads and pastes, so both have one path
+ * for idempotency, the write fence, the caps, second copies and expiry.
+ */
+async function storeReservedSource(c: C, descriptor: UploadDescriptor, bytes: ArrayBuffer, originalFilename: string): Promise<{ sourceId: string }> {
   const reserved = await myVault(c).reserveUpload(c.get("who"), descriptor);
   if (reserved.intent.state === "complete")
-    return c.json({ sourceId: reserved.intent.sourceId }, 201);
-  const authorized = await myVault(c).writeReservedSource(c.get("who"), descriptor, bytes, file.name);
-  if (authorized.sourceId) return c.json({ sourceId: authorized.sourceId }, 201);
-  return c.json(
-    await completeReservedUpload(c.env.FILES, descriptor.r2Key, () =>
-      myVault(c).completeUpload(c.get("who"), descriptor), {
-        expired: () => myVault(c).expiredUploadForCleanup(c.get("who"), descriptor),
-      },
-    ),
-    201,
+    return { sourceId: reserved.intent.sourceId };
+  const authorized = await myVault(c).writeReservedSource(c.get("who"), descriptor, bytes, originalFilename);
+  if (authorized.sourceId) return { sourceId: authorized.sourceId };
+  return completeReservedUpload(c.env.FILES, descriptor.r2Key, () =>
+    myVault(c).completeUpload(c.get("who"), descriptor), {
+      expired: () => myVault(c).expiredUploadForCleanup(c.get("who"), descriptor),
+    },
   );
+}
+
+const PASTE_UNREADABLE = "This text couldn't be read. Paste it as plain text, then try again.";
+const PASTE_EMPTY = "There's no text to read. Paste some text, then try again.";
+const PASTE_TOO_LONG = "Pasted text can be up to 60,000 characters.";
+const PASTE_TITLE_TOO_LONG = "Titles can be up to 120 characters.";
+const PASTE_LIMIT = bodyLimit({ maxSize: MAX_PASTE_BODY_BYTES, onError: tooLarge(PASTE_TOO_LONG) });
+const PasteSourceBody = z.object({ text: z.string(), title: z.string().nullable().optional() }).strict();
+
+/**
+ * Text pasted as a source. The body is read as bytes, because a JSON or form reader would turn
+ * invalid UTF-8 into replacement characters instead of refusing it. The text is cleaned and
+ * counted as it will be stored, then goes the way an upload goes.
+ */
+api.post("/sources/paste", PASTE_LIMIT, async (c) => {
+  if (!(c.req.header("content-type") ?? "").toLowerCase().startsWith("application/json"))
+    throw new AppError("invalid", PASTE_UNREADABLE);
+  let body: z.infer<typeof PasteSourceBody>;
+  try {
+    const bytes = await c.req.arrayBuffer();
+    const parsed = PasteSourceBody.safeParse(JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes)));
+    if (!parsed.success) throw new Error("paste_body");
+    body = parsed.data;
+  } catch {
+    throw new AppError("invalid", PASTE_UNREADABLE);
+  }
+  if (hasLoneSurrogate(body.text) || (body.title != null && hasLoneSurrogate(body.title)))
+    throw new AppError("invalid", PASTE_UNREADABLE);
+  const text = normalizePastedText(body.text);
+  if (!text) throw new AppError("invalid", PASTE_EMPTY);
+  if (text.length > MAX_PASTE_CHARS) throw new AppError("too_large", PASTE_TOO_LONG);
+  const filename = pasteFilename(body.title);
+  if (filename === null) throw new AppError("invalid", PASTE_TITLE_TOO_LONG);
+
+  await myVault(c).checkSession(c.get("who"));
+  const encoded = new TextEncoder().encode(text).slice().buffer;
+  const key = requestKey(c);
+  const digest = await uploadDescriptorDigest({ filename, contentType: PASTE_CONTENT_TYPE, origin: "paste" }, encoded);
+  const descriptor: UploadDescriptor = {
+    requestKey: key,
+    descriptorDigest: digest,
+    filename,
+    contentType: PASTE_CONTENT_TYPE,
+    origin: "paste",
+    byteLength: encoded.byteLength,
+    r2Key: sourceKey(c.get("session").vid, `${key}-${digest}`),
+    sha256: await uploadBodyDigest(encoded),
+  };
+  return c.json(await storeReservedSource(c, descriptor, encoded, filename), 201);
 });
 
 api.get("/sources/:id/text", async (c) =>
@@ -727,7 +790,7 @@ api.get("/sources/:id/file", async (c) => {
   const extension = filename.split(".").pop()?.toLowerCase() ?? "";
   const name = origin === "ocr"
     ? `${fileName(filename.replace(/\s*\(image transcription\)$/i, "").replace(/\.[^.]*$/, ""))}-image-inputs.json`
-    : `${fileName(filename.replace(/\.[^.]*$/, ""))}${ALLOWED_UPLOADS[extension] ? `.${extension}` : ""}`;
+    : `${fileName(filename.replace(/\.[^.]*$/, ""))}${ALLOWED_UPLOADS[extension] || extension === "txt" ? `.${extension}` : ""}`;
   return new Response(guardedStream(object.body, () => v.checkSession(who)), {
     headers: {
       "content-type": origin === "ocr"

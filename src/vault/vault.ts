@@ -42,6 +42,7 @@ import type {
   RolePatch,
   RoleView,
   SensitiveRequest,
+  SourceOrigin,
   SourceState,
   SourceView,
 } from "../shared/api";
@@ -66,6 +67,7 @@ import type {
 } from "../shared/types";
 import { UploadStore, uploadDescriptorDigest, type UploadDescriptor } from "./uploads";
 import { sourceKey } from "../shared/r2";
+import { MAX_PASTE_BYTES, readPastedText } from "../shared/paste";
 import { validateTranscriptionInput, type TranscriptionInput } from "../ai/transcribe";
 import { ExportCache, EXPORT_CACHE_ITEM_BYTES } from "./export-cache";
 import { VaultOperations, ReembedStore } from "./operations";
@@ -128,7 +130,7 @@ const REDISPATCH_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
 
 type SourceRow = {
   ocr_image_count: number | null;
-  origin: "upload" | "ocr";
+  origin: SourceOrigin;
   extractor: string | null;
   parent_source_id: string | null;
   id: string;
@@ -160,7 +162,7 @@ type FactRow = {
   interview_question_id?: string | null;
   interview_question?: string | null;
   interview_quote?: string | null;
-  evidence_origin?: "upload" | "ocr";
+  evidence_origin?: SourceOrigin;
   confidence?: number | null;
   review_reasons?: string;
   revision: number;
@@ -293,9 +295,9 @@ export function monthOf(ms: number): string {
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** An upload's body digest, if it has a well-formed one. OCR page images are never compared. */
+/** An upload's or a paste's body digest, if it has a well-formed one. OCR page images are never compared. */
 function uploadSha256(input: UploadDescriptor): string | null {
-  if ((input.origin ?? "upload") !== "upload" || input.sha256 === undefined) return null;
+  if (input.origin === "ocr" || input.sha256 === undefined) return null;
   if (typeof input.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(input.sha256))
     throw new AppError("invalid", "invalid upload digest");
   return input.sha256;
@@ -762,7 +764,7 @@ export class Vault extends DurableObject<Env> {
   }
 
   private extractionStrategy(
-    origin: "upload" | "ocr" | undefined,
+    origin: SourceOrigin | undefined,
     filename: string,
   ): string {
     try {
@@ -813,21 +815,29 @@ export class Vault extends DurableObject<Env> {
     return { ...reservation, intent: store.reserve(input).intent };
   }
   /**
-   * A second copy of a file the person already uploaded would only propose the same roles and
-   * facts again. Failed readings and completed readings with no evidence may be uploaded again.
+   * A second copy of a file the person already uploaded, or of text they already pasted, would only
+   * propose the same roles and facts again. Failed readings and completed readings with no evidence
+   * may be uploaded or pasted again.
    */
   private refuseSecondCopy(input: UploadDescriptor): void {
     const sha256 = uploadSha256(input);
     if (!sha256) return;
     const copy = this.sql
-      .exec<{ filename: string }>(
-        `SELECT filename FROM sources WHERE sha256 = ? AND state != 'failed'
+      .exec<{ filename: string; origin: SourceOrigin }>(
+        `SELECT filename, origin FROM sources WHERE sha256 = ? AND state != 'failed'
          AND NOT (state = 'ready' AND EXISTS (
            SELECT 1 FROM extraction_commits WHERE source_id = sources.id AND roles = 0 AND facts = 0
          )) ORDER BY created_at LIMIT 1`,
         sha256,
       )
       .toArray()[0];
+    if (copy && input.origin === "paste")
+      throw new AppError(
+        "conflict",
+        copy.origin === "paste"
+          ? "You've already pasted this text."
+          : `You've already uploaded this text as ${copy.filename}.`,
+      );
     if (copy)
       throw new AppError(
         "conflict",
@@ -860,7 +870,7 @@ export class Vault extends DurableObject<Env> {
     if (!input || typeof input !== "object" || typeof input.requestKey !== "string" ||
         !/^[a-zA-Z0-9_-]{1,100}$/.test(input.requestKey) || typeof input.descriptorDigest !== "string")
       throw new AppError("invalid", "invalid upload identity");
-    const maxBytes = input.origin === "ocr" ? 12 * 1024 * 1024 + 1024 : MAX_UPLOAD_BYTES;
+    const maxBytes = input.origin === "ocr" ? 12 * 1024 * 1024 + 1024 : input.origin === "paste" ? MAX_PASTE_BYTES : MAX_UPLOAD_BYTES;
     if (!(bytes instanceof ArrayBuffer) || bytes.byteLength < 1 || bytes.byteLength > maxBytes ||
         typeof originalFilename !== "string" || originalFilename.length < 1 || originalFilename.length > 8192 ||
         !/^[a-f0-9]{64}$/.test(input.descriptorDigest) ||
@@ -872,6 +882,10 @@ export class Vault extends DurableObject<Env> {
     // limits and its binding to the existing reservation. This operation has
     // no await and cannot create a new reservation after the lookup above.
     this.uploads.reserve(input);
+    // Pasted text is stored exactly as the Worker cleaned it, under the name its title gave,
+    // and Distill reads it back through the same check.
+    if (input.origin === "paste" && (originalFilename !== input.filename || readPastedText(bytes) === null))
+      throw new AppError("invalid", "invalid pasted text");
     const expectedKey = sourceKey(this.vaultId, `${input.requestKey}-${input.descriptorDigest}${input.origin === "ocr" ? ".ocr.json" : ""}`);
     if (input.r2Key !== expectedKey)
       throw new AppError("invalid", "invalid upload path");
@@ -975,7 +989,7 @@ export class Vault extends DurableObject<Env> {
             intent.origin,
             intent.parentSourceId,
             extractor,
-            intent.origin === "upload" ? uploadSha256(input) : null,
+            intent.origin === "ocr" ? null : uploadSha256(input),
           );
           this.extractionFeedbackStore.start(id, intent.createdAt);
         },
@@ -991,7 +1005,7 @@ export class Vault extends DurableObject<Env> {
     s: {
       filename: string;
       r2Key: string;
-      origin?: "upload" | "ocr";
+      origin?: SourceOrigin;
       parentSourceId?: string;
       requestKey?: string;
     },
@@ -1085,7 +1099,7 @@ export class Vault extends DurableObject<Env> {
         error: string | null;
         created_at: number;
         proposed: number;
-        origin: "upload" | "ocr";
+        origin: SourceOrigin;
         parent_source_id: string | null;
         extractor: string | null;
         markdown: string | null;
@@ -1129,7 +1143,7 @@ export class Vault extends DurableObject<Env> {
   async sourceFile(
     who: Who,
     sourceId: string,
-  ): Promise<{ r2Key: string; filename: string; origin: "upload" | "ocr" }> {
+  ): Promise<{ r2Key: string; filename: string; origin: SourceOrigin }> {
     this.requireOwner(who);
     const row = this.sourceRow(sourceId);
     return { r2Key: row.r2_key, filename: row.filename, origin: row.origin };
@@ -1141,7 +1155,7 @@ export class Vault extends DurableObject<Env> {
     r2Key: string;
     filename: string;
     createdAt: number;
-    origin: "upload" | "ocr";
+    origin: SourceOrigin;
   }> {
     this.requireOpen();
     const row = this.sourceRow(sourceId);
@@ -4477,7 +4491,7 @@ export class Vault extends DurableObject<Env> {
       if (!/^[A-Za-z0-9_-]{1,100}$/.test(file.id))
         throw new AppError("unavailable", "a source identifier cannot be exported");
       const extension = file.origin === "ocr" ? "json" : file.filename.split(".").pop()?.toLowerCase();
-      const safeExtension = extension && ["pdf", "docx", "zip", "json"].includes(extension) ? extension : "bin";
+      const safeExtension = extension && ["pdf", "docx", "zip", "json", "txt"].includes(extension) ? extension : "bin";
       const path = `sources/${file.id}.${safeExtension}`;
       if (data.sources[index]?.id !== file.id) throw new AppError("unavailable", "the source snapshot is incomplete");
       data.sources[index]!.file = path;

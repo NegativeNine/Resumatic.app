@@ -4,6 +4,7 @@ import { llmExtractor } from "./llm";
 import { segmentExtractor } from "./segment";
 import { validExtractorId } from "./ids.mjs";
 import type { Extractor } from "./types";
+import type { SourceOrigin } from "../../shared/api";
 
 export { verifyExtraction } from "./verify";
 export type {
@@ -49,10 +50,11 @@ export type ExtractFormat = (typeof EXTRACT_FORMATS)[number];
 
 /** Classify accepted upload metadata; OCR is a distinct derived source. */
 export function sourceFormat(
-  origin: "upload" | "ocr" | undefined,
+  origin: SourceOrigin | undefined,
   filename: string,
 ): ExtractFormat | undefined {
   if (origin === "ocr") return "ocr";
+  if (origin === "paste") return undefined; // pasted text has no format route
   if (origin !== undefined && origin !== "upload") return undefined;
   if (/\.pdf$/i.test(filename)) return "pdf";
   if (/\.docx$/i.test(filename)) return "docx";

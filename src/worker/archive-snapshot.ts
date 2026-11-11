@@ -61,7 +61,7 @@ export async function readArchiveSnapshot(response: Response, vaultId: string, s
     const manifest = Manifest.parse(JSON.parse(raw));
     for (const file of manifest.files) {
       if (!file.key.startsWith(`vaults/${vaultId}/sources/`) ||
-          !["pdf", "docx", "zip", "json", "bin"].some((ext) => file.path === `sources/${file.id}.${ext}`) ||
+          !["pdf", "docx", "zip", "json", "txt", "bin"].some((ext) => file.path === `sources/${file.id}.${ext}`) ||
           (file.origin === "ocr" && file.path !== `sources/${file.id}.json`))
         throw new Error("archive_manifest_path");
     }

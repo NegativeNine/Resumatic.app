@@ -15,6 +15,13 @@ describe("extractor format routing", () => {
     expect(sourceFormat("other" as never, "resume.pdf")).toBeUndefined();
   });
 
+  it("gives pasted text no format, so it uses EXTRACTOR", () => {
+    expect(sourceFormat("paste", "cv.pdf.txt")).toBeUndefined();
+    expect(sourceFormat("paste", "export.zip")).toBeUndefined();
+    const routes = '{"pdf":"clairic","docx":"clairic","linkedin":"clairic","ocr":"clairic"}';
+    expect(extractorFor({ EXTRACTOR: "llm:default", EXTRACTOR_BY_FORMAT: routes }, "vault", sourceFormat("paste", "cv.pdf.txt")).id).toBe("llm:default");
+  });
+
   it("keeps the existing default and explicit global fallback when routing is absent", () => {
     expect(extractorFor({}, "vault", "pdf").id).toBe("llm:default");
     expect(extractorFor({ EXTRACTOR: "clairic" }, "vault", "docx").id).toBe(
