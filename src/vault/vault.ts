@@ -81,6 +81,7 @@ import { validateTailorCheckpoint, validateTailorPublication } from "./tailor-pu
 import { finalLegacyEvidence, legacyReceipt, legacyReview } from "./legacy-remediation";
 import { RunStore } from "./runs";
 import { RecordStore } from "./record";
+import { IDENTICAL_ROLE_METHOD, IDENTICAL_WORDING_METHOD, identicalMatches } from "../pipeline/match";
 import type { NewPart, RecordExport } from "../shared/record";
 import { ShareStore } from "./shares";
 import { billingConfig } from "../shared/billing";
@@ -330,7 +331,7 @@ export class Vault extends DurableObject<Env> {
     return new SnapshotStore(this.sql);
   }
 
-  /** Parts of a line, tags and links. Only divisions kept in shadow are written so far; all are exported with the vault. */
+  /** Parts of a line, tags and links. Only what is kept in shadow is written so far; all of it is exported with the vault. */
   private get record(): RecordStore {
     return new RecordStore(this.sql, (fn) => this.ctx.storage.transactionSync(fn));
   }
@@ -1483,6 +1484,57 @@ export class Vault extends DurableObject<Env> {
       }
     }
     return { stored };
+  }
+
+  /**
+   * Looks across the whole record for roles and facts that say again, word for word, what an
+   * earlier one said, and keeps each finding in shadow: stored to be measured, shown to nobody,
+   * merging nothing. It uses no model. What it found before is not stored again.
+   */
+  async matchShadow(sourceId: string, runId?: string): Promise<{ roles: number; facts: number; stored: number }> {
+    this.requireReading(sourceId, runId);
+    const roles = this.sql
+      .exec<{ id: string; kind: string; org: string; title: string | null; start_date: string | null; end_date: string | null; unknown_end_start_date: string | null }>(
+        `SELECT id, kind, org, title, start_date, end_date, unknown_end_start_date FROM roles ORDER BY rowid`,
+      )
+      .toArray()
+      .map((role) => ({ id: role.id, kind: role.kind, org: role.org, title: role.title, startDate: role.start_date, endDate: role.end_date, unknownEndStartDate: role.unknown_end_start_date }));
+    const facts = this.sql
+      .exec<{ id: string; role_id: string | null; kind: string; text: string }>(`SELECT id, role_id, kind, text FROM facts ORDER BY rowid`)
+      .toArray()
+      .map((fact) => ({ id: fact.id, roleId: fact.role_id, kind: fact.kind, text: fact.text }));
+    const matches = identicalMatches(roles, facts);
+    const known = new Set(
+      this.sql
+        .exec<{ kind: string; from_id: string; to_id: string }>(`SELECT kind, from_id, to_id FROM record_links WHERE shadow = 1 AND relation = 'same'`)
+        .toArray()
+        .map((link) => `${link.kind} ${link.from_id} ${link.to_id}`),
+    );
+    let stored = 0;
+    for (const match of matches) {
+      if (known.has(`${match.kind} ${match.from} ${match.to}`)) continue;
+      try {
+        this.record.proposeLink({
+          kind: match.kind,
+          from: match.from,
+          to: match.to,
+          relation: "same",
+          stamp: {
+            proposedBy: "rule",
+            model: null,
+            method: match.kind === "role" ? IDENTICAL_ROLE_METHOD : IDENTICAL_WORDING_METHOD,
+            taxonomyVersion: null,
+            confidence: null,
+            shadow: true,
+          },
+        });
+        stored++;
+      } catch (error) {
+        // Already matched to another row, or as many links as a row can hold: nothing is lost by leaving it.
+        if (!["conflict", "too_large", "not_found"].includes(errorCode(error) ?? "")) throw error;
+      }
+    }
+    return { roles: matches.filter((match) => match.kind === "role").length, facts: matches.filter((match) => match.kind === "fact").length, stored };
   }
 
   // ---------------------------------------------------------------- roles and facts (user)

@@ -187,6 +187,27 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
           return { embedded: pending.length };
         }),
       );
+      // What an upload says again is found before anyone is shown a merge. Where this is switched
+      // on, each role and fact that repeats an earlier one word for word is noted in shadow.
+      // Nothing is merged, and a failure here leaves the upload exactly as it is read today.
+      if (this.env.MATCH_SHADOW_ENABLED === "true")
+        try {
+          await step.do(
+            "match",
+            SHADOW_STEP,
+            once(async () => {
+              try {
+                const found = await v.matchShadow(sourceId, event.instanceId);
+                // Counts only: no role and no line is kept in the Workflow's own state.
+                return { roles: found.roles, facts: found.facts, stored: found.stored };
+              } catch (error) {
+                return { roles: 0, facts: 0, stored: 0, failed: errorCode(error) ?? "error" };
+              }
+            }),
+          );
+        } catch {
+          // The step ran out of time. Nothing was kept.
+        }
       // How lines divide is measured before anyone is shown a division. Where this is switched
       // on, whatever passes every check is kept in shadow. A failure here costs nothing: every
       // line stays whole, as it is read today, and the upload finishes as it would have.

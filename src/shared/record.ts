@@ -426,15 +426,24 @@ export interface RoleIdentity {
 }
 
 /**
- * True when two roles are alike in every field that names a role: the same kind, organisation
- * and title, the same known start, and the same end or none in both, which states a role as
- * current. A missing title, an unknown date or a date written more exactly in one than the other
- * settles nothing, so such roles are offered to the owner instead.
+ * What names a role, as one value that two roles share exactly when they are alike in every
+ * field that names a role: the same kind, organisation and title, the same known start, and the
+ * same end or none, which states a role as current. Null when the fields can't settle which
+ * role this is: no title, no known start, or an end that is not known.
+ */
+export function roleKey(role: RoleIdentity): string | null {
+  const org = wording(role.org);
+  const title = role.title === null ? "" : wording(role.title);
+  if (!org || !title || role.unknownEndStartDate || !role.startDate) return null;
+  return JSON.stringify([role.kind, org, title, role.startDate, role.endDate]);
+}
+
+/**
+ * True when two roles are alike in every field that names a role. A missing title, an unknown
+ * date or a date written more exactly in one than the other settles nothing, so such roles are
+ * offered to the owner instead.
  */
 export function sameRole(a: RoleIdentity, b: RoleIdentity): boolean {
-  if (a.kind !== b.kind || !sameWording(a.org, b.org)) return false;
-  if (a.title === null || b.title === null || !sameWording(a.title, b.title)) return false;
-  if (a.unknownEndStartDate || b.unknownEndStartDate) return false;
-  if (!a.startDate || a.startDate !== b.startDate) return false;
-  return a.endDate === b.endDate;
+  const key = roleKey(a);
+  return key !== null && key === roleKey(b);
 }

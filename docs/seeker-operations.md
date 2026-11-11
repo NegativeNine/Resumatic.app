@@ -45,6 +45,10 @@ Enable it in staging first by adding the variable to `env.staging.vars`. Before 
 
 `SPLIT_SHADOW_ENABLED=true` has the reading of an upload also work out how its lines divide into separate claims, and keep what passes every check in shadow: stored in the person's vault to be measured, shown to nobody and read by nothing ([splitting.md](splitting.md)). It is absent from every environment, and `scripts/validate-config.mjs` refuses it in production configuration (`SPLIT_SHADOW_ROLLOUT_UNVERIFIED`) until it has been measured on lines given with consent and the privacy notice names what is kept. Switched on, every upload makes extra model calls on the extract and judge routes and is marked ready after them. A failure in it never fails an upload.
 
+### Noting what an upload says again
+
+`MATCH_SHADOW_ENABLED=true` has the reading of an upload also look across the person's record for roles and facts that repeat an earlier one word for word, and note each in shadow ([merging.md](merging.md)). Nothing is merged and nothing the app shows changes. It is absent from every environment, and `scripts/validate-config.mjs` refuses it in production configuration (`MATCH_SHADOW_ROLLOUT_UNVERIFIED`) for the same reason as dividing lines: what it finds is stored in people's vaults. It makes no model call. A failure in it never fails an upload.
+
 ## Billing configuration
 
 Billing stays disabled unless `BILLING_ENABLED=true` and all required values are valid. Provide `APP_ORIGIN`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, an explicit `STRIPE_API_VERSION`, and `BILLING_PLANS_JSON`:

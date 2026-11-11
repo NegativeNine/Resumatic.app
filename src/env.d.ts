@@ -30,6 +30,12 @@ interface ResumaticSecrets {
    * adds model calls to every upload, and a failure in it leaves the upload as it is read today.
    */
   SPLIT_SHADOW_ENABLED?: string;
+  /**
+   * "true" has the reading of an upload also look across the record for roles and facts that are
+   * word for word the same as an earlier one, and keep each finding in shadow. It uses no model.
+   * Off everywhere by default, and a failure in it leaves the upload as it is read today.
+   */
+  MATCH_SHADOW_ENABLED?: string;
   /** The combined ESCO and O*NET taxonomy, in a D1 database of its own. Optional: nothing reads it where it isn't bound. */
   TAXONOMY?: D1Database;
   METRICS?: AnalyticsEngineDataset;

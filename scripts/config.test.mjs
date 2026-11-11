@@ -70,6 +70,10 @@ test("the posting reader cannot be enabled in production configuration, and can 
     for (const off of [{}, { SPLIT_SHADOW_ENABLED: "false" }, { SPLIT_SHADOW_ENABLED: "" }])
       assert.ok(!(await report("production", off)).includes("SPLIT_SHADOW_ROLLOUT_UNVERIFIED"), JSON.stringify(off));
     assert.ok(!(await report("staging", {}, { SPLIT_SHADOW_ENABLED: "true" })).includes("SPLIT_SHADOW_ROLLOUT_UNVERIFIED"));
+    assert.ok((await report("production", { MATCH_SHADOW_ENABLED: "true" })).includes("MATCH_SHADOW_ROLLOUT_UNVERIFIED"));
+    for (const off of [{}, { MATCH_SHADOW_ENABLED: "false" }, { MATCH_SHADOW_ENABLED: "" }])
+      assert.ok(!(await report("production", off)).includes("MATCH_SHADOW_ROLLOUT_UNVERIFIED"), JSON.stringify(off));
+    assert.ok(!(await report("staging", {}, { MATCH_SHADOW_ENABLED: "true" })).includes("MATCH_SHADOW_ROLLOUT_UNVERIFIED"));
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
