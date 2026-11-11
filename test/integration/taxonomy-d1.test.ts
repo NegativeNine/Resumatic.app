@@ -57,6 +57,31 @@ describe("the taxonomy in D1", () => {
     expect(await d1.fromAny([])).toEqual([]);
   });
 
+  it("pages through concepts of given kinds in ID order and counts them", async () => {
+    const d1: TaxonomyStore = new D1Store(db());
+    for (const kinds of [["skill"], ["skill", "tool", "occupation"], ["skill", "knowledge", "skill-group", "activity", "tool", "tool-category", "occupation"]] as ConceptKind[][]) {
+      let after = "";
+      const seen: Concept[] = [];
+      for (;;) {
+        const page = await d1.conceptPage(after, kinds, 4);
+        expect(page, kinds.join()).toEqual(await memory.conceptPage(after, kinds, 4));
+        if (page.length === 0) break;
+        seen.push(...page);
+        after = page.at(-1)!.id;
+      }
+      expect(seen.map((concept) => concept.id), kinds.join()).toEqual(seen.map((concept) => concept.id).sort());
+      expect(seen.length, kinds.join()).toBe(await memory.conceptCount(kinds));
+      expect(await d1.conceptCount(kinds), kinds.join()).toBe(seen.length);
+      expect(await d1.conceptCount(kinds, seen[1]!.id), kinds.join()).toBe(2);
+    }
+    // A page is at most a hundred, and a kind nobody has is no concept.
+    expect(await d1.conceptPage("", ["skill"], 1000)).toEqual(await memory.conceptPage("", ["skill"], 100));
+    expect(await d1.conceptPage("", [], 10)).toEqual([]);
+    expect(await d1.conceptPage("", ["'; DROP TABLE concepts; --" as ConceptKind], 10)).toEqual([]);
+    expect(await d1.conceptCount(["'; DROP TABLE concepts; --" as ConceptKind])).toBe(0);
+    expect(await new Taxonomy(d1).conceptCount(["skill"])).toBe(await new Taxonomy(memory).conceptCount(["skill"]));
+  });
+
   it("reads more values than one statement may bind, and is not moved by hostile ones", async () => {
     const d1 = new D1Store(db());
     // D1 binds at most 100 values a statement. Three hundred are asked for at once.

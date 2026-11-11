@@ -96,7 +96,7 @@ import { RunStore } from "./runs";
 import { RecordStore } from "./record";
 import { IDENTICAL_ROLE_METHOD, IDENTICAL_WORDING_METHOD, MAX_OFFER_PAIRS, OFFERS_PER_FACT, OFFER_MIN_COSINE, identicalMatches, type JudgedOffer, type OfferPair } from "../pipeline/match";
 import { roleKey, sameWording, stampProblem } from "../shared/record";
-import { MAX_TAGS_PER_SAVE, MAX_TAG_FACTS, MAX_TAG_ROLES, TAG_JUDGE_METHOD, TAG_RULE_METHOD, skillAsWritten, tagStamp, type HeldTag, type ProposedTag, type TagMade, type TagSubjects } from "../pipeline/tag";
+import { MAX_TAGS_PER_SAVE, MAX_TAG_FACTS, MAX_TAG_ROLES, TAG_JUDGE_METHOD, TAG_RULE_METHOD, TAG_VECTOR_METHOD, skillAsWritten, tagStamp, type HeldTag, type ProposedTag, type TagMade, type TagSubjects } from "../pipeline/tag";
 import type { NewPart, RecordExport } from "../shared/record";
 import { ShareStore } from "./shares";
 import { markedWording, sensitiveUse, setSensitive, usableQuote, withheldFacts } from "./sensitive";
@@ -1785,7 +1785,8 @@ export class Vault extends DurableObject<Env> {
    * measured, shown to nobody and read by nothing else. A tag is about particular words, so one
    * decided about words its row no longer has is left out, and so is the rule's tag for a skill
    * that is no longer one item of its line as written. So is a tag for a fact its owner has marked
-   * sensitive since it was read. A tag the same decider stored before is left exactly as it is.
+   * sensitive since it was read. A tag the same decider stored before is left exactly as it is,
+   * and so is a word-for-word tag a vector tag names again: the vector tag is left out.
    * What the record itself refuses is counted, and the rest are kept.
    */
   async saveShadowTags(sourceId: string, runId: string | undefined, made: TagMade, tags: ProposedTag[]): Promise<{ stored: number; refused: number }> {
@@ -1793,7 +1794,7 @@ export class Vault extends DurableObject<Env> {
     if (!Array.isArray(tags)) throw new AppError("invalid", "tags are proposed for facts and job roles");
     if (tags.length > MAX_TAGS_PER_SAVE) throw new AppError("invalid", "too many tags for one upload");
     for (const tag of tags) {
-      if (tag?.method !== TAG_JUDGE_METHOD && tag?.method !== TAG_RULE_METHOD) throw new AppError("invalid", "unknown tagging method");
+      if (tag?.method !== TAG_JUDGE_METHOD && tag?.method !== TAG_RULE_METHOD && tag?.method !== TAG_VECTOR_METHOD) throw new AppError("invalid", "unknown tagging method");
       if ((tag.subject?.kind !== "fact" && tag.subject?.kind !== "role") || typeof tag.subject.id !== "string")
         throw new AppError("invalid", "tags are proposed for facts and job roles");
     }
@@ -1824,6 +1825,22 @@ export class Vault extends DurableObject<Env> {
         if (role.kind !== "job" || role.title !== tag.words || tag.method === TAG_RULE_METHOD) continue;
       }
       const stamp = tagStamp(tag.method, made);
+      // A concept found word for word in the row is that row's from its words. A vector tag for it
+      // is left, since proposing it again would restamp the word-for-word row as a vector one.
+      if (
+        tag.method === TAG_VECTOR_METHOD &&
+        this.sql
+          .exec(
+            `SELECT 1 FROM record_tags WHERE subject_kind = ? AND subject_id = ? AND concept_id = ? AND shadow = 1 AND method IN (?, ?)`,
+            tag.subject.kind,
+            tag.subject.id,
+            tag.conceptId,
+            TAG_JUDGE_METHOD,
+            TAG_RULE_METHOD,
+          )
+          .toArray().length > 0
+      )
+        continue;
       // Found before, by the same decider against the same taxonomy: the row stays as it was stored.
       const before =
         typeof tag.conceptId === "string" &&

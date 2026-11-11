@@ -17,6 +17,10 @@ export interface TaxonomyStore {
   fromAny(srcs: readonly string[], rels?: readonly Relation[]): Promise<Edge[]>;
   /** Relations that end at `dst`. */
   to(dst: string, rels?: readonly Relation[]): Promise<Edge[]>;
+  /** Up to `limit` concepts of `kinds` whose IDs come after `after`, in ID order. For building the vector index. */
+  conceptPage(after: string, kinds: readonly ConceptKind[], limit: number): Promise<Concept[]>;
+  /** How many concepts of `kinds` there are, or how many of them have an ID up to and including `upTo`. */
+  conceptCount(kinds: readonly ConceptKind[], upTo?: string): Promise<number>;
 }
 
 /** The records of a built taxonomy, as the builder's files hold them. */
@@ -70,5 +74,20 @@ export class MemoryStore implements TaxonomyStore {
 
   async to(dst: string, rels?: readonly Relation[]): Promise<Edge[]> {
     return (this.byDst.get(dst) ?? []).filter((edge) => !rels || rels.includes(edge.rel));
+  }
+
+  async conceptPage(after: string, kinds: readonly ConceptKind[], limit: number): Promise<Concept[]> {
+    // IDs are ASCII, so comparing code units orders them as SQLite's binary collation does.
+    return this.ordered()
+      .filter((concept) => concept.id > after && kinds.includes(concept.kind))
+      .slice(0, limit);
+  }
+
+  async conceptCount(kinds: readonly ConceptKind[], upTo?: string): Promise<number> {
+    return this.records.concepts.filter((concept) => kinds.includes(concept.kind) && (upTo === undefined || concept.id <= upTo)).length;
+  }
+
+  private ordered(): Concept[] {
+    return [...this.records.concepts].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 }

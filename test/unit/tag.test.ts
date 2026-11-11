@@ -7,6 +7,8 @@ import { verifyExtraction } from "../../src/pipeline/extract/verify";
 import {
   FACT_TAG_KINDS,
   MAX_FACT_CANDIDATES,
+  MAX_FACT_VECTOR_CANDIDATES,
+  MAX_ROLE_VECTOR_CANDIDATES,
   MAX_ROLE_CANDIDATES,
   MAX_TAGS_PER_SAVE,
   MAX_TAG_FACTS,
@@ -15,7 +17,12 @@ import {
   MAX_TAG_ROLES,
   MAX_TAG_WORDS,
   TAG_JUDGE_METHOD,
+  TAG_KINDS,
   TAG_RULE_METHOD,
+  TAG_VECTOR_METHOD,
+  VECTOR_MIN_SCORE,
+  VECTOR_READ_DEADLINE_MS,
+  VECTOR_START_BY_MS,
   emptyTagReport,
   sameLetters,
   skillAsWritten,
@@ -28,13 +35,16 @@ import {
   type TagMade,
   type TagMethod,
   type TagReads,
+  type TagOptions,
   type TagSubjects,
+  type VectorReads,
 } from "../../src/pipeline/tag";
 import { AppError } from "../../src/shared/errors";
 import { stampProblem, tagProblem } from "../../src/shared/record";
-import { MemoryStore, Taxonomy, normalizeLabel, type Concept, type Label } from "../../src/taxonomy";
-import { precision, runTagging } from "../evals/tagging";
+import { MemoryStore, Taxonomy, normalizeLabel, taxonomyVectorsFor, type Concept, type Label, type NearConcept } from "../../src/taxonomy";
+import { fixtureIndex, precision, runTagging } from "../evals/tagging";
 import { TAG_LINES } from "../fixtures/tag-lines";
+import { standInEmbed, type MemoryVectorIndex } from "../support/fake-vectorize";
 import { TAXONOMY_FIXTURE } from "../support/taxonomy-fixture";
 
 // Tagging facts and job roles, over the made-up taxonomy and stand-in models. Nothing here calls a
@@ -415,8 +425,8 @@ describe("what is over a cap", () => {
   });
 
   it("is sized so that one call to keep never holds more than the vault takes", () => {
-    expect(MAX_TAGS_PER_SAVE).toBe(MAX_TAG_ROLES * MAX_ROLE_CANDIDATES + MAX_TAG_FACTS * MAX_FACT_CANDIDATES);
-    expect(MAX_TAGS_PER_SAVE).toBe(800);
+    expect(MAX_TAGS_PER_SAVE).toBe(MAX_TAG_ROLES * (MAX_ROLE_CANDIDATES + MAX_ROLE_VECTOR_CANDIDATES) + MAX_TAG_FACTS * (MAX_FACT_CANDIDATES + MAX_FACT_VECTOR_CANDIDATES));
+    expect(MAX_TAGS_PER_SAVE).toBe(1200);
     expect(MAX_TAG_ROLES * MAX_ROLE_CANDIDATES).toBeLessThanOrEqual(MAX_TAG_QUESTIONS);
   });
 });
@@ -746,26 +756,40 @@ describe("a run", () => {
   const RULE = ["listed", S(8), TAG_RULE_METHOD];
   const JOB = ["job", O(1), TAG_JUDGE_METHOD];
 
-  it("makes every read of the taxonomy before it asks or keeps anything", async () => {
+  it("make every word-for-word read before anything is asked, and every vector read after the last word-for-word tag is kept", async () => {
     const events: string[] = [];
     const { taxonomy, reads } = reading({ events });
     const stand = judge();
     const models: Models = { ...stand.models, complete: (...args) => (events.push("ask"), stand.models.complete(...args)) };
-    const report = await tagUpload(
-      models,
-      taxonomy,
-      subjects(),
-      MADE,
-      async (tags) => {
-        events.push(`keep ${tags.length}`);
-        return { stored: tags.length, refused: 0 };
-      },
-      NONE_MARKED,
-    );
+    const keep = async (tags: ProposedTag[]) => {
+      events.push(`keep ${tags.length}`);
+      return { stored: tags.length, refused: 0 };
+    };
+    const report = await tagUpload(models, taxonomy, subjects(), MADE, keep, NONE_MARKED);
     expect(reads.map(([name]) => name)).toEqual(["mentions", "mentions", "mentions", "lookup", "get", "profile"]);
     // The rule's tag is kept before the first question, and each call's answers before the next.
     expect(events).toEqual(["read", "read", "read", "read", "read", "read", "keep 1", "ask", "keep 1", "ask", "keep 2"]);
     expect(report).toEqual({ ...emptyTagReport(), roles: 1, facts: 2, candidates: 4, byRule: 1, asked: 3, yes: 3, stored: 4 });
+
+    // With an index, every word-for-word event comes first and in the same order; the vector
+    // part's reads come only after the last word-for-word tag was kept, and its questions after them.
+    const withIndex: string[] = [];
+    const lookups = nearby({ "Ran Kubernetes clusters": [near(S(2), "skill", "lead a team", 0.9)] }, withIndex);
+    const marked = async (_ids: string[]) => (withIndex.push("marked"), NONE_MARKED());
+    const traced = reading({ events: withIndex });
+    const both = await tagUpload(
+      { ...stand.models, complete: (...args) => (withIndex.push("ask"), stand.models.complete(...args)) },
+      traced.taxonomy,
+      subjects(),
+      MADE,
+      async (tags) => (withIndex.push(`keep ${tags.length}`), { stored: tags.length, refused: 0 }),
+      marked,
+      { vectors: async () => (withIndex.push("manifest"), { vectors: lookups.vectors }) },
+    );
+    const lastWord = withIndex.indexOf("keep 2");
+    expect(withIndex.slice(0, lastWord + 1).filter((event) => event !== "marked")).toEqual(events);
+    expect(withIndex.slice(lastWord + 1)).toEqual(["manifest", "embed", "marked", "embed", "nearest", "nearest", "marked", "ask", "keep 1"]);
+    expect(both).toEqual({ ...report, asked: 4, yes: 4, stored: 5, vector: { ...emptyTagReport().vector, subjects: 2, candidates: 1, asked: 1, yes: 1 } });
   });
 
   it.each(["mentions", "lookup", "get", "profile"] as const)("that cannot make a %s read asks no model and keeps nothing", async (failing) => {
@@ -1023,6 +1047,329 @@ describe("what was decided before", () => {
   });
 });
 
+// ---------------------------------------------------------------- vector candidates
+
+const near = (id: string, kind: NearConcept["kind"], label: string, score: number): NearConcept => ({ id, kind, label, score });
+const BUDGETS_ACTIVITY = "onet:activity:4.A.4.c.3.I01";
+
+/**
+ * Stand-in lookups. A text's vector is where it stands among the texts embedded, and `nearest`
+ * answers for that text from `byText`, best first. `more` replaces either read.
+ */
+function nearby(byText: Record<string, NearConcept[]>, events?: string[], more: Partial<VectorReads> = {}) {
+  const texts: string[] = [];
+  const embedded: string[][] = [];
+  const looked: { text: string; kinds: readonly string[]; k: number }[] = [];
+  const vectors: VectorReads = {
+    async queries(batch) {
+      events?.push("embed");
+      embedded.push([...batch]);
+      return batch.map((text) => [texts.push(text) - 1]);
+    },
+    async nearest(vector, kinds, k) {
+      events?.push("nearest");
+      const text = texts[(vector as number[])[0]!]!;
+      looked.push({ text, kinds, k });
+      return (byText[text] ?? []).filter((concept) => kinds.includes(concept.kind));
+    },
+    ...more,
+  };
+  return { vectors, embedded, looked };
+}
+
+const using = (vectors: VectorReads, more: Omit<TagOptions, "vectors"> = {}): TagOptions => ({ vectors: async () => ({ vectors }), ...more });
+
+async function runNear(subjects: TagSubjects, opts: TagOptions, script: Script = {}, marked: (factIds: string[]) => Promise<string[]> = NONE_MARKED, models?: Models) {
+  const stand = judge(script);
+  const kept: ProposedTag[][] = [];
+  const report = await tagUpload(
+    models ?? stand.models,
+    fixture(),
+    subjects,
+    MADE,
+    async (tags) => {
+      kept.push(tags);
+      return { stored: tags.length, refused: 0 };
+    },
+    marked,
+    opts,
+  );
+  return { report, asked: stand.asked, kept, tags: kept.flat() };
+}
+
+/** The made-up taxonomy's vector index, looked up through the code tagging uses, with a stand-in embedding that records what it was given. */
+async function indexed(index?: MemoryVectorIndex) {
+  const built = index ?? (await fixtureIndex());
+  const embedded: { texts: string[]; opts: unknown }[] = [];
+  const opts: TagOptions = {
+    vectors: () =>
+      taxonomyVectorsFor({ TAXONOMY_VECTORS: built }, fixture(), MADE.taxonomyVersion, TAG_KINDS, {
+        embed: async (texts, given) => {
+          embedded.push({ texts: [...texts], opts: given });
+          return standInEmbed(texts);
+        },
+      }),
+  };
+  return { index: built, embedded, opts };
+}
+
+describe("vector candidates", () => {
+  const SPENT = "Oversaw spending for three departments";
+
+  it("are asked the same question and stamped vector-judge/1", async () => {
+    const { embedded, opts } = await indexed();
+    const { asked, tags, report } = await runNear(upload([role("job", "Coder")], [fact("spent", SPENT)]), opts);
+    // Each wording is embedded once, as a concept query, with the index's model.
+    expect(embedded).toEqual([
+      { texts: ["Coder"], opts: { model: "@cf/qwen/qwen3-embedding-0.6b", purpose: "concept-query" } },
+      { texts: [SPENT], opts: { model: "@cf/qwen/qwen3-embedding-0.6b", purpose: "concept-query" } },
+    ]);
+    // The question is the one a label found word for word is asked in, around the record's own label.
+    expect(asked).toEqual([
+      [
+        { alias: "T1", text: "Worked in the occupation: software developer", facts: [{ text: "Job title: Coder", quote: null }] },
+        { alias: "T2", text: "Worked in the occupation: Example Software Developers", facts: [{ text: "Job title: Coder", quote: null }] },
+      ],
+      [
+        { alias: "T3", text: "Did or can do: manage budgets", facts: [{ text: SPENT, quote: null }] },
+        { alias: "T4", text: "Did this work: Manage budgets or finances.", facts: [{ text: SPENT, quote: null }] },
+      ],
+    ]);
+    expect(tags).toEqual([
+      { subject: { kind: "role", id: "job" }, words: "Coder", conceptId: O(1), conceptKind: "occupation", label: "software developer", method: TAG_VECTOR_METHOD },
+      { subject: { kind: "role", id: "job" }, words: "Coder", conceptId: DEV, conceptKind: "occupation", label: "Example Software Developers", method: TAG_VECTOR_METHOD },
+      { subject: { kind: "fact", id: "spent" }, words: SPENT, conceptId: S(1), conceptKind: "skill", label: "manage budgets", method: TAG_VECTOR_METHOD },
+      { subject: { kind: "fact", id: "spent" }, words: SPENT, conceptId: BUDGETS_ACTIVITY, conceptKind: "activity", label: "Manage budgets or finances.", method: TAG_VECTOR_METHOD },
+    ]);
+    expect(report).toEqual({
+      ...emptyTagReport(),
+      roles: 1,
+      facts: 1,
+      asked: 4,
+      yes: 4,
+      stored: 4,
+      vector: { ...emptyTagReport().vector, subjects: 2, candidates: 4, asked: 4, yes: 4 },
+    });
+    // A yes is the judge's, stamped with the judge's model, in shadow, and a stamp the record stores.
+    expect(tagStamp(TAG_VECTOR_METHOD, MADE)).toEqual({ proposedBy: "model", model: "test/judge", method: "vector-judge/1", taxonomyVersion: MADE.taxonomyVersion, confidence: null, shadow: true });
+    expect(stampProblem(tagStamp(TAG_VECTOR_METHOD, MADE))).toBeNull();
+    // A no keeps nothing, as for any candidate.
+    const declined = await runNear(upload([role("job", "Coder")], [fact("spent", SPENT)]), (await indexed()).opts, { verdict: says("unsupported") });
+    expect(declined.tags).toEqual([]);
+    expect(declined.report.vector).toMatchObject({ asked: 4, yes: 0 });
+  });
+
+  it("never include a concept any label in the row names, even one cut by a cap or declined", async () => {
+    // Nine concepts are named in the line, and six are kept: Golang, data migration and the
+    // container orchestration named by "Kubernetes" are cut by the cap. The judge declines Python.
+    const line = "Python, Kubernetes, SQL, C++, Microsoft Excel, Golang, data migration";
+    const all = [
+      near(S(6), "knowledge", "Go (computer programming)", 0.95),
+      near(S(5), "skill", "migrate existing data", 0.94),
+      near("onet:tool:python", "tool", "Python", 0.93),
+      near(KUBERNETES, "tool", "Kubernetes", 0.92),
+      near(S(2), "skill", "lead a team", 0.6),
+    ];
+    const { vectors } = nearby({ [line]: all, "Senior Software Engineer": [near(O(1), "occupation", "software developer", 0.9), near(O(3), "occupation", "budget analyst", 0.8)] });
+    const { asked, tags, report } = await runNear(upload([role("job", "Senior Software Engineer")], [fact("many", line)]), using(vectors), { verdict: says("unsupported", "Used the software: Python") });
+    expect(report.left.per_fact).toBe(3);
+    const vectorQuestions = lines(asked).flat().slice(-2);
+    expect(vectorQuestions).toEqual(["Worked in the occupation: budget analyst", "Did or can do: lead a team"]);
+    expect(tags.filter((tag) => tag.method === TAG_VECTOR_METHOD).map((tag) => tag.conceptId)).toEqual([O(3), S(2)]);
+    expect(report.vector).toMatchObject({ candidates: 2, asked: 2, left: 0 });
+  });
+
+  it("are never below the floor, and capped per job and per fact, the rest counted", async () => {
+    const { vectors } = nearby({
+      Coder: [near(O(1), "occupation", "software developer", 0.9), near(DEV, "occupation", "Example Software Developers", 0.8), near(O(2), "occupation", "ICT project manager", 0.7), near(O(3), "occupation", "budget analyst", 0.49)],
+      [SPENT]: [
+        near(S(1), "skill", "manage budgets", 0.9),
+        near(BUDGETS_ACTIVITY, "activity", "Manage budgets or finances.", 0.8),
+        near(S(2), "skill", "lead a team", 0.7),
+        near("onet:tool:python", "tool", "Python", 0.6),
+        near(S(5), "skill", "migrate existing data", VECTOR_MIN_SCORE),
+        near(S(7), "skill", "use spreadsheets software", 0.4999),
+      ],
+    });
+    const { tags, report } = await runNear(upload([role("job", "Coder")], [fact("spent", SPENT)]), using(vectors));
+    expect(MAX_ROLE_VECTOR_CANDIDATES).toBe(2);
+    expect(MAX_FACT_VECTOR_CANDIDATES).toBe(3);
+    expect(tags.map((tag) => tag.conceptId)).toEqual([O(1), DEV, S(1), BUDGETS_ACTIVITY, S(2)]);
+    // Above the floor and over a cap: one for the job, two for the fact. At the floor counts as above it.
+    expect(report.vector).toMatchObject({ candidates: 5, left: 3 });
+  });
+
+  it("are not looked up for a skill the rule tagged", async () => {
+    const { vectors, embedded, looked } = nearby({});
+    await runNear(upload([], [skill("listed", "SQL"), fact("line", "Ran Kubernetes clusters")]), using(vectors));
+    expect(embedded).toEqual([["Ran Kubernetes clusters"]]);
+    expect(looked.map((lookup) => lookup.text)).toEqual(["Ran Kubernetes clusters"]);
+    // A fact is looked up among the kinds a fact may be tagged with, a job among occupations, ten at a time.
+    expect(looked[0]).toEqual({ text: "Ran Kubernetes clusters", kinds: [...FACT_TAG_KINDS], k: 10 });
+  });
+
+  it("take only the questions word-for-word candidates leave, after them", async () => {
+    // Fifty-nine lines, two word-for-word questions each: 118 of the 120.
+    const facts = Array.from({ length: 59 }, (_, n) => fact(`line-${n}`, `Ran Kubernetes clusters, number ${n}`));
+    const lead = (score: number) => near(S(2), "skill", "lead a team", score);
+    const { vectors } = nearby(Object.fromEntries(facts.slice(0, 3).map((row, n) => [row.text, [lead(0.9 - n / 100)]])));
+    const { asked, report } = await runNear(upload([], facts), using(vectors));
+    expect(asked.map((call) => call.length)).toEqual([20, 20, 20, 20, 20, 18, 2]);
+    // Every word-for-word question is asked before any vector one.
+    expect(asked.slice(0, 6).flat().every((item) => !item.text.includes("lead a team"))).toBe(true);
+    expect(lines(asked).at(-1)).toEqual(["Did or can do: lead a team", "Did or can do: lead a team"]);
+    expect(report).toMatchObject({ asked: MAX_TAG_QUESTIONS, left: { per_upload: 1 } });
+    expect(report.vector).toMatchObject({ candidates: 3, asked: 2 });
+  });
+
+  it("are carried from another row's yes and not asked when the row holds one", async () => {
+    const lead = [near(S(2), "skill", "lead a team", 0.9)];
+    const { vectors } = nearby({ "Headed a crew": lead, "Headed a crew of six": lead, "Headed a crew of nine": lead });
+    const { asked, kept, report } = await runNear(
+      upload(
+        [],
+        [
+          fact("own", "Headed a crew", { held: [holding(S(2), true, TAG_VECTOR_METHOD)] }),
+          fact("other", "Headed a crew of six", { held: [holding(S(2), false, TAG_VECTOR_METHOD)] }),
+          // The judge's yes for the same concept by words, or under another taxonomy, is not this.
+          fact("fresh", "Headed a crew of nine", { held: [holding(S(2), true, TAG_JUDGE_METHOD), holding(S(2), true, TAG_VECTOR_METHOD, { taxonomyVersion: "esco-0.0.1+onet-0.0+00000000" })] }),
+        ],
+      ),
+      using(vectors),
+    );
+    expect(lines(asked)).toEqual([["Did or can do: lead a team"]]);
+    expect(kept.map(brief)).toEqual([[["other", S(2), TAG_VECTOR_METHOD]], [["fresh", S(2), TAG_VECTOR_METHOD]]]);
+    expect(report.vector).toMatchObject({ candidates: 3, known: 1, carried: 1, asked: 1, yes: 1 });
+  });
+
+  it("a lookup or reservation failure leaves word-for-word tags as without an index", async () => {
+    const rows = () => upload([role("job", "Programmer")], [skill("listed", "SQL"), fact("line", "Ran Kubernetes clusters", { roleId: "job" })]);
+    const without = await run(rows());
+    const lead = { "Ran Kubernetes clusters": [near(S(2), "skill", "lead a team", 0.9)] };
+    const failures: [string, Partial<VectorReads>, string][] = [
+      ["a lookup that fails", { nearest: () => Promise.reject(new Error("VECTOR_QUERY_ERROR: Ran Kubernetes clusters")) }, "error"],
+      ["a refused reservation", { queries: () => Promise.reject(new AppError("quota", "the configured model spend budget is exhausted")) }, "quota"],
+    ];
+    for (const [what, broken, code] of failures) {
+      const { vectors } = nearby(lead, undefined, broken);
+      const failed = await runNear(rows(), using(vectors));
+      expect(failed.tags, what).toEqual(without.tags);
+      const { vector, ...rest } = failed.report;
+      const { vector: _none, ...wordForWord } = without.report;
+      expect(rest, what).toEqual(wordForWord);
+      // A code and nothing else: no line, label or provider text.
+      expect(vector.failed, what).toBe(code);
+      expect(JSON.stringify(vector), what).not.toMatch(/Kubernetes|VECTOR_QUERY/);
+    }
+    // Nor does an index that cannot be read, or one that is not ready, change anything.
+    for (const skipped of ["not_ready", "unreadable", "unbound"]) {
+      const quiet = await runNear(rows(), { vectors: async () => ({ skipped }) });
+      expect(quiet.tags, skipped).toEqual(without.tags);
+      expect(quiet.report, skipped).toEqual({ ...without.report, vector: { ...emptyTagReport().vector, skipped } });
+    }
+  });
+
+  it("a lookup that never answers ends in timeout, after every word-for-word question was asked and its tags kept", async () => {
+    const { index, opts } = await indexed();
+    // The index takes the question and never answers it. The deadline passes once it has been asked.
+    let asking!: () => void;
+    const askedIndex = new Promise<void>((resolve) => (asking = resolve));
+    index.query = () => {
+      asking();
+      return new Promise<never>(() => {});
+    };
+    const rows = upload([role("job", "Programmer")], [skill("listed", "SQL"), fact("line", "Ran Kubernetes clusters", { roleId: "job" })]);
+    const without = await run(rows);
+    const waited: number[] = [];
+    const { tags, asked, report } = await runNear(rows, { ...opts, wait: (ms) => (waited.push(ms), askedIndex) });
+    expect(waited).toEqual([VECTOR_READ_DEADLINE_MS]);
+    expect(asked).toEqual(without.asked);
+    expect(tags).toEqual(without.tags);
+    // Both rows were embedded; the first lookup never came back, so nothing is a candidate.
+    expect(report).toEqual({ ...without.report, vector: { ...emptyTagReport().vector, subjects: 2, failed: "timeout" } });
+  });
+
+  it("send nothing more once the deadline has passed", async () => {
+    // Eight lines: two rounds of four lookups. The deadline passes while the first round is out.
+    const facts = Array.from({ length: 8 }, (_, n) => fact(`line-${n}`, `Headed a crew, number ${n}`));
+    let pass!: () => void;
+    const deadline = new Promise<void>((resolve) => (pass = resolve));
+    const events: string[] = [];
+    const lead = Object.fromEntries(facts.map((row) => [row.text, [near(S(2), "skill", "lead a team", 0.9)]]));
+    const base = nearby(lead);
+    const vectors: VectorReads = {
+      queries: base.vectors.queries,
+      async nearest(vector, kinds, k) {
+        events.push("nearest");
+        pass();
+        // Let the deadline land before this answer comes back.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        return base.vectors.nearest(vector, kinds, k);
+      },
+    };
+    const { asked, report } = await runNear(upload([], facts), using(vectors, { wait: () => deadline }));
+    expect(events.filter((event) => event === "nearest")).toHaveLength(4);
+    expect(asked.flat().some((item) => item.text.includes("lead a team"))).toBe(false);
+    expect(report.vector).toMatchObject({ failed: "timeout", candidates: 0, asked: 0 });
+    // Nothing sent late is answered later either.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(events.filter((event) => event === "nearest")).toHaveLength(4);
+  });
+
+  it("are skipped as late after ninety seconds", async () => {
+    const opened = vi.fn(async () => ({ vectors: nearby({}).vectors }));
+    let clock = 1_000;
+    const { report } = await runNear(upload([], [fact("line", SPENT)]), {
+      vectors: opened,
+      // The run begins, then everything word for word takes a little over ninety seconds.
+      now: () => {
+        const at = clock;
+        clock += VECTOR_START_BY_MS + 1;
+        return at;
+      },
+    });
+    expect(opened).not.toHaveBeenCalled();
+    expect(report.vector).toEqual({ ...emptyTagReport().vector, skipped: "late" });
+  });
+
+  it("never embed a line marked since the run read it", async () => {
+    const { vectors, embedded } = nearby({});
+    const marks = new Set<string>();
+    let open = false;
+    const marked = async (ids: string[]) => ids.filter((id) => marks.has(id));
+    // The owner marks a line after every word-for-word question was asked, as the index is opened.
+    const opts: TagOptions = {
+      vectors: async () => {
+        open = true;
+        marks.add("secret");
+        return { vectors };
+      },
+    };
+    const { report, asked } = await runNear(upload([role("job", "Coder")], [fact("secret", "Oversaw spending for the merger"), fact("plain", SPENT)]), opts, {}, marked);
+    expect(open).toBe(true);
+    expect(embedded).toEqual([["Coder"], [SPENT]]);
+    expect(JSON.stringify(embedded)).not.toContain("merger");
+    expect(JSON.stringify(asked)).not.toContain("merger");
+    expect(report.vector).toMatchObject({ subjects: 2, withheld: 1 });
+  });
+
+  it("embed nothing without an index", async () => {
+    const stand = judge();
+    const embed = vi.fn(stand.models.embed);
+    const models: Models = { ...stand.models, embed };
+    const rows = upload([role("job", "Coder")], [fact("line", SPENT)]);
+    // No index bound: no vector part at all.
+    const none = await runNear(rows, {}, {}, NONE_MARKED, models);
+    expect(none.report).toEqual({ ...emptyTagReport(), roles: 1, facts: 1 });
+    // An index whose manifest is not this build's: the part stops before embedding anything.
+    const { embedded, opts } = await indexed(new (await import("../support/fake-vectorize")).MemoryVectorIndex());
+    const notReady = await runNear(rows, opts, {}, NONE_MARKED, models);
+    expect(notReady.report.vector).toEqual({ ...emptyTagReport().vector, skipped: "not_ready" });
+    expect(embedded).toEqual([]);
+    expect(embed).not.toHaveBeenCalled();
+  });
+});
+
 // ---------------------------------------------------------------- labelled examples
 
 describe("labelled examples", () => {
@@ -1057,6 +1404,23 @@ describe("labelled examples", () => {
     expect(skills.some((found) => /^Microsoft\s*[✗-]\s*Excel$/u.test(found.text))).toBe(true);
   });
 
+  it("found only near the words in meaning name no concept a label in the words names", async () => {
+    const taxonomy = fixture();
+    const inOtherWords = TAG_LINES.flatMap((example) => example.candidates.filter((candidate) => candidate.decidedBy === "vector").map((candidate) => ({ example, candidate })));
+    expect(inOtherWords.length).toBeGreaterThan(0);
+    for (const { example, candidate } of inOtherWords) {
+      const words = "title" in example ? example.title : example.fact.text;
+      const labelled = (await taxonomy.mentions(words, { kinds: "title" in example ? ["occupation"] : FACT_TAG_KINDS })).flatMap((mention) => mention.concepts.map((concept) => concept.id));
+      expect(labelled, `${words} / ${candidate.concept}`).not.toContain(candidate.concept);
+    }
+    // Each is found, by the index and by nothing else, and no example without an index finds one.
+    const { outcomes } = await runTagging(judge().models, TAG_LINES);
+    const listed = outcomes.filter((outcome) => outcome.listed?.decidedBy === "vector");
+    expect(listed.filter((outcome) => outcome.tagged !== TAG_VECTOR_METHOD).map(named)).toEqual([]);
+    const without = await runTagging(judge().models, TAG_LINES, undefined, { embed: null });
+    expect(without.outcomes.filter((outcome) => outcome.found && outcome.listed?.decidedBy === "vector").map(named)).toEqual([]);
+  });
+
   it("are tagged by the rule under a judge that fails, and by nothing else", async () => {
     const { outcomes, report } = await runTagging(throwing, TAG_LINES);
     expect(report.failed).toBe("unavailable");
@@ -1070,6 +1434,9 @@ describe("labelled examples", () => {
     const listed = TAG_LINES.flatMap((example) => example.candidates);
     const byJudge = listed.filter((candidate) => candidate.decidedBy === "judge");
     const byRule = listed.filter((candidate) => candidate.decidedBy === "rule");
+    const byVector = listed.filter((candidate) => candidate.decidedBy === "vector");
+    const nearRight = byVector.filter((candidate) => candidate.expect === "tag").length;
+    expect(nearRight).toBeLessThan(byVector.length);
     // A judge that says yes to everything tags every wrong candidate too, and its precision says so.
     const agreed = precision((await runTagging(judge().models, TAG_LINES)).outcomes);
     const right = byJudge.filter((candidate) => candidate.expect === "tag").length;
@@ -1077,14 +1444,18 @@ describe("labelled examples", () => {
     expect(agreed).toEqual({
       [TAG_RULE_METHOD]: { tagged: byRule.length, right: byRule.length, precision: 1 },
       [TAG_JUDGE_METHOD]: { tagged: byJudge.length, right, precision: right / byJudge.length },
+      [TAG_VECTOR_METHOD]: { tagged: byVector.length, right: nearRight, precision: nearRight / byVector.length },
     });
     // A judge that answers as the labels do is right every time. In these examples a subject's
     // candidates are all right or all wrong, so it is enough to know the subject it is asked of.
     const shown = (example: (typeof TAG_LINES)[number]) =>
       "title" in example ? `Job title: ${example.title}` : example.fact.kind === "skill" ? `Skill: ${example.fact.text}` : example.fact.kind === "credential" ? `Credential: ${example.fact.text}` : example.fact.text;
-    const declined = new Set(TAG_LINES.filter((example) => example.candidates.some((candidate) => candidate.expect === "none" && candidate.decidedBy === "judge")).map(shown));
+    const declined = new Set(
+      TAG_LINES.filter((example) => example.candidates.some((candidate) => candidate.expect === "none" && (candidate.decidedBy === "judge" || candidate.decidedBy === "vector"))).map(shown),
+    );
     const careful = precision((await runTagging(judge({ verdict: (item) => (declined.has(item.facts[0]!.text) ? "unsupported" : "supported") }).models, TAG_LINES)).outcomes);
     expect(careful[TAG_JUDGE_METHOD]).toEqual({ tagged: right, right, precision: 1 });
+    expect(careful[TAG_VECTOR_METHOD]).toEqual({ tagged: nearRight, right: nearRight, precision: 1 });
     // A method that proposed nothing has no precision to report.
     expect(precision((await runTagging(throwing, TAG_LINES)).outcomes)[TAG_JUDGE_METHOD]).toEqual({ tagged: 0, right: 0, precision: null });
   });

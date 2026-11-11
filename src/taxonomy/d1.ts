@@ -64,6 +64,20 @@ const isKind = (value: string): value is ConceptKind => (CONCEPT_KINDS as readon
 const isType = (value: string): value is LabelType => (LABEL_TYPES as readonly string[]).includes(value);
 const isRel = (value: string): value is Relation => (RELATIONS as readonly string[]).includes(value);
 
+/** A concept as the builder wrote it, or null for a row of a kind or scheme this reader does not know. */
+function conceptOf(row: ConceptRow): Concept | null {
+  if (!isKind(row.kind) || (row.scheme !== "esco" && row.scheme !== "onet")) return null;
+  return {
+    id: row.id,
+    kind: row.kind,
+    scheme: row.scheme,
+    code: row.code,
+    label: row.label,
+    description: row.description,
+    meta: object<ConceptMeta>(row.meta) ?? {},
+  };
+}
+
 export class D1Store implements TaxonomyStore {
   constructor(private readonly db: D1Database) {}
 
@@ -110,19 +124,34 @@ export class D1Store implements TaxonomyStore {
         .bind(...part)
         .all<ConceptRow>();
       for (const row of results) {
-        if (!isKind(row.kind) || (row.scheme !== "esco" && row.scheme !== "onet")) continue;
-        out.push({
-          id: row.id,
-          kind: row.kind,
-          scheme: row.scheme,
-          code: row.code,
-          label: row.label,
-          description: row.description,
-          meta: object<ConceptMeta>(row.meta) ?? {},
-        });
+        const concept = conceptOf(row);
+        if (concept) out.push(concept);
       }
     }
     return out;
+  }
+
+  async conceptPage(after: string, kinds: readonly ConceptKind[], limit: number): Promise<Concept[]> {
+    const only = [...new Set(kinds)].filter(isKind);
+    if (only.length === 0 || !Number.isSafeInteger(limit) || limit < 1) return [];
+    const { results } = await this.db
+      .prepare(`SELECT id, kind, scheme, code, label, description, meta FROM concepts WHERE id > ? AND kind IN (${marks(only.length)}) ORDER BY id LIMIT ?`)
+      .bind(after, ...only, Math.min(limit, 100))
+      .all<ConceptRow>();
+    return results.flatMap((row) => {
+      const concept = conceptOf(row);
+      return concept ? [concept] : [];
+    });
+  }
+
+  async conceptCount(kinds: readonly ConceptKind[], upTo?: string): Promise<number> {
+    const only = [...new Set(kinds)].filter(isKind);
+    if (only.length === 0) return 0;
+    const row = await this.db
+      .prepare(`SELECT COUNT(*) AS n FROM concepts WHERE kind IN (${marks(only.length)})` + (upTo === undefined ? "" : ` AND id <= ?`))
+      .bind(...only, ...(upTo === undefined ? [] : [upTo]))
+      .first<{ n: number }>();
+    return row?.n ?? 0;
   }
 
   async labels(norms: readonly string[], kinds?: readonly ConceptKind[]): Promise<Label[]> {
