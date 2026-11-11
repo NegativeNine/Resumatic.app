@@ -1,8 +1,11 @@
 import { vi } from "vitest";
 import type { DocumentView } from "../../src/shared/documents";
 import type { PostingRead } from "../../src/shared/postings";
-import { normalizePosting, type FactPatch, type NewFact, type NewRole, type Profile, type ReviewRequest, type RolePatch } from "../../src/shared/api";
-import type { Fixtures } from "./fixtures";
+import { normalizePosting, type FactPatch, type NewFact, type NewRole, type Profile, type ReviewRequest, type RolePatch, type SensitiveRequest } from "../../src/shared/api";
+import { PREFERENCES_CHANGED, PREFERENCES_REFUSED, cleanPreferences, type Preferences, type PreferencesUpdate } from "../../src/shared/preferences";
+import { wording } from "../../src/shared/record";
+import { targetText, type NewShareComment, type ShareComment } from "../../src/shared/sharing";
+import { sharedView, type Fixtures } from "./fixtures";
 
 export interface Call {
   method: string;
@@ -26,8 +29,14 @@ export class FakeApi {
 
   constructor(readonly state: Fixtures) {}
 
+  /** The account's session is from before the sign-in address was carried. */
+  coachNeedsSignIn = false;
+
   /** Documents written before their evidence was kept, which can't go into a copy. */
   readonly unshareable = new Set<string>();
+
+  /** Documents that use a fact marked sensitive, which can't go into a copy while it is marked. */
+  readonly usesSensitive = new Set<string>();
 
   /** What reading each link comes to. A link that isn't here can't be reached. */
   readonly pages = new Map<string, PostingRead>();
@@ -77,6 +86,42 @@ export class FakeApi {
     ["GET", /^\/api\/v2\/vault$/, () => ok({ sources: this.state.sources, roles: this.state.roles, facts: this.state.facts })],
     ["GET", /^\/api\/billing$/, () => ok(this.state.billing ?? { enabled: false, plans: [], current: null })],
     ["GET", /^\/api\/shares$/, () => ok({ grants: this.state.shares ?? [] })],
+    ["GET", /^\/api\/coach\/clients$/, () => ok({ clients: this.state.clients ?? [], needsSignIn: this.coachNeedsSignIn })],
+    ["POST", /^\/api\/coach\/clients\/([^/]+)\/open$/, (_call, [grantId]) => ok({ grantId })],
+    [
+      "DELETE",
+      /^\/api\/coach\/clients\/([^/]+)$/,
+      (_call, [grantId]) => {
+        this.state.clients = (this.state.clients ?? []).filter((client) => client.grantId !== grantId);
+        return { status: 204 };
+      },
+    ],
+    // A coach's comments on the copy they are reading. The copy is the one sharedView() gives.
+    ["GET", /^\/api\/coach\/clients\/([^/]+)\/comments$/, () => ok({ threads: this.state.coachComments ?? [] })],
+    [
+      "POST",
+      /^\/api\/coach\/clients\/([^/]+)\/comments$/,
+      (call) => {
+        const { target, body } = call.body as NewShareComment;
+        const made: ShareComment = { id: this.id("comment"), author: "coach", body: body.trim(), createdAt: Date.now() };
+        const threads = (this.state.coachComments ??= []);
+        const thread = threads.find((held) => JSON.stringify(held.target) === JSON.stringify(target));
+        if (thread) thread.comments.push(made);
+        else threads.push({ target, quote: targetText(sharedView().snapshot, target) ?? "", comments: [made] });
+        return { status: 201, body: made };
+      },
+    ],
+    [
+      "DELETE",
+      /^\/api\/coach\/clients\/([^/]+)\/comments\/([^/]+)$/,
+      (_call, [, id]) => {
+        // As the vault does: only the coach's own, and a thread with nothing left in it is gone.
+        this.state.coachComments = (this.state.coachComments ?? [])
+          .map((thread) => ({ ...thread, comments: thread.comments.filter((comment) => comment.id !== id || comment.author !== "coach") }))
+          .filter((thread) => thread.comments.length > 0);
+        return { status: 204 };
+      },
+    ],
     [
       "GET",
       /^\/api\/documents$/,
@@ -84,20 +129,60 @@ export class FakeApi {
         ok({
           documents: (this.state.documents ?? [])
             .filter((doc) => doc.state === "ready" && (doc.kind === "letter" || doc.kind === "prep"))
-            .map((doc) => ({ id: doc.id, kind: doc.kind, applicationId: doc.applicationId, version: doc.version, createdAt: doc.createdAt, shareable: !this.unshareable.has(doc.id) })),
+            .map((doc) => ({
+              id: doc.id, kind: doc.kind, applicationId: doc.applicationId, version: doc.version, createdAt: doc.createdAt,
+              shareable: !this.unshareable.has(doc.id) && !this.usesSensitive.has(doc.id),
+              ...(this.usesSensitive.has(doc.id) && !this.unshareable.has(doc.id) ? { usesSensitive: true } : {}),
+            })),
         }),
     ],
     [
       "POST",
       /^\/api\/shares$/,
       (call) => {
-        const { factIds, resumes, documents, expiresAt, label } = call.body as { factIds: string[]; resumes: unknown[]; documents?: unknown[]; expiresAt: number; label?: string };
+        const { factIds, resumes, documents, expiresAt, label, coachEmail } = call.body as { factIds: string[]; resumes: unknown[]; documents?: unknown[]; expiresAt: number; label?: string; coachEmail?: string };
         const grant = {
           id: this.id("share"), epoch: "e", createdAt: Date.now(), expiresAt, revokedAt: null,
           factCount: factIds.length, resumeCount: resumes.length, documentCount: documents?.length ?? 0, available: true, label: label ?? null, lastReadAt: null,
+          coach: coachEmail ? { email: coachEmail.toLowerCase(), name: null, joinedAt: null } : null,
         };
         (this.state.shares ??= []).unshift(grant);
         return { status: 201, body: { grant, url: `https://resumatic.test/share#synthetic-${grant.id}` } };
+      },
+    ],
+    // What coaches wrote on the copies this account shared, and its replies.
+    ["GET", /^\/api\/shares\/comments$/, () => ok({ threads: this.state.shareComments ?? [] })],
+    [
+      "POST",
+      /^\/api\/shares\/comments\/seen$/,
+      () => {
+        for (const thread of this.state.shareComments ?? [])
+          for (const comment of thread.comments) if (comment.author === "coach") comment.seen = true;
+        this.state.me.newFromCoach = 0;
+        return { status: 204 };
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/shares\/comments\/([^/]+)\/replies$/,
+      (call, [id]) => {
+        const thread = (this.state.shareComments ?? []).find((held) => held.comments.some((comment) => comment.id === id && comment.author === "coach"));
+        if (!thread) return notFound("that comment has been deleted; reload to see the thread as it stands");
+        if (!thread.open)
+          return { status: 409, body: { error: "conflict", message: "this copy isn't open to your coach any more, so they can't read a reply; share a new copy to carry on" } };
+        const made: ShareComment = { id: this.id("reply"), author: "owner", body: (call.body as { body: string }).body.trim(), createdAt: Date.now() };
+        thread.comments.push(made);
+        return { status: 201, body: made };
+      },
+    ],
+    [
+      "DELETE",
+      /^\/api\/shares\/comments\/([^/]+)$/,
+      (_call, [id]) => {
+        this.state.shareComments = (this.state.shareComments ?? [])
+          .map((thread) => ({ ...thread, comments: thread.comments.filter((comment) => comment.id !== id) }))
+          .filter((thread) => thread.comments.length > 0);
+        return { status: 204 };
       },
     ],
     ["GET", /^\/api\/mcp\/grants$/, () => ok({ grants: this.state.mcpGrants ?? [] })],
@@ -144,6 +229,21 @@ export class FakeApi {
         const { expectedRevision: _revision, ...patch } = call.body as Partial<Profile> & { expectedRevision?: number };
         this.state.me.profile = { ...this.state.me.profile, ...patch, revision: (this.state.me.profile.revision ?? 0) + 1 };
         return ok(this.state.me.profile);
+      },
+    ],
+    ["GET", /^\/api\/preferences$/, () => ok(this.state.preferences ?? NOTHING_SAID)],
+    [
+      "PUT",
+      /^\/api\/preferences$/,
+      (call) => {
+        // As the server does: the one rule decides what a save takes, and it lands only at the saved revision.
+        const { expectedRevision, ...values } = call.body as PreferencesUpdate;
+        const clean = cleanPreferences(values);
+        if (!clean) return { status: 422, body: { error: "invalid", message: PREFERENCES_REFUSED } };
+        const saved = this.state.preferences ?? NOTHING_SAID;
+        if (expectedRevision !== saved.revision) return { status: 409, body: { error: "conflict", message: PREFERENCES_CHANGED } };
+        this.state.preferences = { ...clean, revision: saved.revision + 1, updatedAt: Date.now() };
+        return ok(this.state.preferences);
       },
     ],
     ["POST", /^\/api\/account\/sign-out-everywhere$/, () => ({ status: 204 })],
@@ -243,6 +343,23 @@ export class FakeApi {
           if (fact) fact.state = "rejected";
         }
         this.recountSources();
+        return { status: 204 };
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/facts\/sensitive$/,
+      (call) => {
+        const { ids, sensitive } = call.body as SensitiveRequest;
+        const named = ids.map((id) => this.state.facts.find((fact) => fact.id === id));
+        if (named.some((fact) => !fact)) return notFound("no such fact");
+        // As the vault does: every fact with the same words is marked or unmarked with the ones named.
+        const words = new Set(named.map((fact) => wording(fact!.text)));
+        for (const fact of this.state.facts) {
+          if (!ids.includes(fact.id) && !words.has(wording(fact.text))) continue;
+          if (sensitive) fact.sensitive = true;
+          else delete fact.sensitive;
+        }
         return { status: 204 };
       },
     ],
@@ -346,6 +463,33 @@ export class FakeApi {
       },
     ],
     [
+      "POST",
+      /^\/api\/resumes\/([^/]+)\/remove-(line|skill)$/,
+      (call, [resumeId, what]) => {
+        const resume = this.state.resumes[resumeId!];
+        if (!resume?.body) return notFound("no such resume");
+        const { lineId, skillIndex } = call.body as { lineId?: string; skillIndex?: number };
+        // As the vault does: a new version without the line or the skill, and what that version
+        // still takes from facts marked sensitive is worked out for it.
+        const use = resume.sensitiveUse ?? { lineIds: [], skills: [] };
+        if (what === "line") {
+          if (resume.body.summary?.id === lineId) resume.body.summary = null;
+          resume.body.sections = resume.body.sections.flatMap((section) => {
+            const lines = section.lines.filter((line) => line.id !== lineId);
+            return lines.length || !section.lines.length ? [{ ...section, lines }] : [];
+          });
+          use.lineIds = use.lineIds.filter((id) => id !== lineId);
+        } else {
+          const [skill] = resume.body.skills.splice(skillIndex ?? -1, 1);
+          use.skills = use.skills.filter((name) => name !== skill);
+        }
+        if (use.lineIds.length || use.skills.length) resume.sensitiveUse = use;
+        else delete resume.sensitiveUse;
+        resume.version += 1;
+        return ok({ version: resume.version });
+      },
+    ],
+    [
       "PATCH",
       /^\/api\/resumes\/([^/]+)\/lines\/([^/]+)$/,
       (call, [resumeId, lineId]) => {
@@ -376,6 +520,8 @@ export function installFakeApi(state: Fixtures): FakeApi {
 }
 
 const ok = (body: unknown): Reply => ({ status: 200, body });
+/** Job preferences before the first save. */
+const NOTHING_SAID: Preferences = { revision: 0, place: null, jobTypes: [], availableFrom: null, payFloor: null, updatedAt: null };
 const notFound = (message: string): Reply => ({ status: 404, body: { error: "not_found", message } });
 
 function respond({ status, body }: Reply): Response {

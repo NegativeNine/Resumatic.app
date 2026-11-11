@@ -23,6 +23,16 @@ export async function judgeFacts(
   const result: ("supported" | "unsupported")[] = [];
   for (let offset = 0; offset < facts.length; offset += 20) {
     const batch = facts.slice(offset, offset + 20);
+    if (models.judge && !model) {
+      const answer = await models.judge(batch.map((fact, id) => ({
+        alias: String(id), text: fact.text, facts: [{ text: fact.quote, quote: fact.quote }],
+      })));
+      batch.forEach((_, id) => {
+        const matches = answer.verdicts.filter((v) => v.id === String(id));
+        result.push(matches.length === 1 && matches[0]!.verdict === "supported" ? "supported" : "unsupported");
+      });
+      continue;
+    }
     const answer = await models.complete(
       "judge",
       [

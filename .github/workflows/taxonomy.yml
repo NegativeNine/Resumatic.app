@@ -1,0 +1,91 @@
+name: Taxonomy build
+
+# Builds the combined ESCO and O*NET taxonomy from the official downloads and attaches it to the
+# run. Started by hand. It uses no secrets, deploys nothing and changes nothing in the repository.
+# docs/taxonomy.md has the whole procedure and the verified public ESCO link.
+
+on:
+  workflow_dispatch:
+    inputs:
+      esco_url:
+        description: "Official ESCO classification CSV package URL; change this with esco_version"
+        required: true
+        default: "https://ec.europa.eu/esco/download/ESCO%20dataset%20-%20v1.2.1%20-%20classification%20-%20en%20-%20csv.zip"
+        type: string
+      esco_version:
+        description: "ESCO version of that package"
+        required: true
+        default: "1.2.1"
+        type: string
+      onet_version:
+        description: "O*NET Database release (30.3 or later)"
+        required: true
+        default: "31.0"
+        type: string
+      crosswalk_url:
+        description: "O*NET - ESCO occupations crosswalk CSV"
+        required: true
+        default: "https://esco.ec.europa.eu/system/files/2023-08/ONET_%28Occupations%29_0_updated.csv"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Inputs reach the shell only as environment variables, never as text in a command.
+      ESCO_URL: ${{ inputs.esco_url }}
+      ESCO_VERSION: ${{ inputs.esco_version }}
+      ONET_VERSION: ${{ inputs.onet_version }}
+      CROSSWALK_URL: ${{ inputs.crosswalk_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Check the inputs
+        run: |
+          set -euo pipefail
+          [[ "$ESCO_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || { echo "ESCO version must look like 1.2.1"; exit 1; }
+          [[ "$ONET_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] || { echo "O*NET release must look like 31.0"; exit 1; }
+          [[ "$ESCO_URL" == https://* ]] || { echo "The ESCO link must start with https://"; exit 1; }
+          [[ "$CROSSWALK_URL" == https://* ]] || { echo "The crosswalk link must start with https://"; exit 1; }
+      - name: Download the official files
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/taxonomy"
+          mkdir -p "$work/esco" "$work/onet"
+          fetch() { curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-time 600 --max-filesize 400000000 --output "$2" -- "$1"; }
+          fetch "$ESCO_URL" "$work/esco.zip"
+          fetch "https://www.onetcenter.org/dl_files/database/db_${ONET_VERSION//./_}_csv.zip" "$work/onet.zip"
+          fetch "$CROSSWALK_URL" "$work/crosswalk.csv"
+          # Only CSV files are taken out, without their folders, so an archive cannot write elsewhere.
+          unzip -q -j -o "$work/esco.zip" '*.csv' -d "$work/esco"
+          unzip -q -j -o "$work/onet.zip" '*.csv' -d "$work/onet"
+          (cd "$work" && sha256sum esco.zip onet.zip crosswalk.csv) | tee "$work/downloads.sha256"
+      - name: Build
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/taxonomy"
+          node scripts/taxonomy/build.mjs \
+            --esco "$work/esco" --esco-version "$ESCO_VERSION" \
+            --onet "$work/onet" --onet-version "$ONET_VERSION" \
+            --crosswalk "$work/crosswalk.csv" \
+            --out "$work/out"
+          cp "$work/downloads.sha256" "$work/out/downloads.sha256"
+          {
+            echo "### Taxonomy built"
+            echo
+            echo '```json'
+            node -e 'const m = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); console.log(JSON.stringify({ version: m.version, counts: m.counts, setAside: m.setAside, inputs: Object.fromEntries(Object.entries(m.inputs).map(([k, files]) => [k, Object.fromEntries(files.map((f) => [f.name, f.rows]))])) }, null, 2))' "$work/out/manifest.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: taxonomy
+          path: ${{ runner.temp }}/taxonomy/out
+          if-no-files-found: error
+          retention-days: 30

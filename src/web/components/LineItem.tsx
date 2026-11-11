@@ -27,6 +27,8 @@ interface Props {
   expectedVersion?: number;
   readOnly?: boolean;
   canRemove?: boolean;
+  /** The line cites a fact its owner has marked sensitive, or was checked against that fact's line. */
+  sensitive?: boolean;
   onEditingChange?: (id: string, active: boolean) => void;
   editingOutdated?: boolean;
 }
@@ -49,6 +51,7 @@ export function LineItem({
   expectedVersion,
   readOnly = false,
   canRemove = false,
+  sensitive = false,
   onEditingChange,
   editingOutdated = false,
 }: Props) {
@@ -72,6 +75,7 @@ export function LineItem({
         <Badge tone={legacyReview === "pending" ? "edited" : line.status} title={legacyReview === "pending" ? "This older line needs a fresh check against confirmed facts." : LINE_STATUS_HINT[line.status]}>
           {legacyReview === "pending" ? "Needs review" : legacyReview === "verified" ? "Checked" : LINE_STATUS_LABEL[line.status]}
         </Badge>
+        {sensitive && <Badge tone="sensitive">Sensitive fact</Badge>}
         <button
           type="button"
           className="rs-note__toggle"
@@ -115,14 +119,17 @@ export function LineItem({
           : <Evidence facts={cited} />}
         {!editing && !readOnly && (
           <div className="rs-note__row">
-            <button
-              type="button"
-              className="rs-linkbtn"
-              aria-describedby={`${id}-text`}
-              onClick={() => { onEditingChange?.(line.id, true); setEditing(true); }}
-            >
-              {legacyReview === "pending" ? "Review line" : "Edit line"}
-            </button>
+            {/* A line that uses a marked fact can't be reworded from it. It can be removed, or reviewed against other facts. */}
+            {(!sensitive || legacyReview === "pending") && (
+              <button
+                type="button"
+                className="rs-linkbtn"
+                aria-describedby={`${id}-text`}
+                onClick={() => { onEditingChange?.(line.id, true); setEditing(true); }}
+              >
+                {legacyReview === "pending" ? "Review line" : "Edit line"}
+              </button>
+            )}
             {(legacyReview || canRemove) && expectedVersion !== undefined && (
               <button type="button" className="rs-linkbtn" disabled={removal.pending} aria-describedby={`${id}-text`}
                 onClick={() => void removal.run(async () => {
@@ -199,7 +206,8 @@ function LineEditor({
     if (hasEvidence) return;
     let stopped = false;
     api.facts("confirmed").then(({ facts }) => {
-      if (!stopped) setAvailableFacts(facts.filter((fact) => roleId === null || fact.roleId === roleId));
+      // A fact marked sensitive is evidence for nothing, so it isn't offered.
+      if (!stopped) setAvailableFacts(facts.filter((fact) => !fact.sensitive && (roleId === null || fact.roleId === roleId)));
     }).catch((e) => {
       if (stopped) return;
       const note = sessionEndNote(e);

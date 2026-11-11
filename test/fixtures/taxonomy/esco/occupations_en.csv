@@ -1,0 +1,5 @@
+conceptType,conceptUri,iscoGroup,preferredLabel,altLabels,hiddenLabels,status,modifiedDate,regulatedProfessionNote,scopeNote,definition,inScheme,description,code
+Occupation,http://data.europa.eu/esco/occupation/00000000-0000-4000-8000-000000000001,2512,software developer,"software engineer
+programmer",,released,2024-01-01T00:00:00.000Z,,,,http://data.europa.eu/esco/concept-scheme/skills,Software developers implement or program software systems.,2512.4
+Occupation,http://data.europa.eu/esco/occupation/00000000-0000-4000-8000-000000000002,1330,ICT project manager,IT project manager,,released,2024-01-01T00:00:00.000Z,,,,http://data.europa.eu/esco/concept-scheme/skills,"ICT project managers schedule, control and direct resources.",1330.1
+Occupation,http://data.europa.eu/esco/occupation/00000000-0000-4000-8000-000000000003,2411,budget analyst,,,released,2024-01-01T00:00:00.000Z,,,,http://data.europa.eu/esco/concept-scheme/skills,Budget analysts monitor the spending of institutions.,2411.1.3

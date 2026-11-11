@@ -2,15 +2,19 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { useLiveProgress } from "../live";
 import { feedbackHref } from "../config";
 import { href, type Route } from "../router";
+import { useSession } from "../session";
 import { BrandMark, Lockup } from "./Lockup";
 import { QuotaMeter } from "./QuotaMeter";
 
-const NAV: { to: string; label: string; pages: readonly Route["page"][] }[] = [
+type NavItem = { to: string; label: string; pages: readonly Route["page"][] };
+const NAV: NavItem[] = [
   { to: href.facts, label: "Facts", pages: ["facts"] },
   // A resume belongs to the job it was tailored for, so Jobs stays current on a resume page.
   { to: href.jobs, label: "Jobs", pages: ["jobs", "resume"] },
   { to: href.account, label: "Account", pages: ["account"] },
 ];
+/** Shown only to someone with a client, or on the page itself: most people here are nobody's coach. */
+const CLIENTS: NavItem = { to: href.clients, label: "Clients", pages: ["clients"] };
 
 export function Shell({
   route,
@@ -22,6 +26,10 @@ export function Shell({
   children: ReactNode;
 }) {
   useLiveProgress();
+  const { me } = useSession();
+  const clients = me.clients ?? 0;
+  // Comments a coach has written that the person hasn't seen, as counted when the app loaded.
+  const fromCoach = me.newFromCoach ?? 0;
   const main = useRef<HTMLElement>(null);
   const routeKey = route.page === "resume" ? `resume/${route.id}` : route.page;
   const shownKey = useRef(routeKey);
@@ -58,10 +66,21 @@ export function Shell({
           <span className="rs-mark rs-mark--beta">Private beta</span>
           <nav className="app-nav" aria-label="Main">
             <ul className="rs-nav">
-              {NAV.map((item) => (
+              {(clients > 0 || route.page === "clients" ? [NAV[0]!, NAV[1]!, CLIENTS, NAV[2]!] : NAV).map((item) => (
                 <li key={item.to}>
-                  <a href={item.to} aria-current={item.pages.includes(route.page) ? "page" : undefined}>
+                  {/* Account is where a coach's comments are read, so it carries the count of new ones. */}
+                  <a
+                    href={item.to}
+                    aria-current={item.pages.includes(route.page) ? "page" : undefined}
+                    aria-label={item.to === href.account && fromCoach > 0 ? `Account, ${fromCoach.toLocaleString()} new from your coach` : undefined}
+                  >
                     {item.label}
+                    {item.to === href.account && fromCoach > 0 && (
+                      <span className="rs-mark rs-mark--new app-nav-new">
+                        {fromCoach.toLocaleString()}
+                        <span className="app-nav-new__word"> new</span>
+                      </span>
+                    )}
                   </a>
                 </li>
               ))}

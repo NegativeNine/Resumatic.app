@@ -24,6 +24,27 @@ interface ResumaticSecrets {
   /** "true" lets a signed-in person have the Worker fetch a job posting's page. Off until its outbound requests are exercised in staging. */
   POSTING_READER_ENABLED?: string;
   OAUTH_KV?: KVNamespace;
+  /**
+   * "true" has the reading of an upload also work out how its lines divide, and keep what passes
+   * every check in shadow: stored to be measured, shown to nobody. Off everywhere by default. It
+   * adds model calls to every upload, and a failure in it leaves the upload as it is read today.
+   */
+  SPLIT_SHADOW_ENABLED?: string;
+  /**
+   * "true" has the reading of an upload also look across the record for roles and facts that are
+   * word for word the same as an earlier one, and keep each finding in shadow. It uses no model.
+   * Off everywhere by default, and a failure in it leaves the upload as it is read today.
+   */
+  MATCH_SHADOW_ENABLED?: string;
+  /**
+   * "true" has the reading of an upload also ask the judge whether lines that differ in wording
+   * say the same thing as lines already in the record, and keep each answer as an offer in
+   * shadow. Off everywhere by default. It adds judge calls to an upload, and a failure in it
+   * leaves the upload as it is read today.
+   */
+  OFFER_SHADOW_ENABLED?: string;
+  /** The combined ESCO and O*NET taxonomy, in a D1 database of its own. Optional: nothing reads it where it isn't bound. */
+  TAXONOMY?: D1Database;
   METRICS?: AnalyticsEngineDataset;
   AUTH_LIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };
   WRITE_LIMIT?: {
@@ -46,6 +67,7 @@ interface ResumaticSecrets {
   DIRECTORY_SHARDS?: string;
   RETENTION_REVIEW_ID?: string;
   EMBEDDING_MODEL?: string;
+  RERANK_MODEL?: string;
 
   /** Google OAuth client secret. */
   OIDC_CLIENT_SECRET: string;

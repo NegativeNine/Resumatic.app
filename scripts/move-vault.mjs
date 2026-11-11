@@ -3,22 +3,35 @@ import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { httpsOrigin } from "./lib/config.mjs";
 
-const TABLES = new Set([
+// Every table the app transfers (TRANSFER_TABLES in src/shared/operations.ts). A manifest that
+// names any other table is refused, so this list has to name each of them; a test keeps the two
+// in step.
+export const TABLES = new Set([
   "profile",
+  "preferences",
   "sources",
   "source_revisions",
   "evidence",
   "roles",
+  "role_create_requests",
   "facts",
+  "fact_create_requests",
   "extraction_feedback_sources",
   "extraction_feedback_facts",
   "extraction_feedback_manual",
   "applications",
+  "application_create_requests",
   "resumes",
   "resume_versions",
   "documents",
   "document_versions",
   "interview_answers",
+  "fact_splits",
+  "fact_parts",
+  "record_tags",
+  "record_links",
+  "coach_clients",
+  "share_comments",
 ]);
 const vaultId = (value) =>
   typeof value === "string" && /^[a-f0-9]{64}$/i.test(value);

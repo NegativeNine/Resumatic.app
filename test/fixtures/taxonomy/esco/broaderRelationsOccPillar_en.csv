@@ -1,0 +1,3 @@
+conceptType,conceptUri,broaderType,broaderUri
+Occupation,http://data.europa.eu/esco/occupation/00000000-0000-4000-8000-000000000001,ISCOGroup,http://data.europa.eu/esco/isco/C2512
+ISCOGroup,http://data.europa.eu/esco/isco/C2512,ISCOGroup,http://data.europa.eu/esco/isco/C251

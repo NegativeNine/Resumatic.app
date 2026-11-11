@@ -1,4 +1,5 @@
 import type { FactKind, Level, Profile, RoleKind } from "./api";
+import { presentResumeBullet } from "./resume-presentation";
 
 export interface SharedRole {
   id: string;
@@ -54,6 +55,8 @@ export interface ShareableDocument {
   createdAt: number;
   /** False for one written before its evidence was kept: it has to be written again to be shared. */
   shareable: boolean;
+  /** True when a fact its owner has marked sensitive is the only reason it can't be shared. */
+  usesSensitive?: boolean;
 }
 /** The job a shared resume or document was made for, as the owner had it named when the copy was made. */
 export interface SharedJob {
@@ -82,6 +85,11 @@ export const SHARE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SHARE_SESSION_TTL_MS = 60 * 60 * 1000;
 /** How often, at most, a copy's last-opened time is written. */
 export const SHARE_READ_INTERVAL_MS = 60_000;
+/**
+ * How long a coach's client list keeps an entry after its copy's last day. The copy can't be opened
+ * by then; the entry stays this long so the coach sees that access ended, and then it goes.
+ */
+export const COACH_CLIENT_KEPT_MS = 30 * 24 * 60 * 60 * 1000;
 /** The longest label an owner can give a link, such as "For Dana". */
 export const MAX_SHARE_LABEL_CHARS = 80;
 export interface ShareGrant {
@@ -94,6 +102,8 @@ export interface ShareGrant {
   resumeCount: number;
   /** Cover letters and interview preparation in the copy. Absent from a server that predates them. */
   documentCount?: number;
+  /** The coach this link names, or null for a link anyone reads as nobody in particular. */
+  coach?: ShareCoach | null;
   /** Whether an unexpired, unrevoked snapshot can currently be delivered. */
   available?: boolean;
   /** The owner's own note of who the link is for. Never shown to the reader. */
@@ -105,4 +115,90 @@ export interface SharedView {
   grantId: string;
   expiresAt: number;
   snapshot: ShareSnapshot;
+  /**
+   * How the person reading stands to the coach this copy names. Absent when it names none, or when
+   * the reader is its owner.
+   * - sign-in: nobody is signed in;
+   * - sign-in-again: signed in, but with a session from before the sign-in address was carried;
+   * - other: signed in with a different address;
+   * - you: this is the named coach, and the copy isn't in their clients: never added, or taken off since;
+   * - joined: the named coach, with the copy in their clients.
+   */
+  reviewer?: "sign-in" | "sign-in-again" | "other" | "you" | "joined";
+}
+
+/** The coach a copy names, as its owner sees them. */
+export interface ShareCoach {
+  /** The address the owner gave. Only the account that signs in with it can act as the coach. */
+  email: string;
+  /** The coach's name once they have added the copy to their clients, if they have one. */
+  name: string | null;
+  /** When that account added the copy to its clients, or null if it hasn't. */
+  joinedAt: number | null;
+}
+
+/** Someone who shared a copy with this account as their coach, as the coach's client list shows it. */
+export interface CoachClient {
+  grantId: string;
+  /** The owner's name, when they chose to put it on the copy. */
+  ownerName: string | null;
+  addedAt: number;
+  expiresAt: number;
+  /** False once the link has expired or been revoked, or the owner's account is gone, and while the copy can't be opened. The counts are then zero. */
+  active: boolean;
+  factCount: number;
+  resumeCount: number;
+  documentCount: number;
+}
+
+// Comments on a shared copy. The coach a copy names writes them, on a line or a fact of the copy,
+// and its owner answers. They are another person's words: text to show, kept in the owner's vault,
+// and never evidence for anything a resume says.
+
+/** The longest comment or reply, counted after it is cleaned. The form counts against it as the Vault does. */
+export const MAX_COMMENT_CHARS = 1000;
+
+/**
+ * What a comment is about: one whole line of a resume in the copy, or one whole fact. A copy can
+ * hold two versions of one resume, so a line is named with its resume's version.
+ */
+export type ShareTarget =
+  | { kind: "line"; resumeId: string; version: number; lineId: string }
+  | { kind: "fact"; factId: string };
+export interface NewShareComment { target: ShareTarget; body: string }
+export interface ShareComment {
+  id: string; author: "coach" | "owner"; body: string; createdAt: number;
+  /** Only in the owner's view of a coach's comment. */
+  name?: string | null; seen?: boolean;
+}
+/** Everything said about one line or fact of one copy, oldest first. `quote` is the target's words as the copy showed them. */
+export interface CommentThread { target: ShareTarget; quote: string; comments: ShareComment[] }
+export interface OwnerCommentThread extends CommentThread {
+  grantId: string; coachEmail: string; open: boolean;
+  /** A line's job as its owner names it now. Absent for a fact. */
+  job?: SharedJob | null;
+}
+
+/**
+ * The words of a line or a fact as a copy shows them, or null when the copy holds no such thing.
+ * Only a resume's summary and the lines under its roles can be named, and a fact by its ID: skills,
+ * headings and documents have no IDs in a copy. A line under a role is read as the page prints it,
+ * without a list marker it was imported with. `target` is checked here because it arrives from a
+ * request.
+ */
+export function targetText(snapshot: ShareSnapshot, target: ShareTarget): string | null {
+  const given: unknown = target;
+  if (typeof given !== "object" || given === null) return null;
+  const { kind, resumeId, version, lineId, factId } = given as Record<string, unknown>;
+  if (kind === "fact")
+    return typeof factId === "string" ? (snapshot.facts.find((fact) => fact.id === factId)?.text ?? null) : null;
+  if (kind !== "line" || typeof lineId !== "string") return null;
+  const resume = snapshot.resumes.find((held) => held.id === resumeId && held.version === version);
+  if (!resume) return null;
+  if (resume.summary?.id === lineId) return resume.summary.text;
+  for (const section of resume.sections) {
+    const line = section.lines.find((held) => held.id === lineId);
+    if (line) return presentResumeBullet(line.text);
+  }
+  return null;
 }

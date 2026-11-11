@@ -129,6 +129,16 @@ export async function validate({
     // production until its outbound requests have been exercised against a deployed Worker.
     if (environment === "production" && config.vars?.POSTING_READER_ENABLED === "true")
       missing.push("POSTING_READER_ROLLOUT_UNVERIFIED");
+    // Dividing lines in shadow stores what it works out in people's vaults. Keep it out of
+    // production until it has been measured on lines given with consent and the privacy notice
+    // names what is kept.
+    if (environment === "production" && config.vars?.SPLIT_SHADOW_ENABLED === "true")
+      missing.push("SPLIT_SHADOW_ROLLOUT_UNVERIFIED");
+    // The same for noting what an upload says again: it stores its findings in people's vaults.
+    if (environment === "production" && config.vars?.MATCH_SHADOW_ENABLED === "true")
+      missing.push("MATCH_SHADOW_ROLLOUT_UNVERIFIED");
+    if (environment === "production" && config.vars?.OFFER_SHADOW_ENABLED === "true")
+      missing.push("OFFER_SHADOW_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.R2_CACHE_FENCE_ENABLED && config.vars.R2_CACHE_FENCE_ENABLED !== "false")
       missing.push("R2_CACHE_FENCE_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.PLACEMENT_FENCE_ENABLED && config.vars.PLACEMENT_FENCE_ENABLED !== "false")

@@ -1,5 +1,40 @@
-/** Test-only helper to reconstruct a Vault schema before copies counted their documents, the latest migration. */
+/** Test-only helper to reconstruct a Vault schema before a shared copy could take comments, the latest migration. The index goes with its table. */
+export function removeCommentMigration(sql: SqlStorage): void {
+  sql.exec(`DROP TABLE IF EXISTS share_comments`);
+}
+
+/** Test-only helper to reconstruct a Vault schema before a fact could be marked sensitive, and so before every later migration. */
+export function removeSensitiveMigration(sql: SqlStorage): void {
+  removeCommentMigration(sql);
+  sql.exec(`DROP INDEX IF EXISTS facts_sensitive`);
+  sql.exec(`ALTER TABLE facts DROP COLUMN sensitive`);
+}
+
+/** Test-only helper to reconstruct a Vault schema before job preferences were kept, and so before every later migration. */
+export function removePreferencesMigration(sql: SqlStorage): void {
+  removeSensitiveMigration(sql);
+  sql.exec(`DROP TABLE IF EXISTS preferences`);
+}
+
+/** Test-only helper to reconstruct a Vault schema before a link could name a coach, and so before every later migration. */
+export function removeCoachMigration(sql: SqlStorage): void {
+  removePreferencesMigration(sql);
+  sql.exec(`DROP TABLE IF EXISTS coach_clients`);
+  for (const column of ["coach_joined_at", "coach_name", "coach_user_id", "coach_email"])
+    sql.exec(`ALTER TABLE share_grants DROP COLUMN ${column}`);
+}
+
+/** Test-only helper to reconstruct a Vault schema before the record held parts, tags and links, and so before every later migration. */
+export function removeRecordMigration(sql: SqlStorage): void {
+  removeCoachMigration(sql);
+  for (const trigger of ["fact_deleted", "role_deleted", "split_deleted", "part_deleted", "fact_reworded", "role_retitled", "role_changed"])
+    sql.exec(`DROP TRIGGER IF EXISTS record_${trigger}`);
+  for (const table of ["record_links", "record_tags", "fact_parts", "fact_splits"]) sql.exec(`DROP TABLE IF EXISTS ${table}`);
+}
+
+/** Test-only helper to reconstruct a Vault schema before copies counted their documents, and so before every later migration. */
 export function removeShareDocumentMigration(sql: SqlStorage): void {
+  removeRecordMigration(sql);
   sql.exec(`ALTER TABLE share_grants DROP COLUMN document_count`);
 }
 

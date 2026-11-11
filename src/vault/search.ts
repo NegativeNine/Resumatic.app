@@ -39,6 +39,11 @@ export function topMatches(
   return out;
 }
 
+/** The cosine of two unit vectors, or null when they were made by different models and can't be compared. */
+export function cosine(a: Float32Array, b: Float32Array): number | null {
+  return a.length === b.length && a.length > 0 ? dot(a, b) : null;
+}
+
 export function packVector(values: number[]): ArrayBuffer {
   return floatEmbedding(values).buffer as ArrayBuffer;
 }

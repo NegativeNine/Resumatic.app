@@ -12,6 +12,8 @@
 //   GET    /api/me                     Me
 //   GET    /api/profile                Profile
 //   PUT    /api/profile                Partial<Profile> -> Profile
+//   GET    /api/preferences            Preferences
+//   PUT    /api/preferences            PreferencesUpdate -> Preferences
 //   POST   /api/account/sign-out-everywhere   204
 //   POST   /api/sources                multipart field "file" (PDF or DOCX, at most 10 MB) -> 201 { sourceId }
 //   GET    /api/sources                { sources: SourceView[] }
@@ -25,6 +27,7 @@
 //   POST   /api/facts                  NewFact -> 201 { factId }
 //   PATCH  /api/facts/:id              FactPatch -> 204          (new wording, another role, or both)
 //   POST   /api/review                 ReviewRequest -> 204   (role or fact IDs)
+//   POST   /api/facts/sensitive        SensitiveRequest -> 204   (mark or unmark facts, and every fact with the same words)
 //   POST   /api/applications           { jdText } -> 201 { applicationId }
 //   POST   /api/v2/applications        { jdText, url? } with an idempotency key
 //   POST   /api/applications/duplicates   { jdText } -> { duplicate: ApplicationRef | null }
@@ -90,6 +93,8 @@ export const MAX_JOB_NAME_CHARS = 160;
 export const MAX_URL_CHARS = 2000;
 export const MAX_FACT_CHARS = 600;
 export const MAX_LINE_CHARS = 300;
+/** The most facts one request can mark or unmark as sensitive. */
+export const MAX_SENSITIVE_IDS = 200;
 
 export interface Profile {
   revision?: number;
@@ -120,6 +125,12 @@ export interface Me {
   userId: string;
   profile: Profile;
   quota: Quota;
+  /** The address this session signed in with. Absent from a session issued before it was carried. */
+  signInEmail?: string;
+  /** How many copies other people have shared with this account as their coach. */
+  clients?: number;
+  /** How many comments a coach has written on this account's shared copies that its owner hasn't seen. */
+  newFromCoach?: number;
 }
 
 export interface SourceView {
@@ -194,6 +205,11 @@ export interface FactView {
   /** The verbatim source quote that supports the fact; null for facts the user typed. */
   quote: string | null;
   sourceId: string | null;
+  /**
+   * True while its owner has it marked sensitive: left out of everything generated, never put in a
+   * shared copy and never shown to a connected app. Only its owner is ever told.
+   */
+  sensitive?: boolean;
 }
 
 /** A role the user adds. It is their own claim, so it starts confirmed and has no quote. */
@@ -225,6 +241,16 @@ export interface ReviewRequest {
   expectedRevisions?: Record<string, number>;
   confirm: string[];
   reject: string[];
+}
+
+/**
+ * Marks facts sensitive, or unmarks them. Every fact with the same words as one named is marked or
+ * unmarked with it. The request names the wanted state, so repeating it changes nothing.
+ */
+export interface SensitiveRequest {
+  ids: string[];
+  sensitive: boolean;
+  expectedRevisions?: Record<string, number>;
 }
 
 export interface ApplicationView {
@@ -327,6 +353,13 @@ export interface ResumeReport {
 export interface ResumeView {
   /** The stored version is retained for the owner but cannot currently be exported or shared. */
   needsGroundingReview?: boolean;
+  /**
+   * Present while this version uses a fact its owner has marked sensitive: the lines that cite one
+   * or were checked against the line one was read from, and the printed skills only marked facts
+   * stand behind. Until they or the mark are removed, the version can't be downloaded, shared,
+   * refined or read by a connected app.
+   */
+  sensitiveUse?: { lineIds: string[]; skills: string[] };
   /** Fresh verification progress for an old version; earlier flags are not trusted. */
   legacyReview?: { verifiedLineIds: string[]; totalLines: number; headersReady: boolean; skillsReady: boolean };
   /** The request was saved, but starting its workflow is unconfirmed. */

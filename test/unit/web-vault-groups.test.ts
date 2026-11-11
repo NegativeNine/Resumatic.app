@@ -35,6 +35,16 @@ describe("duplicate review grouping", () => {
     expect(grouped[0]?.map((item) => item.sourceId)).toEqual(["s1", "s2"]);
   });
 
+  it("keeps a fact marked sensitive apart from an unmarked copy, and groups copies that are both marked", () => {
+    const base: FactView = { ...fact("one", "r1", "confirmed"), origin: "extracted", text: "Led a team", quote: "Led a team", sourceId: "s1", level: "led" };
+    const copy: FactView = { ...base, id: "two", sourceId: "s2" };
+    // One control stands for every copy shown with it, so a marked copy and an unmarked one are not shown as one.
+    expect(groupFacts([{ ...base, sensitive: true }, copy]).map((items) => items.map((item) => item.id))).toEqual([["one"], ["two"]]);
+    expect(groupFacts([base, { ...copy, sensitive: true }]).map((items) => items.map((item) => item.id))).toEqual([["one"], ["two"]]);
+    expect(groupFacts([{ ...base, sensitive: true }, { ...copy, sensitive: true }]).map((items) => items.map((item) => item.id))).toEqual([["one", "two"]]);
+    expect(groupFacts([base, copy]).map((items) => items.map((item) => item.id))).toEqual([["one", "two"]]);
+  });
+
   it("splits unusually large groups into atomic, bounded review requests", () => {
     const base: FactView = { ...fact("one", null, "proposed"), origin: "extracted", text: "TypeScript", kind: "skill", quote: "TypeScript", sourceId: "s1" };
     const groups = groupFacts(Array.from({ length: 401 }, (_, i) => ({ ...base, id: `${i}` })));

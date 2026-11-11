@@ -1,0 +1,3 @@
+conceptType,conceptUri,code,preferredLabel,status,altLabels,inScheme,description
+ISCOGroup,http://data.europa.eu/esco/isco/C251,251,Software and applications developers and analysts,released,,http://data.europa.eu/esco/concept-scheme/skills,
+ISCOGroup,http://data.europa.eu/esco/isco/C2512,2512,Software developers,released,,http://data.europa.eu/esco/concept-scheme/skills,

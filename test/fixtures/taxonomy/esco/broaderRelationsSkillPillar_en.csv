@@ -1,0 +1,5 @@
+conceptType,conceptUri,broaderType,broaderUri
+KnowledgeSkillCompetence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000001,SkillGroup,http://data.europa.eu/esco/skill/S1.1
+SkillGroup,http://data.europa.eu/esco/skill/S1.1,SkillGroup,http://data.europa.eu/esco/skill/S1
+KnowledgeSkillCompetence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000003,SkillGroup,http://data.europa.eu/esco/isced-f/061
+KnowledgeSkillCompetence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000004,SkillGroup,http://data.europa.eu/esco/isced-f/061

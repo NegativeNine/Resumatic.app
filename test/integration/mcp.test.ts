@@ -4,12 +4,14 @@ import {
 } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { setModels } from "../../src/ai/models";
 import {
   handleMcp,
   oauthUserGrantCount,
   revokeOAuthUserGrants,
 } from "../../src/worker/mcp";
 import { createSession } from "../../src/worker/session";
+import { JOB_DESCRIPTION, eventually, fakeModels, type FakeModelOptions } from "./support";
 
 // Real provider crypto/protocol and real Vault RPC, with isolated ephemeral KV. No remote requests.
 function memoryKv(): KVNamespace {
@@ -285,4 +287,133 @@ describe("OAuth MCP integration", () => {
     expect(response?.status).toBe(413);
     await waitOnExecutionContext(ctx);
   });
+});
+
+/** Approves the fixture's request with these permissions, as its owner would, and gives back a way to call the app's tools. */
+async function connect(f: Awaited<ReturnType<typeof fixture>>, scopes: string[]) {
+  const form = new URLSearchParams({ handle: f.handle, decision: "approve" });
+  for (const scope of scopes) form.append("scope", scope);
+  const approved = await f.call("/oauth/authorize", {
+    method: "POST",
+    headers: { origin: "https://resumatic.test", cookie: f.cookies, "content-type": "application/x-www-form-urlencoded" },
+    body: form,
+  });
+  expect(approved.status, await approved.clone().text()).toBe(302);
+  const token = await f.call("/oauth/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code: new URL(approved.headers.get("location")!).searchParams.get("code")!,
+      client_id: f.client.client_id,
+      redirect_uri: "https://client.example.test/callback",
+      code_verifier: f.verifier,
+      resource: "https://resumatic.test/mcp",
+    }),
+  });
+  expect(token.status, await token.clone().text()).toBe(200);
+  const { access_token } = (await token.json()) as { access_token: string };
+  let request = 0;
+  const ask = async <T>(method: string, params: unknown): Promise<T> => {
+    const response = await f.call("/mcp", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${access_token}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "mcp-protocol-version": "2025-06-18",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: ++request, method, params }),
+    });
+    expect(response.status, await response.clone().text()).toBe(200);
+    const body = await response.text();
+    const message = JSON.parse(
+      response.headers.get("content-type")?.includes("text/event-stream") ? body.split("\n").find((line) => line.startsWith("data: "))!.slice(6) : body,
+    ) as { result: T };
+    return message.result;
+  };
+  return {
+    tools: async () => (await ask<{ tools: { name: string; description: string }[] }>("tools/list", {})).tools,
+    /** A tool's answer as the app receives it: what it says, and whether it is the tool's error. */
+    tool: async (name: string, args: Record<string, unknown>) => {
+      const result = await ask<{ isError?: boolean; content: { text: string }[] }>("tools/call", { name, arguments: args });
+      return { failed: result.isError === true, text: result.content.map((part) => part.text).join("\n") };
+    },
+  };
+}
+
+describe("a connected app and a fact marked sensitive", () => {
+  const GO_SERVICE = "Built a Go service that processes 2 million events per day";
+  const SECRET = "Thornfield union ballot";
+  const SECRET_LINE = `Mentored 6 apprentices through the ${SECRET}`;
+  const UNAVAILABLE = "This operation is unavailable or permission has ended.";
+
+  it("is told before it connects, and then never lists, finds or counts the fact, reads a resume that uses it, or tailors with it", async () => {
+    const options: FakeModelOptions & { inputs: string[] } = { calls: {}, inputs: [] };
+    setModels(() => fakeModels(options));
+    try {
+      const f = await fixture();
+      // The person is told, on the page where they decide, what the app will never be given.
+      expect(f.html).toContain("Original uploads, evidence quotes, private application notes and facts you've marked sensitive are excluded.");
+      const who = { userId: f.userId, gen: 1 };
+      const { roleId } = await f.stub.addRole(who, { kind: "job", org: "Acme", title: "Engineer", startDate: "2021", endDate: null });
+      const kept = (await f.stub.addFact(who, { roleId, kind: "accomplishment", text: GO_SERVICE, level: "implemented" })).factId;
+      const secret = (await f.stub.addFact(who, { roleId, kind: "accomplishment", text: SECRET_LINE, level: "led" })).factId;
+      const { applicationId } = await f.stub.addApplication(who, JOB_DESCRIPTION);
+      const app = await connect(f, ["vault:read", "vault:generate"]);
+      const described = await app.tools();
+      for (const name of ["list_facts", "search_facts"])
+        expect(described.find((tool) => tool.name === name)!.description).toContain("Excludes original uploads, evidence quotes, private notes and facts marked sensitive.");
+
+      const facts = async (name: string, args: Record<string, unknown>) => {
+        const answer = await app.tool(name, args);
+        expect(answer.failed, answer.text).toBe(false);
+        return (JSON.parse(answer.text) as { id: string; text: string }[]).map((fact) => fact.id);
+      };
+      /** Starts a resume as the app would, and waits until the app can read it. */
+      const tailored = async () => {
+        const started = await app.tool("start_tailoring", { applicationId, requestKey: crypto.randomUUID() });
+        expect(started.failed, started.text).toBe(false);
+        const { resumeId } = JSON.parse(started.text) as { resumeId: string };
+        await eventually(async () => (await f.stub.getResume(who, resumeId)).state !== "running", "the resume to finish", 60_000);
+        expect((await f.stub.getResume(who, resumeId)).state).toBe("ready");
+        return resumeId;
+      };
+
+      // Unmarked, the app is given both facts, finds the one by its words, and reads a resume that uses it.
+      expect((await facts("list_facts", {})).sort()).toEqual([kept, secret].sort());
+      expect(await facts("search_facts", { query: "Thornfield ballot" })).toEqual([secret]);
+      const earlier = await tailored();
+      const read = await app.tool("get_resume", { id: earlier });
+      expect(read.failed, read.text).toBe(false);
+      expect(read.text).toContain(SECRET);
+
+      await f.stub.markSensitive(who, { ids: [secret], sensitive: true });
+      options.inputs.length = 0;
+      // Not listed, not found by any of its words, and not counted towards what a list returns.
+      expect(await facts("list_facts", {})).toEqual([kept]);
+      expect(await facts("list_facts", { limit: 1 })).toEqual([kept]);
+      for (const query of ["Thornfield", "ballot", "Mentored 6 apprentices", SECRET_LINE]) expect(await facts("search_facts", { query }), query).toEqual([]);
+      expect(await facts("search_facts", { query: "Go service" })).toEqual([kept]);
+      // The resume that uses it is refused in the words any refusal has. Nothing says why.
+      expect(await app.tool("get_resume", { id: earlier })).toEqual({ failed: true, text: UNAVAILABLE });
+      expect(await app.tool("get_resume", { id: earlier, version: 1 })).toEqual({ failed: true, text: UNAVAILABLE });
+      // A resume the app starts now is made without it, and the app can read that one.
+      const later = await tailored();
+      const fresh = await app.tool("get_resume", { id: later });
+      expect(fresh.failed, fresh.text).toBe(false);
+      expect(fresh.text).toContain("Built a Go service");
+      expect(fresh.text).not.toContain(SECRET);
+      expect(options.inputs.length).toBeGreaterThan(0);
+      expect(options.inputs.join("\n")).not.toContain(SECRET);
+
+      // Unmarked again, it is the person's to share with the app as before.
+      await f.stub.markSensitive(who, { ids: [secret], sensitive: false });
+      expect((await facts("list_facts", {})).sort()).toEqual([kept, secret].sort());
+      expect((await app.tool("get_resume", { id: earlier })).failed).toBe(false);
+      await waitOnExecutionContext(f.ctx);
+    } finally {
+      setModels(null);
+    }
+  }, 120_000);
 });

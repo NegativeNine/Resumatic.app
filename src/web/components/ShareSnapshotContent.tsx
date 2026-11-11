@@ -2,22 +2,62 @@ import type { ReactNode } from "react";
 import { formatDate } from "../format";
 import { presentResumeBullet } from "../../shared/resume-presentation";
 import { formatRoleDates } from "../../shared/sheet";
-import type { SharedDocument, SharedJob, SharedLine, SharedResume, SharedView } from "../../shared/sharing";
+import type { SharedDocument, SharedJob, SharedLine, SharedResume, SharedView, ShareTarget } from "../../shared/sharing";
 import { Lockup } from "./Lockup";
 import { Badge, Glyph } from "./ui";
 
-/** The frame around a shared copy: the lockup, then the page. The reader has no account here. */
-export function ShareFrame({ children }: { children: ReactNode }) {
+/**
+ * The frame around a shared copy: the lockup, then the page. The reader has no account here.
+ * `wide` makes room for the comments beside the copy.
+ */
+export function ShareFrame({ children, wide }: { children: ReactNode; wide?: boolean }) {
   return (
     <div className="app-share">
       <header className="app-share__bar">
         <Lockup className="app-share__lockup" />
         <span className="rs-meta">Shared copy, read only</span>
       </header>
-      <main className="app-share__main" id="main">
+      <main className={wide ? "app-share__main app-share__main--comments" : "app-share__main"} id="main">
         {children}
       </main>
     </div>
+  );
+}
+
+/**
+ * What the copy's coach is given to comment with: which line or fact is chosen, how to choose
+ * another, and the threads and form to show beside the copy.
+ */
+export interface ShareCommenting {
+  selected: ShareTarget | null;
+  onSelect(target: ShareTarget): void;
+  aside: ReactNode;
+}
+
+/** Whether two targets name the same line of the same resume version, or the same fact. */
+export function sameTarget(a: ShareTarget | null, b: ShareTarget | null): boolean {
+  if (a === null || b === null || a.kind !== b.kind) return false;
+  return a.kind === "line"
+    ? b.kind === "line" && a.resumeId === b.resumeId && a.version === b.version && a.lineId === b.lineId
+    : b.kind === "fact" && a.factId === b.factId;
+}
+
+/**
+ * A line or a fact as a button, for the reader who can comment on it. It reads as the text it
+ * holds, and says whether it is the one chosen. `sheet` is a line on the resume's paper, which
+ * takes the sheet's own tint when chosen.
+ */
+function Pick({ target, commenting, sheet, children }: { target: ShareTarget; commenting: ShareCommenting; sheet?: boolean; children: ReactNode }) {
+  const chosen = sameTarget(commenting.selected, target);
+  return (
+    <button
+      type="button"
+      className={["app-share__pick", sheet ? "rs-line" : "", sheet && chosen ? "is-open" : ""].filter(Boolean).join(" ")}
+      aria-pressed={chosen}
+      onClick={() => commenting.onSelect(target)}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -29,7 +69,13 @@ const RESUME_CHECK: Readonly<Record<SharedResume["verification"], { tone: string
 };
 
 /** Kept separate so the same read-only snapshot can be tested without a browser session. */
-export function ShareSnapshotContent({ view }: { view: SharedView }) {
+/** `notice` is said under the heading, before the copy: what a named coach can do with it, say. */
+/**
+ * `comments` is given only for the coach the copy names, once the copy is in their list. Each
+ * resume line and each fact is then a button to choose, and the threads sit beside the copy.
+ * Without it the copy is text to read, exactly as every other reader has it.
+ */
+export function ShareSnapshotContent({ view, notice, comments }: { view: SharedView; notice?: ReactNode; comments?: ShareCommenting }) {
   const { facts, resumes } = view.snapshot;
   const documents = view.snapshot.documents ?? [];
   const owner = view.snapshot.owner?.name || null;
@@ -38,8 +84,34 @@ export function ShareSnapshotContent({ view }: { view: SharedView }) {
     documents.filter((other) => other.kind === document.kind).length > 1
       ? documents.slice(0, index + 1).filter((other) => other.kind === document.kind).length
       : null;
+  const copy = (
+    <>
+      {facts.length > 0 && (
+        <section className="rs-panel app-share__facts" aria-labelledby="share-facts">
+          <h2 id="share-facts">Confirmed facts</h2>
+          <ul className="plain-list">
+            {facts.map((fact) => (
+              <li key={fact.id}>
+                <p>{comments ? <Pick target={{ kind: "fact", factId: fact.id }} commenting={comments}>{fact.text}</Pick> : fact.text}</p>
+                <p className="rs-meta">
+                  {fact.role ? [fact.role.title, fact.role.org].filter(Boolean).join(", ") : "General experience"}
+                  {fact.origin === "user" ? ". Added by the owner in their own words." : ""}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {resumes.map((resume) => (
+        <SharedResumeSheet resume={resume} comments={comments} key={`${resume.id}:${resume.version}`} />
+      ))}
+      {documents.map((document, index) => (
+        <SharedDocumentSheet document={document} number={numbered(document, index)} key={`${document.id}:${document.version}`} />
+      ))}
+    </>
+  );
   return (
-    <ShareFrame>
+    <ShareFrame wide={comments !== undefined}>
       <h1>Shared career snapshot</h1>
       <p className="rs-lede">
         {owner ? (
@@ -58,28 +130,18 @@ export function ShareSnapshotContent({ view }: { view: SharedView }) {
           Privacy notice
         </a>
       </p>
-      {facts.length > 0 && (
-        <section className="rs-panel app-share__facts" aria-labelledby="share-facts">
-          <h2 id="share-facts">Confirmed facts</h2>
-          <ul className="plain-list">
-            {facts.map((fact) => (
-              <li key={fact.id}>
-                <p>{fact.text}</p>
-                <p className="rs-meta">
-                  {fact.role ? [fact.role.title, fact.role.org].filter(Boolean).join(", ") : "General experience"}
-                  {fact.origin === "user" ? ". Added by the owner in their own words." : ""}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </section>
+      {notice && <div className="app-share__notice">{notice}</div>}
+      {comments ? (
+        <div className="app-share__columns">
+          <div className="app-share__copy">{copy}</div>
+          <aside className="app-share__aside" aria-labelledby="share-comments">
+            <h2 id="share-comments">Comments</h2>
+            {comments.aside}
+          </aside>
+        </div>
+      ) : (
+        copy
       )}
-      {resumes.map((resume) => (
-        <SharedResumeSheet resume={resume} key={`${resume.id}:${resume.version}`} />
-      ))}
-      {documents.map((document, index) => (
-        <SharedDocumentSheet document={document} number={numbered(document, index)} key={`${document.id}:${document.version}`} />
-      ))}
     </ShareFrame>
   );
 }
@@ -128,7 +190,7 @@ function SharedDocumentSheet({ document, number }: { document: SharedDocument & 
   );
 }
 
-function SharedResumeSheet({ resume }: { resume: SharedResume & { job?: SharedJob | null } }) {
+function SharedResumeSheet({ resume, comments }: { resume: SharedResume & { job?: SharedJob | null }; comments?: ShareCommenting }) {
   const check = RESUME_CHECK[resume.verification];
   // The job as its owner had it named when the copy was made. An unnamed job says nothing.
   const job = [resume.job?.title, resume.job?.company].filter(Boolean).join(" at ");
@@ -140,7 +202,7 @@ function SharedResumeSheet({ resume }: { resume: SharedResume & { job?: SharedJo
     { heading: "Experience", roles: resume.sections.filter((section) => section.kind !== "education") },
     { heading: "Education", roles: resume.sections.filter((section) => section.kind === "education") },
   ].filter((group) => group.roles.length > 0);
-  const line = (value: SharedLine, bullet = false) => (
+  const words = (value: SharedLine, bullet: boolean) => (
     <>
       {bullet ? presentResumeBullet(value.text) : value.text}
       {value.verification !== "verified" && (
@@ -151,6 +213,16 @@ function SharedResumeSheet({ resume }: { resume: SharedResume & { job?: SharedJo
       )}
     </>
   );
+  // The summary and the lines under a role are what a coach can comment on. Headings, contact
+  // details and skills are not lines, and have no ID in a copy to name them by.
+  const line = (value: SharedLine, bullet = false) =>
+    comments ? (
+      <Pick target={{ kind: "line", resumeId: resume.id, version: resume.version, lineId: value.id }} commenting={comments} sheet>
+        {words(value, bullet)}
+      </Pick>
+    ) : (
+      words(value, bullet)
+    );
   return (
     <section className="app-share__resume" aria-label={job ? `${label}, tailored for ${job}` : label}>
       <div className="app-share__resume-head">

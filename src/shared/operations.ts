@@ -1,8 +1,14 @@
 import { AppError } from "./errors";
 
-/** Content and its retry receipts. Credentials, grants, jobs and financial ledgers are excluded. */
+/**
+ * Content and its retry receipts, and the account's own list of the copies shared with it as a
+ * coach. Credentials, grants, jobs and financial ledgers are excluded.
+ */
 export const TRANSFER_TABLES = [
   "profile",
+  // Job preferences: one row, moved as it is, revision included. A new vault has no row until
+  // its owner first saves, so the table is empty where an import needs it to be.
+  "preferences",
   "sources",
   "source_revisions",
   "evidence",
@@ -23,6 +29,20 @@ export const TRANSFER_TABLES = [
   "documents",
   "document_versions",
   "interview_answers",
+  // Judgements about facts and roles: how a line divides, its concepts, and what was merged.
+  // After the facts and roles they are about, so every row finds its fact on arrival.
+  "fact_splits",
+  "fact_parts",
+  "record_tags",
+  "record_links",
+  // A coach's client list. It is not a grant and opens nothing by itself: a row says only where
+  // a copy is kept, and the copy's owner's vault still decides every open from the account and
+  // the address, which a replacement leaves as they were.
+  "coach_clients",
+  // What a coach wrote on a shared copy, and the owner's replies. They are the owner's to keep, so
+  // they move. Grants don't, so every thread arrives closed: it can be read and deleted, and
+  // nobody can add to it. A row holds no vault ID, storage key or run state.
+  "share_comments",
 ] as const;
 export type TransferTable = (typeof TRANSFER_TABLES)[number];
 export type TransferValue = string | number | null | { binary: string };

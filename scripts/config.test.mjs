@@ -65,6 +65,19 @@ test("the posting reader cannot be enabled in production configuration, and can 
       assert.ok(!(await report("production", off)).includes("POSTING_READER_ROLLOUT_UNVERIFIED"), JSON.stringify(off));
     // Staging is where it is exercised before the guard is lifted.
     assert.ok(!(await report("staging", {}, { POSTING_READER_ENABLED: "true" })).includes("POSTING_READER_ROLLOUT_UNVERIFIED"));
+    // The same for dividing lines in shadow: staging only, until it has been measured.
+    assert.ok((await report("production", { SPLIT_SHADOW_ENABLED: "true" })).includes("SPLIT_SHADOW_ROLLOUT_UNVERIFIED"));
+    for (const off of [{}, { SPLIT_SHADOW_ENABLED: "false" }, { SPLIT_SHADOW_ENABLED: "" }])
+      assert.ok(!(await report("production", off)).includes("SPLIT_SHADOW_ROLLOUT_UNVERIFIED"), JSON.stringify(off));
+    assert.ok(!(await report("staging", {}, { SPLIT_SHADOW_ENABLED: "true" })).includes("SPLIT_SHADOW_ROLLOUT_UNVERIFIED"));
+    assert.ok((await report("production", { MATCH_SHADOW_ENABLED: "true" })).includes("MATCH_SHADOW_ROLLOUT_UNVERIFIED"));
+    for (const off of [{}, { MATCH_SHADOW_ENABLED: "false" }, { MATCH_SHADOW_ENABLED: "" }])
+      assert.ok(!(await report("production", off)).includes("MATCH_SHADOW_ROLLOUT_UNVERIFIED"), JSON.stringify(off));
+    assert.ok(!(await report("staging", {}, { MATCH_SHADOW_ENABLED: "true" })).includes("MATCH_SHADOW_ROLLOUT_UNVERIFIED"));
+    assert.ok((await report("production", { OFFER_SHADOW_ENABLED: "true" })).includes("OFFER_SHADOW_ROLLOUT_UNVERIFIED"));
+    for (const off of [{}, { OFFER_SHADOW_ENABLED: "false" }, { OFFER_SHADOW_ENABLED: "" }])
+      assert.ok(!(await report("production", off)).includes("OFFER_SHADOW_ROLLOUT_UNVERIFIED"), JSON.stringify(off));
+    assert.ok(!(await report("staging", {}, { OFFER_SHADOW_ENABLED: "true" })).includes("OFFER_SHADOW_ROLLOUT_UNVERIFIED"));
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -213,10 +226,10 @@ test("production selects top-level configuration and staging its own bindings", 
 test("default model routes use Cloudflare catalog IDs in both environments", async () => {
   for (const environment of ["production", "staging"]) {
     const { config } = await readConfig(environment);
-    assert.equal(config.vars.MODEL_EXTRACT, "anthropic/claude-haiku-5.5");
-    assert.equal(config.vars.MODEL_ANALYZE, "anthropic/claude-haiku-5.5");
-    assert.equal(config.vars.MODEL_WRITE, "anthropic/claude-sonnet-5.5");
-    assert.equal(config.vars.MODEL_JUDGE, "openai/gpt-5");
+    assert.equal(config.vars.MODEL_EXTRACT, environment === "staging" ? "meta/muse-ember-1.0" : "anthropic/claude-haiku-5.5");
+    assert.equal(config.vars.MODEL_ANALYZE, environment === "staging" ? "meta/muse-ember-1.0" : "anthropic/claude-haiku-5.5");
+    assert.equal(config.vars.MODEL_WRITE, environment === "staging" ? "meta/muse-ember-1.0" : "anthropic/claude-sonnet-5.5");
+    assert.equal(config.vars.MODEL_JUDGE, environment === "staging" ? "@cf/cloudflare/clef" : "openai/gpt-5");
   }
 });
 test("live checks cannot pass with credentials but no spend budget", () => {
@@ -513,11 +526,11 @@ test("release gates require passing evidence for the exact candidate commit", as
       mode: "human-audited",
       profile: "full",
       runId: "12345678-1234-4234-8234-123456789abc",
-      environment: "staging",
+      environment: "production",
       strategies: ["llm:default"],
       manifestHash: "a".repeat(64),
       snapshotSha256: "b".repeat(64),
-      configurationHash: extractionConfiguration(["llm:default"], "staging", { root: fileURLToPath(new URL("../", import.meta.url)), priceOverrides: {} }).hash,
+      configurationHash: extractionConfiguration(["llm:default"], "production", { root: fileURLToPath(new URL("../", import.meta.url)), priceOverrides: {} }).hash,
       winner: "llm:default",
       rankingPending: false,
       results: [{
@@ -535,12 +548,12 @@ test("release gates require passing evidence for the exact candidate commit", as
       }],
     },
   });
-  const seededConfig = extractionConfiguration(["llm:default"], "staging", { root: fileURLToPath(new URL("../", import.meta.url)), priceOverrides: {} });
+  const seededConfig = extractionConfiguration(["llm:default"], "production", { root: fileURLToPath(new URL("../", import.meta.url)), priceOverrides: {} });
   Object.assign(evidence.grounding, {
     unsupportedClaims: 0,
     evaluatedLines: 100,
     seeded: {
-      mode: "live", commit, environment: "staging", seedVersion: SEED_VERSION,
+      mode: "live", commit, environment: "production", seedVersion: SEED_VERSION,
       sourceConfigurationHash: seededConfig.hash, configurationHash: "c".repeat(64), datasetHash: "d".repeat(64),
       models: seededConfig.models,
       baseline: { cases: 3, inputLines: 9, outputLines: 7, deterministicViolations: 0 },

@@ -88,7 +88,7 @@ export async function selectFacts(
     const role = fact.kind === "skill" ? "skill" : fact.roleId === null ? "loose" : (roleKeys.get(fact.roleId) ?? fact.roleId);
     return JSON.stringify([role, fact.kind, cleanExtractedText(fact.text), fact.level]);
   };
-  const queries = await models.embed(analysis.requirements);
+  const queries = await models.embed(analysis.requirements, { purpose: "query" });
   // Fetch extra neighbors so repeated uploads do not fill the entire candidate window.
   const candidates = await search(queries, TAILOR.perRequirement * 4);
 
@@ -394,7 +394,9 @@ async function judge(
       .filter((f): f is FactRecord => !!f)
       .map((f) => ({ text: f.text, quote: f.quote })),
   }));
-  const out = await models.complete("judge", judgePrompt(items), JudgeOut);
+  const out = models.judge
+    ? await models.judge(items)
+    : await models.complete("judge", judgePrompt(items), JudgeOut);
   for (const v of out.verdicts) {
     const line = aliases.get(v.id.trim());
     if (line && result.has(line.id)) {

@@ -5,6 +5,7 @@ export type Route =
   | { page: "jobs" }
   | { page: "resume"; id: string }
   | { page: "account" }
+  | { page: "clients" }
   | { page: "privacy" }
   | { page: "terms" }
   | { page: "notFound" };
@@ -13,12 +14,13 @@ export const href = {
   facts: "#/facts",
   jobs: "#/jobs",
   account: "#/account",
+  clients: "#/clients",
   privacy: "#/privacy",
   terms: "#/terms",
   resume: (id: string) => `#/resumes/${encodeURIComponent(id)}`,
 };
 
-const PAGES = ["facts", "jobs", "account", "privacy", "terms"] as const;
+const PAGES = ["facts", "jobs", "account", "clients", "privacy", "terms"] as const;
 
 /** The v1 addresses, still honoured so old links and bookmarks land on the renamed pages. */
 const ALIASES: Readonly<Record<string, (typeof PAGES)[number]>> = { sources: "facts", applications: "jobs" };

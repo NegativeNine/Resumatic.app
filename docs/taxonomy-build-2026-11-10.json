@@ -1,0 +1,209 @@
+{
+  "format": 1,
+  "version": "esco-1.2.1+onet-31.0+c036f953",
+  "contentHash": "c036f9531c7426244821fd1af06c9c523012a3b6e57a2f558e014b3bc67a7614",
+  "sources": [
+    {
+      "id": "esco",
+      "name": "ESCO classification",
+      "version": "1.2.1"
+    },
+    {
+      "id": "onet",
+      "name": "O*NET 31.0 Database",
+      "version": "31.0"
+    },
+    {
+      "id": "esco-onet-crosswalk",
+      "name": "O*NET - ESCO crosswalk (occupations)",
+      "version": "2022-09"
+    }
+  ],
+  "language": "en",
+  "counts": {
+    "concepts": {
+      "activity": 2460,
+      "knowledge": 3219,
+      "occupation": 4055,
+      "occupation-group": 619,
+      "skill": 10720,
+      "skill-group": 640,
+      "task": 18838,
+      "tool": 8753,
+      "tool-category": 134
+    },
+    "conceptsBySource": {
+      "esco": 18237,
+      "onet": 31201
+    },
+    "labels": {
+      "alternative": 175020,
+      "derived": 1602,
+      "hidden": 717,
+      "preferred": 30600
+    },
+    "relations": {
+      "broader": 35794,
+      "essential": 67600,
+      "matches": 4250,
+      "optional": 58451,
+      "performs": 18583,
+      "same-label": 165,
+      "skill-essential": 189,
+      "skill-optional": 5628,
+      "task-activity": 24087,
+      "task-of": 18838,
+      "uses": 31821
+    }
+  },
+  "setAside": {
+    "crosswalk_occupation_not_in_release": 3,
+    "esco_concept_repeated": 25,
+    "relation_to_itself": 1,
+    "same_label_ambiguous": 5
+  },
+  "inputs": {
+    "esco": [
+      {
+        "name": "skills_en.csv",
+        "rows": 13960,
+        "sha256": "d03b10efca94b4bcfa260a992cfde89c375f0fa12095d6662a663cfd2f9f2950"
+      },
+      {
+        "name": "skillGroups_en.csv",
+        "rows": 640,
+        "sha256": "644b68a174299eb05336eec36e0716c4671a0c6bdd4ac268803ecd6533dc739d"
+      },
+      {
+        "name": "occupations_en.csv",
+        "rows": 3043,
+        "sha256": "8034348d84b6d1dd24a5bcf9609186ecbba0a85457ee2eacd65bddec33a51b4a"
+      },
+      {
+        "name": "ISCOGroups_en.csv",
+        "rows": 619,
+        "sha256": "7a829bb6fddccbdb028d3ae69d822f2f1ba581522667f6185949c6d0788eaa1c"
+      },
+      {
+        "name": "occupationSkillRelations_en.csv",
+        "rows": 126051,
+        "sha256": "e1a46511f0ef4d505f106f1d41f528ef76d289f93e59d4d0cbaac38986102c44"
+      },
+      {
+        "name": "skillSkillRelations_en.csv",
+        "rows": 5818,
+        "sha256": "64a5f8fb7b8dda4932ff06db4738ce1beed3906e45a49b14453349056c609439"
+      },
+      {
+        "name": "broaderRelationsSkillPillar_en.csv",
+        "rows": 20819,
+        "sha256": "56b70f4852b1f53c6192c979310c34c93f95436621d907083cf0d55b51d8e42d"
+      },
+      {
+        "name": "broaderRelationsOccPillar_en.csv",
+        "rows": 3648,
+        "sha256": "b6b457a7b248e87734a5ef01f59f0bd4d083b6ad5e9251f6ed4cce51d69c6383"
+      },
+      {
+        "name": "digitalSkillsCollection_en.csv",
+        "rows": 1284,
+        "sha256": "9f2ee9179f0720826cbfc65627bd3642926ba4dfb3bf29250f22cb232c225b1e"
+      },
+      {
+        "name": "greenSkillsCollection_en.csv",
+        "rows": 629,
+        "sha256": "502eaee4f496e7576ee078a76d5da03fa14f5476f740ca965ca2ef596d9683ab"
+      },
+      {
+        "name": "languageSkillsCollection_en.csv",
+        "rows": 359,
+        "sha256": "93b2ca9ef1300a34c2262753e33dbcf6a3a17ad7d2afe435849649818ec6cf33"
+      },
+      {
+        "name": "transversalSkillsCollection_en.csv",
+        "rows": 95,
+        "sha256": "40bd1884f1c62b91ab86b6c87d7fab11b082c17b425975d0d178d1b5cb5e01ca"
+      },
+      {
+        "name": "researchSkillsCollection_en.csv",
+        "rows": 40,
+        "sha256": "fd9b6bd45df2bad68e50d963ac366b5c7dec2917e178e69003b6d94bb1e41d13"
+      },
+      {
+        "name": "digCompSkillsCollection_en.csv",
+        "rows": 25,
+        "sha256": "814108ed9bc93268abc6d717bbd36f876a73180da2ff1a89b4f867c50e1ae9d4"
+      },
+      {
+        "name": "researchOccupationsCollection_en.csv",
+        "rows": 122,
+        "sha256": "85993f6460b6bb008985cd40341c3d373fac9989d854f76d2d3c6fc8dc2d6d1a"
+      }
+    ],
+    "onet": [
+      {
+        "name": "occupation_data.csv",
+        "rows": 1016,
+        "sha256": "a09eae1d6609686e44e05b7290993a1c8b523d8ca224bc0eedc194c855c3ee02"
+      },
+      {
+        "name": "job_titles.csv",
+        "rows": 54269,
+        "sha256": "75a3b46d6edc5996117c10c9ed488c9a06f7495d02969e9d12873ab14a21540c"
+      },
+      {
+        "name": "gwas_to_iwas_to_dwas.csv",
+        "rows": 2087,
+        "sha256": "ae4e9f166187bfe8e6328a21470689ed188e7ed831090ace2a21c66cebb31a49"
+      },
+      {
+        "name": "task_statements.csv",
+        "rows": 18838,
+        "sha256": "4568e14d8db6f05551ad37e056e909b13ebae4a26bcb5ff915bb5f281d582c57"
+      },
+      {
+        "name": "tasks_to_dwas.csv",
+        "rows": 24087,
+        "sha256": "15624d31acb85627736a87dc7c485edffe30361262571c8242fad4ae9e7678a6"
+      },
+      {
+        "name": "software_skills.csv",
+        "rows": 31821,
+        "sha256": "6aabb96b464288db849580e6510530efff3f80e25dde2bb23f1fc36bb526b016"
+      }
+    ],
+    "crosswalk": [
+      {
+        "name": "crosswalk.csv",
+        "rows": 4253,
+        "sha256": "82179a0a3340da97b63df90134d8d941ec3c2c478334d855b69e4dd57a91b620"
+      }
+    ]
+  },
+  "notices": [
+    "This service uses the ESCO classification of the European Commission.",
+    "This service includes information from the O*NET 31.0 Database by the U.S. Department of Labor, Employment and Training Administration (USDOL/ETA). Used under the CC BY 4.0 license. O*NET® is a trademark of USDOL/ETA. Resumatic has modified all or some of this information. USDOL/ETA has not approved, endorsed, or tested these modifications."
+  ],
+  "licences": [
+    {
+      "source": "ESCO",
+      "terms": "Commission Decision 2011/833/EU on the reuse of Commission documents",
+      "url": "https://esco.ec.europa.eu/en/use-esco/download"
+    },
+    {
+      "source": "O*NET 31.0 Database",
+      "terms": "Creative Commons Attribution 4.0 International",
+      "url": "https://creativecommons.org/licenses/by/4.0/"
+    }
+  ],
+  "modifications": [
+    "ESCO and O*NET records are held together in one set, each under an ID that names its source. No ESCO or O*NET label, description, code or relation is reworded.",
+    "Labels are also stored in a comparison form (lower case, without accents or surrounding punctuation) so they can be found in text.",
+    "A label marked \"derived\" is made by the builder: an ESCO label without its bracketed qualifier, or an O*NET software example without the final word \"software\".",
+    "O*NET software examples have no IDs in the database, so each is given one made from its name. Examples whose names compare equal are held as one tool.",
+    "A \"performs\" relation says an occupation has tasks that carry out a detailed work activity, and counts them. It is computed from O*NET's Tasks to DWAs file.",
+    "A \"same-label\" relation links an O*NET software example to an ESCO concept when their labels compare equal and belong to one concept on each side. It is not part of either source.",
+    "O*NET occupations and ESCO occupations are related only by the official O*NET - ESCO crosswalk, with the match type it gives."
+  ],
+  "d1Files": 17
+}

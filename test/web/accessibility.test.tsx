@@ -75,6 +75,8 @@ describe("accessibility", () => {
     await screen.findByText("Dana Okafor");
     await screen.findByText("Career Notebook");
     await screen.findByRole("combobox", { name: "Choose a plan" });
+    // The job preferences card loads by itself, so its form is waited for too.
+    await screen.findByRole("button", { name: "Save preferences" });
     expect(await violations()).toEqual([]);
     // The form for a new link: what to share, who it’s for and what the copy should say.
     await userEvent.click(screen.getByRole("button", { name: "Choose what to share" }));

@@ -53,6 +53,9 @@ export default defineConfig({
               // Production has no pilot binding; the staging-only coordinator
               // is explicitly bound here for local runtime integration tests.
               durableObjects: { PILOT_BUDGET: "PilotBudget" },
+              // No deployment binds the taxonomy yet. Tests load a small synthetic one into a
+              // local D1 database (test/integration/taxonomy-d1.test.ts).
+              d1Databases: { TAXONOMY: "taxonomy-test" },
               bindings: {
                 // Test-only secrets and settings. None of these values exist anywhere else.
                 SESSION_KEY: "test-session-key-that-is-long-enough-0123456789",

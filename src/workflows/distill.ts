@@ -4,6 +4,9 @@ import {
   type WorkflowStep,
 } from "cloudflare:workers";
 import { runModels } from "./models";
+import { modelFor } from "../ai/models";
+import { ENTAILMENT_METHOD, offers } from "../pipeline/match";
+import { SPLIT_METHOD, splitLines } from "../pipeline/split";
 import { extractFacts } from "../pipeline/distill";
 import { extractorById } from "../pipeline/extract";
 import { validateTranscriptionInput } from "../ai/transcribe";
@@ -14,6 +17,17 @@ import { vault } from "../shared/stubs";
 import { MODEL_STEP, STEP, once, retrySafely, sourceFailureMessage } from "./steps";
 
 export type DistillParams = { vaultId: string; sourceId: string };
+
+/**
+ * Work kept in shadow gets one short try. It is never worth holding an upload for. `limit` counts
+ * the tries after the first, so it is 0: a stage that runs out of time is not run again, which
+ * would repeat every model call it had made. Leaving `retries` out would allow five more.
+ *
+ * Running out of time stops the wait, not the work: the engine does not cancel a step's body.
+ * Whatever that try still stores is taken by the vault only while this run is reading the upload
+ * (`requireReading`), so nothing arrives after "finish".
+ */
+const SHADOW_STEP = { retries: { limit: 0, delay: "5 seconds" }, timeout: "3 minutes" } as const;
 
 /**
  * Distill: convert an upload to Markdown, extract quoted facts, embed them. Each step writes to
@@ -182,6 +196,91 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
           return { embedded: pending.length };
         }),
       );
+      // What an upload says again is found before anyone is shown a merge. Where this is switched
+      // on, each role and fact that repeats an earlier one word for word is noted in shadow.
+      // Nothing is merged, and a failure here leaves the upload exactly as it is read today.
+      if (this.env.MATCH_SHADOW_ENABLED === "true")
+        try {
+          await step.do(
+            "match",
+            SHADOW_STEP,
+            once(async () => {
+              try {
+                const found = await v.matchShadow(sourceId, event.instanceId);
+                // Counts only: no role and no line is kept in the Workflow's own state.
+                return { roles: found.roles, facts: found.facts, stored: found.stored };
+              } catch (error) {
+                return { roles: 0, facts: 0, stored: 0, failed: errorCode(error) ?? "error" };
+              }
+            }),
+          );
+        } catch {
+          // The step ran out of time. The upload goes on without it.
+        }
+      // Two lines that say the same thing in different words are only ever offered to the owner.
+      // Where this is switched on, the judge is asked about the likeliest pairs and its answers
+      // are kept as offers in shadow. A failure here leaves the upload as it is read today.
+      if (this.env.OFFER_SHADOW_ENABLED === "true")
+        try {
+          await step.do(
+            "offer",
+            SHADOW_STEP,
+            once(async () => {
+              try {
+                const pairs = await v.offerCandidates(sourceId, event.instanceId);
+                if (pairs.length === 0) return { pairs: 0, same: 0, fuller: 0, stored: 0 };
+                const found = await offers(runModels(this.env, vaultId, event.instanceId, "offer", "distill"), pairs);
+                // The answers are about the lines as they were read here, and either can be
+                // reworded while the judge is asked. Each offer goes back with the words it is about.
+                const text = new Map(pairs.flatMap((pair) => [pair.later, pair.earlier]).map((line) => [line.id, line.text]));
+                const { stored } = await v.saveShadowOffers(
+                  sourceId,
+                  event.instanceId,
+                  { model: modelFor(this.env, "judge"), method: ENTAILMENT_METHOD },
+                  found.map((offer) => ({ ...offer, lines: { from: text.get(offer.from)!, to: text.get(offer.to)! } })),
+                );
+                // Counts only: no line is kept in the Workflow's own state.
+                return { pairs: pairs.length, same: found.filter((offer) => offer.relation === "same").length, fuller: found.filter((offer) => offer.relation === "fuller").length, stored };
+              } catch (error) {
+                return { pairs: 0, same: 0, fuller: 0, stored: 0, failed: errorCode(error) ?? "error" };
+              }
+            }),
+          );
+        } catch {
+          // The step ran out of time. The upload goes on without it.
+        }
+      // How lines divide is measured before anyone is shown a division. Where this is switched
+      // on, whatever passes every check is kept in shadow. A failure here costs nothing: every
+      // line stays whole, as it is read today, and the upload finishes as it would have.
+      if (this.env.SPLIT_SHADOW_ENABLED === "true")
+        try {
+          await step.do(
+            "split",
+            SHADOW_STEP,
+            once(async () => {
+              try {
+                const lines = await v.splitCandidates(sourceId, event.instanceId);
+                if (lines.length === 0) return { lines: 0, divided: 0 };
+                const decisions = await splitLines(runModels(this.env, vaultId, event.instanceId, "split", "distill"), lines);
+                const text = new Map(lines.map((line) => [line.id, line.text]));
+                const refused: Record<string, number> = {};
+                for (const decision of decisions) if (decision.refusal) refused[decision.refusal] = (refused[decision.refusal] ?? 0) + 1;
+                const { stored } = await v.saveShadowSplits(
+                  sourceId,
+                  event.instanceId,
+                  { model: `${modelFor(this.env, "extract")}+${modelFor(this.env, "judge")}`, method: SPLIT_METHOD },
+                  decisions.flatMap((decision) => (decision.parts ? [{ factId: decision.id, line: text.get(decision.id)!, parts: decision.parts }] : [])),
+                );
+                // Counts only: no line and no part is kept in the Workflow's own state.
+                return { lines: lines.length, divided: stored, refused };
+              } catch (error) {
+                return { lines: 0, divided: 0, failed: errorCode(error) ?? "error" };
+              }
+            }),
+          );
+        } catch {
+          // The step ran out of time. The upload goes on without it.
+        }
       await step.do(
         "finish",
         STEP,

@@ -1,0 +1,8 @@
+O*NET-SOC Code,Title,Task ID,Task,DWA Element ID,DWA Element Name,Date,Domain Source
+99-1001.00,Example Software Developers,9001,Write and test code for new software features.,4.A.3.b.1.I01.D01,Write computer programming code.,08/2026,Analyst
+99-1001.00,Example Software Developers,9002,Move services from one hosting platform to another.,4.A.3.b.1.I01.D02,Migrate software systems to new platforms.,08/2026,Analyst
+99-1001.00,Example Software Developers,9002,Move services from one hosting platform to another.,4.A.3.b.1.I01.D01,Write computer programming code.,08/2026,Analyst
+99-1002.00,Example Project Management Specialists,9003,Lead project teams and coordinate their work.,4.A.4.b.4.I01.D01,Manage project teams.,08/2026,Analyst
+99-1003.00,Example Budget Analysts,9004,Prepare and monitor departmental budgets.,4.A.4.c.3.I01.D01,Prepare operational budgets.,08/2026,Analyst
+99-1002.00,Example Project Management Specialists,9005,Track project spending against the approved budget.,4.A.4.c.3.I01.D01,Prepare operational budgets.,08/2026,Analyst
+99-1001.00,Example Software Developers,9001,Write and test code for new software features.,4.A.9.z.9.I09.D09,No such activity.,08/2026,Analyst
