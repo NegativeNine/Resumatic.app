@@ -519,10 +519,15 @@ export class ShareStore {
   /**
    * Ties the copy to the account its owner named. Only the account that signed in with that address
    * can do it, and only while holding the link. Returns what that account's client list shows.
+   * A copy that can't be delivered now is taken up by nobody, in the words of a link that has ended.
    */
   join(claims: { grantId: string; epoch: string }, coach: CoachAccount, now = Date.now()): { ownerName: string | null; expiresAt: number } {
     this.auth.requireOpen();
     const row = this.open(claims, now);
+    // Before anything is said about whose copy it is: a link's session can outlive its copy being
+    // open, and a copy closed since, by a fact marked sensitive or anything else, says no more
+    // here than it does to its link.
+    this.read(claims, now);
     if (!row.coach_email || row.coach_email !== coach.email)
       throw new AppError("forbidden", "this copy names a different address as its coach");
     const name = coach.name?.replace(/\s+/g, " ").trim().slice(0, 200) || null;
@@ -565,11 +570,21 @@ export class ShareStore {
     return { epoch: row.epoch, expiresAt: row.expires_at };
   }
 
-  /** What a coach's client list shows for one copy. An ended or unknown one is simply not active. */
+  /**
+   * What a coach's client list shows for one copy. An ended or unknown one is simply not active,
+   * and neither is one that can't be delivered now: a copy closed while a fact in it is marked
+   * sensitive is listed exactly as one that has ended, so its coach is not told which it is.
+   */
   coachStatus(grantId: string, coach: CoachAccount, now = Date.now()): Pick<CoachClient, "active" | "ownerName" | "expiresAt" | "factCount" | "resumeCount" | "documentCount"> | null {
     this.auth.requireOpen();
     const row = this.joined(grantId, coach, now);
     if (!row) return null;
+    try {
+      // Live only if it would open: the same check the list's own Open makes.
+      this.read({ grantId: row.id, epoch: row.epoch }, now);
+    } catch {
+      return null;
+    }
     return {
       active: true,
       ownerName: this.ownerName(row),

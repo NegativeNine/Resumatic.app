@@ -6,7 +6,7 @@ import { extractFacts } from "../../src/pipeline/distill";
 import { setPdfRenderer } from "../../src/render/pdf";
 import { MAX_SENSITIVE_IDS, type FactView, type Me, type ResumeLine, type ResumeView } from "../../src/shared/api";
 import type { DocumentView, NewDocument } from "../../src/shared/documents";
-import type { ShareableDocument, ShareGrant, SharedView } from "../../src/shared/sharing";
+import type { CoachClient, ShareableDocument, ShareGrant, SharedView } from "../../src/shared/sharing";
 import { directory, vault } from "../../src/shared/stubs";
 import type { FactRecord } from "../../src/shared/types";
 import { MIGRATIONS, SCHEMA_VERSION, migrate } from "../../src/vault/schema";
@@ -973,6 +973,67 @@ describe("shared copies and a marked fact", () => {
     expect((await fromList()).status).toBe(200);
     expect((await grants(user)).map((grant) => grant.available)).toEqual([true, true, true]);
   }, 120_000);
+
+  it("lists a closed copy to its coach as one that has ended, and lets nobody take it up while it is closed", async () => {
+    const user = await reader();
+    expect((await user.send("PUT", "/api/profile", { name: "Jane Doe" })).status).toBe(200);
+    const led = await factOf(user, LED);
+    const mentored = await factOf(user, MENTORED);
+    const coach = await signIn(uniqueEmail("coach"));
+    const stranger = await signIn();
+    // Three copies name the coach. The first two hold the fact about to be marked, and the coach
+    // takes up only the first. The third holds another fact.
+    const taken = await share(user, { factIds: [led.id, mentored.id], coachEmail: coach.email, showName: true });
+    const waiting = await share(user, { factIds: [led.id], coachEmail: coach.email });
+    const other = await share(user, { factIds: [mentored.id], coachEmail: coach.email });
+    /** The link's own session for a copy, which a reader's browser holds for up to an hour. */
+    const sessionFor = async (copy: Copy) => cookieFrom(await exchange(copy), `__Host-share-${copy.grant.id}`)!;
+    const takeUp = (copy: Copy, link: string, as = coach) =>
+      call("/api/coach/clients", { method: "POST", cookie: `${link}; ${as.cookie}`, headers: { "content-type": "application/json" }, body: JSON.stringify({ grantId: copy.grant.id }) });
+    const listed = async (copy: Copy) => (await coach.json<{ clients: CoachClient[] }>("/api/coach/clients")).clients.find((client) => client.grantId === copy.grant.id);
+    const named = async (copy: Copy) => (await grants(user)).find((grant) => grant.id === copy.grant.id)!.coach;
+    const ENDED = { error: "conflict", message: "this copy has ended; the person who shared it can share again" };
+
+    // Every link is opened while its copy is open, so each of these sessions outlives the mark.
+    const links = { taken: await sessionFor(taken), waiting: await sessionFor(waiting), other: await sessionFor(other) };
+    expect((await takeUp(taken, links.taken)).status).toBe(204);
+    expect((await takeUp(other, links.other)).status).toBe(204);
+    const live = await listed(taken);
+    expect(live).toEqual({ grantId: taken.grant.id, ownerName: "Jane Doe", addedAt: expect.any(Number), expiresAt: taken.grant.expiresAt, active: true, factCount: 2, resumeCount: 0, documentCount: 0 });
+    expect(await listed(waiting)).toBeUndefined();
+
+    expect((await mark(user, [led.id])).status).toBe(204);
+
+    // The coach's list says of the closed copy what it says of one that has ended: not that it is
+    // live, and not how much it holds. The copy of another fact is listed as it was.
+    const closed = await listed(taken);
+    expect(closed).toEqual({ ...live, active: false, factCount: 0, resumeCount: 0, documentCount: 0 });
+    expect(await listed(other)).toMatchObject({ active: true, factCount: 1 });
+    // The link's session from before the mark takes up nothing now: not for the coach the copy
+    // names, not for another account, and not as a repeat for a copy already taken up. Each is
+    // told what the coach of any ended copy is told.
+    for (const refused of [await takeUp(waiting, links.waiting), await takeUp(waiting, links.waiting, stranger), await takeUp(taken, links.taken)]) {
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toEqual(ENDED);
+    }
+    // Nothing was written by that: the owner is shown no take-up, and neither list gained the copy.
+    expect(await named(waiting)).toEqual({ email: coach.email, name: null, joinedAt: null });
+    expect(await listed(waiting)).toBeUndefined();
+    expect((await stranger.json<{ clients: CoachClient[] }>("/api/coach/clients")).clients).toEqual([]);
+
+    // Unmarked, the copy is listed as it was, and the one that was waiting can be taken up.
+    expect((await mark(user, [led.id], false)).status).toBe(204);
+    expect(await listed(taken)).toEqual(live);
+    expect((await takeUp(waiting, links.waiting)).status).toBe(204);
+    expect(await listed(waiting)).toMatchObject({ active: true, factCount: 1 });
+    expect((await named(waiting))!.joinedAt).toEqual(expect.any(Number));
+
+    // A copy its owner revokes is listed exactly as the closed one was: nothing tells the two apart.
+    expect((await user.send("DELETE", `/api/shares/${taken.grant.id}`)).status).toBe(204);
+    expect(await listed(taken)).toEqual(closed);
+    const ended = await takeUp(taken, links.taken);
+    expect([ended.status, await ended.json()]).toEqual([409, ENDED]);
+  });
 
   it("answers for a copy as it always has once the account is closing or gone", async () => {
     const user = await signIn();

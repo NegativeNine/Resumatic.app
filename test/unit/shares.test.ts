@@ -682,6 +682,9 @@ describe("the coach a copy names", () => {
       // The saved resume no longer matches the copy, so there is nothing to open.
       db.prepare(`UPDATE resume_versions SET data = ? WHERE resume_id = 'resume1'`).run(JSON.stringify({ render: { profile: {}, body: { summary: null, sections: [], skills: [] } }, facts: {} }));
       expect(() => shares.openForCoach(grant.id, dana, now)).toThrow("unavailable");
+      // The coach's list says no more of it than of a link that has ended, and it can't be taken up again.
+      expect(shares.coachStatus(grant.id, dana, now)).toBeNull();
+      expect(() => shares.join(claims, dana, now + 1)).toThrow("gone: this share link is unavailable or expired");
       shares.revoke(who, grant.id, now + 1);
       expect(() => shares.openForCoach(grant.id, dana, now + 2)).toThrow("unavailable");
       expect(shares.coachStatus(grant.id, dana, now + 2)).toBeNull();
@@ -782,13 +785,43 @@ describe("a fact its owner has marked sensitive", () => {
     const { shares, security, db, fact } = copies(dana.email);
     try {
       const claims = { grantId: fact.id, epoch: fact.epoch };
+      const listed = { active: true, ownerName: null, expiresAt: now + 10_000, factCount: 1, resumeCount: 0, documentCount: 0 };
       shares.join(claims, dana, now);
       expect(shares.openForCoach(fact.id, dana, now)).toEqual({ epoch: fact.epoch, expiresAt: now + 10_000 });
+      expect(shares.coachStatus(fact.id, dana, now)).toEqual(listed);
       security.withheld = marked(["f1"], [QUOTE]);
       expect(() => shares.openForCoach(fact.id, dana, now)).toThrow("gone: this share link is unavailable or expired");
       expect(() => shares.read(claims, now)).toThrow("unavailable");
+      // Their list says of it what it says of a link that has ended: nothing, not even how much it holds.
+      expect(shares.coachStatus(fact.id, dana, now)).toBeNull();
       security.withheld = unmarked;
       expect(shares.openForCoach(fact.id, dana, now)).toEqual({ epoch: fact.epoch, expiresAt: now + 10_000 });
+      expect(shares.coachStatus(fact.id, dana, now)).toEqual(listed);
+    } finally { db.close(); }
+  });
+
+  it("can't be taken up by the coach a copy names while it is marked, and its owner is shown no take-up", () => {
+    const dana = { userId: "u-dana", email: "dana@example.test", name: "Dana Okafor" };
+    const { shares, security, db, fact } = copies(dana.email);
+    try {
+      // The coach holds the link's session from before the mark, and has not taken the copy up.
+      const claims = { grantId: fact.id, epoch: fact.epoch };
+      const named = () => shares.list(who, now).find((grant) => grant.id === fact.id)!.coach;
+      expect(shares.reviewer(claims, dana, now)).toBe("you");
+      security.withheld = marked(["f1"], [QUOTE]);
+      // The same words as for a link that has ended, for the named coach and for anyone else.
+      expect(() => shares.join(claims, dana, now)).toThrow("gone: this share link is unavailable or expired");
+      expect(() => shares.join(claims, { userId: "u-x", email: "someone@example.test" }, now)).toThrow("gone: this share link is unavailable or expired");
+      expect(named()).toEqual({ email: dana.email, name: null, joinedAt: null });
+      expect(shares.coachStatus(fact.id, dana, now)).toBeNull();
+      // Unmarked, the copy is taken up as it always could be.
+      security.withheld = unmarked;
+      expect(shares.join(claims, dana, now + 5)).toEqual({ ownerName: null, expiresAt: now + 10_000 });
+      expect(named()).toEqual({ email: dana.email, name: "Dana Okafor", joinedAt: now + 5 });
+      // Marked again once taken up, a repeat of the take-up is refused too and changes nothing.
+      security.withheld = marked(["f1"], [QUOTE]);
+      expect(() => shares.join(claims, { ...dana, name: "Someone Else" }, now + 9)).toThrow("gone: this share link is unavailable or expired");
+      expect(named()).toEqual({ email: dana.email, name: "Dana Okafor", joinedAt: now + 5 });
     } finally { db.close(); }
   });
 });

@@ -143,7 +143,7 @@ export interface CoachClient {
   ownerName: string | null;
   addedAt: number;
   expiresAt: number;
-  /** False once the link has expired or been revoked, or the owner's account is gone. */
+  /** False once the link has expired or been revoked, or the owner's account is gone, and while the copy can't be opened. The counts are then zero. */
   active: boolean;
   factCount: number;
   resumeCount: number;
