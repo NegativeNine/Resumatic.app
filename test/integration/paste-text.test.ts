@@ -130,7 +130,13 @@ describe("pasting text: what the route refuses", () => {
   it("refuses a body over 512 KiB with the same sentence", async () => {
     const user = await signIn();
     await refused(await paste(user, { text: "a".repeat(512 * 1024) }), 413, "too_large", PASTE_TOO_LONG);
+    // Only the body limit can refuse this one: cleaned, it is 15 characters, which would be accepted.
+    await refused(await paste(user, { text: `Led the launch.${" ".repeat(512 * 1024)}` }), 413, "too_large", PASTE_TOO_LONG);
     await nothingStored(user);
+    // Under the limit, the same shape is read.
+    const sourceId = await pasted(user, { text: `Led the launch.${" ".repeat(400 * 1024)}` });
+    await waitForSource(user, sourceId);
+    expect((await user.json<{ markdown: string }>(`/api/sources/${sourceId}/text`)).markdown).toBe("Led the launch.");
   });
 
   it("refuses a title over 120 characters", async () => {
