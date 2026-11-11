@@ -101,7 +101,7 @@ describe("what to offer about two lines", () => {
       ["AWS Solutions Architect certification", "AWS Solutions Architect certification (in progress)"],
       // The same words, joined by a hyphen.
       ["AWS Solutions Architect certification", "AWS Solutions Architect certification (in-progress)"],
-      ["AWS Solutions Architect certification", "AWS Solutions Architect certification (work‑in‑progress)"],
+      ["AWS Solutions Architect certification", "AWS Solutions Architect certification (work\u2011in\u2011progress)"],
       ["Led the launch in two regions", "Led the up-coming launch in two regions"],
       // A listed word with a soft hyphen inside it, as text read from a PDF can have.
       ["Handled customer escalations", "Ne\u00ADver handled customer escalations"],
