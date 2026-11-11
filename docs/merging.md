@@ -42,7 +42,7 @@ Lines that differ in wording are never merged by a rule. With `OFFER_SHADOW_ENAB
 **What is asked.** Each direction separately: does this line say everything that one says?
 
 1. The checks a resume line passes against its facts, which need no model. A different figure, a different name, a hedge on one side, a denial, or an outcome going the other way settles that direction as no, whatever a judge would say.
-2. The judge, in the form it already answers. Anything but one plain "supported" is a no.
+2. The judge, in the form it already answers. Anything but one plain "supported" is a no, and an answer counts only in the call that asked its question.
 
 | Each says everything the other says | Only one does | Neither does |
 | --- | --- | --- |

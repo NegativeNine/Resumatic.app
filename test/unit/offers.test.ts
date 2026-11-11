@@ -7,19 +7,22 @@ import { MATCH_PAIRS } from "../fixtures/match-pairs";
 const pair = (later: string, earlier: string, n = 1): OfferPair => ({ later: { id: `later-${n}`, text: later }, earlier: { id: `earlier-${n}`, text: earlier } });
 
 type Verdict = "supported" | "unsupported" | "overstated" | "missing" | "twice";
-/** A judge that answers by the line it is asked about. Unlisted lines are supported. */
-function models(verdicts: Record<string, Verdict> = {}, typed = false) {
+type Answer = { id: string; verdict: "supported" | "unsupported" | "overstated"; reason: string };
+/**
+ * A judge that answers by the line it is asked about. Unlisted lines are supported. `reply`
+ * rewrites a whole reply; `call` counts the judge's calls from 0.
+ */
+function models(verdicts: Record<string, Verdict> = {}, typed = false, reply?: (answers: Answer[], call: number) => Answer[]) {
   const asked: JudgeItem[][] = [];
   const judge = (items: JudgeItem[]) => {
     asked.push(items);
-    return {
-      verdicts: items.flatMap((item) => {
-        const verdict = verdicts[item.text] ?? "supported";
-        if (verdict === "missing") return [];
-        const one = { id: item.alias, verdict: verdict === "twice" ? ("supported" as const) : verdict, reason: "" };
-        return verdict === "twice" ? [one, one] : [one];
-      }),
-    };
+    const answers = items.flatMap((item): Answer[] => {
+      const verdict = verdicts[item.text] ?? "supported";
+      if (verdict === "missing") return [];
+      const one = { id: item.alias, verdict: verdict === "twice" ? ("supported" as const) : verdict, reason: "" };
+      return verdict === "twice" ? [one, one] : [one];
+    });
+    return { verdicts: reply ? reply(answers, asked.length - 1) : answers };
   };
   const made: Models = {
     async complete(route, messages, schema) {
@@ -97,6 +100,30 @@ describe("what to offer about two lines", () => {
     expect(asked.map((batch) => batch.length)).toEqual([20, 20, 10]);
     expect(found.map((offer) => offer.relation)).toEqual(pairs.flatMap((_, index) => (index === 7 ? [] : [index % 2 ? "fuller" : "same"])));
     expect(found.every((offer) => offer.from.startsWith("later-") && offer.to.startsWith("earlier-"))).toBe(true);
+  });
+
+  it("takes an answer only from the call that asked the question", async () => {
+    // Eleven pairs are 22 questions, asked in calls of 20 and 2. Both questions about the last
+    // pair are in the second call.
+    const pairs = Array.from({ length: 11 }, (_, index) => pair(`Trained ${index + 2} new starters every month`, `Trained ${index + 2} new starters`, index));
+    const yes = (id: string): Answer => ({ id, verdict: "supported", reason: "" });
+    const relations = async (reply: (answers: Answer[], call: number) => Answer[], typed: boolean) => {
+      const { models: fake, asked } = models({}, typed, reply);
+      const found = await offers(fake, pairs);
+      expect(asked.map((batch) => batch.map((item) => item.alias))).toEqual([expect.not.arrayContaining(["11.e", "11.l"]), ["11.e", "11.l"]]);
+      return pairs.map((one) => found.find((offer) => [one.later.id, one.earlier.id].includes(offer.from))?.relation ?? "nothing");
+    };
+    for (const typed of [false, true]) {
+      // The first reply volunteers that the earlier line says everything, and the call that asked gets no answer.
+      expect(await relations((answers, call) => (call === 0 ? [...answers, yes("11.l")] : answers.filter((answer) => answer.id !== "11.l")), typed), String(typed)).toEqual([...Array(10).fill("same"), "fuller"]);
+      // The other way round: no answer from the call that asked, and one volunteered by the next.
+      expect(await relations((answers, call) => (call === 0 ? answers.filter((answer) => answer.id !== "3.e") : [...answers, yes("3.e")]), typed), String(typed)).toEqual(["same", "same", "fuller", ...Array(8).fill("same")]);
+      // An answer nobody asked for decides nothing by itself, and takes nothing from the answer that was asked for.
+      expect(await relations((answers, call) => (call === 0 ? [...answers, { ...yes("11.e"), verdict: "unsupported" }, yes("12.e")] : answers), typed), String(typed)).toEqual(Array(11).fill("same"));
+      // Nor does a volunteered answer stand in for a direction a check settled without asking.
+      const { models: fake } = models({}, typed, (answers) => [...answers, yes("1.l")]);
+      expect(await offers(fake, [pair("Led a team of 5 engineers", "Led a team of engineers")]), String(typed)).toEqual([{ relation: "fuller", from: "later-1", to: "earlier-1" }]);
+    }
   });
 
   it("lets a judge failure through, for the caller to keep nothing", async () => {

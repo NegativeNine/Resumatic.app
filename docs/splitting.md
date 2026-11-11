@@ -22,7 +22,7 @@ It is step 4 of the [pipeline design](taxonomy-pipelines-design.md). The code is
 | 7 | The judge finds that the line states each claim as the claim reads alone | "Led the billing product" from "Led the design team and shipped the billing product" | Yes |
 | 8 | The judge finds that the claims together say everything the line says | A division that is accurate but leaves something unsaid | Yes |
 
-The judge is asked in the form it already answers: is this line supported by these facts? For check 7 the claim is the line and the whole line is its one fact. For check 8 the whole line is the line and the claims are its facts. Anything but "supported" keeps the line whole, and so does a missing or repeated answer.
+The judge is asked in the form it already answers: is this line supported by these facts? For check 7 the claim is the line and the whole line is its one fact. For check 8 the whole line is the line and the claims are its facts. Anything but "supported" keeps the line whole, and so does a missing or repeated answer. The questions for an upload can take several calls, and an answer counts only in the call that asked its question: one call never answers for another.
 
 ## Starting rule 1: which lines are never divided
 

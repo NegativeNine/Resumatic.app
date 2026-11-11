@@ -39,20 +39,22 @@ interface Script {
   verdicts?: Record<string, "supported" | "unsupported" | "overstated" | "missing" | "twice">;
   /** Answer through the typed-decision judge, as staging does. */
   typed?: boolean;
+  /** Rewrites a whole judge reply. `call` counts the judge's calls from 0. */
+  reply?: (verdicts: Verdict[], call: number) => Verdict[];
 }
+type Verdict = { id: string; verdict: "supported" | "unsupported" | "overstated"; reason: string };
 
 function models(script: Script = {}) {
   const calls = { extract: [] as { id: string; text: string; words: string }[][], judge: [] as JudgeItem[][], typed: 0 };
   const judge = (items: JudgeItem[]) => {
     calls.judge.push(items);
-    return {
-      verdicts: items.flatMap((item) => {
-        const verdict = script.verdicts?.[item.text] ?? "supported";
-        if (verdict === "missing") return [];
-        const one = { id: item.alias, verdict: verdict === "twice" ? ("supported" as const) : verdict, reason: "" };
-        return verdict === "twice" ? [one, one] : [one];
-      }),
-    };
+    const verdicts = items.flatMap((item): Verdict[] => {
+      const verdict = script.verdicts?.[item.text] ?? "supported";
+      if (verdict === "missing") return [];
+      const one = { id: item.alias, verdict: verdict === "twice" ? ("supported" as const) : verdict, reason: "" };
+      return verdict === "twice" ? [one, one] : [one];
+    });
+    return { verdicts: script.reply ? script.reply(verdicts, calls.judge.length - 1) : verdicts };
   };
   const made: Models = {
     async complete(route, messages: ChatMessage[], schema) {
@@ -298,6 +300,26 @@ describe("dividing lines", () => {
     // Every call numbers its lines from 1: no call learns how many lines the person has.
     expect(calls.extract.map((batch) => batch[0]!.id)).toEqual(["1", "1", "1"]);
     expect(calls.judge.map((batch) => batch.length)).toEqual([20, 20, 20, 9]);
+  });
+
+  it("takes an answer only from the call that asked the question", async () => {
+    // Eight lines of two claims are 24 questions, asked in calls of 20 and 4. Whether the claims
+    // of the last line say everything it says is asked in the second call.
+    const lines = Array.from({ length: 8 }, (_, index) => ({ id: `fact-${index}`, text: `Led a team of ${index + 2} and shipped ${index + 3} products` }));
+    const propose = Object.fromEntries(lines.map((line) => [line.text, proposal(line.text, ["clause", [line.text.slice(0, line.text.indexOf(" and"))]], ["clause", [line.text.slice(line.text.indexOf("shipped"))]])]));
+    const yes = (id: string): Verdict => ({ id, verdict: "supported", reason: "" });
+    for (const typed of [false, true]) {
+      // The first reply volunteers an answer to it, and the call that asked it gets none.
+      const early = models({ propose, typed, reply: (verdicts, call) => (call === 0 ? [...verdicts, yes("L8.all")] : verdicts.filter((verdict) => verdict.id !== "L8.all")) });
+      expect((await splitLines(early.models, lines)).map((decision) => decision.refusal), String(typed)).toEqual([...Array(7).fill(null), "says_less"]);
+      expect(early.calls.judge.map((batch) => batch.map((item) => item.alias))).toEqual([expect.not.arrayContaining(["L8.all"]), ["L7.all", "L8.0", "L8.1", "L8.all"]]);
+      // The other way round: no answer from the call that asked, and one volunteered by the next.
+      const late = models({ propose, typed, reply: (verdicts, call) => (call === 0 ? verdicts.filter((verdict) => verdict.id !== "L3.all") : [...verdicts, yes("L3.all")]) });
+      expect((await splitLines(late.models, lines)).map((decision) => decision.refusal), String(typed)).toEqual([null, null, "says_less", null, null, null, null, null]);
+      // An answer nobody asked for decides nothing by itself, and takes nothing from the answer that was asked for.
+      const stray = models({ propose, typed, reply: (verdicts, call) => (call === 0 ? [...verdicts, { ...yes("L8.all"), verdict: "unsupported" }, yes("L9.all")] : verdicts) });
+      expect((await splitLines(stray.models, lines)).every((decision) => decision.refusal === null), String(typed)).toBe(true);
+    }
   });
 
   it("lets a model failure through, for the caller to leave every line whole", async () => {

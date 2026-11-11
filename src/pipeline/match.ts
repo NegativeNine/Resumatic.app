@@ -120,18 +120,21 @@ export async function offers(models: Models, pairs: readonly OfferPair[]): Promi
   const holds = new Map<string, boolean>();
   for (let at = 0; at < items.length; at += JUDGE_ITEMS_PER_CALL) {
     const batch = items.slice(at, at + JUDGE_ITEMS_PER_CALL);
+    const asked = new Set(batch.map((item) => item.alias));
     const out = models.judge ? await models.judge(batch) : await models.complete("judge", judgePrompt(batch), JudgeOut);
     for (const verdict of out.verdicts) {
       const id = verdict.id.trim();
+      // An answer counts only for a question this call asked, so one call never answers for
+      // another, and nothing answers a question the checks above left unasked.
+      if (!asked.has(id)) continue;
       // Two answers for one question are no answer, whatever either says.
       holds.set(id, !holds.has(id) && verdict.verdict === "supported");
     }
   }
-  const asked = new Set(items.map((item) => item.alias));
   const found: Offer[] = [];
   pairs.forEach((pair, index) => {
-    const laterSaysAll = asked.has(`${index + 1}.e`) && holds.get(`${index + 1}.e`) === true;
-    const earlierSaysAll = asked.has(`${index + 1}.l`) && holds.get(`${index + 1}.l`) === true;
+    const laterSaysAll = holds.get(`${index + 1}.e`) === true;
+    const earlierSaysAll = holds.get(`${index + 1}.l`) === true;
     if (laterSaysAll && earlierSaysAll) found.push({ relation: "same", from: pair.later.id, to: pair.earlier.id });
     else if (laterSaysAll) found.push({ relation: "fuller", from: pair.later.id, to: pair.earlier.id });
     else if (earlierSaysAll) found.push({ relation: "fuller", from: pair.earlier.id, to: pair.later.id });
