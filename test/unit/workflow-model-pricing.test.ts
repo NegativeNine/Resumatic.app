@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { runModels } from "../../src/workflows/models";
+import { AppError } from "../../src/shared/errors";
+import { operatorModels, runModels } from "../../src/workflows/models";
 
 const model = "openai/gpt-5.6-sol";
 
@@ -143,5 +144,62 @@ describe("workflow model spending bounds", () => {
     )).rejects.toThrow("this model has no configured cost bound");
     expect(reserve).not.toHaveBeenCalled();
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  describe("an operator's calls", () => {
+    const qwen = "@cf/qwen/qwen3-embedding-0.6b";
+    const RUN = "taxonomy-index-3191aa55-1";
+    function operatorEnv(more: Record<string, unknown> = {}, reserve = vi.fn(async () => {})) {
+      const events: string[] = [];
+      const settle = vi.fn(async () => { events.push("settle"); });
+      const reserving = vi.fn(async (...args: unknown[]) => { events.push("reserve"); return (reserve as (...a: unknown[]) => Promise<void>)(...args); });
+      const run = vi.fn(async () => { events.push("run"); return { data: [Array(1024).fill(0.5)], usage: { input_tokens: 3 } }; });
+      const named: string[] = [];
+      const env = {
+        DAILY_SPEND_CAP_USD: "10",
+        AI: { run },
+        DIRECTORY: { idFromName: (name: string) => (named.push(name), name), get: () => ({ reserveOperatorModelAttempt: reserving, settleOperatorModelAttempt: settle }) },
+        // A person's vault is never reached for an operator's call.
+        VAULT: { idFromString: () => { throw new Error("a vault was reached"); }, get: () => { throw new Error("a vault was reached"); } },
+        ...more,
+      } as unknown as Env;
+      return { env, events, reserve: reserving, settle, run, named };
+    }
+
+    it("reserves an operator's embedding in the Directory before it is sent, and settles it", async () => {
+      const { env, events, reserve, settle, run, named } = operatorEnv();
+      await expect(operatorModels(env, RUN, "batch 1").embed(["manage budgets\nSkill"], { model: qwen, purpose: "document" })).resolves.toHaveLength(1);
+      expect(named).toEqual(["global"]);
+      expect(events).toEqual(["reserve", "run", "settle"]);
+      expect(reserve).toHaveBeenCalledWith(RUN, "batch 1", expect.objectContaining({ model: qwen, route: "embed" }), expect.any(Number), 10_000_000);
+      expect((reserve.mock.calls[0] as unknown[])[3]).toBeGreaterThan(0);
+      expect(run).toHaveBeenCalledWith(qwen, { documents: ["manage budgets\nSkill"] }, expect.anything());
+      // 3 input tokens at the built-in price, rounded up to a whole micro-dollar.
+      expect(settle).toHaveBeenCalledWith((reserve.mock.calls[0] as unknown[] as [string, string, { attemptId: string }])[2].attemptId, 1, 3, null);
+    });
+
+    it("sends nothing when the operator ledger refuses", async () => {
+      const refusing = vi.fn(async () => { throw new AppError("quota", "the configured model spend budget is exhausted"); });
+      const { env, run, settle } = operatorEnv({}, refusing);
+      await expect(operatorModels(env, RUN, "batch 1").embed(["manage budgets"], { model: qwen, purpose: "document" })).rejects.toThrow("quota");
+      expect(refusing).toHaveBeenCalledOnce();
+      expect(run).not.toHaveBeenCalled();
+      expect(settle).not.toHaveBeenCalled();
+    });
+
+    it("refuses every operator call in pilot mode, reserving nothing", async () => {
+      const pilot = vi.fn(() => { throw new Error("the pilot ledger was reached"); });
+      const fetcher = vi.fn();
+      vi.stubGlobal("fetch", fetcher);
+      const { env, reserve, run, settle } = operatorEnv({ PILOT_SHARED_BUDGET: "true", PILOT_BUDGET: { idFromName: pilot, get: pilot }, PILOT_BUDGET_KEY: "k".repeat(40), MODEL_JUDGE: model });
+      const models = operatorModels(env, RUN, "batch 1");
+      await expect(models.embed(["manage budgets"], { model: qwen, purpose: "document" })).rejects.toThrow("this model route is not bounded for the shared pilot");
+      await expect(models.complete("judge", [], z.object({ answer: z.number() }))).rejects.toThrow("this model route is not bounded for the shared pilot");
+      expect(reserve).not.toHaveBeenCalled();
+      expect(run).not.toHaveBeenCalled();
+      expect(settle).not.toHaveBeenCalled();
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(pilot).not.toHaveBeenCalled();
+    });
   });
 });

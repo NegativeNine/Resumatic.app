@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { expect, it } from "vitest";
 import type { Directory } from "../../src/directory/directory";
 import { DIRECTORY_MIGRATIONS, migrateDirectory } from "../../src/directory/schema";
-import { InviteRevocation } from "../../src/directory/invite-revocation";
+import { INVITE_GLOBAL_ORPHAN_MIGRATIONS, InviteRevocation } from "../../src/directory/invite-revocation";
 import { directoryForSignIn } from "../../src/directory/routing";
 import { directory } from "../../src/shared/stubs";
 import { undoInviteGlobalOrphansMigration } from "../support/undo-invite-inventory";
@@ -35,7 +35,7 @@ it.each(["active", "detached"] as const)("fences and rescans an inherited %s ope
     const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
     try {
       undoInviteGlobalOrphansMigration(sql);
-      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(DIRECTORY_MIGRATIONS.length - 1));
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(DIRECTORY_MIGRATIONS.indexOf(INVITE_GLOBAL_ORPHAN_MIGRATIONS)));
       const grant = sql.exec<{ generation: string }>(`SELECT generation FROM invites WHERE email=?`, p.email).one().generation;
       sql.exec(`INSERT INTO invite_revocation_barrier(slot,operation_id,email,email_fingerprint,generation,created_at) VALUES(1,?,?,?,?,?)`, op, p.email, signature, grant, Date.now());
       if (kind === "detached") {
@@ -127,7 +127,7 @@ it("does not activate an unbound global Vault when an inherited barrier appears 
       await started;
       const row = sql.exec<{ vault_id: string }>(`SELECT v.vault_id FROM vaults v JOIN identities i ON i.user_id=v.user_id WHERE i.provider=? AND i.subject=?`, p.provider, p.subject).one();
       undoInviteGlobalOrphansMigration(sql);
-      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(DIRECTORY_MIGRATIONS.length - 1));
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(DIRECTORY_MIGRATIONS.indexOf(INVITE_GLOBAL_ORPHAN_MIGRATIONS)));
       const generation = sql.exec<{ generation: string }>(`SELECT generation FROM invites WHERE email=?`, p.email).one().generation;
       sql.exec(`INSERT INTO invite_revocation_barrier(slot,operation_id,email,email_fingerprint,generation,created_at) VALUES(1,?,?,?,?,?)`, op, p.email, signature, generation, Date.now());
       migrateDirectory(sql, (fn) => state.storage.transactionSync(fn), true, false);

@@ -1,7 +1,7 @@
 import { models, type Models } from "../ai/models";
 import { MODEL_PRICES, type ModelAttempt } from "../ai/usage";
 import { AppError } from "../shared/errors";
-import { vault } from "../shared/stubs";
+import { directory, vault } from "../shared/stubs";
 import { stagingPilotBudget } from "../worker/pilot/access";
 import type { PilotIdentityPath } from "../worker/pilot/ledger";
 import { sharedPilotSafetyReady } from "./pilot-readiness";
@@ -12,6 +12,12 @@ import { sharedPilotSafetyReady } from "./pilot-readiness";
 const PILOT_GATEWAY_ATTEMPTS = 6;
 const PILOT_CHAT_ROUTES = new Set(["extract", "analyze", "write", "repair", "judge"]);
 
+/** Where a call's cost is reserved before it is sent and settled after: a vault's own, or the operator ledger. */
+export interface SpendLedger {
+  reserveModelAttempt(runId: string, step: string, attempt: ModelAttempt, maxCostMicros: number, dailyCapMicros: number): Promise<void>;
+  settleModelAttempt(id: string, costMicros: number | null, inputTokens: number | null, outputTokens: number | null): Promise<void>;
+}
+
 /** Reserve every provider attempt, including schema retries, before it leaves the Worker. */
 export function runModels(
   env: Env,
@@ -21,13 +27,60 @@ export function runModels(
   identityPath: PilotIdentityPath | null = null,
 ): Models {
   const v = vault(env, vaultId);
+  const base = reservingModels(env, v, { metricsIndex: vaultId, runId, step, identity: { path: identityPath, vaultId } });
+  return {
+    ...base,
+    embed: async (texts, opts) =>
+      base.embed(texts, {
+        model: opts?.model ?? (await v.embeddingModel(runId)),
+        purpose: opts?.purpose,
+      }),
+  };
+}
+
+/**
+ * Models for an operator's job, such as building the taxonomy's vector index. The spend is no
+ * person's, so each call is reserved in the global Directory's operator ledger, against the same
+ * daily cap as a separate total. The shared pilot bounds no such route: in pilot mode every call
+ * is refused before anything is reserved, and the pilot's own ledger is never touched.
+ */
+export function operatorModels(env: Env, runId: string, step: string): Models {
+  const coordinator = directory(env);
+  return reservingModels(
+    env,
+    {
+      reserveModelAttempt: (id, at, attempt, max, cap) => coordinator.reserveOperatorModelAttempt(id, at, attempt, max, cap),
+      settleModelAttempt: (id, cost, input, output) => coordinator.settleOperatorModelAttempt(id, cost, input, output),
+    },
+    { metricsIndex: "operator", runId, step, identity: null },
+  );
+}
+
+/**
+ * Models whose every attempt is reserved in `ledger` before it is sent and settled after it.
+ * `identity` is the person a run is for; an operator's job has none.
+ */
+export function reservingModels(
+  env: Env,
+  ledger: SpendLedger,
+  scope: { metricsIndex: string; runId: string; step: string; identity: { path: PilotIdentityPath | null; vaultId: string } | null },
+): Models {
+  const { runId, step } = scope;
+  const v = ledger;
   const started = new Map<string, number>();
   const prices = priceTable(env.MODEL_PRICES_JSON);
   if (env.PILOT_SHARED_BUDGET !== undefined && !["true", "false"].includes(env.PILOT_SHARED_BUDGET))
     throw new AppError("unavailable", "pilot budget configuration is invalid");
-  const pilot = env.PILOT_SHARED_BUDGET === "true" ? stagingPilotBudget(env) : null;
-  const base = models(env, {
+  const pilotMode = env.PILOT_SHARED_BUDGET === "true";
+  const pilot = pilotMode && scope.identity ? stagingPilotBudget(env) : null;
+  const identityPath = scope.identity?.path ?? null;
+  const vaultId = scope.identity?.vaultId ?? "";
+  return models(env, {
     async onAttemptStart(attempt) {
+      // The shared pilot bounds a person's runs only. An operator's call is refused here, before
+      // anything is reserved, and the pilot's ledger is never touched.
+      if (pilotMode && !scope.identity)
+        throw new AppError("unavailable", "this model route is not bounded for the shared pilot");
       // An authenticated diagnostic can observe only real call sites, with no
       // provider request. The nonce stays in the ledger, not Workflow state.
       if (pilot && identityPath && await pilot.observeIdentity(identityPath, vaultId, runId, step, env.PILOT_VERSION_METADATA?.id ?? ""))
@@ -105,7 +158,7 @@ export function runModels(
         usage.outputTokens,
       );
       env.METRICS?.writeDataPoint({
-        indexes: [vaultId],
+        indexes: [scope.metricsIndex],
         blobs: [
           runId,
           step,
@@ -128,7 +181,7 @@ export function runModels(
       if (pilot) await pilot.settle(attempt.attemptId, null);
       await v.settleModelAttempt(attempt.attemptId, null, null, null);
       env.METRICS?.writeDataPoint({
-        indexes: [vaultId],
+        indexes: [scope.metricsIndex],
         blobs: [runId, step, attempt.route, attempt.model, "failed"],
         doubles: [
           Date.now() - (started.get(attempt.attemptId) ?? Date.now()),
@@ -139,14 +192,6 @@ export function runModels(
       });
     },
   });
-  return {
-    ...base,
-    embed: async (texts, opts) =>
-      base.embed(texts, {
-        model: opts?.model ?? (await v.embeddingModel(runId)),
-        purpose: opts?.purpose,
-      }),
-  };
 }
 
 function priceTable(
