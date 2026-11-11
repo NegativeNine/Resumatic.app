@@ -131,7 +131,7 @@ These numbers come from arithmetic, not from measurement.
 - **Tags on parts of a line.** A part gets none yet ([splitting.md](splitting.md)).
 - **Tags on postings** and their requirements.
 - **Any screen, and the owner's review.** Nothing shows a tag, and nobody can confirm or reject one.
-- **Any use of tags:** matching and coverage by concept, years per skill, the private card. A reading tags every fact it proposed that is not marked sensitive, whatever is decided about the fact later, and a fact marked after it was tagged keeps its tags. Nothing reads the tags, so nothing has to be held back yet: the first use of them for anyone but their owner has to leave out the tags of every fact `usableFacts()` leaves out.
+- **Any use of tags:** matching and coverage by concept, years per skill, and anything shown to someone other than its owner. A reading tags every fact it proposed that is not marked sensitive, whatever is decided about the fact later, and a fact marked after it was tagged keeps its tags. The first use of them for anyone but their owner has to leave out the tags of every fact `usableFacts()` leaves out. The owner's card preview, where switched on, reads only confirmed tags, which no stage writes, so it shows nothing yet; and it bars every concept that any tag on a fact marked sensitive names, in any state, even where an unmarked fact shows it too ([visibility-design.md](visibility-design.md)).
 
 ## What has and has not been measured
 

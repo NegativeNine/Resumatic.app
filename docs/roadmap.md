@@ -23,6 +23,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Fit preview through connected apps | Merged in #35. No migration | Deployed before connected apps are switched on anywhere; then MCP in staging and a real client |
 | Hardening fixes | Merged in #35 | Denial and intention checks read any apostrophe; "upto" is a bound; cleaning keeps a star or backtick set off by spaces; an expired connected-app grant is cleared on time; direction overrides are stripped from postings. The shadow stamps these change are raised to /3 |
 | Tagging facts and roles with taxonomy concepts | Merged in #35 | Off by default, refused in production configuration, and inert without a wholly loaded taxonomy. No vault migration. The eval against the real judge has not been run and nothing has been measured; vector candidates, parts, postings, screens and any use of tags are not built |
+| Private card preview and re-identification test | #NN open, based on main at 3d7c9fe (`market/01-card-preview`) | Off by default, refused in production configuration, needs a wholly loaded taxonomy. No migration. Empty on real vaults until owner review confirms tags. Harness rates are synthetic; Gate 3's real test, counsel and the sharing rules remain |
 
 The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments, suggested wording (two columns on the comments' table).
 
@@ -42,7 +43,7 @@ The [pipeline design](taxonomy-pipelines-design.md) is agreed. The rebuilt taxon
 4. Add owner review of parts, tags and merge proposals.
 5. Add matching and coverage by concept, retaining evidence checks and similarity fallback.
 6. Add skills with years only where skill-use intervals are evidenced or owner-confirmed; role dates alone are insufficient.
-7. Add the private card preview from confirmed tags. Its sharing rules still need an explicit decision.
+7. Add the private card preview from confirmed tags. Its sharing rules still need an explicit decision. The owner-only preview is #NN; publishing is not built.
 
 Skills with years and the card preview depend on tagging and belong in this pipeline sequence. Missing or uncertain tags remain unknown; they do not establish missing experience.
 
