@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import type { DocumentView } from "../../src/shared/documents";
 import type { PostingRead } from "../../src/shared/postings";
+import type { CardPreview } from "../../src/shared/card";
 import { normalizePosting, type FactPatch, type NewFact, type NewRole, type Profile, type ReviewRequest, type RolePatch, type SensitiveRequest } from "../../src/shared/api";
 import { PREFERENCES_CHANGED, PREFERENCES_REFUSED, cleanPreferences, type Preferences, type PreferencesUpdate } from "../../src/shared/preferences";
 import { wording } from "../../src/shared/record";
@@ -301,6 +302,7 @@ export class FakeApi {
         return ok(this.state.preferences);
       },
     ],
+    ["GET", /^\/api\/v2\/card-preview$/, () => ok(this.state.cardPreview ?? EMPTY_CARD)],
     ["POST", /^\/api\/account\/sign-out-everywhere$/, () => ({ status: 204 })],
     ["POST", /^\/auth\/logout$/, () => ({ status: 204 })],
     ["DELETE", /^\/auth\/account$/, () => ({ status: 202, body: { deleting: true } })],
@@ -577,6 +579,8 @@ export function installFakeApi(state: Fixtures): FakeApi {
 const ok = (body: unknown): Reply => ({ status: 200, body });
 /** Job preferences before the first save. */
 const NOTHING_SAID: Preferences = { revision: 0, place: null, jobTypes: [], availableFrom: null, payFloor: null, updatedAt: null };
+/** The card of a vault with no confirmed tags and no confirmed job: every vault today. */
+const EMPTY_CARD: CardPreview = { state: "ready", taxonomyVersion: "esco-1.2.1+onet-31.0+3f810824", card: { occupation: null, experience: null, skills: [] } };
 const notFound = (message: string): Reply => ({ status: 404, body: { error: "not_found", message } });
 const conflict = (message: string): Reply => ({ status: 409, body: { error: "conflict", message } });
 
