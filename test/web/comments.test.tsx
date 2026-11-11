@@ -185,6 +185,18 @@ describe("a coach commenting on a client's copy", () => {
     expect(box()).toHaveAccessibleDescription(/^The owner of this copy will see this the next time they open Resumatic\./);
   });
 
+  it("never shows the owner's reply under “You”, whatever name the owner chose", async () => {
+    const threads: CommentThread[] = [
+      { target: onLine, quote: LED_LINE, comments: [comment("c1", "coach", "Lead with what it saved."), comment("c2", "owner", "It saved two days a release.")] },
+    ];
+    open(joined((view) => { view.snapshot.owner = { name: "You" }; }), { ...fixtures(), coachComments: threads });
+    const card = await screen.findByRole("article", { name: `On “${LED_LINE}”` });
+    expect(within(card).getAllByRole("listitem").map((item) => item.querySelector(".app-thread__byline")!.textContent)).toEqual([
+      expect.stringMatching(/^You, \d+ Nov 2026$/),
+      expect.stringMatching(/^The owner, \d+ Nov 2026$/),
+    ]);
+  });
+
   it("gives other readers, and a copy of documents alone, nothing to choose", async () => {
     for (const reviewer of [undefined, "sign-in", "sign-in-again", "other", "you"] as const) {
       const { api, page } = open(joined((view) => { view.reviewer = reviewer; }));
@@ -547,7 +559,7 @@ describe("an owner reading what their coach wrote", () => {
     ]);
 
     const line = within(thread(LED_LINE));
-    expect(line.getByText(/^Dana Okafor, \d+ Nov 2026/)).toBeInTheDocument();
+    expect(line.getByText(/^Dana Okafor \(dana@example\.test\), \d+ Nov 2026/)).toBeInTheDocument();
     expect(line.getByText("From dana@example.test, on version 2 of your resume for Platform Engineer at Initrode.")).toBeInTheDocument();
     expect(line.getByRole("link", { name: "Open this resume" })).toHaveAttribute("href", "#/resumes/res-ready");
     // A job with no name is a resume, and an account with no name is its address.
@@ -560,6 +572,31 @@ describe("an owner reading what their coach wrote", () => {
     expect(fact.getByText("From dana@example.test, on a fact you shared.")).toBeInTheDocument();
     expect(fact.getByRole("link", { name: "Open Facts" })).toHaveAttribute("href", "#/facts");
     expect(await violations()).toEqual([]);
+  });
+
+  it("never bylines a coach's comment as the owner's own, or as the product's, whatever name the coach chose", async () => {
+    const state = fixtures();
+    state.shareComments = [
+      fromDana({
+        comments: [
+          comment("c1", "coach", "Agreed, I’ll say I led the migration.", { name: "You", seen: true }),
+          comment("c2", "owner", "It saved two days."),
+          comment("c3", "coach", "From the product, honest.", { name: " resumatic ", seen: true }),
+        ],
+      }),
+    ];
+    installFakeApi(state);
+    renderWithSession(<OwnerComments />, state.me);
+    await screen.findByRole("region", { name: "Comments from your coach" });
+    const bylines = within(thread(LED_LINE)).getAllByRole("listitem").map((item) => item.querySelector(".app-thread__byline")!.textContent);
+    // Only the owner's own reply is "You". A name that would read as the owner or the product is no name: the address stands.
+    expect(bylines).toEqual([
+      expect.stringMatching(/^dana@example\.test, \d+ Nov 2026$/),
+      expect.stringMatching(/^You, \d+ Nov 2026$/),
+      expect.stringMatching(/^dana@example\.test, \d+ Nov 2026$/),
+    ]);
+    // Nor does the name stand in the page's own sentences.
+    expect(screen.getByRole("textbox", { name: "Reply to dana@example.test" })).toHaveAccessibleDescription(/^dana@example\.test sees your reply/);
   });
 
   it("says on the share form that the coach it names can comment, and nobody else", async () => {
@@ -729,7 +766,7 @@ describe("an owner reading what their coach wrote", () => {
     await userEvent.click(within(section).getByRole("button", { name: "Try again" }));
     const shown = await screen.findByRole("article", { name: "On “<b>Led</b>”" });
     expect(within(shown).getByText(hostile)).toBeInTheDocument();
-    expect(within(shown).getByText(/^<script>Dana<\/script>, \d+ Nov 2026$/)).toBeInTheDocument();
+    expect(within(shown).getByText(/^<script>Dana<\/script> \(dana@example\.test\), \d+ Nov 2026$/)).toBeInTheDocument();
     expect(within(shown).getByRole("textbox", { name: "Reply to <script>Dana</script>" })).toBeInTheDocument();
     for (const tag of ["img", "script", "b"]) expect(shown.querySelector(tag), tag).toBeNull();
     // The one link in the thread is the app's own, to the resume.

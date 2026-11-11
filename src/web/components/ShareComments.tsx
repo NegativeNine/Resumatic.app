@@ -111,6 +111,16 @@ const targetKey = (target: ShareTarget) =>
 
 const SEND_FAILED = "That didn’t go through. Check your connection, then try again.";
 
+/**
+ * A name another person chose, fit to stand where a comment says whose it is, or null. Words that
+ * would read as the reader's own (“You”) or as the product's are no name at all, so the caller
+ * falls back to what it says without one.
+ */
+function chosenName(name: string | null | undefined): string | null {
+  const trimmed = name?.trim() ?? "";
+  return trimmed && !["you", "resumatic"].includes(trimmed.toLowerCase()) ? trimmed : null;
+}
+
 /** The copy's route refusing a copy that isn't in this account's client list, as against a server with no such route. */
 const NOT_LISTED = "no such client";
 
@@ -135,7 +145,7 @@ export function CoachComments({
 }) {
   const id = useId();
   const grantId = view.grantId;
-  const owner = view.snapshot.owner?.name || null;
+  const owner = chosenName(view.snapshot.owner?.name);
   const [threads, setThreads] = useState<CommentThread[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [text, setText] = useState("");
@@ -370,7 +380,7 @@ function OwnerThread({ thread, onChanged }: { thread: OwnerCommentThread; onChan
   const trimmed = text.trim();
   // A reply answers the coach's latest comment, and goes to the account that wrote it.
   const latest = thread.comments.filter((comment) => comment.author === "coach").at(-1) ?? null;
-  const coach = latest?.name || thread.coachEmail;
+  const coach = chosenName(latest?.name) ?? thread.coachEmail;
   const closed = `This copy isn’t open to ${coach} any more, so they can’t read a reply. Share a new copy to carry on.`;
   const job = thread.target.kind === "line" ? [thread.job?.title, thread.job?.company].filter(Boolean).join(" at ") : "";
 
@@ -378,7 +388,13 @@ function OwnerThread({ thread, onChanged }: { thread: OwnerCommentThread; onChan
     <ThreadCard
       quote={thread.quote}
       comments={thread.comments}
-      byline={(comment) => (comment.author === "owner" ? "You" : comment.name || thread.coachEmail)}
+      // "You" is the owner's alone. A coach's comment always carries the address they sign in with,
+      // so no name they choose for their account can pass for the owner's words, or the product's.
+      byline={(comment) => {
+        if (comment.author === "owner") return "You";
+        const name = chosenName(comment.name);
+        return name ? `${name} (${thread.coachEmail})` : thread.coachEmail;
+      }}
       canDelete={() => true}
       onDelete={(comment) =>
         remove.run(async () => {
