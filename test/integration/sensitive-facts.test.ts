@@ -875,6 +875,121 @@ describe("an older version under review", () => {
   }, 120_000);
 });
 
+// A limit, pinned as it stands. While a fact is marked, a fact read from the same line is used with
+// its own words as its only evidence, so work made then was checked against those words alone.
+// Unmarking gives that fact its whole line back, which that work never saw, and stored work counts
+// only against a fact's evidence exactly as it is now. Nothing is rewritten either way. Whether
+// such work should stay valid is not decided: docs/seeker-release-status.md says so.
+describe("work made while a fact was marked, once it is unmarked", () => {
+  const SUMMARY = "Works in Go";
+  const CHECKED = { verifiedLineIds: ["summary"], totalLines: 1, headersReady: true, skillsReady: true };
+
+  /** An older version under review: one summary line with nothing stored to prove it, and these printed skills. */
+  async function older(skills: string[]) {
+    const user = await reader();
+    const applicationId = await job(user);
+    const resume = await tailor(user, applicationId);
+    expect(resume.state, resume.error ?? "").toBe("ready");
+    const go = await factOf(user, "Go");
+    expect(go.quote).toBe(SKILLS);
+    await sql(user, (db) => {
+      const saved = JSON.parse(db.exec<{ data: string }>(`SELECT data FROM resume_versions WHERE resume_id = ? AND version = ?`, resume.id, resume.version).one().data);
+      saved.render.body = { summary: { id: "summary", text: SUMMARY, factIds: [], status: "kept" }, skills, sections: [] };
+      saved.provenance = "legacy";
+      delete saved.evidence;
+      delete saved.legacyReceipts;
+      db.exec(`UPDATE resume_versions SET data = ? WHERE resume_id = ? AND version = ?`, JSON.stringify(saved), resume.id, resume.version);
+      db.exec(`UPDATE resumes SET body = ? WHERE id = ?`, JSON.stringify(saved.render.body), resume.id);
+    });
+    const latest = () => resumeOf(user, resume.id);
+    /** Starts a check or an edit of the summary, at one output if it completes, and waits for it. */
+    const work = async (extra: Partial<NewDocument>) => {
+      await refill(user);
+      const started = await startDocument(user, applicationId, { kind: "refine", resumeId: resume.id, expectedVersion: (await latest()).version, lineIds: ["summary"], ...extra });
+      expect(started.status, await started.clone().text()).toBe(202);
+      return finishedDocument(user, ((await started.json()) as { documentId: string }).documentId);
+    };
+    /** Checks the summary against "Go", and gives the version that check made. */
+    const check = async () => {
+      expect((await work({ manualText: SUMMARY, manualFactIds: [go.id] })).state).toBe("ready");
+      expect(await quota(user)).toMatchObject({ used: 1, reserved: 0 });
+      return latest();
+    };
+    const finish = async () => user.send("POST", `/api/resumes/${resume.id}/legacy-finalize`, { expectedVersion: (await latest()).version });
+    return { user, resume, go, latest, work, check, finish };
+  }
+
+  it("counts a line checked against a fact read off the marked fact's line only while the mark stands", async () => {
+    const { user, resume, go, latest, check, finish } = await older([]);
+    // "Kubernetes" was read from the same line as "Go". While it is marked, the line is checked
+    // against "Go" with that one word as its evidence, and the check counts.
+    const [kubernetes] = await marked(user, "Kubernetes");
+    const during = await check();
+    expect(during.legacyReview).toEqual(CHECKED);
+    expect(during.facts[go.id]).toEqual({ text: "Go", quote: "Go" });
+    expect(during.sensitiveUse).toBeUndefined();
+
+    // Unmarked, "Go" has its whole line for evidence again. The check was not made against that,
+    // so it no longer counts, and the version can't be finished on the strength of it.
+    expect((await mark(user, [kubernetes!.id], false)).status).toBe(204);
+    const after = await latest();
+    expect(after.version).toBe(during.version);
+    expect(after.legacyReview).toEqual({ ...CHECKED, verifiedLineIds: [] });
+    expect(after.sensitiveUse).toBeUndefined();
+    const refused = await finish();
+    expect([refused.status, await refused.json()]).toEqual([409, { error: "conflict", message: "verify every line and confirm its roles and skills before finishing" }]);
+    // Nothing was rewritten: marked again, the same check counts as it did.
+    expect((await mark(user, [kubernetes!.id])).status).toBe(204);
+    expect((await latest()).legacyReview).toEqual(CHECKED);
+
+    // Unmarked for good, its owner checks the line again, against the whole line this time, at
+    // one more output. That check counts and the version is finished.
+    expect((await mark(user, [kubernetes!.id], false)).status).toBe(204);
+    const again = await check();
+    expect(again.version).toBe(during.version + 1);
+    expect(again.legacyReview).toEqual(CHECKED);
+    expect(again.facts[go.id]).toEqual({ text: "Go", quote: SKILLS });
+    const finished = await finish();
+    expect(finished.status, await finished.clone().text()).toBe(200);
+    const preview = await user.fetch(`/api/resumes/${resume.id}/preview`);
+    expect(preview.status).toBe(200);
+    expect(await preview.text()).toContain(SUMMARY);
+  }, 120_000);
+
+  it("won't reword a line that cites a fact read off the marked fact's line while the version still prints that fact as a skill", async () => {
+    const { user, resume, go, latest, work, check, finish } = await older(["Go"]);
+    // Checked and finished while "Kubernetes" is marked: the version cites "Go" in its summary and
+    // prints it as a skill, on that one word as its evidence. It downloads like any other.
+    const [kubernetes] = await marked(user, "Kubernetes");
+    await check();
+    expect((await finish()).status).toBe(200);
+    const finished = await latest();
+    expect(finished).toMatchObject({ provenance: "snapshot", facts: { [go.id]: { text: "Go", quote: "Go" } } });
+    expect(finished.body!.skills).toEqual(["Go"]);
+    expect((await user.fetch(`/api/resumes/${resume.id}/preview`)).status).toBe(200);
+
+    // Unmarked, it still downloads: nothing in it was rewritten. But its summary can't be reworded.
+    // The new wording is checked against "Go" with its whole line, the printed skill rests on "Go"
+    // as it was, and one version keeps one record for a fact.
+    expect((await mark(user, [kubernetes!.id], false)).status).toBe(204);
+    expect((await user.fetch(`/api/resumes/${resume.id}/preview`)).status).toBe(200);
+    const REWORDED = "Writes services in Go";
+    expect(await work({ manualText: REWORDED })).toMatchObject({ state: "failed", error: "conflict" });
+    expect((await latest()).version).toBe(finished.version);
+    // The failed check cost nothing.
+    expect(await quota(user)).toMatchObject({ used: 0, reserved: 0 });
+
+    // With the skill taken off the version, which is free, the line is reworded against the fact as it is now.
+    const removed = await user.send("POST", `/api/resumes/${resume.id}/remove-skill`, { skillIndex: 0, expectedVersion: finished.version });
+    expect(removed.status, await removed.clone().text()).toBe(200);
+    expect((await work({ manualText: REWORDED })).state).toBe("ready");
+    const reworded = await latest();
+    expect(reworded.body!.summary!.text).toBe(REWORDED);
+    expect(reworded.facts[go.id]).toEqual({ text: "Go", quote: SKILLS });
+    expect((await user.fetch(`/api/resumes/${resume.id}/preview`)).status).toBe(200);
+  }, 120_000);
+});
+
 describe("a letter that uses a marked fact", () => {
   it("is still its owner's to read and download, and is listed as one that can't be shared, with the reason", async () => {
     const user = await reader();

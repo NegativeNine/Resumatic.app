@@ -1,10 +1,12 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import type { ResumeBody, ResumeLine } from "../../src/shared/api";
-import type { FactRecord } from "../../src/shared/types";
+import type { FactRecord, RenderData } from "../../src/shared/types";
+import { legacyReceipt, legacyReview } from "../../src/vault/legacy-remediation";
+import { mergeRefinementEvidence } from "../../src/vault/refinement-evidence";
 import { createSchema } from "../../src/vault/schema";
 import { isWithheld, sensitiveUse, setSensitive, usableQuote, withheldFacts, type Withheld } from "../../src/vault/sensitive";
-import { evidenceForFacts } from "../../src/vault/snapshots";
+import { evidenceForFacts, type ResumeVersion } from "../../src/vault/snapshots";
 
 // The one place that says which facts are withheld, on the vault's whole schema in Node's SQLite,
 // so the triggers that guard a fact are the ones a real vault has.
@@ -248,5 +250,62 @@ describe("what a resume version takes from marked facts", () => {
     // Stored facts that are not a map are read as none, and the citation still counts by its ID.
     const body: ResumeBody = { summary: line("summary", ["led"]), sections: [], skills: [] };
     expect(sensitiveUse(body, [] as unknown as Record<string, { text: string; quote: string | null }>, evidence, withheld)).toEqual({ lineIds: ["summary"], skills: [] });
+  });
+});
+
+// A limit, pinned as it stands. While a fact is marked, a fact read from the same line is used
+// with its own words as its only evidence, and with its whole line again once the mark is gone.
+// The two are different evidence. Work is compared with a fact's evidence exactly, so what was
+// checked against the one is not taken as checked against the other, in either direction. Whether
+// a check against the fact's own words should stand afterwards is not decided:
+// docs/seeker-release-status.md says so.
+describe("work made while a fact was marked, once it is unmarked", () => {
+  const SUMMARY = "Works in Go";
+  /** "Go", read from the skills line, as a run captures it under these marks. */
+  const go = (withheld: Withheld): FactRecord => ({
+    id: "go", revision: 1, origin: "extracted", roleId: null, kind: "skill", text: "Go", level: null,
+    quote: usableQuote({ origin: "extracted", text: "Go", quote: SKILLS }, withheld),
+  });
+  const during = go(held(["kubernetes"], [SKILLS]));
+  const after = go(none);
+  const render = (skills: string[]): RenderData => ({
+    version: 1, company: null, title: null, profile: { name: "", email: "", phone: "", location: "", links: [] },
+    body: { summary: { id: "summary", text: SUMMARY, factIds: ["go"], status: "kept" }, sections: [], skills },
+  });
+
+  it("captures the fact as other evidence than it has afterwards", () => {
+    expect([during.quote, after.quote]).toEqual(["Go", SKILLS]);
+  });
+
+  it("no longer counts a line of an older version that was checked against the fact's own words", () => {
+    const saved: ResumeVersion = { render: render([]), report: null, facts: {}, provenance: "legacy" };
+    saved.legacyReceipts = { summary: legacyReceipt(saved.render.body, "summary", [during], []) };
+    expect(legacyReview(saved, [during], []).verifiedLineIds).toEqual(["summary"]);
+    // The check was not made against the whole line, so it has to be made again.
+    expect(legacyReview(saved, [after], []).verifiedLineIds).toEqual([]);
+    saved.legacyReceipts = { summary: legacyReceipt(saved.render.body, "summary", [after], []) };
+    expect(legacyReview(saved, [after], []).verifiedLineIds).toEqual(["summary"]);
+    // And the other way round, which is the mark doing its work: checked against the whole line,
+    // the line is not checked while a fact read from that line is marked.
+    expect(legacyReview(saved, [during], []).verifiedLineIds).toEqual([]);
+  });
+
+  it("won't reword a line that cites the fact while the version still prints it as a skill on the earlier evidence", () => {
+    const base = (skills: string[]): ResumeVersion => ({
+      render: render(skills), report: null, provenance: "snapshot",
+      facts: { go: { text: during.text, quote: during.quote } }, evidence: evidenceForFacts([during]),
+    });
+    const reworded = (skills: string[]): ResumeBody => {
+      const body = structuredClone(render(skills).body);
+      body.summary!.text = "Writes services in Go";
+      return body;
+    };
+    // While the mark stands the fact is what the version was made with, and the line is reworded.
+    expect(mergeRefinementEvidence(base(["Go"]), reworded(["Go"]), [during], []).evidence).toEqual({ go: during });
+    // Unmarked, one version would need the fact twice over: as the printed skill was checked, and
+    // as the new wording was. It keeps one record for a fact, so the rewording is refused.
+    expect(() => mergeRefinementEvidence(base(["Go"]), reworded(["Go"]), [after], [])).toThrow("conflict: the resume or its supporting evidence changed");
+    // With the skill taken off the version, the line is bound to the fact as it is now.
+    expect(mergeRefinementEvidence(base([]), reworded([]), [after], []).evidence).toEqual({ go: after });
   });
 });
