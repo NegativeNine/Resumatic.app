@@ -121,7 +121,11 @@ Every file is run, in order, and the loop stops at the first one that fails. The
 - A load that left a file out ends with the last file failing: `NOT NULL constraint failed: taxonomy_meta.value`.
 - The app reads a database without those rows as not loaded, and `info()` fails with "the taxonomy is not loaded". That holds for a database with nothing in it, for one loaded part of the way, and for one loaded from SQL made before the builder wrote the counts.
 
-A load that failed is started again in a new database, and the old one is deleted rather than repaired. The check is a count of rows, made once as the load ends. It does not compare contents, and nothing recounts afterwards: a taxonomy's database is not written to again.
+A load that failed is started again in a new database, and the old one is deleted rather than repaired. The check is a count of rows, made once as the load ends. It does not compare contents, and the app does not count again when it reads: a taxonomy's database is not written to after its load. To count again by hand, for instance before a binding is moved to a database, compare what was written with what is there:
+
+```sh
+npx wrangler d1 execute resumatic-taxonomy-<version> --remote --command "SELECT (SELECT value FROM taxonomy_meta WHERE key = 'records') AS written, (SELECT COUNT(*) FROM concepts) AS concepts, (SELECT COUNT(*) FROM labels) AS labels, (SELECT COUNT(*) FROM relations) AS relations"
+```
 
 Then bind it as `TAXONOMY` in the environment that should read it. The binding is optional: where it is absent, `taxonomyFor(env)` is null and the app behaves as it did before. Nothing in this repository binds it yet.
 
