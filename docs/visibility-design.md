@@ -44,7 +44,7 @@ The page says the last three are left out, in the owner's own words for them.
 - the confirmed, non-shadow tags of `usableFacts()` of kind accomplishment or credential, with relation `shows` or `uses`, and the confirmed tags of the parts of a division the owner has accepted;
 - the dates of confirmed jobs, and the confirmed occupation tags on them.
 
-A concept is barred when any non-shadow tag, in any state, names it on a fact marked sensitive or on a part of that fact's division. It stays barred even where an unmarked fact shows it too, because a card that showed it would still say what the marked line says. Shadow tags are never read: they are kept to be measured. Skills-list facts are left out because they are self-declared; `does` tags because they are activities and tasks, and a card lists skills.
+A concept is barred when any non-shadow tag, in any state, names it on a fact marked sensitive or on a part of that fact's division. It stays barred even where an unmarked fact shows it too, because a card that showed it would still say what the marked line says. The Vault passes the barred concepts to the Worker, which leaves them off as groups too: a skill group or tool category that a marked fact names is not shown even where another fact's skill belongs to it. A marked fact's skill does not bar the group above it, so a sibling skill on an unmarked fact can still show that group (open decision 13). Shadow tags are never read: they are kept to be measured. Skills-list facts are left out because they are self-declared; `does` tags because they are activities and tasks, and a card lists skills.
 
 **Skills.** Skills are ranked by how many facts show them, then by ID. The first 24 are read, and each is shown as its group, at most 12 groups, each once.
 
@@ -77,7 +77,7 @@ At every rung, a card that says remote says that instead of a place. "Fewer skil
 
 **Counting.** A card is placed at the finest rung where the cards not yet placed that share its exact description include at least k = 10 trust-signalled cards. Otherwise it is suppressed and stays at Notify me. Cards placed at a finer rung are not counted toward a coarser description: they can be told apart from it, so they are not in its anonymity set. Untrusted cards are placed with their group but never count toward it.
 
-**Handles.** A card's handle is the first 16 hex characters of SHA-256(`secret|id|levelEpoch`). `levelEpoch` counts the times the card's assigned rung, suppressed included, has changed. A card that goes from rung 0 to 1 and back to 0 has three handles, and never gets its first one back. A handle made from the rung alone would have returned it, and linked the card across the change, which the system design forbids.
+**Handles.** A card's handle is the first 16 hex characters of SHA-256(`secret|id|levelEpoch`). `levelEpoch` counts the times the card's assigned rung, suppressed included, has changed. A card that goes from rung 0 to 1 and back to 0 has three handles, and never gets its first one back. A card left out of a publication, because its owner turned it off or it was away, is held as not shown, a level like suppressed: it comes back with a new handle, not the one it left with. A handle made from the rung alone would have returned it, and linked the card across the change, which the system design forbids.
 
 **Bands match.** The harness's fine band edges (`FINE_BANDS` in `scripts/reid/ladder.mjs`) are the card's (`experienceOf` in `src/pipeline/card.ts`). The harness imports no app code, so the two must change together.
 
@@ -128,7 +128,7 @@ For the owner to decide. None is met by anything yet: the synthetic rates above 
 
 ## What Gate 3 still needs
 
-- Tags measured on lines given with consent, and the owner's review of tags. Until then every real card is empty.
+- Tags measured on lines given with consent, and the owner's review of tags. Until then every real card has no occupation and no skills, only the band its confirmed jobs' dates give.
 - Real card distributions, in place of the synthetic population.
 - Block-aware publication: a card that blocks an employer published only beside enough others blocking it.
 - Difference attacks across handle changes over time.
@@ -151,3 +151,5 @@ For the owner to decide. None is met by anything yet: the synthetic rates above 
 10. **Job settings and the card.** Should location, availability and job types ever reach the card, and under what per-use decision?
 11. **Credits elsewhere.** Should the credits appear wherever taxonomy labels are shown, beyond the legal pages and the section's link?
 12. **Staging.** Should `CARD_PREVIEW_ENABLED` be switched on in staging, where a taxonomy is bound?
+13. **Groups of marked skills.** Should a marked fact's skill also bar the group it is shown as, so that no sibling skill on an unmarked fact can show it? That would leave more off the card, and the walk would also have to resolve every barred concept, which the 37-statement bound does not cover.
+14. **The page's wording about an empty card.** The section says the card is built only from confirmed tags and calls a card with no occupation and no skills empty, while it still shows the band from confirmed jobs' dates. The fixed sentences need the owner's review before they change.

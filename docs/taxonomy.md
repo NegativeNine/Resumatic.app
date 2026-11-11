@@ -8,7 +8,7 @@ Resumatic describes work in the terms of two public classifications, held as one
 
 This document says what is in the taxonomy, how it is built and loaded, how the app reads it, and what must be credited. The redesign of the reading and tailoring pipelines that uses it is set out in [taxonomy-pipelines-design.md](taxonomy-pipelines-design.md).
 
-**Status: the builder and the lookup exist and are tested on small synthetic files, and one build from the real downloads was made and checked on 10 November 2026 (see "What has and has not been checked"). The builder changed after it, so the build was made again from the same downloads on 11 November 2026 and that build was loaded into a D1 database on the staging account. The staging deployment binds it as `TAXONOMY` through its hand-applied configuration; the committed configuration binds none. One stage reads one where it is bound and switched on, which is nowhere yet: tagging in shadow ([tagging.md](tagging.md)) and the owner's card preview, where switched on.**
+**Status: the builder and the lookup exist and are tested on small synthetic files, and one build from the real downloads was made and checked on 10 November 2026 (see "What has and has not been checked"). The builder changed after it, so the build was made again from the same downloads on 11 November 2026 and that build was loaded into a D1 database on the staging account. The staging deployment binds it as `TAXONOMY` through its hand-applied configuration; the committed configuration binds none. Two parts of the app read one where it is bound and switched on, which is nowhere yet: tagging in shadow ([tagging.md](tagging.md)) and the owner's card preview.**
 
 ## What each source is used for
 
