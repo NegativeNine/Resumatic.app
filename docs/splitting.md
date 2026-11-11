@@ -52,7 +52,7 @@ So the safety of dividing rests, for those two kinds of error, on the judge. The
 
 ## What no check establishes
 
-That a mention is a tool, a name or a figure. A mention is held to the checks above as a part of the line: whole words inside a claim, never across a figure, and never a figure without the word that scales or hedges it. Whether those words name a tool is the proposing model's word alone. Nothing reads a mention yet; when tagging is built (step 5), each tag on one is a judgement of its own.
+That a mention is a tool, a name or a figure. A mention is held to the checks above as a part of the line: whole words inside a claim, never across a figure, and never a figure without the word that scales or hedges it. Whether those words name a tool is the proposing model's word alone. Nothing reads a mention yet; tagging does not tag parts yet ([tagging.md](tagging.md)).
 
 ## Running in shadow
 

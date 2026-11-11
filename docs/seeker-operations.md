@@ -51,6 +51,12 @@ Enable it in staging first by adding the variable to `env.staging.vars`. Before 
 
 `OFFER_SHADOW_ENABLED=true` has the reading of an upload also ask the judge whether lines that differ in wording say the same thing as lines already in the same role, and keep each answer as an offer in shadow ([merging.md](merging.md)). Nothing is offered to anyone and nothing is merged. It is absent from every environment and refused in production configuration (`OFFER_SHADOW_ROLLOUT_UNVERIFIED`). Switched on, an upload makes extra calls on the judge route, at most 120 questions, and is marked ready after them. It gets one try of at most three minutes, as dividing lines does. A failure in it never fails an upload.
 
+### Tagging in shadow
+
+`TAG_SHADOW_ENABLED=true` has the reading of an upload also work out which taxonomy concepts its facts and job titles show, and keep each tag in shadow: stored in the person's vault to be measured, shown to nobody and read by nothing ([tagging.md](tagging.md)). It does nothing unless a taxonomy is bound as `TAXONOMY` and wholly loaded. It is absent from every environment, and `scripts/validate-config.mjs` refuses it in production configuration (`TAG_SHADOW_ROLLOUT_UNVERIFIED`). Switched on, an upload sends the words of each line and job title to the taxonomy's database to be looked up, makes extra calls on the judge route, at most 120 questions, and is marked ready after them. The stage gets one try of at most three minutes, which "ready" waits for, and is not run again if it runs out of time. A failure in it never fails an upload, and it keeps what was stored before it failed: tags are stored as they are decided, where a division or an offer is stored only at the end.
+
+Before the production guard is lifted, all of these must hold: the precision of each method's tags, measured on lines given with consent; the privacy notice naming the tags as data held and the lookup in the taxonomy's database; the ESCO and O\*NET credits on the legal pages ([taxonomy.md](taxonomy.md), "Credits"); what D1 keeps of the values bound to a query, established for the taxonomy's database; and the stage's D1 statements at its caps (about 400 for the words of an upload, 120 for the rule and eight occupation profiles) run against a deployed Worker.
+
 ## Billing configuration
 
 Billing stays disabled unless `BILLING_ENABLED=true` and all required values are valid. Provide `APP_ORIGIN`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, an explicit `STRIPE_API_VERSION`, and `BILLING_PLANS_JSON`:

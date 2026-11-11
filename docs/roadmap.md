@@ -16,6 +16,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Dividing a line into its claims | #31 open, based on #30 | Off by default, and kept in shadow where switched on. The eval against the real models needs credentials and has not been run; nothing has been measured |
 | Finding what an upload says again | #32 open, based on #31 | Off by default; notes identical roles and facts in shadow with no model, and merges nothing. Offers of different wordings, which need the judge, are not built |
 | Two wordings of one thing | #33 open, based on #32 | Off by default; asks the judge about likely pairs and keeps each answer as an offer in shadow. The eval against the real judge needs credentials and has not been run |
+| Tagging facts and roles with taxonomy concepts | #NN open, based on #33 | Off by default and inert without a loaded taxonomy. No vault migration. Vector candidates, parts, postings, screens and any use of tags are not built; the eval against the real judge has not been run |
 
 An open PR or a local check is not a claim of production release acceptance. The [release status](seeker-release-status.md) records the broader acceptance work.
 
@@ -31,11 +32,11 @@ The last two were on the roadmap as Now from the start and do not depend on tagg
 
 ## Taxonomy pipeline work
 
-The [pipeline design](taxonomy-pipelines-design.md) is agreed. The real-data build's [manifest](taxonomy-build-2026-11-10.json) is available, and the vault can hold parts, tags and links ([record.md](record.md)); no reading or tailoring pipeline uses either yet.
+The [pipeline design](taxonomy-pipelines-design.md) is agreed. The real-data build's [manifest](taxonomy-build-2026-11-10.json) is available, and the vault can hold parts, tags and links ([record.md](record.md)); nothing uses either except the shadow stages below, switched on nowhere.
 
 1. Load the versioned taxonomy into staging and build its vector index.
 2. Add evidence, parts, tags and links without changing existing records. In review as #30.
-3. Evaluate splitting, tagging and duplicate matching in shadow, using consented labelled examples. Splitting is in review as #31 ([splitting.md](splitting.md)), and matching as #32 and #33 ([merging.md](merging.md)); none has been run against the real models. Tagging is not started and waits for the taxonomy in staging.
+3. Evaluate splitting, tagging and duplicate matching in shadow, using consented labelled examples. Splitting is in review as #31 ([splitting.md](splitting.md)), and matching as #32 and #33 ([merging.md](merging.md)); none has been run against the real models. Tagging of facts and roles is in review as #NN ([tagging.md](tagging.md)) and waits for the taxonomy in staging before it can run anywhere.
 4. Add owner review of parts, tags and merge proposals.
 5. Add matching and coverage by concept, retaining evidence checks and similarity fallback.
 6. Add skills with years only where skill-use intervals are evidenced or owner-confirmed; role dates alone are insufficient.

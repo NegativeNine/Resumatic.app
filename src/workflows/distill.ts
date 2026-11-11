@@ -7,6 +7,8 @@ import { runModels } from "./models";
 import { modelFor } from "../ai/models";
 import { ENTAILMENT_METHOD, offers } from "../pipeline/match";
 import { SPLIT_METHOD, splitLines } from "../pipeline/split";
+import { emptyTagReport, tagUpload } from "../pipeline/tag";
+import { taxonomyFor } from "../taxonomy";
 import { extractFacts } from "../pipeline/distill";
 import { extractorById } from "../pipeline/extract";
 import { validateTranscriptionInput } from "../ai/transcribe";
@@ -276,6 +278,34 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
           );
         } catch {
           // The step ran out of time. Nothing was kept, and the lines stay whole.
+        }
+      // Which taxonomy concepts a line shows is measured before anyone is shown a tag. Where this
+      // is switched on and a taxonomy is bound, every label found word for word in a fact or a job
+      // title is decided, by a rule or by the judge, and each tag is kept in shadow as it is
+      // decided. Without both there is no step: nothing is looked up and no model is asked. A
+      // failure here leaves the upload as it is read today, with whatever tags were kept before it.
+      const taxonomy = this.env.TAG_SHADOW_ENABLED === "true" ? taxonomyFor(this.env) : null;
+      if (taxonomy)
+        try {
+          await step.do(
+            "tag",
+            SHADOW_STEP,
+            once(async () => {
+              try {
+                // An empty, part-loaded or unreachable taxonomy fails here, before anything is read from the vault.
+                const made = { model: modelFor(this.env, "judge"), taxonomyVersion: (await taxonomy.info()).version };
+                const subjects = await v.tagCandidates(sourceId, event.instanceId);
+                // Counts only: no line, title or label is kept in the Workflow's own state.
+                return await tagUpload(runModels(this.env, vaultId, event.instanceId, "tag", "distill"), taxonomy, subjects, made, (tags) =>
+                  v.saveShadowTags(sourceId, event.instanceId, made, tags),
+                );
+              } catch (error) {
+                return { ...emptyTagReport(), failed: errorCode(error) ?? "error" };
+              }
+            }),
+          );
+        } catch {
+          // The step ran out of time. What it had stored by then is kept, and nothing is asked again.
         }
       await step.do(
         "finish",

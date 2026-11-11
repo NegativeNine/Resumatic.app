@@ -4,7 +4,7 @@ A vault holds a person's facts and roles, each with the quote it was read from. 
 
 It is step 3 of the [pipeline design](taxonomy-pipelines-design.md). The vocabulary and the rules that need no storage are in `src/shared/record.ts`; the tables and the store are in `src/vault/record.ts`.
 
-**Status: the tables, the store and its rules exist and are tested. Two things write to them, both in shadow and only where switched on, which is nowhere by default: divisions of lines ([splitting.md](splitting.md)), notes of roles and facts that repeat an earlier one word for word, and offers of two wordings as the same fact ([merging.md](merging.md)). Nothing proposes a tag, nothing is merged, no screen shows any of it, and tailoring does not use it. What a vault shows and does is exactly as it was.**
+**Status: the tables, the store and its rules exist and are tested. Three things write to them, all in shadow and only where switched on, which is nowhere by default: divisions of lines ([splitting.md](splitting.md)); notes of roles and facts that repeat an earlier one word for word, and offers of two wordings as the same fact ([merging.md](merging.md)); and tags on facts and job roles ([tagging.md](tagging.md)). Nothing is merged, no screen shows any of it, and tailoring does not use it. What a vault shows and does is exactly as it was.**
 
 ## What is kept
 
@@ -111,7 +111,7 @@ Dropping a confirmed tag when its fact is reworded is deliberate: the tag was co
 
 ## What is not built
 
-- Divisions are proposed only in shadow and only where switched on (step 4, [splitting.md](splitting.md)). Identical copies are noted the same way, and so are offers of two wordings as the same fact (step 6, [merging.md](merging.md)). Nothing proposes a tag (step 5).
+- Divisions are proposed only in shadow and only where switched on (step 4, [splitting.md](splitting.md)). Identical copies are noted the same way, and so are offers of two wordings as the same fact (step 6, [merging.md](merging.md)). Tags are proposed the same way, on facts and job roles only; a part gets none yet (step 5, [tagging.md](tagging.md)).
 - No screen shows or decides one (step 7), and the vault has no routes for them.
 - Tailoring does not read tags, parts or merges (step 8). The list of facts still shows every fact, including one merged into another.
 - A fact's record does not yet hold when a skill was used, which years per skill needs.
