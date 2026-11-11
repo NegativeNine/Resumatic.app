@@ -227,8 +227,10 @@ export function htmlToText(input: string): string {
   }
   const lines = value
     .replace(/\r\n?/g, "\n")
-    // Control and zero-width characters carry nothing a person reads.
+    // Control and zero-width characters carry nothing a person reads. Nor do marks of direction,
+    // which can show a posting in one order while it is read, and searched for skills, in another.
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200d\u2060\ufeff]/g, "")
+    .replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "")
     // Every kind of space is one space.
     .replace(/[\t \u00a0\u2000-\u200a\u202f\u3000]+/g, " ")
     .split("\n")
