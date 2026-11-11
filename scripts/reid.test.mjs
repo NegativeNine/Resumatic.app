@@ -145,6 +145,33 @@ test("a card that goes from rung 0 to 1 and back to 0 ends with three different 
   assert.ok(!handles.includes(back.get(watched).handle));
 });
 
+test("a card left out of a publication comes back with a new handle, never its first", () => {
+  const alike = Array.from({ length: 12 }, (_, n) => card(`alike-${n}`, { skills: [1, 2, 3, 4, 5, 6, 100, 101] }));
+  const watched = alike[0].id;
+  const first = publish(alike, { secret: SECRET });
+  assert.equal(first.get(watched).rung, 0);
+  // Its owner turns it off for a while: the publication holds it as not shown, a change of level.
+  const away = publish(alike.slice(1), { secret: SECRET, previous: first });
+  assert.deepEqual(away.get(watched), { rung: null, key: null, levelEpoch: 1, handle: null });
+  for (const other of alike.slice(1)) assert.deepEqual(away.get(other.id), first.get(other.id), other.id);
+  // Still away: nothing changes.
+  const still = publish(alike.slice(1), { secret: SECRET, previous: away });
+  assert.deepEqual(still.get(watched), away.get(watched));
+  // Back at the same rung, with a handle it never had.
+  const back = publish(alike, { secret: SECRET, previous: still });
+  assert.equal(back.get(watched).rung, 0);
+  assert.equal(back.get(watched).levelEpoch, 2);
+  assert.notEqual(back.get(watched).handle, first.get(watched).handle);
+  // A card suppressed when it left keeps its level while away, and its epoch moves once it is placed again.
+  const few = publish(alike.slice(0, 3), { secret: SECRET, previous: back });
+  assert.equal(few.get(watched).rung, null);
+  const gone = publish(alike.slice(1, 3), { secret: SECRET, previous: few });
+  assert.equal(gone.get(watched).levelEpoch, few.get(watched).levelEpoch);
+  const again = publish(alike, { secret: SECRET, previous: gone });
+  assert.equal(again.get(watched).levelEpoch, few.get(watched).levelEpoch + 1);
+  assert.ok(![first, back].map((round) => round.get(watched).handle).includes(again.get(watched).handle));
+});
+
 test("an unchanged level keeps its handle, and no handle repeats across cards", () => {
   const again = publish(seekers, { secret: SECRET, previous: published });
   for (const [id, entry] of published) assert.deepEqual(again.get(id), entry, id);

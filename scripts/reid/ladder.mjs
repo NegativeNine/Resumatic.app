@@ -79,7 +79,9 @@ function handleOf(secret, id, levelEpoch) {
  *
  * Each card's `levelEpoch` counts how often its rung, suppressed included, has changed since
  * `previous`, and its handle is made from it: a card that goes back to a rung it had before gets a
- * new handle, never its old one.
+ * new handle, never its old one. A card in `previous` but not in `cards` (turned off, or away for
+ * a while) is kept in the result as not shown, which is a level like suppressed: its epoch moves
+ * when it leaves a rung and again when it comes back, so it never returns to its first handle.
  */
 export function publish(cards, { k = K, secret, previous } = {}) {
   if (typeof secret !== "string" || !secret) throw new Error("a publication needs a secret");
@@ -108,6 +110,8 @@ export function publish(cards, { k = K, secret, previous } = {}) {
     const levelEpoch = before ? before.levelEpoch + (rung !== before.rung ? 1 : 0) : 0;
     out.set(card.id, { rung, key, levelEpoch, handle: rung === null ? null : handleOf(secret, card.id, levelEpoch) });
   }
+  for (const [id, before] of previous ?? [])
+    if (!out.has(id)) out.set(id, { rung: null, key: null, levelEpoch: before.levelEpoch + (before.rung !== null ? 1 : 0), handle: null });
   return out;
 }
 
