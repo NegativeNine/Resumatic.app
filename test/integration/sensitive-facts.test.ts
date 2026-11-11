@@ -380,6 +380,42 @@ describe("marking a fact sensitive", () => {
     expect(again.filter((fact) => fact.sensitive).map((fact) => fact.text)).toEqual([LED]);
   });
 
+  it("reaches the same line whether or not its stored copy kept the stars set off by spaces", async () => {
+    // Cleaning once took out a star set off by spaces, so a line read before that changed is stored
+    // without the stars that a copy of the same line read now keeps.
+    const SPACED = "Covered 2 * 3 * 4 client sites";
+    const STRIPPED = "Covered 2 3 4 client sites";
+    const OTHER = "Covered 2 * 3 * 5 client sites";
+    const content = RESUME.replace(`- ${MENTORED}`, `- ${MENTORED}\n- ${SPACED}\n- ${OTHER}`);
+    options.extraction = {
+      ...EXTRACTION,
+      facts: [
+        ...EXTRACTION.facts,
+        { roleKey: "globex", kind: "accomplishment", text: SPACED, level: null, quote: SPACED },
+        { roleKey: "globex", kind: "accomplishment", text: OTHER, level: null, quote: OTHER },
+      ],
+    };
+    const user = await signIn();
+    await read(user, "jane-doe.pdf", content);
+    const older = await factOf(user, SPACED);
+    await sql(user, (db) => void db.exec(`UPDATE facts SET text = ? WHERE id = ?`, STRIPPED, older.id));
+    expect((await mark(user, [older.id])).status).toBe(204);
+
+    // A later upload's copy, read with its stars kept, arrives marked; the line with other words does not.
+    const later = await read(user, "jane-doe-2025.pdf", `${content}\nAvailable from January.\n`);
+    const arrived = (await facts(user)).filter((fact) => fact.sourceId === later);
+    expect(arrived.filter((fact) => fact.sensitive).map((fact) => fact.text)).toEqual([SPACED]);
+    expect((await usable(user)).map((fact) => fact.text)).not.toContain(SPACED);
+
+    // Unmarking either copy unmarks both, and marking the copy that kept its stars marks the other.
+    const copies = async () => (await facts(user)).filter((fact) => fact.text === SPACED || fact.text === STRIPPED);
+    expect((await mark(user, [older.id], false)).status).toBe(204);
+    expect((await copies()).map((fact) => fact.sensitive === true)).toEqual([false, false]);
+    expect((await mark(user, [(await factOf(user, SPACED)).id])).status).toBe(204);
+    expect((await copies()).map((fact) => fact.sensitive === true)).toEqual([true, true]);
+    expect((await facts(user)).filter((fact) => fact.text === OTHER).map((fact) => fact.sensitive === true)).toEqual([false, false]);
+  });
+
   it("refuses anyone but the owner, an unknown fact, a malformed request and a stale page, and changes nothing", async () => {
     const alice = await reader();
     const bob = await reader();
