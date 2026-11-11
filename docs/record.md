@@ -48,7 +48,7 @@ A part is a list of positions in its fact's text and a kind. No wording is store
 
 The record also refuses parts that are out of order, overlap inside one part, repeat, or don't fit together: a division needs at least one clause, a result must lead to a clause, and a mention must sit inside a claim.
 
-**What the record does not check.** Whether a part means what the line means cannot be told from positions. Whether a line with "helped" or "not" in it may be divided at all, whether anything was left out, and whether each part reads the same alone are checked where a division is proposed (step 4), and a division that passes here can still be refused there.
+**What the record does not check.** Whether a part means what the line means cannot be told from positions. Whether a line with "helped" or "not" in it may be divided at all, whether anything was left out, whether each part reads the same alone, and whether a result is the outcome of the claim it names are checked where a division is proposed (step 4), and a division that passes here can still be refused there.
 
 **One division at a time.** A new proposal replaces one nobody has decided. It never replaces a division the owner accepted, and one the owner turned down is not stored again. The owner dividing a line themselves replaces whatever stood. A skill is one item and has no parts.
 

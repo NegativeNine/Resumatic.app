@@ -17,9 +17,10 @@ export interface SplitExample {
   /** One division a careful reader would accept. */
   gold?: LabelledPart[];
   /**
-   * Divisions made only of the line's own words that say something the line doesn't. None may
-   * ever be accepted. `caught` is the check that refuses it without a model, or "judge" when
-   * nothing but the judge can.
+   * Divisions made only of the line's own words that say something the line doesn't: in a claim,
+   * in a mention, or in which claim a result is the outcome of. None may ever be accepted.
+   * `caught` is the check that refuses it without a model, or "judge" when nothing but the judge
+   * can.
    */
   traps?: { says: string; parts: LabelledPart[]; caught: SplitRefusal | "judge" }[];
 }
@@ -124,6 +125,15 @@ export const SPLIT_LINES: SplitExample[] = [
         ],
         caught: "claim_check",
       },
+      {
+        says: "mentions a figure without the word that scales it",
+        parts: [
+          ["clause", ["Built a service handling 2 million events"]],
+          ["clause", ["cut its costs by 30%"]],
+          ["mention", ["2"]],
+        ],
+        caught: "claim_check",
+      },
     ],
   },
   {
@@ -182,11 +192,51 @@ export const SPLIT_LINES: SplitExample[] = [
       },
     ],
   },
+  {
+    line: "Rebuilt the checkout, raising conversion by 12%, and led the design team",
+    expect: "split",
+    gold: [
+      ["clause", ["Rebuilt the checkout"]],
+      ["result", ["raising conversion by 12%"], 0],
+      ["clause", ["led the design team"]],
+    ],
+    traps: [
+      {
+        says: "names a claim that comes after a result as what led to it",
+        parts: [
+          ["clause", ["Rebuilt the checkout"]],
+          ["result", ["raising conversion by 12%"], 2],
+          ["clause", ["led the design team"]],
+        ],
+        caught: "result_before_claim",
+      },
+    ],
+  },
+  {
+    line: "Trained 4 new hires and rewrote the importer, cutting import time from 2 hours to 5 minutes",
+    expect: "split",
+    gold: [
+      ["clause", ["Trained 4 new hires"]],
+      ["clause", ["rewrote the importer"]],
+      ["result", ["cutting import time from 2 hours to 5 minutes"], 1],
+    ],
+    traps: [
+      {
+        says: "says the other thing done is what cut the time",
+        parts: [
+          ["clause", ["Trained 4 new hires"]],
+          ["clause", ["rewrote the importer"]],
+          ["result", ["cutting import time from 2 hours to 5 minutes"], 0],
+        ],
+        caught: "judge",
+      },
+    ],
+  },
   { line: "Helped lead the migration and the rollout", expect: "qualified" },
   { line: "Did not manage the budget but ran the roadmap", expect: "qualified" },
   // Typed with an accent and with an opening quotation mark where the apostrophe belongs.
-  { line: "Didn´t manage the budget but ran the roadmap", expect: "qualified" },
-  { line: "Wasn‘t on the on-call rota but wrote every runbook", expect: "qualified" },
+  { line: "Didn\u00B4t manage the budget but ran the roadmap", expect: "qualified" },
+  { line: "Wasn\u2018t on the on-call rota but wrote every runbook", expect: "qualified" },
   { line: "Built services in Python or Go and deployed them weekly", expect: "qualified" },
   { line: "Proposed a redesign of billing, cutting costs by 20%", expect: "qualified" },
   { line: "Reduced latency by up to 40% and doubled throughput", expect: "qualified" },

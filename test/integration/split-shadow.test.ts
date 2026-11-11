@@ -156,6 +156,18 @@ describe("reading an upload with shadow divisions switched on", () => {
     expect((await held(user, facts.find((fact) => fact.text === LED)!.id)).all.factSplits).toEqual([]);
   });
 
+  it("keeps nothing when the judge does not find that the line states a result with the claim it is named as the outcome of", async () => {
+    // Read together, the claim and its result have no comma between them. So this judge accepts
+    // each part alone and the line against its parts, and refuses only the two read as one.
+    const { seen, models } = splitting(divideLed, { judgeRejects: ["Kubernetes cutting deploy time by 60%"] });
+    setModels(() => models);
+    const user = await signIn();
+    const facts = await read(user);
+    expect(facts).toHaveLength(8);
+    expect(seen.options.calls?.judge).toBe(1);
+    expect((await held(user, facts.find((fact) => fact.text === LED)!.id)).all.factSplits).toEqual([]);
+  });
+
   it("keeps nothing a check refuses, whatever the model proposes", async () => {
     // "Led ... deploy time by 60%" is the line's own words, and reaches across "40 services" to say it.
     const { models } = splitting((lines) => ({

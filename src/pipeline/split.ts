@@ -12,11 +12,13 @@ import { MAX_PART_RANGES, MAX_SPLIT_PARTS, lineRuns, partText, partsProblem, typ
 //   1. a line with a hedge, a negation, an alternative or an intention in it is never divided;
 //   2. the parts must be whole words of the line and fit together (src/shared/record.ts);
 //   3. no word that carries meaning may be left out of every claim;
-//   4. a claim made of separate pieces may not reach across a figure to join them;
-//   5. each claim must pass the checks a resume line passes against its facts: numbers, names,
-//      scope, and denied or planned actions;
-//   6. the judge must find that the line states each claim as it reads alone, and that the
-//      claims together say everything the line says.
+//   4. a part made of separate pieces may not reach across a figure to join them;
+//   5. each part, a mention included, must pass the checks a resume line passes against its
+//      facts: numbers, names, scope, and denied or planned actions;
+//   6. a result must come after the claim it is named as the outcome of;
+//   7. the judge must find that the line states each claim as it reads alone, that it states each
+//      result with the claim it is the outcome of, and that the claims together say everything
+//      the line says.
 // Nothing here stores anything. A caller keeps the divisions that pass, in shadow.
 
 /** The check that made a division, stamped on it. Raise the number when a rule or the prompt changes. */
@@ -34,12 +36,16 @@ export const SPLIT_REFUSALS = [
   "malformed",
   /** A word that carries meaning was in no claim. */
   "word_lost",
-  /** A claim made of separate pieces skipped a figure between them. */
+  /** A part made of separate pieces skipped a figure between them. */
   "figure_skipped",
-  /** A claim failed a deterministic check against its line. */
+  /** A part failed a deterministic check against its line. */
   "claim_check",
+  /** A result did not come after the claim it names, so the two can't be read together as the line reads. */
+  "result_before_claim",
   /** The judge did not find that the line states a claim as it reads alone. */
   "reads_differently",
+  /** The judge did not find that the line states a result with the claim it is named as the outcome of. */
+  "not_its_outcome",
   /** The judge did not find that the claims together say everything the line says. */
   "says_less",
 ] as const;
@@ -144,7 +150,7 @@ export function splitPrompt(lines: SplitLine[]): ChatMessage[] {
 
 Each line comes with its words numbered from 0. For each line return its parts:
 - "clause": one thing the person did, with its verb and everything that verb acts on. When two verbs share words ("Designed and built the API"), give each verb its own clause and put the shared words in both.
-- "result": an outcome the line states for a clause ("cutting deploy time from 40 minutes to 6"). Set "of" to the position, in your list of parts for that line, of the clause it is the outcome of. "of" is null for every other kind.
+- "result": an outcome the line states for a clause ("cutting deploy time from 40 minutes to 6"). Set "of" to the position, in your list of parts for that line, of the clause it is the outcome of. Positions count from 0, as word numbers do: the first part you list is 0. A result comes after the clause it is the outcome of. "of" is null for every other kind.
 - "mention": a tool, product, organisation, or figure with its unit, inside a clause or result.
 "words" is one or more ranges of word numbers, {"from", "to"}, both inclusive, in the order they appear.
 
@@ -203,13 +209,16 @@ export function toParts(line: string, proposal: SplitProposal): NewPart[] | null
 const JOINING = new Set(["and", "&", "plus", "then", "also", "both", "while", "by", "thereby", "thus"]);
 
 const claimsOf = (parts: NewPart[]) => parts.filter((part) => part.kind !== "mention");
+/** The part a result is named as the outcome of. Only for parts that passed `partsProblem`. */
+const named = (parts: NewPart[], result: NewPart) => parts[result.resultOf!]!;
 
 /**
  * Why these parts can't stand for the line, as far as can be told without a model, or null when
  * they can. The parts are the line's own words, so the claim check is not looking for new words.
- * It finds a claim that says more by saying less: a figure without the word that scales or
+ * It finds a part that says more by saying less: a figure without the word that scales or
  * hedges it, a verb whose "helped" was left behind, or an action the line denies. It cannot find
- * every claim that pairs a verb with the wrong object. That is the judge's question.
+ * every claim that pairs a verb with the wrong object, or every result named as the outcome of
+ * the wrong one of the claims before it. Those are the judge's questions.
  */
 export function partsRefusal(line: string, parts: NewPart[]): SplitRefusal | null {
   if (partsProblem(line, parts)) return "malformed";
@@ -221,22 +230,35 @@ export function partsRefusal(line: string, parts: NewPart[]): SplitRefusal | nul
     const kept = claims.some((claim) => claim.ranges.some(([start, end]) => start <= run.coreStart && run.coreEnd <= end));
     if (!kept) return "word_lost";
   }
-  // A claim may join pieces of the line ("Designed ... the API"), but not across a figure. Reaching
-  // past one either leaves behind a number that belongs to the claim's verb or borrows another
-  // claim's: "Led a team of 5 and shipped 3 products" must never yield "Led 3 products".
-  for (const claim of claims)
-    for (let i = 1; i < claim.ranges.length; i++)
-      if (numbersIn(line.slice(claim.ranges[i - 1]![1], claim.ranges[i]![0])).length) return "figure_skipped";
-  for (const claim of claims) if (!checkClaim(partText(line, claim.ranges), [{ text: line }]).ok) return "claim_check";
+  // A part may join pieces of the line ("Designed ... the API"), but not across a figure. Reaching
+  // past one either leaves behind a number that belongs to the part's verb or borrows another's:
+  // "Led a team of 5 and shipped 3 products" must never yield "Led 3 products". A mention is held
+  // to this and to the claim check as a claim is: it is stored with the division, and "2" is not
+  // a mention of "2 million".
+  for (const part of parts)
+    for (let i = 1; i < part.ranges.length; i++)
+      if (numbersIn(line.slice(part.ranges[i - 1]![1], part.ranges[i]![0])).length) return "figure_skipped";
+  for (const part of parts) if (!checkClaim(partText(line, part.ranges), [{ text: line }]).ok) return "claim_check";
+  // Which claim a result is the outcome of is put to the judge by reading the two together, the
+  // claim and then the result. That reads as the line does only when the result comes after the
+  // claim, so a result named as the outcome of anything later keeps the line whole.
+  for (const part of parts) if (part.kind === "result" && named(parts, part).ranges.at(-1)![1] > part.ranges[0]![0]) return "result_before_claim";
   return null;
 }
 
-/** The judge's two questions for one line, as lines to check against facts. */
+/** The judge's three questions for one line, as lines to check against facts. */
 function judgeItems(line: SplitLine, parts: NewPart[]): JudgeItem[] {
   const claims = claimsOf(parts).map((claim) => partText(line.text, claim.ranges));
   return [
     // Does the line state each claim, with nothing added and nothing changed, when it is read alone?
     ...claims.map((text, index) => ({ alias: `${line.id}.${index}`, text, facts: [{ text: line.text, quote: null }] })),
+    // Does the line state each result as the outcome of the claim it names? The two are read
+    // together, the claim and then its result, so naming another claim asks another question.
+    ...parts.flatMap((part, index) =>
+      part.kind === "result"
+        ? [{ alias: `${line.id}.r${index}`, text: partText(line.text, [...named(parts, part).ranges, ...part.ranges]), facts: [{ text: line.text, quote: null }] }]
+        : [],
+    ),
     // Do the claims together say everything the line says?
     { alias: `${line.id}.all`, text: line.text, facts: claims.map((text) => ({ text, quote: null })) },
   ];
@@ -310,7 +332,9 @@ export async function splitLines(models: Models, lines: SplitLine[]): Promise<Sp
     checked.forEach(({ line, parts }, index) => {
       const alias = `L${index + 1}`;
       const alone = claimsOf(parts).every((_, claim) => verdicts.get(`${alias}.${claim}`) === true);
+      const outcomes = parts.every((part, at) => part.kind !== "result" || verdicts.get(`${alias}.r${at}`) === true);
       if (!alone) whole(line.id, "reads_differently");
+      else if (!outcomes) whole(line.id, "not_its_outcome");
       else if (verdicts.get(`${alias}.all`) !== true) whole(line.id, "says_less");
     });
   }
