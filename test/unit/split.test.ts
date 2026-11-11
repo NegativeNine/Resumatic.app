@@ -96,7 +96,7 @@ describe("starting rule 1: a qualified line stays whole", () => {
     ["Didn\u2019t own on-call but wrote every runbook", "didn't"],
     // Whatever was typed or read for the apostrophe: a quotation mark of either hand, an accent
     // standing alone, a prime, or a letter that only looks like one.
-    ...["\u2018", "\u201b", "\u02bc", "\u02bb", "`", "\u00b4", "\u2032", "\uff07"].map((mark): [string, string] => [`Didn${mark}t own on-call but wrote every runbook`, "didn't"]),
+    ...["\u2018", "\u201B", "\u02BC", "\u02BB", "`", "\u00B4", "\u2032", "\uFF07"].map((mark): [string, string] => [`Didn${mark}t own on-call but wrote every runbook`, "didn't"]),
     ["Ran the roadmap but COULDN\u00b4T hire for it in 2020", "couldn't"],
     ["Shipped the API without downtime and trained the team", "without"],
     ["Built services in Python or Go and deployed them weekly", "or"],

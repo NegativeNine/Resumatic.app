@@ -67,11 +67,12 @@ describe("the judge in the REST evaluation adapter", () => {
   const quietPilot = () => ({ reserve: vi.fn(async () => {}), settle: vi.fn(async () => {}), freeze: vi.fn(async () => {}) });
 
   it("is there exactly when the Worker has one, for the configuration each environment runs", () => {
-    const staging = wranglerVars("staging");
-    // Staging is the only environment the live evals read, and its judge is a typed decision.
-    expect(models(staging as unknown as Env).judge).toBeTypeOf("function");
-    for (const vars of [staging, wranglerVars(), { MODEL_JUDGE: CLEF_MODEL }, { MODEL_JUDGE: "openai/gpt-5" }, {}])
+    // Staging's is the configuration the live evals read. Whatever judge it names, and whatever
+    // the top-level configuration names, the adapter and the Worker ask it the same way.
+    const configured = [wranglerVars("staging"), wranglerVars(), { MODEL_JUDGE: CLEF_MODEL }, { MODEL_JUDGE: "openai/gpt-5" }, {}];
+    for (const vars of configured)
       expect(typeof restModels(creds, vars, { budget: new EvalBudget({ usd: 1, maxCalls: 1 }), pilot: quietPilot() }).judge, JSON.stringify(vars.MODEL_JUDGE)).toBe(typeof models(vars as unknown as Env).judge);
+    expect(restModels(creds, { MODEL_JUDGE: CLEF_MODEL }, { budget: new EvalBudget({ usd: 1, maxCalls: 1 }), pilot: quietPilot() }).judge).toBeTypeOf("function");
   });
 
   it("sends the Worker's own request for each line, and reserves it as input alone", async () => {

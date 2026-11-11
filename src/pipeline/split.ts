@@ -94,7 +94,7 @@ const QUALIFYING_PHRASES =
 // Whatever was typed or read where an apostrophe belongs: a quotation mark of either hand, an
 // accent standing alone, a prime, or a modifier letter that only looks like one. "Didn`t" and
 // "didn\u2018t" deny exactly what "didn't" denies.
-const APOSTROPHES = /['\u2032\u2035\uff07\p{Pi}\p{Pf}\p{Sk}\p{Lm}]/gu;
+const APOSTROPHES = /['\u2032\u2035\uFF07\p{Pi}\p{Pf}\p{Sk}\p{Lm}]/gu;
 
 /**
  * Every hedge, negation, alternative or intention in a line: the phrases in the order they come,
