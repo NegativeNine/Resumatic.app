@@ -62,7 +62,9 @@ An offer is only ever an offer. Nothing here confirms one, and in shadow nobody 
 
 **An answer is about particular words.** The judge is asked while the upload is still being read, and either line can be reworded in the meantime. Each answer goes back to the vault with the two lines as the judge was asked about them, and an offer is kept only if both facts still say exactly that. Rewording a fact afterwards removes its offers, as it removes every judgement about its words ([record.md](record.md), "When words change").
 
-Like the matcher, this step cannot fail an upload and gets one try of at most three minutes. If it runs out of time it is not run again, so the judge is never asked the same questions twice, and nothing is kept.
+Like the matcher, this step cannot fail an upload and gets one try of at most three minutes. If it runs out of time it is not run again, so the judge is never asked the same questions twice, and the upload goes on without it.
+
+**A try that runs out of time is not cancelled.** The Workflow stops waiting for it, and that is all: in the Workflows engine bundled for local runs, the work already started carries on. While the upload is still being read it can ask the rest of its questions, each call reserving budget first as every model call does, and what it stores in that time is kept like any other offer, held to the same checks. Once the upload is marked ready the vault accepts nothing more from that reading and reserves no further call for it. That the work carries on is read from the engine's code: it has not been observed on the deployed platform, and no test runs a stage past its time. That the vault refuses the reading afterwards is tested (`test/integration/offer-shadow.test.ts`).
 
 ## What is not built
 
