@@ -1,5 +1,12 @@
-/** Test-only helper to reconstruct a Vault schema before a shared copy could take comments, the latest migration. The index goes with its table. */
+/** Test-only helper to reconstruct a Vault schema before a coach could suggest wording, the latest migration. */
+export function removeSuggestionMigration(sql: SqlStorage): void {
+  sql.exec(`ALTER TABLE share_comments DROP COLUMN document_id`);
+  sql.exec(`ALTER TABLE share_comments DROP COLUMN suggestion_state`);
+}
+
+/** Test-only helper to reconstruct a Vault schema before a shared copy could take comments, and so before every later migration. The index goes with its table. */
 export function removeCommentMigration(sql: SqlStorage): void {
+  removeSuggestionMigration(sql);
   sql.exec(`DROP TABLE IF EXISTS share_comments`);
 }
 

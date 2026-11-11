@@ -53,7 +53,8 @@ import {
 } from "../shared/api";
 import { AppError, errorCode, errorDetail, httpStatus } from "../shared/errors";
 import { MAX_SHARE_LABEL_CHARS, type CoachClient, type SharedView } from "../shared/sharing";
-import type { CommentThread, OwnerCommentThread } from "../shared/sharing";
+import type { CommentThread, NewSuggestion, OwnerCommentThread } from "../shared/sharing";
+import { MAX_VAULT_COMMENTS } from "../vault/share-comments";
 import { hintFor, type CfLocation } from "../shared/location";
 import { PREFERENCES_REFUSED, cleanPreferences } from "../shared/preferences";
 import { docxKey, pdfKey, sourceKey } from "../shared/r2";
@@ -1365,8 +1366,18 @@ api.get("/shares/comments", async (c) => {
   const threads: OwnerCommentThread[] = await myVault(c).listShareComments(c.get("who"));
   return c.json({ threads });
 });
+// A page from before the v2 path sends no list, and marks every coach's comment seen as it always
+// did. Kept, with its RPC, so such a page or Worker in a mixed rollout still clears the count.
 api.post("/shares/comments/seen", async (c) => {
   await myVault(c).markShareCommentsSeen(c.get("who"));
+  return c.body(null, 204);
+});
+// The page names the comments it showed as new. Only those are marked, so one a coach writes while
+// the page is open is still counted, and still marked new, the next time the list is read. A new
+// path and RPC name, so an older Worker or Vault can't drop the list and mark everything.
+api.post("/v2/shares/comments/seen", JSON_LIMIT, async (c) => {
+  const { ids } = await jsonBody(c, z.object({ ids: z.array(z.string().max(100)).max(MAX_VAULT_COMMENTS) }));
+  await myVault(c).markShownShareCommentsSeen(c.get("who"), ids);
   return c.body(null, 204);
 });
 api.post("/shares/comments/:id/replies", JSON_LIMIT, async (c) => {
@@ -1375,6 +1386,15 @@ api.post("/shares/comments/:id/replies", JSON_LIMIT, async (c) => {
 });
 api.delete("/shares/comments/:id", async (c) => {
   await myVault(c).removeShareComment(c.get("who"), c.req.param("id"));
+  return c.body(null, 204);
+});
+// A coach's suggested wording, which its owner accepts or declines. Accepting starts the owner's
+// own verified line edit, with the wording the vault holds: nothing in the request can pass for it.
+api.post("/shares/suggestions/:id/accept", async (c) =>
+  c.json(await myVault(c).acceptSuggestion(c.get("who"), c.req.param("id"), requestKey(c)), 202),
+);
+api.post("/shares/suggestions/:id/decline", async (c) => {
+  await myVault(c).declineSuggestion(c.get("who"), c.req.param("id"));
   return c.body(null, 204);
 });
 
@@ -1508,6 +1528,15 @@ api.delete("/coach/clients/:grantId/comments/:id", async (c) => {
   const { entry, account } = await coachCopy(c);
   await unlessEnded(vault(c.env, entry.ownerVault).removeCommentAsCoach(entry.grantId, account, c.req.param("id")));
   return c.body(null, 204);
+});
+// Suggested wording for one line, kept with the comments and reached the same way. A coach deletes
+// one with the comments' delete. Only the shape is checked here, so what the coach reads about the
+// wording is the owner's vault's own sentence.
+api.post("/coach/clients/:grantId/suggestions", JSON_LIMIT, async (c) => {
+  const { entry, account } = await coachCopy(c);
+  const input = await jsonBody(c, z.object({ target: CommentTarget, text: z.string().max(4 * MAX_LINE_CHARS) }));
+  const key = requestKey(c);
+  return c.json(await unlessEnded(vault(c.env, entry.ownerVault).suggestOnShare(entry.grantId, account, input as NewSuggestion, key)), 201);
 });
 app.post("/share/session", JSON_LIMIT, async (c) => {
   const { token } = await jsonBody(

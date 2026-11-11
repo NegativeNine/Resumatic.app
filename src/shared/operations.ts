@@ -41,7 +41,9 @@ export const TRANSFER_TABLES = [
   "coach_clients",
   // What a coach wrote on a shared copy, and the owner's replies. They are the owner's to keep, so
   // they move. Grants don't, so every thread arrives closed: it can be read and deleted, and
-  // nobody can add to it. A row holds no vault ID, storage key or run state.
+  // nobody can add to it. A row holds no vault ID or storage key. A suggested wording's
+  // `document_id` names the owner's check, and documents move with their IDs, so it needs no
+  // rewrite; runs don't move, so a check that was running arrives without a verdict.
   "share_comments",
 ] as const;
 export type TransferTable = (typeof TRANSFER_TABLES)[number];

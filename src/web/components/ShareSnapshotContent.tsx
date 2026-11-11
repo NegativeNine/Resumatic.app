@@ -26,11 +26,12 @@ export function ShareFrame({ children, wide }: { children: ReactNode; wide?: boo
 
 /**
  * What the copy's coach is given to comment with: which line or fact is chosen, how to choose
- * another, and the threads and form to show beside the copy.
+ * another, and the threads and form to show beside the copy. Without `onSelect` nothing can be
+ * chosen: once commenting is over, lines and facts are text again and the aside says why.
  */
 export interface ShareCommenting {
   selected: ShareTarget | null;
-  onSelect(target: ShareTarget): void;
+  onSelect?(target: ShareTarget): void;
   aside: ReactNode;
 }
 
@@ -54,7 +55,7 @@ function Pick({ target, commenting, sheet, children }: { target: ShareTarget; co
       type="button"
       className={["app-share__pick", sheet ? "rs-line" : "", sheet && chosen ? "is-open" : ""].filter(Boolean).join(" ")}
       aria-pressed={chosen}
-      onClick={() => commenting.onSelect(target)}
+      onClick={() => commenting.onSelect?.(target)}
     >
       {children}
     </button>
@@ -79,6 +80,8 @@ export function ShareSnapshotContent({ view, notice, comments }: { view: SharedV
   const { facts, resumes } = view.snapshot;
   const documents = view.snapshot.documents ?? [];
   const owner = view.snapshot.owner?.name || null;
+  /** Lines and facts are buttons only while one can be chosen. */
+  const choosing = comments?.onSelect ? comments : undefined;
   /** Several letters, say, are told apart by number when nothing else does it. */
   const numbered = (document: SharedDocument, index: number) =>
     documents.filter((other) => other.kind === document.kind).length > 1
@@ -92,7 +95,7 @@ export function ShareSnapshotContent({ view, notice, comments }: { view: SharedV
           <ul className="plain-list">
             {facts.map((fact) => (
               <li key={fact.id}>
-                <p>{comments ? <Pick target={{ kind: "fact", factId: fact.id }} commenting={comments}>{fact.text}</Pick> : fact.text}</p>
+                <p>{choosing ? <Pick target={{ kind: "fact", factId: fact.id }} commenting={choosing}>{fact.text}</Pick> : fact.text}</p>
                 <p className="rs-meta">
                   {fact.role ? [fact.role.title, fact.role.org].filter(Boolean).join(", ") : "General experience"}
                   {fact.origin === "user" ? ". Added by the owner in their own words." : ""}
@@ -103,7 +106,7 @@ export function ShareSnapshotContent({ view, notice, comments }: { view: SharedV
         </section>
       )}
       {resumes.map((resume) => (
-        <SharedResumeSheet resume={resume} comments={comments} key={`${resume.id}:${resume.version}`} />
+        <SharedResumeSheet resume={resume} comments={choosing} key={`${resume.id}:${resume.version}`} />
       ))}
       {documents.map((document, index) => (
         <SharedDocumentSheet document={document} number={numbered(document, index)} key={`${document.id}:${document.version}`} />

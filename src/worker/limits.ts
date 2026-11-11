@@ -22,7 +22,7 @@ export function httpRoute(path: string): HttpRoute {
   if (path === "/mcp") return "mcp";
   if (path.startsWith("/api/sources")) return "sources";
   if (
-    /^\/api\/(applications\/[^/]+\/(resumes|documents)|resumes\/[^/]+\/refine)/.test(
+    /^\/api\/(applications\/[^/]+\/(resumes|documents)|resumes\/[^/]+\/refine|shares\/suggestions\/[^/]+\/accept)/.test(
       path,
     )
   )

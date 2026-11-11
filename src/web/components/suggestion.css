@@ -1,0 +1,12 @@
+/* Suggested wording on a shared copy: the coach's card beside the copy, and the owner's card in its thread on Account. Tokens only. */
+.app-suggestion { display: grid; gap: var(--space-2); margin-top: 2px; }
+.app-suggestion__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; }
+.app-suggestion__title { font-weight: 600; }
+.app-suggestion__from, .app-suggestion__note { margin: 0; overflow-wrap: anywhere; }
+.app-suggestion__lines { display: grid; gap: var(--space-1); padding-inline-start: var(--space-3); border-inline-start: 2px solid var(--rule); }
+.app-suggestion__lines p { margin: 0; font-size: 15px; line-height: 22px; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* The copy's line is struck as a rejected fact is; the wording reads as plain text, not as a link or a highlight. */
+.app-suggestion__was del { color: var(--ink-muted); text-decoration: line-through; text-decoration-color: var(--rule-strong); }
+.app-suggestion__now ins { color: var(--ink); text-decoration: none; }
+.app-suggestion .actions { margin-top: 0; }
+.app-suggest-form .actions { flex-wrap: wrap; }

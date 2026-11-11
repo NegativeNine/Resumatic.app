@@ -15,8 +15,8 @@ import type {
 import { isInstruction } from "./extract/verify";
 import { analyzeJob, selectFacts, verifyDraft, verifyExactLine } from "./tailor";
 
-/** A changed line drops its finding, which was about the earlier wording. */
-function rewritten(line: ResumeLine, change: Pick<ResumeLine, "text" | "factIds" | "status">): ResumeLine {
+/** A changed line drops its finding, which was about the earlier wording. Accepting a coach's suggested wording builds its line the same way. */
+export function rewritten(line: ResumeLine, change: Pick<ResumeLine, "text" | "factIds" | "status">): ResumeLine {
   const { finding: _earlier, ...rest } = line;
   return { ...rest, ...change };
 }
