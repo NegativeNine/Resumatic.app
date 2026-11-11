@@ -19,6 +19,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Preferences | Merged in #34 | Kept in the vault and read only by the owner's form and export. Work authorisation and remote work are not stored |
 | Sensitive facts | Merged in #34 | A mark on a fact and its words. Marking a role, and finding sensitive facts for the person, are not built. The embedding model still receives a marked fact's words on an edit or a rebuild |
 | Comments on a shared copy | Merged in #34 | Suggested wording builds on its table |
+| Fit preview through connected apps | Branch `now/10-connected-app-fit`, based on #34 (sensitive facts). No migration | Deployed before connected apps are switched on anywhere; then MCP in staging and a real client |
 | Tagging facts and roles, in shadow | Begun on branch `pipeline/05-tag`; unfinished and untested | Finish, test and review the stage. The taxonomy it reads is loaded on staging |
 
 The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments. Suggested wording will add the next.
@@ -28,7 +29,7 @@ A merged PR or a local check is not a claim of production release acceptance. Th
 ## Now: still to build
 
 - Suggested wording on a shared copy. Designed; builds on comments.
-- Fit preview through connected apps. Designed; builds on sensitive facts.
+- Fit preview through connected apps. Designed; builds on sensitive facts. Built on branch `now/10-connected-app-fit`, for review.
 
 Built and merged in #34: comments on a shared copy; sensitive facts; preferences. A few low-severity review points on preferences and comments are still open: the test that keeps preferences unread does not see a second way into the store from inside the Vault; marking comments seen can mark one that arrived after the list was read; after a copy ends under a coach, the page still says they can comment until it is reloaded.
 
