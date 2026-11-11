@@ -130,6 +130,10 @@ describe("starting rule 1: a qualified line stays whole", () => {
     ["This may reduce costs and should speed up releases", "may"],
     ["Built the pipeline and will migrate the rest next year", "will"],
     ["Currently learning Rust and building a parser", "learning"],
+    // Still under way, or only expected: neither is said to be finished.
+    ["Leading the ongoing migration of 40 services to Kubernetes", "ongoing"],
+    ["Leading the on-going migration of 60 services to Kubernetes", "ongoing"],
+    ["Anticipated graduation in May 2027 with honours in statistics", "anticipated"],
     ["Evaluated vendors and/or built tooling for each", "and/or"],
     ["Hizo la migraci\u00F3n sin ayuda y entren\u00F3 al equipo", "sin"],
     ["Hat nicht nur die API gebaut und das Team geschult", "nicht"],

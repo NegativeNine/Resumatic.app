@@ -239,6 +239,8 @@ export const SPLIT_LINES: SplitExample[] = [
   { line: "Wasn\u2018t on the on-call rota but wrote every runbook", expect: "qualified" },
   // A listed phrase with a hyphen for its space.
   { line: "AWS Solutions Architect certification in-progress and Terraform Associate passed", expect: "qualified" },
+  // Something still under way beside something done.
+  { line: "PMP certification ongoing and Certified ScrumMaster completed in 2024", expect: "qualified" },
   { line: "Built services in Python or Go and deployed them weekly", expect: "qualified" },
   { line: "Proposed a redesign of billing, cutting costs by 20%", expect: "qualified" },
   { line: "Reduced latency by up to 40% and doubled throughput", expect: "qualified" },

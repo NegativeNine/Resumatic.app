@@ -80,11 +80,12 @@ const QUALIFYING_WORDS = new Set([
   "lack", "lacks", "lacked", "lacking",
   // Alternatives: "Python or Go" is not "Python" and "Go".
   "or", "either", "versus", "vs",
-  // Intention, attempt and possibility: nothing here is said to have happened.
+  // Intention, attempt and possibility, and work still under way: nothing here is said to have
+  // happened, or to be finished.
   "proposed", "propose", "proposes", "proposing", "proposal", "planned", "planning", "intended", "intend", "intending",
-  "expected", "expecting", "will", "would", "could", "should", "might", "shall", "pending", "upcoming", "potential",
-  "potentially", "prospective", "tentative", "hoped", "hoping", "tried", "trying", "attempted", "attempting",
-  "seeking", "pursuing", "learning", "studying", "exploring", "if", "unless",
+  "expected", "expecting", "anticipated", "anticipating", "will", "would", "could", "should", "might", "shall", "pending",
+  "upcoming", "ongoing", "potential", "potentially", "prospective", "tentative", "hoped", "hoping", "tried", "trying",
+  "attempted", "attempting", "seeking", "pursuing", "learning", "studying", "exploring", "if", "unless",
   // The same in the other languages the reader already guards skills against.
   "sin", "nunca", "ohne", "nicht", "niemals", "sans", "jamais",
 ]);

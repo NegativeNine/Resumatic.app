@@ -40,6 +40,8 @@ export const MATCH_PAIRS: PairExample[] = [
   { later: "Completed the PMP certification", earlier: "Pursuing the PMP certification", expect: "different", stoppedBy: "check", why: "one is still under way" },
   { later: "AWS Solutions Architect certification", earlier: "AWS Solutions Architect certification (in progress)", expect: "different", stoppedBy: "check", why: "one is not finished" },
   { later: "Google Professional Cloud Architect certification", earlier: "Google Professional Cloud Architect certification (in-progress)", expect: "different", stoppedBy: "check", why: "one is not finished, written with a hyphen" },
+  { later: "Certified ScrumMaster", earlier: "Certified ScrumMaster (ongoing)", expect: "different", stoppedBy: "check", why: "one is still under way, in a word of its own" },
+  { later: "B.S. Computer Science, May 2027", earlier: "B.S. Computer Science, anticipated May 2027", expect: "different", stoppedBy: "check", why: "one is only expected" },
   { later: "Wrote the on-call runbooks", earlier: "Reviewed the on-call runbooks", expect: "different", stoppedBy: "judge", why: "a different thing done to the same object" },
   { later: "Increased checkout conversion", earlier: "Reduced checkout conversion", expect: "different", stoppedBy: "check", why: "the outcome went the other way" },
   { later: "Trained the sales team on the new CRM", earlier: "Trained the finance team on the new CRM", expect: "different", stoppedBy: "judge", why: "a different team was trained" },
