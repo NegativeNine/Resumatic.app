@@ -18,7 +18,7 @@ None of these changes a fact, a role or a quote. Each is a row beside them, and 
 
 ## What every judgement carries
 
-- **What made it:** a rule in the code, a model, or the owner; the model's name if one did; the rule or check and its version (`identical-wording/2`); the taxonomy build it was made against; and how sure the check was, where it says.
+- **What made it:** a rule in the code, a model, or the owner; the model's name if one did; the rule or check and its version (`identical-wording/3`); the taxonomy build it was made against; and how sure the check was, where it says.
 - **What was decided:** it starts as *proposed*. Only the owner confirms or rejects it, with the one exception under "Merging without asking" below. A model never decides.
 - **Whether it is in shadow.** A shadow judgement is stored to be measured and shown to nobody. The owner cannot decide it, it merges nothing, and nothing but measurement reads it. A judgement that shows and one in shadow can exist side by side.
 

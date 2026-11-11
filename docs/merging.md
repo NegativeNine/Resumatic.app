@@ -26,7 +26,7 @@ Rows are read oldest first, and each later copy points at the **earliest** row t
 With `MATCH_SHADOW_ENABLED=true`, reading an upload gains one stage after its facts are embedded:
 
 - It looks across the whole record, not only the new upload, so copies that were already there are found too.
-- Each finding is stored as a shadow link from the copy to the earliest row, stamped `identical-role/2` or `identical-wording/2`. What was found before is not stored again.
+- Each finding is stored as a shadow link from the copy to the earliest row, stamped `identical-role/3` or `identical-wording/3`. What was found before is not stored again.
 - **Nothing is merged.** A shadow link stands for nothing: every fact still stands for itself with its own one quote, the lists show every row, and tailoring hides repeats as it already does.
 - It makes no model call, so it costs nothing and adds almost no time.
 - **It cannot fail an upload.** A failure leaves the upload exactly as it is read today. It gets one try of at most three minutes and is not run again.

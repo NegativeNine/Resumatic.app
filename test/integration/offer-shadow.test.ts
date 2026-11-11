@@ -85,7 +85,7 @@ describe("reading with shadow offers switched on", () => {
       holds: false,
       proposedBy: "model",
       model: env.MODEL_JUDGE,
-      method: "entailment/2",
+      method: "entailment/3",
       decidedBy: null,
     });
     expect(links.shown).toEqual([]);
@@ -148,8 +148,8 @@ describe("reading with shadow offers switched on", () => {
     settings.MATCH_SHADOW_ENABLED = "true";
     const { links, long, short } = await twice({ judgeRejects: ["every quarter"] });
     // Three roles and seven lines are word for word the same. The eighth line is the offer.
-    expect(links.all.filter((link) => link.proposedBy === "rule").map((link) => link.method).sort()).toEqual([...Array(3).fill("identical-role/2"), ...Array(7).fill("identical-wording/2")].sort());
-    expect(links.all.filter((link) => link.proposedBy === "model")).toMatchObject([{ relation: "fuller", from: long.id, to: short.id, method: "entailment/2" }]);
+    expect(links.all.filter((link) => link.proposedBy === "rule").map((link) => link.method).sort()).toEqual([...Array(3).fill("identical-role/3"), ...Array(7).fill("identical-wording/3")].sort());
+    expect(links.all.filter((link) => link.proposedBy === "model")).toMatchObject([{ relation: "fuller", from: long.id, to: short.id, method: "entailment/3" }]);
     expect(links.all.every((link) => link.shadow && !link.holds)).toBe(true);
   });
 
@@ -209,8 +209,8 @@ describe("reading with shadow offers switched on", () => {
     await runInDurableObject(vaultOf(user), async (instance, state) => {
       const source = state.storage.sql.exec<{ id: string; run_id: string }>(`SELECT id, run_id FROM sources WHERE id = (SELECT source_id FROM facts WHERE id = ?)`, long.id).one();
       const late = { relation: "same" as const, from: long.id, to: short.id, lines: { from: long.text, to: short.text } };
-      await expect(instance.saveShadowOffers(source.id, source.run_id, { model: "judge", method: "entailment/2" }, [late])).rejects.toThrow(/no longer accepts work/);
-      await expect(instance.saveShadowSplits(source.id, source.run_id, { model: "extract+judge", method: "split/2" }, [])).rejects.toThrow(/no longer accepts work/);
+      await expect(instance.saveShadowOffers(source.id, source.run_id, { model: "judge", method: "entailment/3" }, [late])).rejects.toThrow(/no longer accepts work/);
+      await expect(instance.saveShadowSplits(source.id, source.run_id, { model: "extract+judge", method: "split/3" }, [])).rejects.toThrow(/no longer accepts work/);
       await expect(instance.matchShadow(source.id, source.run_id)).rejects.toThrow(/no longer accepts work/);
       await expect(instance.offerCandidates(source.id, source.run_id)).rejects.toThrow(/no longer accepts work/);
       // Nor is another model call reserved for that reading, so none is sent.

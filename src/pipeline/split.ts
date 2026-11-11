@@ -25,7 +25,7 @@ import { APOSTROPHES, UNSEEN } from "../shared/characters";
 // Nothing here stores anything. A caller keeps the divisions that pass, in shadow.
 
 /** The check that made a division, stamped on it. Raise the number when a rule or the prompt changes. */
-export const SPLIT_METHOD = "split/2";
+export const SPLIT_METHOD = "split/3";
 
 /** Why a line stays whole. Counted, never stored with the line. */
 export const SPLIT_REFUSALS = [

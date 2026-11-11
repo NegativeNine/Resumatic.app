@@ -21,7 +21,7 @@ export interface Stamp {
   proposedBy: Proposer;
   /** The model that made it. Null unless a model did. */
   model: string | null;
-  /** The rule or check that produced it, with its version: "identical-wording/2". */
+  /** The rule or check that produced it, with its version: "identical-wording/3". */
   method: string;
   /** The taxonomy build it was made against. Every tag has one. */
   taxonomyVersion: string | null;
