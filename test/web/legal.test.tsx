@@ -48,7 +48,7 @@ describe("the privacy notice", () => {
     expect(apps).toContain("never receives your uploaded files, the words a fact came from, or your notes on a job");
     expect(apps).toContain("revoking access does not remove it from there");
     // A fact the person keeps to themselves: what the mark does, and the two things it doesn't.
-    expect(apps).toContain("or your notes on a job. It never receives a fact you have marked sensitive, or a resume that uses one. It never receives a coach’s comments either. Its access lasts");
+    expect(apps).toContain("or your notes on a job. It never receives a fact you have marked sensitive, or a resume that uses one. It never receives a coach’s comments or suggested wording either. Its access lasts");
     const choices = section("Your choices");
     expect(choices).toContain(
       "Keep a fact to yourself: mark a fact sensitive under Facts and it is left out of every new resume, letter, interview preparation and fit preview, never put in a shared copy and never shown to a connected app.",
@@ -67,14 +67,14 @@ describe("the privacy notice", () => {
     const items = (title: string) => [...screen.getByRole("heading", { level: 2, name: title }).closest("section")!.querySelectorAll("li")].map((item) => item.textContent!.replace(/\s+/g, " ").trim());
     // Kept, with what each is about and who wrote it, listed after the coach's own list.
     const kept = items("What we keep");
-    const comments = "Comments a coach writes on a copy you shared, and your replies, with the line or fact each is about and the coach’s name and sign-in address.";
+    const comments = "Comments a coach writes on a copy you shared and wording they suggest, and your replies, with the line or fact each is about and the coach’s name and sign-in address.";
     expect(kept).toContain(comments);
     expect(kept[kept.indexOf(comments) - 1]).toMatch(/^If someone names you as their coach and you add their copy to your client list/);
     // Never a model's input, said where the notice says what models are sent.
     const ai = screen.getByRole("heading", { level: 2, name: "How AI is used" }).closest("section")!.querySelector("p")!.textContent!.replace(/\s+/g, " ").trim();
     expect(ai.endsWith("a line those facts do not support is never shown to you. Comments on a shared copy are never sent to a language model or used to write or check a resume.")).toBe(true);
     // Who can comment, who can't, where the owner answers, and that nothing is sent to tell them.
-    expect(items("Sharing a copy").at(-1)).toBe(
+    expect(items("Sharing a copy").at(-2)).toBe(
       "The coach you name can comment on a line or a fact in the copy once they have added it to their client list. Nobody else with the link can read or write comments. You answer and delete them under Account, where they stay after the copy ends until you delete them. We don’t send email: a count of new comments shows the next time you open Resumatic.",
     );
     // The coach is told, where they will look, that their words are kept in someone else's account.
@@ -83,7 +83,23 @@ describe("the privacy notice", () => {
       "thirty days after the copy’s last day. If you comment, your words are kept in the owner’s account, not yours, with your name, sign-in address and account ID. You can delete a comment while the copy is open to you. After that the owner keeps it until they delete it or their account, even if you delete yours.",
     );
     // A connected app is given none of it.
-    expect(section("Connecting an app")).toContain("or a resume that uses one. It never receives a coach’s comments either. Its access lasts an hour");
+    expect(section("Connecting an app")).toContain("or a resume that uses one. It never receives a coach’s comments or suggested wording either. Its access lasts an hour");
+  });
+
+  it("says what a coach's suggested wording can change, who is told what, and when it reaches a model", () => {
+    render(<LegalPage doc="privacy" />);
+    const items = (title: string) => [...screen.getByRole("heading", { level: 2, name: title }).closest("section")!.querySelectorAll("li")].map((item) => item.textContent!.replace(/\s+/g, " ").trim());
+    // Its own paragraph, straight after the one that says comments never reach a model.
+    const ai = [...screen.getByRole("heading", { level: 2, name: "How AI is used" }).closest("section")!.querySelectorAll("p")].map((p) => p.textContent!.replace(/\s+/g, " ").trim());
+    expect(ai[1]).toBe("Wording a coach suggests is sent to a model only if you accept it, to be checked against your facts like any edit you make.");
+    // After the comments item: nothing changes unless the owner accepts, and the coach is told one thing.
+    expect(items("Sharing a copy").at(-1)).toBe(
+      "A coach you name can suggest new wording for a line. Nothing changes unless you accept it, and then it is checked against your confirmed facts first. Your coach is told whether you used it, and nothing else.",
+    );
+    // The coach is told, after what is said of comments, where their wording is kept and what a delete leaves.
+    expect(section("Sharing a copy")).toContain(
+      "even if you delete yours. If you suggest wording, it is kept in the owner’s account like a comment and shown to them with the name on your account. If they accept it, it is sent to a model to be checked. You are told whether they used it. You can delete a suggestion while the copy is open to you; if the owner had already accepted it, the check they started, and any resume line it became, keep the wording.",
+    );
   });
 
   // Each sentence is checked beside the constant it describes. Change one, and change the other.

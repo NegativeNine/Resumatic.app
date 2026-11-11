@@ -19,15 +19,16 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Preferences | Merged in #34 | Kept in the vault and read only by the owner's form and export. Work authorisation and remote work are not stored |
 | Sensitive facts | Merged in #34 | A mark on a fact and its words. Marking a role, and finding sensitive facts for the person, are not built. The embedding model still receives a marked fact's words on an edit or a rebuild |
 | Comments on a shared copy | Merged in #34 | Suggested wording builds on its table |
+| Suggested wording on a shared copy | Open on branch `now/12-coach-suggestions`, based on comments' review fixes (`fix/comments-review`) | Adds the vault's next migration, the fourth of four after coach accounts, directly after comments'; only that order is deployed. Accepting is the owner's own verified line edit, so the manual-edit release blocker holds it. Real sign-ins on both sides and the real judge on suggested wording are owed |
 | Tagging facts and roles, in shadow | Begun on branch `pipeline/05-tag`; unfinished and untested | Finish, test and review the stage. The taxonomy it reads is loaded on staging |
 
-The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments. Suggested wording will add the next.
+The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments. Suggested wording will add the next. Its branch adds it as two columns on the comments' table, directly after comments' own; a branch that appends another migration first moves it, and its rewind helper, after that one.
 
 A merged PR or a local check is not a claim of production release acceptance. The [release status](seeker-release-status.md) records the broader acceptance work.
 
 ## Now: still to build
 
-- Suggested wording on a shared copy. Designed; builds on comments.
+- Suggested wording on a shared copy. Designed; builds on comments. Built on branch `now/12-coach-suggestions`, in review.
 - Fit preview through connected apps. Designed; builds on sensitive facts.
 
 Built and merged in #34: comments on a shared copy; sensitive facts; preferences. A low-severity review point on preferences is still open: the test that keeps preferences unread does not see a second way into the store from inside the Vault. The review points on comments are settled on branch `fix/comments-review`, with no migration: the page names the comments it marks seen, on a new path (`POST /api/v2/shares/comments/seen`) beside the old one, which a page loaded before still uses to mark everything until it is reloaded; a copy that ends under a coach stops offering anything to choose; a 404 from a server without the comment routes is no longer read as a copy that left the list; and a coach's chosen name can no longer pass for the owner's own words.
