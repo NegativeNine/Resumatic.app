@@ -96,19 +96,47 @@ const QUALIFYING_PHRASES =
 // "didn\u2018t" deny exactly what "didn't" denies.
 const APOSTROPHES = /['\u2032\u2035\uFF07\p{Pi}\p{Pf}\p{Sk}\p{Lm}]/gu;
 
+// A hyphen of any length, or a minus sign. Where one stands between two letters it joins them:
+// the words of a phrase ("in-progress") or the halves of a word ("up-coming").
+const HYPHEN = "[-\\u2010-\\u2015\\u2212\\uFE63\\uFF0D]";
+const HYPHENS = new RegExp(HYPHEN, "u");
+const JOINING_HYPHEN = new RegExp(`(?<=\\p{L})${HYPHEN}(?=\\p{L})`, "gu");
+const WORD = "[\\p{L}\\p{N}]+(?:'[\\p{L}]+)?";
+/** One word, or several with nothing but a hyphen between each and the next. */
+const HYPHENATED = new RegExp(`${WORD}(?:${HYPHEN}${WORD})*`, "gu");
+
 /**
  * Every hedge, negation, alternative or intention in a line: the phrases in the order they come,
- * then the words in theirs. Two lines qualified in the same way give the same list.
+ * then the words in theirs. Two lines qualified in the same way give the same list, however the
+ * words were joined or marked.
  */
 export function qualifiers(line: string): string[] {
   // The list is read against the words alone, whichever apostrophe and whatever spacing they came with.
   const text = line.replace(APOSTROPHES, "'").replace(/\s+/gu, " ");
-  const found = [...text.matchAll(QUALIFYING_PHRASES)].map((phrase) => phrase[0].toLowerCase());
-  for (const match of text.matchAll(/[\p{L}\p{N}]+(?:'[\p{L}]+)?/gu)) {
-    const word = match[0];
-    const lower = word.toLowerCase();
-    // "May 2021" is a month. Only the verb is a possibility.
-    if (lower.endsWith("n't") || word === "may" || QUALIFYING_WORDS.has(lower)) found.push(lower);
+  const found: string[] = [];
+  // A phrase is the same phrase with a hyphen for its space. Each joining hyphen becomes one
+  // space, so a place in the copy is the same place in the text.
+  const spaced = text.replace(JOINING_HYPHEN, " ");
+  for (const phrase of spaced.matchAll(QUALIFYING_PHRASES)) {
+    const end = phrase.index + phrase[0].length;
+    const hyphenated = text.slice(phrase.index, end) !== phrase[0];
+    // "Up-to-date" is not "up to": a hyphenated phrase counts only where the hyphenated word ends with it.
+    if (hyphenated && text[end] !== spaced[end]) continue;
+    found.push(phrase[0].toLowerCase());
+  }
+  for (const run of text.matchAll(HYPHENATED)) {
+    const words = run[0].split(HYPHENS);
+    // A listed word with a hyphen inside it is the same word: "up-coming".
+    const whole = words.join("").toLowerCase();
+    if (words.length > 1 && QUALIFYING_WORDS.has(whole)) {
+      found.push(whole);
+      continue;
+    }
+    for (const word of words) {
+      const lower = word.toLowerCase();
+      // "May 2021" is a month. Only the verb is a possibility.
+      if (lower.endsWith("n't") || word === "may" || QUALIFYING_WORDS.has(lower)) found.push(lower);
+    }
   }
   return found;
 }

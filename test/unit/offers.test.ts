@@ -97,6 +97,10 @@ describe("what to offer about two lines", () => {
       ["Negotiated vendor contracts", "Didn\u00B4t negotiate vendor contracts"],
       ["Completed the PMP certification", "Pursuing the PMP certification"],
       ["AWS Solutions Architect certification", "AWS Solutions Architect certification (in progress)"],
+      // The same words, joined by a hyphen.
+      ["AWS Solutions Architect certification", "AWS Solutions Architect certification (in-progress)"],
+      ["AWS Solutions Architect certification", "AWS Solutions Architect certification (work‑in‑progress)"],
+      ["Led the launch in two regions", "Led the up-coming launch in two regions"],
       ["Migrated the billing system", "Tried to migrate the billing system"],
       ["Built a new billing system", "Planned to build a new billing system"],
       ["Led the migration to Kubernetes", "Helped lead the migration to Kubernetes"],
@@ -119,6 +123,10 @@ describe("what to offer about two lines", () => {
     const { models: fake, asked } = models();
     expect(await offers(fake, [pair("Helped design the billing API used by 3 product teams", "Helped design the billing API that 3 product teams use")])).toEqual([{ relation: "same", from: "later-1", to: "earlier-1" }]);
     expect(asked.flat()).toHaveLength(2);
+    // A phrase is the same words whether a hyphen or a space joins them.
+    const spelt = models();
+    expect(await offers(spelt.models, [pair("AWS Solutions Architect certification (in-progress)", "AWS Solutions Architect certification (in progress)")])).toEqual([{ relation: "same", from: "later-1", to: "earlier-1" }]);
+    expect(spelt.asked.flat()).toHaveLength(2);
     // Where the same words qualify both, a denial of a known action is still settled without asking.
     const denied = models();
     expect(await offers(denied.models, [pair("Did not manage the budget but led the roadmap", "Managed the budget but did not lead the roadmap")])).toEqual([]);

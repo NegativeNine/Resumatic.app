@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "../../src/ai/llm";
 import type { Models } from "../../src/ai/models";
 import type { JudgeItem } from "../../src/ai/prompts";
-import { SPLIT_REFUSALS, numberedWords, partsRefusal, qualifier, splitLines, splitPrompt, toParts, type SplitProposal } from "../../src/pipeline/split";
+import { SPLIT_REFUSALS, numberedWords, partsRefusal, qualifier, qualifiers, splitLines, splitPrompt, toParts, type SplitProposal } from "../../src/pipeline/split";
 import { lineRuns, partText, type NewPart } from "../../src/shared/record";
 import { SPLIT_LINES } from "../fixtures/split-lines";
 
@@ -107,6 +107,13 @@ describe("starting rule 1: a qualified line stays whole", () => {
     // A phrase is the same phrase across a line break, two spaces or a space that does not break.
     ["Reduced latency by up\u00A0to 40% and tripled throughput", "up to"],
     ["Was part  of the team that rebuilt billing\nand shipped it", "part of"],
+    // A hyphen of any length where the words of a phrase join, or inside a word, changes nothing.
+    ["AWS Solutions Architect certification in-progress and two exams passed", "in progress"],
+    ["Thesis is a work‐in‐progress with two chapters drafted", "in progress"],
+    ["Reduced latency by up-to 40% and doubled throughput", "up to"],
+    ["Reduced latency by up–to–40% and tripled throughput", "up to"],
+    ["Preparing the up-coming launch in two regions and three languages", "upcoming"],
+    ["Preparing the UP‑COMING launch in two regions and four languages", "upcoming"],
     ["This may reduce costs and should speed up releases", "may"],
     ["Built the pipeline and will migrate the rest next year", "will"],
     ["Currently learning Rust and building a parser", "learning"],
@@ -118,9 +125,30 @@ describe("starting rule 1: a qualified line stays whole", () => {
     expect(qualifier(line)).toBe(because);
   });
 
-  const plain = [API, TEAM, "Migrated 40 services to Kubernetes and trained the on-call team", "May 2021 launch lead for two regions and three product lines", "Rebuilt the co-located cache and cut read latency by half"];
+  const plain = [
+    API,
+    TEAM,
+    "Migrated 40 services to Kubernetes and trained the on-call team",
+    "May 2021 launch lead for two regions and three product lines",
+    "Rebuilt the co-located cache and cut read latency by half",
+    // "Up-to-date" is not "up to": a hyphenated phrase counts only where it ends the hyphenated word.
+    "Kept the runbooks up-to-date and trained the on-call team",
+    "Built a one-of-a-kind dashboard for the sales and finance teams",
+    "Wrote a part-of-speech tagger and trained it on 2 million sentences",
+  ];
   it.each(plain)("%j has nothing that qualifies it", (line) => {
     expect(qualifier(line)).toBeNull();
+  });
+
+  it("reads a phrase or a word the same however its parts are joined", () => {
+    // Two lines qualified in the same way give the same list, which is what offers compare.
+    expect(qualifiers("AWS certification (in-progress), not yet sat")).toEqual(qualifiers("AWS certification (in progress), not yet sat"));
+    expect(qualifiers("AWS certification (in-progress), not yet sat")).toEqual(["in progress", "not"]);
+    expect(qualifiers("Not ready for the up-coming audit")).toEqual(qualifiers("Not ready for the upcoming audit"));
+    expect(qualifiers("Not ready for the up-coming audit")).toEqual(["not", "upcoming"]);
+    // A hyphen joins only what it touches, and a hyphenated word is read as its parts when it is not a listed word itself.
+    expect(qualifiers("Re-proposed the redesign, on - going since March")).toEqual(["proposed"]);
+    expect(qualifiers("Python-or-Go services")).toEqual(["or"]);
   });
 
   it("is decided before any model is asked", async () => {
