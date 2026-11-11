@@ -1,6 +1,6 @@
 import { AppError } from "../shared/errors";
 import { validConceptId } from "./ids.mjs";
-import { normalizeLabel, wordRuns, words } from "./normalize.mjs";
+import { asSeen, normalizeLabel, wordRuns, words } from "./normalize.mjs";
 import type { TaxonomyStore } from "./store";
 import {
   LABEL_TYPES,
@@ -193,9 +193,11 @@ export class Taxonomy {
  */
 function weakWord(written: string, norm: string, concepts: Mention["concepts"]): boolean {
   if (norm.length <= 2) return true;
-  // How an accent is encoded is not a different way of writing a word.
-  const asWritten = written.normalize("NFC");
+  // A word is written the way a person reads it. A character nobody sees is no part of that, in
+  // the text or in a label, and neither is how an accent is encoded.
+  const spelling = (word: string) => asSeen(word).normalize("NFC");
+  const asWritten = spelling(written);
   return concepts
     .filter((concept) => concept.type !== "derived")
-    .every((concept) => concept.matched !== concept.matched.toLowerCase() && concept.matched.normalize("NFC") !== asWritten);
+    .every((concept) => concept.matched !== concept.matched.toLowerCase() && spelling(concept.matched) !== asWritten);
 }

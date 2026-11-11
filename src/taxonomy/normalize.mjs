@@ -21,11 +21,22 @@ const WORD = /\.?[\p{L}\p{N}][\p{L}\p{N}\p{M}\p{Cf}]*[+#]*(?:[.&'][\p{L}\p{N}][\
 /** Curly apostrophes read as straight ones. The replacement keeps the length, so offsets hold. */
 const APOSTROPHES = /[\u2018\u2019\u02BC]/g;
 
+/** The characters nobody sees: the format characters a word is read through. */
+const UNSEEN = /\p{Cf}+/gu;
+
 function fold(word) {
   return word
     .normalize("NFKD")
     .replace(/[\p{M}\p{Cf}]+/gu, "")
     .toLowerCase();
+}
+
+/**
+ * A stretch of text as a person sees it: without the characters nobody sees. Everything else stays
+ * as it is written, capitals, accents and punctuation included, so this is not a comparison form.
+ */
+export function asSeen(text) {
+  return text.replace(UNSEEN, "");
 }
 
 /**

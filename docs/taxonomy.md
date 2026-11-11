@@ -150,7 +150,7 @@ A mention of one word is `weak` when any of these holds:
 - only a label the builder made carries it ("Testing", which is O\*NET's "Testing software" shortened);
 - every label a source wrote for it has a capital, and the text writes it as none of them does: "excel" for Excel, "Did" or "did" for DID, "PYTHON" for Python.
 
-A capital alone is not evidence, because every line starts with one. A label that is itself lower case ("communication") is an everyday word and is matched however the text writes it. The flag goes by spelling and nothing else: an everyday word that the text writes exactly as its label is written ("Chef at a 40-seat bistro", beside the software called Chef) is not marked, and telling those apart belongs to the checked step.
+A capital alone is not evidence, because every line starts with one. A label that is itself lower case ("communication") is an everyday word and is matched however the text writes it. How the text writes a word is how a person reads it: a character nobody sees in the word or straight after it, and an accent encoded another way, are not another spelling, in the text or in a label. The flag goes by spelling and nothing else: an everyday word that the text writes exactly as its label is written ("Chef at a 40-seat bistro", beside the software called Chef) is not marked, and telling those apart belongs to the checked step.
 
 Limits today: English only, and exact wording only. Finding the activity or skill a line describes in other words needs a vector index of the concepts, which is the next step.
 

@@ -15,6 +15,8 @@ const withLabels = (...labels: Omit<Label, "norm">[]) =>
   new Taxonomy(new MemoryStore({ ...TAXONOMY_FIXTURE, labels: [...TAXONOMY_FIXTURE.labels, ...labels.map((label) => ({ ...label, norm: normalizeLabel(label.text) }))] }));
 /** An accent written as its letter and then a combining mark, as some editors and PDF text layers write it. */
 const decomposed = (text: string) => text.normalize("NFD");
+/** A text with every character that is not plain ASCII written as its code, to name a case whose point is a character nobody sees. */
+const coded = (text: string) => text.replace(/[^\x20-\x7e]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
 
 describe("the combined taxonomy", () => {
   it("says which taxonomy it is, and that none is loaded when none is", async () => {
@@ -206,6 +208,31 @@ describe("labels found in a line of text", () => {
     expect(brief(await t.mentions("Communication with clients"))).toEqual([["Communication", [S(63)], false]]);
     // How an accent is encoded is not a different spelling.
     for (const line of ["Proven\u00e7al", decomposed("Proven\u00e7al")]) expect(brief(await t.mentions(line)), line).toEqual([[line, [S(62)], false]]);
+  });
+
+  it("do not take a character nobody sees for a different spelling", async () => {
+    const t = withLabels(
+      { conceptId: S(60), kind: "knowledge", type: "alternative", text: "DID" },
+      { conceptId: S(62), kind: "knowledge", type: "preferred", text: "Proven\u00e7al" },
+      // A source's own label can carry such a character: two of ESCO's start with a zero-width space.
+      { conceptId: S(64), kind: "knowledge", type: "preferred", text: "\u200bKanban" },
+    );
+    const python = ["onet:tool:python", S(3)];
+    // A zero-width space, a soft hyphen or a direction mark, after the word or inside it. The word
+    // found has the character in it, and is still the word its label writes.
+    for (const line of ["Python\u200b", "Python\u00ad", "Python\u200e", "Py\u200bthon", "Py\u00adthon", "Python\u200b\u200b\u200b"])
+      expect(brief(await t.mentions(line)), coded(line)).toEqual([[line, python, false]]);
+    expect(brief(await t.mentions("Python\u200b, SQL\u00ad"))).toEqual([
+      ["Python\u200b", python, false],
+      ["SQL\u00ad", [S(8)], false],
+    ]);
+    // With the encoding of an accent as well, and in a label as much as in the text.
+    for (const line of ["Proven\u00e7al\u200b", decomposed("Proven\u00e7\u200bal")]) expect(brief(await t.mentions(line)), coded(line)).toEqual([[line, [S(62)], false]]);
+    expect(brief(await t.mentions("Kanban"))).toEqual([["Kanban", [S(64)], false]]);
+    // It makes no word firm that is not written as its label is.
+    for (const line of ["python\u200b", "PYTHON\u200b", "Pyth\u00adON"]) expect(brief(await t.mentions(line)), coded(line)).toEqual([[line, python, true]]);
+    expect(brief(await t.mentions("Did\u200b not use SAP"))).toEqual([["Did\u200b", [S(60)], true]]);
+    expect(brief(await t.mentions("kanban\u200b boards"))).toEqual([["kanban\u200b", [S(64)], true]]);
   });
 
   it("refuse a text too long to be a line, and find nothing in nothing", async () => {
