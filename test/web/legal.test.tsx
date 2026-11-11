@@ -51,6 +51,30 @@ describe("the privacy notice", () => {
     expect(section("Your choices")).toContain("cancels a paid plan, ends every shared copy and app connection");
   });
 
+  it("says who reads a coach's comments, where they are kept and where they never go", () => {
+    render(<LegalPage doc="privacy" />);
+    const items = (title: string) => [...screen.getByRole("heading", { level: 2, name: title }).closest("section")!.querySelectorAll("li")].map((item) => item.textContent!.replace(/\s+/g, " ").trim());
+    // Kept, with what each is about and who wrote it, listed after the coach's own list.
+    const kept = items("What we keep");
+    const comments = "Comments a coach writes on a copy you shared, and your replies, with the line or fact each is about and the coach’s name and sign-in address.";
+    expect(kept).toContain(comments);
+    expect(kept[kept.indexOf(comments) - 1]).toMatch(/^If someone names you as their coach and you add their copy to your client list/);
+    // Never a model's input, said where the notice says what models are sent.
+    const ai = screen.getByRole("heading", { level: 2, name: "How AI is used" }).closest("section")!.querySelector("p")!.textContent!.replace(/\s+/g, " ").trim();
+    expect(ai.endsWith("a line those facts do not support is never shown to you. Comments on a shared copy are never sent to a language model or used to write or check a resume.")).toBe(true);
+    // Who can comment, who can't, where the owner answers, and that nothing is sent to tell them.
+    expect(items("Sharing a copy").at(-1)).toBe(
+      "The coach you name can comment on a line or a fact in the copy once they have added it to their client list. Nobody else with the link can read or write comments. You answer and delete them under Account, where they stay after the copy ends until you delete them. We don’t send email: a count of new comments shows the next time you open Resumatic.",
+    );
+    // The coach is told, where they will look, that their words are kept in someone else's account.
+    const sharing = section("Sharing a copy");
+    expect(sharing).toContain(
+      "thirty days after the copy’s last day. If you comment, your words are kept in the owner’s account, not yours, with your name, sign-in address and account ID. You can delete a comment while the copy is open to you. After that the owner keeps it until they delete it or their account, even if you delete yours.",
+    );
+    // A connected app is given none of it.
+    expect(section("Connecting an app")).toContain("or your notes on a job. It never receives a coach’s comments either. Its access lasts an hour");
+  });
+
   // Each sentence is checked beside the constant it describes. Change one, and change the other.
   it("states the limits the code enforces", () => {
     render(<LegalPage doc="privacy" />);
