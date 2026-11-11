@@ -38,7 +38,7 @@ The [pipeline design](taxonomy-pipelines-design.md) is agreed. The rebuilt taxon
 
 1. Load the versioned taxonomy into staging (done on 11 November) and build its vector index (not started).
 2. Add evidence, parts, tags and links without changing existing records. Merged in #34.
-3. Evaluate splitting, tagging and duplicate matching in shadow, using consented labelled examples. Splitting ([splitting.md](splitting.md)) and matching ([merging.md](merging.md)) are merged in #34; none has been run against the real models. Tagging of facts and roles is built in shadow on branch `pipeline/05-tag` and in review ([tagging.md](tagging.md)); it reads the taxonomy staging binds, and has not been run against the real judge.
+3. Evaluate splitting, tagging and duplicate matching in shadow, using consented labelled examples. Splitting ([splitting.md](splitting.md)) and matching ([merging.md](merging.md)) are merged in #34; none has been run against the real models. Tagging of facts and roles is built in shadow on branch `pipeline/05-tag` and in review ([tagging.md](tagging.md)); it is switched on nowhere, including staging, where the taxonomy it reads is bound, and has not been run against the real judge.
 4. Add owner review of parts, tags and merge proposals.
 5. Add matching and coverage by concept, retaining evidence checks and similarity fallback.
 6. Add skills with years only where skill-use intervals are evidenced or owner-confirmed; role dates alone are insufficient.
