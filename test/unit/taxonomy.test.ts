@@ -154,6 +154,42 @@ describe("labels found in a line of text", () => {
     expect(brief(await t.mentions("strong budget management"))).toEqual([["budget management", [S(1)], false]]);
   });
 
+  it("do not take a capital for evidence unless a label a source wrote is written that way", async () => {
+    const t = withLabels(
+      // Two O*NET software examples, each also under the name the builder makes by dropping "software".
+      { conceptId: "onet:tool:testing-software", kind: "tool", type: "preferred", text: "Testing software" },
+      { conceptId: "onet:tool:testing-software", kind: "tool", type: "derived", text: "Testing" },
+      { conceptId: "onet:tool:sales-software", kind: "tool", type: "preferred", text: "Sales software" },
+      { conceptId: "onet:tool:sales-software", kind: "tool", type: "derived", text: "Sales" },
+      { conceptId: S(60), kind: "knowledge", type: "alternative", text: "DID" },
+      { conceptId: "onet:tool:act", kind: "tool", type: "preferred", text: "Act!" },
+      { conceptId: "onet:tool:ansible-software", kind: "tool", type: "derived", text: "Ansible" },
+      { conceptId: S(61), kind: "knowledge", type: "preferred", text: "Ansible" },
+      { conceptId: S(62), kind: "knowledge", type: "preferred", text: "Proven\u00e7al" },
+      { conceptId: S(63), kind: "skill", type: "preferred", text: "communication" },
+    );
+    // Every line starts with a capital. A first word that only a label the builder made carries is thin.
+    expect(brief(await t.mentions("Testing and debugging of embedded firmware"))).toEqual([["Testing", ["onet:tool:testing-software"], true]]);
+    expect(brief(await t.mentions("Sales grew 40% year over year"))).toEqual([["Sales", ["onet:tool:sales-software"], true]]);
+    // So is one that no label is written like: "Did" is not DID, and "Act" is not Act!.
+    expect(brief(await t.mentions("Did not use SAP"))).toEqual([["Did", [S(60)], true]]);
+    expect(brief(await t.mentions("Act as the primary contact for vendors"))).toEqual([["Act", ["onet:tool:act"], true]]);
+    expect(brief(await t.mentions("PYTHON, SQL"))).toEqual([
+      ["PYTHON", ["onet:tool:python", S(3)], true],
+      ["SQL", [S(8)], false],
+    ]);
+    // Written as a label a source wrote, a word is firm wherever it stands. A skills-list item is the whole text.
+    expect(brief(await t.mentions("Routed calls over DID trunks"))).toEqual([["DID", [S(60)], false]]);
+    expect(brief(await t.mentions("Python"))).toEqual([["Python", ["onet:tool:python", S(3)], false]]);
+    // A label the builder made beside one a source wrote: the source's label decides.
+    expect(brief(await t.mentions("Ansible"))).toEqual([["Ansible", [S(61), "onet:tool:ansible-software"], false]]);
+    expect(brief(await t.mentions("wrote ansible playbooks"))).toEqual([["ansible", [S(61), "onet:tool:ansible-software"], true]]);
+    // A label that is itself an everyday word is that word, capital or not.
+    expect(brief(await t.mentions("Communication with clients"))).toEqual([["Communication", [S(63)], false]]);
+    // How an accent is encoded is not a different spelling.
+    for (const line of ["Proven\u00e7al", decomposed("Proven\u00e7al")]) expect(brief(await t.mentions(line)), line).toEqual([[line, [S(62)], false]]);
+  });
+
   it("refuse a text too long to be a line, and find nothing in nothing", async () => {
     const t = taxonomy();
     expect(await t.mentions("")).toEqual([]);

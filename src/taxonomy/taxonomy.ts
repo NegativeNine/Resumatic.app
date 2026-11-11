@@ -178,10 +178,17 @@ export class Taxonomy {
 }
 
 /**
- * One word that is also a label is thin evidence when it is very short, or when the text writes in
- * lower case what every matching label writes with a capital ("go" for Go, "excel" for Excel).
+ * One word that is also a label is thin evidence when it is very short, when only labels the
+ * builder made carry it ("Testing", from "Testing software"), or when every label a source wrote
+ * for it has a capital and the text writes it as none of them does: "go" for Go, "excel" for
+ * Excel, "Did" for DID. A capital alone shows nothing, because every line starts with one. A label
+ * that is itself lower case is an everyday word, and is that word however the text writes it.
  */
 function weakWord(written: string, norm: string, concepts: Mention["concepts"]): boolean {
   if (norm.length <= 2) return true;
-  return written === written.toLowerCase() && concepts.every((concept) => concept.matched !== concept.matched.toLowerCase());
+  // How an accent is encoded is not a different way of writing a word.
+  const asWritten = written.normalize("NFC");
+  return concepts
+    .filter((concept) => concept.type !== "derived")
+    .every((concept) => concept.matched !== concept.matched.toLowerCase() && concept.matched.normalize("NFC") !== asWritten);
 }

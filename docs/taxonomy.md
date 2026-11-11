@@ -121,12 +121,20 @@ Anything derived from the taxonomy (a tag on a fact, an occupation on a role) mu
 
 | Call | Answers |
 | --- | --- |
-| `mentions(text)` | The labels that appear word for word in a text, with their positions and concepts. The longest wording wins. A single short or everyday word ("go", "excel") is marked `weak` |
+| `mentions(text)` | The labels that appear word for word in a text, with their positions and concepts. The longest wording wins. A single word that is thin evidence is marked `weak` (below) |
 | `lookup(label)` | The concepts that carry exactly this label |
 | `broader(id)` | The concepts above this one, nearest first |
 | `profile(occupation)` | The occupation through both sources: ESCO's skills, O\*NET's activities and software, with each item saying which occupation's record it comes from and how the crosswalk relates it |
 
 A mention is a candidate, never a tag. Deciding that a line shows a skill is a separate, checked step (see the design).
+
+A mention of one word is `weak` when any of these holds:
+
+- the word is one or two characters long ("go", "R");
+- only a label the builder made carries it ("Testing", which is O\*NET's "Testing software" shortened);
+- every label a source wrote for it has a capital, and the text writes it as none of them does: "excel" for Excel, "Did" or "did" for DID, "PYTHON" for Python.
+
+A capital alone is not evidence, because every line starts with one. A label that is itself lower case ("communication") is an everyday word and is matched however the text writes it. The flag goes by spelling and nothing else: an everyday word that the text writes exactly as its label is written ("Chef at a 40-seat bistro", beside the software called Chef) is not marked, and telling those apart belongs to the checked step.
 
 Limits today: English only, and exact wording only. Finding the activity or skill a line describes in other words needs a vector index of the concepts, which is the next step.
 
