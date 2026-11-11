@@ -123,7 +123,9 @@ export async function offers(models: Models, pairs: readonly OfferPair[]): Promi
   pairs.forEach((pair, index) => {
     // "Pursuing the certification" is not "Completed the certification", and "Never handled" is
     // not "Handled". The claim checks below read a denial or a plan only beside the verbs they
-    // know, so the list settles this for every verb, and for both directions at once.
+    // know, so the list settles this for every verb, and for both directions at once. It settles
+    // the words it holds: a hedge in other words ("Almost finished") passes here, and the judge
+    // is the only thing left to stop it.
     if (qualifiers(pair.later.text).join("\n") !== qualifiers(pair.earlier.text).join("\n")) return;
     if (checkClaim(pair.earlier.text, [{ text: pair.later.text }]).ok)
       items.push({ alias: `${index + 1}.e`, text: pair.earlier.text, facts: [{ text: pair.later.text, quote: null }] });

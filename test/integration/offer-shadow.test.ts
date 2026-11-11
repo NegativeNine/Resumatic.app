@@ -51,7 +51,7 @@ async function twice(second: FakeModelOptions, wrap: (models: Models, user: User
     const record = new RecordStore(state.storage.sql, (fn) => state.storage.transactionSync(fn));
     return { all: record.export().recordLinks, shown: facts.flatMap((fact) => record.links("fact", fact.id)) };
   });
-  return { facts, links, calls: options.calls!, long: facts.find((fact) => fact.text === LONG)!, short: facts.find((fact) => fact.text === SHORT)! };
+  return { user, facts, links, calls: options.calls!, long: facts.find((fact) => fact.text === LONG)!, short: facts.find((fact) => fact.text === SHORT)! };
 }
 
 describe("reading a second resume as it is configured everywhere today", () => {
@@ -159,6 +159,30 @@ describe("reading with shadow offers switched on", () => {
     } finally {
       await reading.dispose();
     }
+  });
+
+  it("accepts nothing more from a reading once its upload is marked ready", async () => {
+    settings.OFFER_SHADOW_ENABLED = "true";
+    settings.MATCH_SHADOW_ENABLED = "true";
+    // This judge finds neither line says everything the other says, so the reading kept no offer.
+    const { user, links, long, short } = await twice({ judgeRejects: ["Mentored"] });
+    const before = links.all.length;
+    expect(links.all.filter((link) => link.proposedBy === "model")).toEqual([]);
+    // A try that ran out of time is not cancelled: the Workflow only stops waiting for it. If it
+    // comes back after the reading has finished, the vault takes nothing from it.
+    await runInDurableObject(vaultOf(user), async (instance, state) => {
+      const source = state.storage.sql.exec<{ id: string; run_id: string }>(`SELECT id, run_id FROM sources WHERE id = (SELECT source_id FROM facts WHERE id = ?)`, long.id).one();
+      const late = { relation: "same" as const, from: long.id, to: short.id, lines: { from: long.text, to: short.text } };
+      await expect(instance.saveShadowOffers(source.id, source.run_id, { model: "judge", method: "entailment/2" }, [late])).rejects.toThrow(/no longer accepts work/);
+      await expect(instance.saveShadowSplits(source.id, source.run_id, { model: "extract+judge", method: "split/2" }, [])).rejects.toThrow(/no longer accepts work/);
+      await expect(instance.matchShadow(source.id, source.run_id)).rejects.toThrow(/no longer accepts work/);
+      await expect(instance.offerCandidates(source.id, source.run_id)).rejects.toThrow(/no longer accepts work/);
+      // Nor is another model call reserved for that reading, so none is sent.
+      const call = { attemptId: crypto.randomUUID(), route: "judge", model: "judge", inputChars: 100, maxOutputTokens: 100 };
+      await expect(instance.reserveModelAttempt(source.run_id, "offer", call, 1_000, 10_000_000)).rejects.toThrow(/no longer accepts writes/);
+      const record = new RecordStore(state.storage.sql, (fn) => state.storage.transactionSync(fn));
+      expect(record.export().recordLinks).toHaveLength(before);
+    });
   });
 
   it("finishes the upload with every fact when the judge fails", async () => {

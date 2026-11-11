@@ -13,7 +13,7 @@ It is step 4 of the [pipeline design](taxonomy-pipelines-design.md). The code is
 
 | # | Check | Stops | Needs a model |
 | --- | --- | --- | --- |
-| 1 | The line has no hedge, negation, alternative or intention in it (starting rule 1) | "Helped lead X and Y" becoming "lead Y" | No. Decided before any model is asked |
+| 1 | The line has none of the listed hedges, negations, alternatives or intentions in it (starting rule 1) | "Helped lead X and Y" becoming "lead Y" | No. Decided before any model is asked |
 | 2 | The parts are whole words of the line and fit together ([record.md](record.md)) | "helpful" for "unhelpful"; a result of nothing | No |
 | 3 | There are at least two claims | Storing a division that divides nothing | No |
 | 4 | Every word that carries meaning is inside a claim. Only a joining word ("and", "then", "by") may be left out | A dropped figure, unit or qualifier | No |
@@ -33,18 +33,24 @@ A line stays whole if it has any of these in it. The list is wide on purpose: it
 - **Shared or partial credit:** helped, assisted, supported, contributed, participated, involved, partly, jointly, part of, member of, one of.
 - **Negation and exception:** not, no, never, none, without, cannot, unable, except, lack, any word ending in *n't*, rather than, instead of, failed to.
 - **Alternatives:** or, either, versus, and/or. "Python or Go" is not "Python" and "Go".
-- **Intention, attempt and possibility:** proposed, planned, intended, expected, will, would, could, should, may, might, pending, potential, tried, attempted, learning, exploring, if, unless, up to, plans to, in progress.
+- **Intention, attempt and possibility, and work still under way:** proposed, planned, intended, expected, anticipated, will, would, could, should, may, might, pending, potential, tried, attempted, learning, exploring, if, unless, up to (also written "upto"), plans to, in progress, ongoing.
 - The commonest negations in Spanish, German and French, as the reader already guards skills.
 
-The list is read against the line's words, whichever mark stands for an apostrophe and whatever spacing they came with. "Didn`t", "didn´t" and "didn‘t" are *didn't*, and "up to" is the same phrase across a line break or a space that does not break.
+The list is read against the line's words, whichever mark stands for an apostrophe and whatever spacing they came with. "Didn`t", "didn´t" and "didn‘t" are *didn't*, and "up to" is the same phrase across a line break or a space that does not break. Such a mark is part of a word only in *n't*. Anywhere else it is a possessive or a quotation mark, and the word on each side of it is read by itself: "not‘hotfixes’" has *not* in it, and "would’ve" has *would*.
+
+A hyphen where the words of a phrase join, or inside a word, changes nothing either: "in-progress" is *in progress* and "up-coming" is *upcoming*, with a hyphen of any length. A hyphenated phrase counts only where the hyphenated word ends with it, so "work-in-progress" is *in progress* and "up-to-date" is not *up to*.
+
+Nor does a character that is not shown, such as the soft hyphens that text read from a PDF can keep inside its words, or a zero-width space. A line that has one is read as a person sees it, and also with each such character as a space, and it stays whole if either reading has a listed word.
 
 "May 2021" is a month and does not count. A line of fewer than four words or more than eighty is not divided either.
+
+**It is still a list.** It settles the words it holds, as they are spelt, and no others. A hedge, a denial or an unfinished state in other words ("almost", "declined to", "candidate"), a contraction written with no apostrophe ("didnt"), or a listed word spelt with a look-alike letter from another alphabet does not keep a line whole. Such a line can be divided. Check 4 still keeps the word inside a claim, and whether that is the claim it belongs to is the judge's question (check 8).
 
 Check 7 is a starting rule of the same kind. A line that states an outcome before what led to it, such as "Doubled sign-ups in 6 weeks by rebuilding the onboarding flow", stays whole when the outcome is marked as a result. A result is put to the judge read after its claim, and that is the line's own order only when the result comes second.
 
 ## What only the judge can stop
 
-Checks 2 to 7 cannot tell that a verb has been paired with the wrong object when no figure lies between them. "Wrote weekly incident reviews" is made of the words of "Wrote the on-call runbooks and ran weekly incident reviews" and passes every check that needs no model. Only check 8 refuses it.
+Checks 2 to 7 cannot tell that a verb has been paired with the wrong object when no figure lies between them. "Wrote weekly incident reviews" is made of the words of "Wrote the on-call runbooks and ran weekly incident reviews" and passes every check that needs no model. Only check 8 refuses it. The same goes for a verb paired with a hedge that belongs to another, when the hedge is one the list does not have: "Almost shipped the billing API" from "Almost finished the data migration and shipped the billing API".
 
 Nor can they tell which of the claims before a result it is the outcome of. Check 7 settles a result named as the outcome of a claim that comes after it. Between two claims that both come before it, only check 9 can refuse the wrong one.
 
@@ -60,7 +66,7 @@ With `SPLIT_SHADOW_ENABLED=true`, reading an upload gains one stage after its fa
 
 - It asks about the lines the reading proposed, other than skills.
 - What passes every check is stored as a shadow division on its fact, stamped `split/2` and with the two models that made and judged it.
-- **It cannot fail an upload.** A model failure, a refused answer or running out of time leaves every line whole and the upload finishes as it would have. It gets one try of at most three minutes. A stage that runs out of time is not run again, so no model call is made twice for it.
+- **It cannot fail an upload.** A model failure or a refused answer leaves every line whole, and the upload finishes as it would have. It gets one try of at most three minutes. A stage that runs out of time is not run again, so no model call is made twice for it, and the upload finishes without it. That try is not cancelled, only no longer waited for: a division it stores before the upload is marked ready is kept, held to the same checks, and nothing is accepted from it afterwards ([merging.md](merging.md) says where this is read from).
 - It adds model calls to every upload, and the upload is marked ready after them. Before this is switched on anywhere people are waiting, move it after "ready".
 - The Workflow's own state holds counts only: how many lines, how many divided, and how many stayed whole for each reason.
 

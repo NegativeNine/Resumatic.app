@@ -9,7 +9,8 @@ import { MAX_PART_RANGES, MAX_SPLIT_PARTS, lineRuns, partText, partsProblem, typ
 //
 // A model proposes a division by word number and never writes a word. The proposal is then
 // checked, and any failure leaves the line whole, exactly as it is read today:
-//   1. a line with a hedge, a negation, an alternative or an intention in it is never divided;
+//   1. a line with a hedge, a negation, an alternative or an intention from a closed list in it
+//      is never divided;
 //   2. the parts must be whole words of the line and fit together (src/shared/record.ts);
 //   3. no word that carries meaning may be left out of every claim;
 //   4. a part made of separate pieces may not reach across a figure to join them;
@@ -69,7 +70,9 @@ const JUDGE_ITEMS_PER_CALL = 20;
 // A closed list. A line that has any of these stays whole, because a part cut from it can lose
 // the word that changes its meaning: "Helped lead X and Y" must never become "lead Y". The list is
 // deliberately wide. It leaves some lines whole that a person would divide, and it is the place to
-// loosen once divisions are measured on labelled lines.
+// loosen once divisions are measured on labelled lines. It is still a list: a hedge it does not
+// hold ("almost") keeps no line whole and settles no pair, and what is then kept rests on the
+// other checks and the judge.
 const QUALIFYING_WORDS = new Set([
   // Shared or partial credit. The same words the scope check reads as "contributed".
   "help", "helped", "helping", "helps", "assist", "assisted", "assisting", "assists",
@@ -80,11 +83,14 @@ const QUALIFYING_WORDS = new Set([
   "lack", "lacks", "lacked", "lacking",
   // Alternatives: "Python or Go" is not "Python" and "Go".
   "or", "either", "versus", "vs",
-  // Intention, attempt and possibility: nothing here is said to have happened.
+  // Intention, attempt and possibility, and work still under way: nothing here is said to have
+  // happened, or to be finished.
   "proposed", "propose", "proposes", "proposing", "proposal", "planned", "planning", "intended", "intend", "intending",
-  "expected", "expecting", "will", "would", "could", "should", "might", "shall", "pending", "upcoming", "potential",
-  "potentially", "prospective", "tentative", "hoped", "hoping", "tried", "trying", "attempted", "attempting",
-  "seeking", "pursuing", "learning", "studying", "exploring", "if", "unless",
+  "expected", "expecting", "anticipated", "anticipating", "will", "would", "could", "should", "might", "shall", "pending",
+  "upcoming", "ongoing", "potential", "potentially", "prospective", "tentative", "hoped", "hoping", "tried", "trying",
+  "attempted", "attempting", "seeking", "pursuing", "learning", "studying", "exploring", "if", "unless",
+  // "Up to", a phrase below, as it is often written.
+  "upto",
   // The same in the other languages the reader already guards skills against.
   "sin", "nunca", "ohne", "nicht", "niemals", "sans", "jamais",
 ]);
@@ -96,19 +102,64 @@ const QUALIFYING_PHRASES =
 // "didn\u2018t" deny exactly what "didn't" denies.
 const APOSTROPHES = /['\u2032\u2035\uFF07\p{Pi}\p{Pf}\p{Sk}\p{Lm}]/gu;
 
+// A hyphen of any length, or a minus sign. Where one stands between two letters it joins them:
+// the words of a phrase ("in-progress") or the halves of a word ("up-coming").
+const HYPHEN = "[-\\u2010-\\u2015\\u2212\\uFE63\\uFF0D]";
+const HYPHENS = new RegExp(HYPHEN, "u");
+const JOINING_HYPHEN = new RegExp(`(?<=\\p{L})${HYPHEN}(?=\\p{L})`, "gu");
+// An apostrophe is part of a word only in "n't". Anywhere else it is a possessive or a quotation
+// mark, and the word on each side of it is read by itself: "not" in "not'hotfixes'".
+const WORD = "[\\p{L}\\p{N}]+(?:(?<=n)'t(?!\\p{L}))?";
+/** One word, or several with nothing but a hyphen between each and the next. */
+const HYPHENATED = new RegExp(`${WORD}(?:${HYPHEN}${WORD})*`, "giu");
+
+// A character that is not shown: a soft hyphen, a zero-width space or joiner, a mark of direction.
+const UNSEEN = /\p{Default_Ignorable_Code_Point}/gu;
+
 /**
  * Every hedge, negation, alternative or intention in a line: the phrases in the order they come,
- * then the words in theirs. Two lines qualified in the same way give the same list.
+ * then the words in theirs. Two lines qualified in the same way give the same list, however the
+ * words were joined or marked.
  */
 export function qualifiers(line: string): string[] {
+  const shown = line.replace(UNSEEN, "");
+  const found = listed(shown);
+  if (shown === line) return found;
+  // An unseen character can sit inside a word ("pro\u00ADposed") or stand between two. The line is
+  // read as a person sees it, and then with each one as a space, which is how it was read before
+  // anything looked for them. It is qualified by whatever either reading finds, each once.
+  const apart = listed(line.replace(UNSEEN, " "));
+  for (const word of found) if (apart.includes(word)) apart.splice(apart.indexOf(word), 1);
+  return [...found, ...apart];
+}
+
+function listed(line: string): string[] {
   // The list is read against the words alone, whichever apostrophe and whatever spacing they came with.
   const text = line.replace(APOSTROPHES, "'").replace(/\s+/gu, " ");
-  const found = [...text.matchAll(QUALIFYING_PHRASES)].map((phrase) => phrase[0].toLowerCase());
-  for (const match of text.matchAll(/[\p{L}\p{N}]+(?:'[\p{L}]+)?/gu)) {
-    const word = match[0];
-    const lower = word.toLowerCase();
-    // "May 2021" is a month. Only the verb is a possibility.
-    if (lower.endsWith("n't") || word === "may" || QUALIFYING_WORDS.has(lower)) found.push(lower);
+  const found: string[] = [];
+  // A phrase is the same phrase with a hyphen for its space. Each joining hyphen becomes one
+  // space, so a place in the copy is the same place in the text.
+  const spaced = text.replace(JOINING_HYPHEN, " ");
+  for (const phrase of spaced.matchAll(QUALIFYING_PHRASES)) {
+    const end = phrase.index + phrase[0].length;
+    const hyphenated = text.slice(phrase.index, end) !== phrase[0];
+    // "Up-to-date" is not "up to": a hyphenated phrase counts only where the hyphenated word ends with it.
+    if (hyphenated && text[end] !== spaced[end]) continue;
+    found.push(phrase[0].toLowerCase());
+  }
+  for (const run of text.matchAll(HYPHENATED)) {
+    const words = run[0].split(HYPHENS);
+    // A listed word with a hyphen inside it is the same word: "up-coming".
+    const whole = words.join("").toLowerCase();
+    if (words.length > 1 && QUALIFYING_WORDS.has(whole)) {
+      found.push(whole);
+      continue;
+    }
+    for (const word of words) {
+      const lower = word.toLowerCase();
+      // "May 2021" is a month. Only the verb is a possibility.
+      if (lower.endsWith("n't") || word === "may" || QUALIFYING_WORDS.has(lower)) found.push(lower);
+    }
   }
   return found;
 }

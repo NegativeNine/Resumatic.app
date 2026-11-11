@@ -232,11 +232,44 @@ export const SPLIT_LINES: SplitExample[] = [
       },
     ],
   },
+  {
+    // "Almost" is a hedge the closed list of qualifying words does not hold, so starting rule 1
+    // does not keep this line whole. The word must still be in a claim, and only the judge can
+    // tell that it is in the wrong one.
+    line: "Almost finished the data migration and shipped the billing API",
+    expect: "split",
+    gold: [
+      ["clause", ["Almost finished the data migration"]],
+      ["clause", ["shipped the billing API"]],
+    ],
+    traps: [
+      {
+        says: "gives one claim the hedge that belongs to the other, in a word the list does not have",
+        parts: [
+          ["clause", ["finished the data migration"]],
+          ["clause", ["Almost", "shipped the billing API"]],
+        ],
+        caught: "judge",
+      },
+      {
+        says: "leaves out a hedge the list does not have",
+        parts: [
+          ["clause", ["finished the data migration"]],
+          ["clause", ["shipped the billing API"]],
+        ],
+        caught: "word_lost",
+      },
+    ],
+  },
   { line: "Helped lead the migration and the rollout", expect: "qualified" },
   { line: "Did not manage the budget but ran the roadmap", expect: "qualified" },
   // Typed with an accent and with an opening quotation mark where the apostrophe belongs.
   { line: "Didn\u00B4t manage the budget but ran the roadmap", expect: "qualified" },
   { line: "Wasn\u2018t on the on-call rota but wrote every runbook", expect: "qualified" },
+  // A listed phrase with a hyphen for its space.
+  { line: "AWS Solutions Architect certification in-progress and Terraform Associate passed", expect: "qualified" },
+  // Something still under way beside something done.
+  { line: "PMP certification ongoing and Certified ScrumMaster completed in 2024", expect: "qualified" },
   { line: "Built services in Python or Go and deployed them weekly", expect: "qualified" },
   { line: "Proposed a redesign of billing, cutting costs by 20%", expect: "qualified" },
   { line: "Reduced latency by up to 40% and doubled throughput", expect: "qualified" },
