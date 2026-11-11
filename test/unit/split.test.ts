@@ -166,6 +166,9 @@ describe("starting rule 1: a qualified line stays whole", () => {
     expect(qualifiers("AWS certification (in-progress), not yet sat")).toEqual(["in progress", "not"]);
     expect(qualifiers("Not ready for the up-coming audit")).toEqual(qualifiers("Not ready for the upcoming audit"));
     expect(qualifiers("Not ready for the up-coming audit")).toEqual(["not", "upcoming"]);
+    // A hyphenated word that spells a listed word is that word, and is not read as its parts as well.
+    expect(qualifiers("Can-not travel in the first quarter")).toEqual(qualifiers("Cannot travel in the first quarter"));
+    expect(qualifiers("Can-not travel in the first quarter")).toEqual(["cannot"]);
     // A hyphen joins only what it touches, and a hyphenated word is read as its parts when it is not a listed word itself.
     expect(qualifiers("Re-proposed the redesign, on - going since March")).toEqual(["proposed"]);
     expect(qualifiers("Python-or-Go services")).toEqual(["or"]);
