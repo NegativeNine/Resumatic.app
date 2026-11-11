@@ -307,6 +307,23 @@ describe("building the taxonomy's vector index", () => {
       const refused = await runIndexBuild({ ...env, TAXONOMY_VECTORS: new MemoryVectorIndex() } as unknown as Env, "taxonomy-index-3191aa55-2", { taxonomyVersion: VERSION }, stepper().step);
       expect(refused).toMatchObject({ state: "stopped", code: "quota" });
       expect(run).not.toHaveBeenCalled();
+
+      // In pilot mode no @cf/ model is called: the build stops before anything is reserved.
+      refuse = false;
+      const pilot = vi.fn(() => {
+        throw new Error("the pilot ledger was reached");
+      });
+      const before = reserved.length;
+      const piloted = await runIndexBuild(
+        { ...env, PILOT_SHARED_BUDGET: "true", PILOT_BUDGET: { idFromName: pilot, get: pilot }, TAXONOMY_VECTORS: new MemoryVectorIndex() } as unknown as Env,
+        "taxonomy-index-3191aa55-3",
+        { taxonomyVersion: VERSION },
+        stepper().step,
+      );
+      expect(piloted).toMatchObject({ state: "stopped", code: "unavailable" });
+      expect(reserved).toHaveLength(before);
+      expect(run).not.toHaveBeenCalled();
+      expect(pilot).not.toHaveBeenCalled();
     } finally {
       db.close();
     }
