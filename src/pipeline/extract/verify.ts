@@ -26,8 +26,17 @@ import {
 import { sourceDate } from "./dates";
 import { supportedRoleAssignment } from "./role-assignment";
 
-/** Known injection patterns; eval and human gates still test semantic leakage. */
+/**
+ * Known injection patterns; eval and human gates still test semantic leakage. The text is also read
+ * with every star and backtick taken out, because cleaning keeps a mark set off by spaces as part
+ * of what a line says, and "Ignore * previous * instructions" must still read as an instruction.
+ * Taking marks out only adds readings, so this refuses more and never less.
+ */
 export function isInstruction(text: string): boolean {
+  return matchesInstruction(text) || matchesInstruction(text.replace(/[*`]+/g, " ").replace(/[^\S\n]+/g, " "));
+}
+
+function matchesInstruction(text: string): boolean {
   if (
     /(?:^|\n)\s*(?:[-*+•]\s*)?(?:please\s+)?(?:add|include|write|list|state|say|change|replace|put)\b[^.!?\n]{0,120}\b(?:(?:(?:my|this|your)\s+)?r[eé]sum[eé]|(?:my|this|your)\s+cv)(?![\p{L}\p{N}])/iu.test(text) ||
     /(?:^|\n)\s*(?:[-*+•]\s*)?(?:please\s+)?(?:list|write|show|describe|present|portray)\s+me\s+as\b/iu.test(text) ||
