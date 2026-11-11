@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Models } from "../../src/ai/models";
 import type { JudgeItem } from "../../src/ai/prompts";
 import { offers, type OfferPair } from "../../src/pipeline/match";
+import { qualifiers } from "../../src/pipeline/split";
 import { MATCH_PAIRS } from "../fixtures/match-pairs";
 
 const pair = (later: string, earlier: string, n = 1): OfferPair => ({ later: { id: `later-${n}`, text: later }, earlier: { id: `earlier-${n}`, text: earlier } });
@@ -87,9 +88,10 @@ describe("what to offer about two lines", () => {
     expect(asked.flat().map((item) => item.text)).toEqual(["Led a team of engineers"]);
   });
 
-  it("offers nothing, and asks nothing, about a hedge, a denial, an attempt or an intention that only one line has", async () => {
+  it("offers nothing, and asks nothing, about a listed hedge, denial, attempt or intention that only one line has", async () => {
     // This judge says yes to everything, and no list of verbs knows "handle", "complete",
-    // "negotiate" or "pursue". The closed list of qualifying words settles each pair first.
+    // "negotiate" or "pursue". The closed list of qualifying words settles each pair first. It
+    // settles the words it holds: the labelled pairs below hold some it does not.
     const cases: [stated: string, qualified: string][] = [
       ["Handled customer escalations", "Never handled customer escalations"],
       ["Completed the PMP certification", "Did not complete the PMP certification"],
@@ -210,6 +212,19 @@ describe("labelled pairs", () => {
     expect(await offers(models().models, [pair(example.later, example.earlier)])).toEqual([{ relation: "same", from: "later-1", to: "earlier-1" }]);
     // With a judge that says no to either direction, they are not.
     expect((await offers(models({ [example.later]: "unsupported" }).models, [pair(example.later, example.earlier)])).filter((offer) => offer.relation === "same")).toEqual([]);
+  });
+
+  it("holds, for the judge alone, pairs in which one line is hedged, denied or unfinished in words the list does not have", () => {
+    // The closed list settles the words it holds and no others. What it cannot settle has to be
+    // among the labelled pairs, or the eval never puts it to the real judge.
+    const outside = MATCH_PAIRS.filter((example) => example.unlisted !== undefined);
+    expect(outside).not.toEqual([]);
+    for (const example of outside) {
+      expect([example.expect, example.stoppedBy], example.earlier).toEqual(["different", "judge"]);
+      // Only one line has the words, and the list reads the two lines as qualified alike.
+      expect([example.later, example.earlier].filter((line) => line.toLowerCase().includes(example.unlisted!)), example.earlier).toHaveLength(1);
+      expect(qualifiers(example.later), example.earlier).toEqual(qualifiers(example.earlier));
+    }
   });
 
   it("says for every pair that must not be offered what stops it", () => {

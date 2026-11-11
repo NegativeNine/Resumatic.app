@@ -484,6 +484,19 @@ describe("labelled lines", () => {
     expect(await one(trap.line, { propose: { [trap.line]: proposal(trap.line, ...trap.parts) }, verdicts: { [wrong]: "unsupported" } })).toEqual({ id: "fact-1", parts: null, refusal: "not_its_outcome" });
   });
 
+  it("puts a hedge the list does not have, moved to another claim, to the judge as exactly that reading", async () => {
+    const trap = traps.find((found) => found.says === "gives one claim the hedge that belongs to the other, in a word the list does not have")!;
+    const wrong = "Almost shipped the billing API";
+    // The list is a list: it has no "almost", so starting rule 1 does not keep this line whole.
+    expect(qualifier(trap.line)).toBeNull();
+    // A judge that finds nothing wrong keeps the division: no check that needs no model stops it.
+    const lenient = models({ propose: { [trap.line]: proposal(trap.line, ...trap.parts) } });
+    expect((await splitLines(lenient.models, [{ id: "fact-1", text: trap.line }]))[0]!.refusal).toBeNull();
+    expect(lenient.calls.judge[0]!.map((item) => item.text)).toContain(wrong);
+    // A judge that does not find the claim in the line, as the claim reads alone, refuses it.
+    expect(await one(trap.line, { propose: { [trap.line]: proposal(trap.line, ...trap.parts) }, verdicts: { [wrong]: "unsupported" } })).toEqual({ id: "fact-1", parts: null, refusal: "reads_differently" });
+  });
+
   it.each(SPLIT_LINES.filter((example) => example.expect === "qualified"))("$line stays whole whatever a model proposes", async (example) => {
     expect(await one(example.line, { answer: (lines) => ({ lines: lines.map((line) => ({ id: line.id, parts: [{ kind: "clause", words: [{ from: 0, to: 1 }], of: null }, { kind: "clause", words: [{ from: 2, to: 3 }], of: null }] })) }) })).toMatchObject({
       parts: null,

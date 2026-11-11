@@ -9,7 +9,8 @@ import { MAX_PART_RANGES, MAX_SPLIT_PARTS, lineRuns, partText, partsProblem, typ
 //
 // A model proposes a division by word number and never writes a word. The proposal is then
 // checked, and any failure leaves the line whole, exactly as it is read today:
-//   1. a line with a hedge, a negation, an alternative or an intention in it is never divided;
+//   1. a line with a hedge, a negation, an alternative or an intention from a closed list in it
+//      is never divided;
 //   2. the parts must be whole words of the line and fit together (src/shared/record.ts);
 //   3. no word that carries meaning may be left out of every claim;
 //   4. a part made of separate pieces may not reach across a figure to join them;
@@ -69,7 +70,9 @@ const JUDGE_ITEMS_PER_CALL = 20;
 // A closed list. A line that has any of these stays whole, because a part cut from it can lose
 // the word that changes its meaning: "Helped lead X and Y" must never become "lead Y". The list is
 // deliberately wide. It leaves some lines whole that a person would divide, and it is the place to
-// loosen once divisions are measured on labelled lines.
+// loosen once divisions are measured on labelled lines. It is still a list: a hedge it does not
+// hold ("almost") keeps no line whole and settles no pair, and what is then kept rests on the
+// other checks and the judge.
 const QUALIFYING_WORDS = new Set([
   // Shared or partial credit. The same words the scope check reads as "contributed".
   "help", "helped", "helping", "helps", "assist", "assisted", "assisting", "assists",

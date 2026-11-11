@@ -13,7 +13,7 @@ It is step 4 of the [pipeline design](taxonomy-pipelines-design.md). The code is
 
 | # | Check | Stops | Needs a model |
 | --- | --- | --- | --- |
-| 1 | The line has no hedge, negation, alternative or intention in it (starting rule 1) | "Helped lead X and Y" becoming "lead Y" | No. Decided before any model is asked |
+| 1 | The line has none of the listed hedges, negations, alternatives or intentions in it (starting rule 1) | "Helped lead X and Y" becoming "lead Y" | No. Decided before any model is asked |
 | 2 | The parts are whole words of the line and fit together ([record.md](record.md)) | "helpful" for "unhelpful"; a result of nothing | No |
 | 3 | There are at least two claims | Storing a division that divides nothing | No |
 | 4 | Every word that carries meaning is inside a claim. Only a joining word ("and", "then", "by") may be left out | A dropped figure, unit or qualifier | No |
@@ -44,11 +44,13 @@ Nor does a character that is not shown, such as the soft hyphens that text read 
 
 "May 2021" is a month and does not count. A line of fewer than four words or more than eighty is not divided either.
 
+**It is still a list.** It settles the words it holds, as they are spelt, and no others. A hedge, a denial or an unfinished state in other words ("almost", "declined to", "candidate"), a contraction written with no apostrophe ("didnt"), or a listed word spelt with a look-alike letter from another alphabet does not keep a line whole. Such a line can be divided. Check 4 still keeps the word inside a claim, and whether that is the claim it belongs to is the judge's question (check 8).
+
 Check 7 is a starting rule of the same kind. A line that states an outcome before what led to it, such as "Doubled sign-ups in 6 weeks by rebuilding the onboarding flow", stays whole when the outcome is marked as a result. A result is put to the judge read after its claim, and that is the line's own order only when the result comes second.
 
 ## What only the judge can stop
 
-Checks 2 to 7 cannot tell that a verb has been paired with the wrong object when no figure lies between them. "Wrote weekly incident reviews" is made of the words of "Wrote the on-call runbooks and ran weekly incident reviews" and passes every check that needs no model. Only check 8 refuses it.
+Checks 2 to 7 cannot tell that a verb has been paired with the wrong object when no figure lies between them. "Wrote weekly incident reviews" is made of the words of "Wrote the on-call runbooks and ran weekly incident reviews" and passes every check that needs no model. Only check 8 refuses it. The same goes for a verb paired with a hedge that belongs to another, when the hedge is one the list does not have: "Almost shipped the billing API" from "Almost finished the data migration and shipped the billing API".
 
 Nor can they tell which of the claims before a result it is the outcome of. Check 7 settles a result named as the outcome of a claim that comes after it. Between two claims that both come before it, only check 9 can refuse the wrong one.
 
