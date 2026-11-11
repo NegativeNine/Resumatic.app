@@ -1,3 +1,6 @@
+import type { Models } from "../ai/models";
+import { JudgeOut, judgePrompt, type JudgeItem } from "../ai/prompts";
+import { checkClaim } from "../grounding/claims";
 import { roleKey, wording, type RoleIdentity } from "../shared/record";
 
 // Finding what an upload says again (step 6 of docs/taxonomy-pipelines-design.md, first part).
@@ -9,8 +12,8 @@ import { roleKey, wording, type RoleIdentity } from "../shared/record";
 // wording. Those are the two findings the record itself will confirm without the owner
 // (src/vault/record.ts), and both sides use the same definitions, from src/shared/record.ts.
 //
-// Anything less than identical is not looked for here. Offering two different wordings as the
-// same fact needs the judge, and is a later change.
+// Anything less than identical is never merged by a rule. Two different wordings can only be
+// offered to the owner, and `offers` below is what works out which to offer.
 
 /** The rules that made a match, stamped on it. Raise the number when what counts as identical changes. */
 export const IDENTICAL_ROLE_METHOD = "identical-role/1";
@@ -68,4 +71,70 @@ export function identicalMatches(roles: readonly MatchRole[], facts: readonly Ma
     else matches.push({ kind: "fact", from: fact.id, to: first });
   }
   return matches;
+}
+
+// ---------------------------------------------------------------- offers
+
+/** The check that made an offer, stamped on it. Raise the number when the questions or the pre-check change. */
+export const ENTAILMENT_METHOD = "entailment/1";
+
+/** Two facts of one kind in one role whose wording differs. `later` was read after `earlier`. */
+export interface OfferPair {
+  later: { id: string; text: string };
+  earlier: { id: string; text: string };
+}
+
+/**
+ * What to offer the owner about a pair. `same`: each says everything the other says, and the
+ * earlier fact would stand for both. `fuller`: `from` says everything `to` says, and more.
+ */
+export interface Offer {
+  relation: "same" | "fuller";
+  from: string;
+  to: string;
+}
+
+const JUDGE_ITEMS_PER_CALL = 20;
+
+/** How near in meaning two lines must be before the judge is asked about them, and how many are asked. */
+export const OFFER_MIN_COSINE = 0.6;
+export const OFFERS_PER_FACT = 2;
+export const MAX_OFFER_PAIRS = 60;
+
+/**
+ * Works out, for each pair, whether one fact says everything the other says. Each direction is
+ * asked on its own: first the checks a resume line passes against its facts, which need no model
+ * and settle any pair whose figures or names differ, then the judge, in the form it already
+ * answers. A direction holds only if both say so. Nothing is composed and no wording changes:
+ * the answer is which of the two existing facts, if either, could stand for the other.
+ */
+export async function offers(models: Models, pairs: readonly OfferPair[]): Promise<Offer[]> {
+  // "x.e": does the later fact say everything the earlier one says? "x.l": the other way round.
+  const items: JudgeItem[] = [];
+  pairs.forEach((pair, index) => {
+    if (checkClaim(pair.earlier.text, [{ text: pair.later.text }]).ok)
+      items.push({ alias: `${index + 1}.e`, text: pair.earlier.text, facts: [{ text: pair.later.text, quote: null }] });
+    if (checkClaim(pair.later.text, [{ text: pair.earlier.text }]).ok)
+      items.push({ alias: `${index + 1}.l`, text: pair.later.text, facts: [{ text: pair.earlier.text, quote: null }] });
+  });
+  const holds = new Map<string, boolean>();
+  for (let at = 0; at < items.length; at += JUDGE_ITEMS_PER_CALL) {
+    const batch = items.slice(at, at + JUDGE_ITEMS_PER_CALL);
+    const out = models.judge ? await models.judge(batch) : await models.complete("judge", judgePrompt(batch), JudgeOut);
+    for (const verdict of out.verdicts) {
+      const id = verdict.id.trim();
+      // Two answers for one question are no answer, whatever either says.
+      holds.set(id, !holds.has(id) && verdict.verdict === "supported");
+    }
+  }
+  const asked = new Set(items.map((item) => item.alias));
+  const found: Offer[] = [];
+  pairs.forEach((pair, index) => {
+    const laterSaysAll = asked.has(`${index + 1}.e`) && holds.get(`${index + 1}.e`) === true;
+    const earlierSaysAll = asked.has(`${index + 1}.l`) && holds.get(`${index + 1}.l`) === true;
+    if (laterSaysAll && earlierSaysAll) found.push({ relation: "same", from: pair.later.id, to: pair.earlier.id });
+    else if (laterSaysAll) found.push({ relation: "fuller", from: pair.later.id, to: pair.earlier.id });
+    else if (earlierSaysAll) found.push({ relation: "fuller", from: pair.earlier.id, to: pair.later.id });
+  });
+  return found;
 }

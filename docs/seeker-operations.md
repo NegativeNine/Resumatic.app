@@ -49,6 +49,8 @@ Enable it in staging first by adding the variable to `env.staging.vars`. Before 
 
 `MATCH_SHADOW_ENABLED=true` has the reading of an upload also look across the person's record for roles and facts that repeat an earlier one word for word, and note each in shadow ([merging.md](merging.md)). Nothing is merged and nothing the app shows changes. It is absent from every environment, and `scripts/validate-config.mjs` refuses it in production configuration (`MATCH_SHADOW_ROLLOUT_UNVERIFIED`) for the same reason as dividing lines: what it finds is stored in people's vaults. It makes no model call. A failure in it never fails an upload.
 
+`OFFER_SHADOW_ENABLED=true` has the reading of an upload also ask the judge whether lines that differ in wording say the same thing as lines already in the same role, and keep each answer as an offer in shadow ([merging.md](merging.md)). Nothing is offered to anyone and nothing is merged. It is absent from every environment and refused in production configuration (`OFFER_SHADOW_ROLLOUT_UNVERIFIED`). Switched on, an upload makes extra calls on the judge route, at most 120 questions, and is marked ready after them. A failure in it never fails an upload.
+
 ## Billing configuration
 
 Billing stays disabled unless `BILLING_ENABLED=true` and all required values are valid. Provide `APP_ORIGIN`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, an explicit `STRIPE_API_VERSION`, and `BILLING_PLANS_JSON`:

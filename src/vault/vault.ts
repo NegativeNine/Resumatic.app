@@ -81,7 +81,8 @@ import { validateTailorCheckpoint, validateTailorPublication } from "./tailor-pu
 import { finalLegacyEvidence, legacyReceipt, legacyReview } from "./legacy-remediation";
 import { RunStore } from "./runs";
 import { RecordStore } from "./record";
-import { IDENTICAL_ROLE_METHOD, IDENTICAL_WORDING_METHOD, identicalMatches } from "../pipeline/match";
+import { IDENTICAL_ROLE_METHOD, IDENTICAL_WORDING_METHOD, MAX_OFFER_PAIRS, OFFERS_PER_FACT, OFFER_MIN_COSINE, identicalMatches, type Offer, type OfferPair } from "../pipeline/match";
+import { roleKey, sameWording } from "../shared/record";
 import type { NewPart, RecordExport } from "../shared/record";
 import { ShareStore } from "./shares";
 import { billingConfig } from "../shared/billing";
@@ -96,7 +97,7 @@ import type {
 } from "../pipeline/documents";
 import type { NewDocument, DocumentView } from "../shared/documents";
 import { DOCUMENT_RUN_KINDS, FREE_DOCUMENT_KINDS, GENERATION_RUN_KINDS, freeQuotaBucket, type RunRecord } from "../shared/runs";
-import { packVector, toUnit, topMatches, unpackVector } from "./search";
+import { cosine, packVector, toUnit, topMatches, unpackVector } from "./search";
 
 /** A running Tailor row older than this is checked against the Workflow before it blocks a new run. */
 const STALE_RUN_MS = 30 * 60 * 1000;
@@ -1535,6 +1536,77 @@ export class Vault extends DurableObject<Env> {
       }
     }
     return { roles: matches.filter((match) => match.kind === "role").length, facts: matches.filter((match) => match.kind === "fact").length, stored };
+  }
+
+  /**
+   * The pairs worth asking the judge about: each line this upload proposed, beside the lines
+   * nearest to it in meaning that another upload, or the owner, put in the same role. Lines with
+   * the same words are left out, since a rule already finds those, and so is any pair that has
+   * been linked or offered before. A skill is one item and is never paired.
+   */
+  async offerCandidates(sourceId: string, runId?: string): Promise<OfferPair[]> {
+    this.requireReading(sourceId, runId);
+    // Roles alike in every field that names a role are one role here. Any other role is only itself.
+    const roleOf = new Map(
+      this.sql
+        .exec<{ id: string; kind: string; org: string; title: string | null; start_date: string | null; end_date: string | null; unknown_end_start_date: string | null }>(
+          `SELECT id, kind, org, title, start_date, end_date, unknown_end_start_date FROM roles`,
+        )
+        .toArray()
+        .map((role) => [
+          role.id,
+          roleKey({ kind: role.kind, org: role.org, title: role.title, startDate: role.start_date, endDate: role.end_date, unknownEndStartDate: role.unknown_end_start_date }) ?? `only ${role.id}`,
+        ]),
+    );
+    const rows = this.sql
+      .exec<{ id: string; role_id: string; kind: string; text: string; source_id: string | null; vector: ArrayBuffer }>(
+        `SELECT id, role_id, kind, text, source_id, vector FROM facts WHERE kind <> 'skill' AND role_id IS NOT NULL AND vector IS NOT NULL ORDER BY rowid`,
+      )
+      .toArray();
+    const linked = new Set(
+      this.sql
+        .exec<{ from_id: string; to_id: string }>(`SELECT from_id, to_id FROM record_links WHERE kind = 'fact'`)
+        .toArray()
+        .flatMap((link) => [`${link.from_id} ${link.to_id}`, `${link.to_id} ${link.from_id}`]),
+    );
+    const others = rows.filter((row) => row.source_id !== sourceId).map((row) => ({ row, unit: toUnit(unpackVector(row.vector)) }));
+    const pairs: OfferPair[] = [];
+    for (const fact of rows.filter((row) => row.source_id === sourceId)) {
+      const unit = toUnit(unpackVector(fact.vector));
+      const near = others
+        .filter(({ row }) => row.kind === fact.kind && roleOf.get(row.role_id) === roleOf.get(fact.role_id) && !linked.has(`${fact.id} ${row.id}`) && !sameWording(row.text, fact.text))
+        .map(({ row, unit: other }) => ({ row, score: cosine(unit, other) ?? -1 }))
+        .filter(({ score }) => score >= OFFER_MIN_COSINE)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, OFFERS_PER_FACT);
+      for (const { row } of near) pairs.push({ later: { id: fact.id, text: fact.text }, earlier: { id: row.id, text: row.text } });
+      if (pairs.length >= MAX_OFFER_PAIRS) break;
+    }
+    return pairs.slice(0, MAX_OFFER_PAIRS);
+  }
+
+  /** Keeps what the judge found about this upload's lines as offers in shadow: shown to nobody, merging nothing. */
+  async saveShadowOffers(sourceId: string, runId: string | undefined, made: { model: string; method: string }, found: Offer[]): Promise<{ stored: number }> {
+    this.requireReading(sourceId, runId);
+    let stored = 0;
+    for (const offer of found) {
+      if (!this.sql.exec(`SELECT id FROM facts WHERE id IN (?, ?) AND source_id = ?`, offer.from, offer.to, sourceId).toArray().length)
+        throw new AppError("conflict", "fact is not part of this source");
+      try {
+        this.record.proposeLink({
+          kind: "fact",
+          from: offer.from,
+          to: offer.to,
+          relation: offer.relation,
+          stamp: { proposedBy: "model", model: made.model, method: made.method, taxonomyVersion: null, confidence: null, shadow: true },
+        });
+        stored++;
+      } catch (error) {
+        // Already linked another way, or as many links as a fact can hold: nothing is lost by leaving it.
+        if (!["conflict", "too_large", "not_found", "invalid"].includes(errorCode(error) ?? "")) throw error;
+      }
+    }
+    return { stored };
   }
 
   // ---------------------------------------------------------------- roles and facts (user)

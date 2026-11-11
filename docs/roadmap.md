@@ -15,6 +15,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | The record: parts of a line, tags and links | #30 open, based on #28 | Nothing writes or reads it yet. It and #26 each add the vault's next migration: whichever merges second is rebased to come after the other, and the two branches are not deployed to one environment before then |
 | Dividing a line into its claims | #31 open, based on #30 | Off by default, and kept in shadow where switched on. The eval against the real models needs credentials and has not been run; nothing has been measured |
 | Finding what an upload says again | #32 open, based on #31 | Off by default; notes identical roles and facts in shadow with no model, and merges nothing. Offers of different wordings, which need the judge, are not built |
+| Two wordings of one thing | #33 open, based on #32 | Off by default; asks the judge about likely pairs and keeps each answer as an offer in shadow. The eval against the real judge needs credentials and has not been run |
 
 An open PR or a local check is not a claim of production release acceptance. The [release status](seeker-release-status.md) records the broader acceptance work.
 
@@ -34,7 +35,7 @@ The [pipeline design](taxonomy-pipelines-design.md) is agreed. The real-data bui
 
 1. Load the versioned taxonomy into staging and build its vector index.
 2. Add evidence, parts, tags and links without changing existing records. In review as #30.
-3. Evaluate splitting, tagging and duplicate matching in shadow, using consented labelled examples. Splitting is in review as #31 ([splitting.md](splitting.md)) and finding identical copies as #32 ([merging.md](merging.md)); offers of different wordings and tagging are not started.
+3. Evaluate splitting, tagging and duplicate matching in shadow, using consented labelled examples. Splitting is in review as #31 ([splitting.md](splitting.md)), and matching as #32 and #33 ([merging.md](merging.md)); none has been run against the real models. Tagging is not started and waits for the taxonomy in staging.
 4. Add owner review of parts, tags and merge proposals.
 5. Add matching and coverage by concept, retaining evidence checks and similarity fallback.
 6. Add skills with years only where skill-use intervals are evidenced or owner-confirmed; role dates alone are insufficient.

@@ -137,6 +137,8 @@ export async function validate({
     // The same for noting what an upload says again: it stores its findings in people's vaults.
     if (environment === "production" && config.vars?.MATCH_SHADOW_ENABLED === "true")
       missing.push("MATCH_SHADOW_ROLLOUT_UNVERIFIED");
+    if (environment === "production" && config.vars?.OFFER_SHADOW_ENABLED === "true")
+      missing.push("OFFER_SHADOW_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.R2_CACHE_FENCE_ENABLED && config.vars.R2_CACHE_FENCE_ENABLED !== "false")
       missing.push("R2_CACHE_FENCE_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.PLACEMENT_FENCE_ENABLED && config.vars.PLACEMENT_FENCE_ENABLED !== "false")

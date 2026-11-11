@@ -5,6 +5,7 @@ import {
 } from "cloudflare:workers";
 import { runModels } from "./models";
 import { modelFor } from "../ai/models";
+import { ENTAILMENT_METHOD, offers } from "../pipeline/match";
 import { SPLIT_METHOD, splitLines } from "../pipeline/split";
 import { extractFacts } from "../pipeline/distill";
 import { extractorById } from "../pipeline/extract";
@@ -202,6 +203,30 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
                 return { roles: found.roles, facts: found.facts, stored: found.stored };
               } catch (error) {
                 return { roles: 0, facts: 0, stored: 0, failed: errorCode(error) ?? "error" };
+              }
+            }),
+          );
+        } catch {
+          // The step ran out of time. Nothing was kept.
+        }
+      // Two lines that say the same thing in different words are only ever offered to the owner.
+      // Where this is switched on, the judge is asked about the likeliest pairs and its answers
+      // are kept as offers in shadow. A failure here leaves the upload as it is read today.
+      if (this.env.OFFER_SHADOW_ENABLED === "true")
+        try {
+          await step.do(
+            "offer",
+            SHADOW_STEP,
+            once(async () => {
+              try {
+                const pairs = await v.offerCandidates(sourceId, event.instanceId);
+                if (pairs.length === 0) return { pairs: 0, same: 0, fuller: 0, stored: 0 };
+                const found = await offers(runModels(this.env, vaultId, event.instanceId, "offer", "distill"), pairs);
+                const { stored } = await v.saveShadowOffers(sourceId, event.instanceId, { model: modelFor(this.env, "judge"), method: ENTAILMENT_METHOD }, found);
+                // Counts only: no line is kept in the Workflow's own state.
+                return { pairs: pairs.length, same: found.filter((offer) => offer.relation === "same").length, fuller: found.filter((offer) => offer.relation === "fuller").length, stored };
+              } catch (error) {
+                return { pairs: 0, same: 0, fuller: 0, stored: 0, failed: errorCode(error) ?? "error" };
               }
             }),
           );
