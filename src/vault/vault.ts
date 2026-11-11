@@ -3281,9 +3281,26 @@ export class Vault extends DurableObject<Env> {
     options: NewDocument,
     requestKey: string,
   ): Promise<{ documentId: string; runId: string }> {
-    const digest = base64url(
+    const digest = await this.documentDigest(applicationId, options);
+    const begun = this.beginDocument(who, applicationId, options, requestKey, digest);
+    if (!begun.replay) await this.dispatchRun(this.runs.get(begun.id)!);
+    return { documentId: begun.id, runId: begun.id };
+  }
+
+  /** What a request for a document is known by when the same request arrives again. */
+  private async documentDigest(applicationId: string, options: NewDocument): Promise<string> {
+    return base64url(
       await sha256(JSON.stringify([applicationId, options])),
     );
+  }
+
+  /**
+   * Checks a request for a document and begins its run. It awaits nothing: every refusal and the
+   * run's own rows happen in one turn, so no caller can pass between a check and the write, and a
+   * caller may hold a transaction of its own around it. `replay` is true when this request had
+   * already begun a run, which is then not dispatched again.
+   */
+  private beginDocument(who: Who, applicationId: string, options: NewDocument, requestKey: string, digest: string): { id: string; replay: boolean } {
     this.requireOwner(who);
     if (options.manualText !== undefined &&
         (options.kind !== "refine" || options.expectedVersion === undefined ||
@@ -3310,7 +3327,7 @@ export class Vault extends DurableObject<Env> {
           "conflict",
           "request key already used with other input",
         );
-      return { documentId: existing.id, runId: existing.id };
+      return { id: existing.id, replay: true };
     }
     if (
       this.runs
@@ -3393,8 +3410,7 @@ export class Vault extends DurableObject<Env> {
         );
       },
     );
-    await this.dispatchRun(this.runs.get(id)!);
-    return { documentId: id, runId: id };
+    return { id, replay: false };
   }
 
   async documentInput(runId: string): Promise<
