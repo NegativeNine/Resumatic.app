@@ -20,6 +20,8 @@ const shadow: Stamp = { ...model, shadow: true };
 const S = (n: number) => `esco:skill:00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const O = (n: number) => `esco:occupation:00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const KUBERNETES = "onet:tool:kubernetes";
+const GROUP = "esco:skill:S1.1";
+const CATEGORY = "onet:toolcat:5.A.1.02";
 const ACTIVITY = "onet:activity:4.A.3.b.1.I01.D01";
 
 const LINE = "Designed the billing API and cut hosting costs by 30%";
@@ -213,23 +215,31 @@ describe("what a vault gives for its owner's card", () => {
     tag("fact", "other", S(2), "skill");
     tag("fact", "other", S(3), "skill");
     tag("fact", "plain", S(3), "skill");
+    // The marked fact also names a skill group and a tool category itself, which other facts' skills may be shown as.
+    tag("fact", "marked", GROUP, "skill-group", model);
+    tag("fact", "marked", CATEGORY, "tool-category", model);
     expect(material().skills).toEqual([
       { conceptId: S(3), facts: 2 },
       { conceptId: S(1), facts: 1 },
       { conceptId: S(2), facts: 1 },
     ]);
+    expect(material().barred).toEqual([]);
     mark("marked");
     expect(material().skills).toEqual([{ conceptId: S(3), facts: 2 }]);
+    // Every concept the marked fact or its part names goes to the Worker as barred, so it can leave each off as a group too.
+    expect(material().barred).toEqual([GROUP, S(1), S(2), CATEGORY].sort());
     // A tag the owner rejected on the marked fact still names its concept, and still bars it.
     record.decideTag(record.tags({ kind: "fact", id: "marked" })[0]!.id, "rejected");
     expect(material().skills).toEqual([{ conceptId: S(3), facts: 2 }]);
+    expect(material().barred).toContain(S(1));
     // Unmarked, each comes back.
     mark("marked", false);
     expect(material().skills.map((skill) => skill.conceptId)).toEqual([S(3), S(1), S(2)]);
+    expect(material().barred).toEqual([]);
   });
 
   it("takes occupations only from confirmed jobs, and holds no title, organisation, text or row ID", () => {
-    const { fact, role, tag, material } = vault();
+    const { fact, role, tag, mark, material } = vault();
     role("job-2", { org: "Contoso Pharmaceuticals", title: "Head of Platform", start: "2014", end: "2019-02" });
     tag("role", "job-1", O(1), "occupation");
     tag("role", "job-1", "onet:occ:99-1001.00", "occupation");
@@ -241,6 +251,9 @@ describe("what a vault gives for its owner's card", () => {
     tag("fact", "f2", S(8), "knowledge");
     tag("fact", "f2", KUBERNETES, "tool");
     tag("fact", "f1", S(1), "skill");
+    fact("f3", "Negotiated the supplier settlement");
+    tag("fact", "f3", S(7), "skill");
+    mark("f3");
 
     const given = material();
     expect(given).toEqual({
@@ -255,10 +268,12 @@ describe("what a vault gives for its owner's card", () => {
         { conceptId: S(1), facts: 1 },
         { conceptId: KUBERNETES, facts: 1 },
       ],
+      // A marked fact's concepts, by concept ID alone.
+      barred: [S(7)],
     });
     expect(given.jobs).toHaveLength(2);
     const text = JSON.stringify(given);
-    for (const word of ["Northwind", "Contoso", "Staff Platform Engineer", "Head of Platform", "billing", "Kubernetes", "stored label", "job-1", "job-2", "f1", "f2", "upload-1"])
+    for (const word of ["Northwind", "Contoso", "Staff Platform Engineer", "Head of Platform", "billing", "Kubernetes", "settlement", "stored label", "job-1", "job-2", "f1", "f2", "f3", "upload-1"])
       expect(text, word).not.toContain(word);
     expect(Object.keys(given.jobs[0]!).sort()).toEqual(["endDate", "occupations", "startDate", "unknownEndStartDate"]);
     expect(Object.keys(given.skills[0]!).sort()).toEqual(["conceptId", "facts"]);

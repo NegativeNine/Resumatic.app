@@ -213,6 +213,21 @@ describe("the card preview", () => {
     expect((await card(user)).skills).toEqual([RESOURCES, ORCHESTRATION]);
   });
 
+  it("leaves out a group a marked fact names, even where another fact's skill belongs to it", async () => {
+    const user = await signIn();
+    const { roleId } = await tagged(user);
+    // A third fact names the two groups the others' skills are shown as: one tag confirmed, one only proposed.
+    const secret = await fact(user, roleId, "Audited the cost allocations before the merger");
+    await tag(user, { kind: "fact", id: secret }, RESOURCES.id, "skill-group");
+    await tag(user, { kind: "fact", id: secret }, ORCHESTRATION.id, "tool-category", proposed);
+    expect((await card(user)).skills).toEqual([RESOURCES, ORCHESTRATION]);
+    // Marked, neither group is shown, though manage budgets and Kubernetes, on unmarked facts, belong to them.
+    expect((await mark(user, [secret])).status).toBe(204);
+    expect((await card(user)).skills).toEqual([]);
+    expect((await mark(user, [secret], false)).status).toBe(204);
+    expect((await card(user)).skills).toEqual([RESOURCES, ORCHESTRATION]);
+  });
+
   it("gives another account's session its own card, and the vault refuses another account's identity", async () => {
     const sam = await signIn();
     await tagged(sam);

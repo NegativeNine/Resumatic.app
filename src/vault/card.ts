@@ -21,7 +21,9 @@ const SKILL_RELATIONS: ReadonlySet<string> = new Set(["shows", "uses"]);
  *
  * A concept that any tag on a withheld fact names, in any state, or on a part of that fact's
  * division, is left out altogether, even where an unmarked fact shows it too: a card that still
- * showed it would still say what the marked line says.
+ * showed it would still say what the marked line says. Those concepts are also returned as
+ * `barred`: the Worker shows each skill as its group, which this side can't know, and leaves off
+ * a group that a marked fact names however the card reaches it.
  */
 export function readCardMaterial(
   record: Pick<RecordStore, "tags" | "split">,
@@ -65,5 +67,6 @@ export function readCardMaterial(
         .map((tag) => tag.conceptId),
     })),
     skills,
+    barred: [...barred].sort(),
   };
 }

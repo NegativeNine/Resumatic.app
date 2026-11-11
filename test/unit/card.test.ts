@@ -57,9 +57,10 @@ const job = (startDate: string | null, endDate: string | null, occupations: stri
   unknownEndStartDate,
   occupations,
 });
-const material = (skills: string[], jobs: CardMaterial["jobs"] = []): CardMaterial => ({
+const material = (skills: string[], jobs: CardMaterial["jobs"] = [], barred: string[] = []): CardMaterial => ({
   jobs,
   skills: skills.map((conceptId, index) => ({ conceptId, facts: skills.length - index })),
+  barred,
 });
 async function cardOf(given: CardMaterial, reads: CardReads = fixture()) {
   const preview = await buildCard(given, reads, VERSION, NOW);
@@ -162,6 +163,19 @@ describe("the skills on a card", () => {
     expect(groups.get(reach.id)?.id).toBe(reach.group);
     // In the made-up taxonomy, a skill with nothing above it.
     expect(await cardOf(material([S(2), S(5), "esco:skill:unknown"]))).toMatchObject({ skills: [] });
+  });
+
+  it("never shows a concept a marked fact names, as a skill or as the group another fact's skill belongs to", async () => {
+    // S(1) is under the skill group S1.1, Kubernetes under the tool category 5.A.1.02, and S(3) under 061.
+    const open = await cardOf(material([S(1), "onet:tool:kubernetes", S(3)]));
+    expect(open.skills.map((skill) => skill.id)).toEqual(["esco:skill:S1.1", "onet:toolcat:5.A.1.02", "esco:isced-f:061"]);
+    // A marked fact names the group and the category themselves. Unmarked facts' skills reach both, and neither is shown.
+    const marked = await cardOf(material([S(1), "onet:tool:kubernetes", S(3)], [], ["esco:skill:S1.1", "onet:toolcat:5.A.1.02"]));
+    expect(marked.skills).toEqual([{ id: "esco:isced-f:061", label: "information and communication technologies" }]);
+    // A barred skill that reaches the Worker is not shown either, and isn't read.
+    const { reads, calls } = counted(fixture());
+    expect((await cardOf(material([S(1), S(3)], [], [S(1)]), reads)).skills.map((skill) => skill.id)).toEqual(["esco:isced-f:061"]);
+    expect(calls.concepts[0]).toEqual([S(3)]);
   });
 
   it("walks every skill together: one fromAny and one concepts per level, at most 37 statements in all", async () => {

@@ -242,7 +242,9 @@ function shown(concept: Concept): CardConcept | null {
 /**
  * The card for this material. The occupation is the first, in `occupationOrder`, that the taxonomy
  * holds as an occupation or an ISCO group. Skills are taken in rank order, the first 24 read, each
- * shown as its group once, up to 12.
+ * shown as its group once, up to 12. A concept the material bars is never shown: the Vault has
+ * already left it out as a skill, and here it is left out as a group, so that a group a marked
+ * fact names does not come back as the group of another fact's skill.
  */
 export async function buildCard(material: CardMaterial, reads: CardReads, version: string, now: number): Promise<CardPreview> {
   let occupation: CardConcept | null = null;
@@ -257,14 +259,18 @@ export async function buildCard(material: CardMaterial, reads: CardReads, versio
     }
   }
 
-  const ranked = material.skills.slice(0, MAX_CARD_SKILL_READS).map((skill) => skill.conceptId);
+  const barred = new Set(material.barred);
+  const ranked = material.skills
+    .filter((skill) => !barred.has(skill.conceptId))
+    .slice(0, MAX_CARD_SKILL_READS)
+    .map((skill) => skill.conceptId);
   const groups = ranked.length ? await groupsOf(await reads.concepts(ranked), reads) : new Map<string, Concept>();
   const skills: CardConcept[] = [];
   const held = new Set<string>();
   for (const id of ranked) {
     if (skills.length >= MAX_CARD_SKILLS) break;
     const group = groups.get(id);
-    const card = group && !held.has(group.id) ? shown(group) : null;
+    const card = group && !held.has(group.id) && !barred.has(group.id) ? shown(group) : null;
     if (!card) continue;
     held.add(card.id);
     skills.push(card);

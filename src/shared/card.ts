@@ -30,6 +30,12 @@ export interface CardMaterial {
   jobs: { startDate: string | null; endDate: string | null; unknownEndStartDate: string | null; occupations: string[] }[];
   /** Concepts confirmed on usable accomplishment or credential facts, most facts first, then ID. */
   skills: { conceptId: string; facts: number }[];
+  /**
+   * Concepts that any non-shadow tag, in any state, names on a fact marked sensitive or on a part
+   * of its division. A card shows none of them: not as a skill, and not as the group another
+   * fact's skill is shown as.
+   */
+  barred: string[];
 }
 
 /** A concept as a card shows it: its taxonomy ID and the taxonomy's own label. */
