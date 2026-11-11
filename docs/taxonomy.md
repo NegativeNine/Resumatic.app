@@ -124,7 +124,7 @@ Anything derived from the taxonomy (a tag on a fact, an occupation on a role) mu
 | `mentions(text)` | The labels that appear word for word in a text, with their positions and concepts. The longest wording wins. A single word that is thin evidence is marked `weak` (below) |
 | `lookup(label)` | The concepts that carry exactly this label |
 | `broader(id)` | The concepts above this one, nearest first |
-| `profile(occupation)` | The occupation through both sources: ESCO's skills, O\*NET's activities and software, with each item saying which occupation's record it comes from and how the crosswalk relates it |
+| `profile(occupation)` | The occupation through both sources: ESCO's skills, O\*NET's activities and software, with each item saying which occupation's record it comes from and how the crosswalk relates it. Every occupation the crosswalk relates to it is read, however many (in the 10 November build one O\*NET occupation has 82), closest match first and those of one match type in ID order |
 
 A mention is a candidate, never a tag. Deciding that a line shows a skill is a separate, checked step (see the design).
 

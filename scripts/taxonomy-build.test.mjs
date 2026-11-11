@@ -435,6 +435,7 @@ test("the SQL loads into SQLite as written, one statement to a line, and holds e
     const plan = (sql, ...args) => db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...args).map((row) => row.detail).join(" | ");
     assert.match(plan(`SELECT * FROM labels WHERE norm IN (?, ?)`, "a", "b"), /SEARCH labels USING PRIMARY KEY/);
     assert.match(plan(`SELECT * FROM relations WHERE src = ? AND rel IN (?)`, "a", "b"), /SEARCH relations USING PRIMARY KEY/);
+    assert.match(plan(`SELECT * FROM relations WHERE src IN (?, ?) AND rel IN (?, ?)`, "a", "b", "c", "d"), /SEARCH relations USING PRIMARY KEY/);
     assert.match(plan(`SELECT * FROM relations WHERE dst = ? AND rel IN (?)`, "a", "b"), /relations_by_dst/);
     assert.match(plan(`SELECT * FROM concepts WHERE id IN (?, ?)`, "a", "b"), /SEARCH concepts USING PRIMARY KEY/);
   } finally { db.close(); }

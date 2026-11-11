@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MemoryStore, Taxonomy, MAX_MENTION_TEXT_CHARS, normalizeLabel, taxonomyFor, words, type Label, type Mention, type TaxonomyStore } from "../../src/taxonomy";
+import { MemoryStore, Taxonomy, MAX_MENTION_TEXT_CHARS, normalizeLabel, taxonomyFor, words, type Concept, type Edge, type Label, type Mention, type TaxonomyStore } from "../../src/taxonomy";
 import { TAXONOMY_FIXTURE } from "../support/taxonomy-fixture";
 
 const S = (n: number) => `esco:skill:00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -19,7 +19,7 @@ const decomposed = (text: string) => text.normalize("NFD");
 describe("the combined taxonomy", () => {
   it("says which taxonomy it is, and that none is loaded when none is", async () => {
     expect(await taxonomy().info()).toEqual(TAXONOMY_FIXTURE.info);
-    const empty: TaxonomyStore = { info: async () => null, concepts: async () => [], labels: async () => [], from: async () => [], to: async () => [] };
+    const empty: TaxonomyStore = { info: async () => null, concepts: async () => [], labels: async () => [], from: async () => [], fromAny: async () => [], to: async () => [] };
     await expect(new Taxonomy(empty).info()).rejects.toThrow("unavailable: the taxonomy is not loaded");
     // Without the binding there is no taxonomy, and nothing that depends on one runs.
     expect(taxonomyFor({})).toBeNull();
@@ -288,6 +288,55 @@ describe("an occupation seen through both sources", () => {
       [S(1), "essential", null],
       [S(7), "optional", null],
     ]);
+  });
+
+  it("reads every occupation the crosswalk relates it to, however many there are", async () => {
+    // Ten more ESCO occupations matched to one O*NET occupation just as its own counterpart is, each
+    // with a skill no other names. Matches of one type come in ID order, which says nothing of them.
+    const more = Array.from({ length: 10 }, (_, n) => ({ occupation: O(100 + n), skill: S(100 + n) }));
+    const store = new MemoryStore({
+      ...TAXONOMY_FIXTURE,
+      concepts: [
+        ...TAXONOMY_FIXTURE.concepts,
+        ...more.flatMap(({ occupation, skill }, n): Concept[] => [
+          { id: occupation, kind: "occupation", scheme: "esco", code: null, label: `budget specialist ${n}`, description: null, meta: {} },
+          { id: skill, kind: "skill", scheme: "esco", code: null, label: `budget skill ${n}`, description: null, meta: {} },
+        ]),
+      ],
+      edges: [
+        ...TAXONOMY_FIXTURE.edges,
+        ...more.flatMap(({ occupation, skill }): Edge[] => [
+          { src: BA, rel: "matches", dst: occupation, meta: { type: "broad" } },
+          { src: occupation, rel: "essential", dst: skill, meta: null },
+        ]),
+      ],
+    });
+    const reads: string[] = [];
+    const counted: TaxonomyStore = {
+      info: () => store.info(),
+      concepts: (ids) => store.concepts(ids),
+      labels: (norms, kinds) => store.labels(norms, kinds),
+      from: (src, rels) => (reads.push("from"), store.from(src, rels)),
+      fromAny: (srcs, rels) => (reads.push("fromAny"), store.fromAny(srcs, rels)),
+      to: (dst, rels) => (reads.push("to"), store.to(dst, rels)),
+    };
+    const profile = (await new Taxonomy(counted).profile(BA))!;
+    expect(profile.counterparts.map((counterpart) => [counterpart.concept.id, counterpart.match])).toEqual([
+      [O(3), "broad"],
+      ...more.map(({ occupation }) => [occupation, "broad"]),
+    ]);
+    // Each one's skill is in the profile, and says whose record it is from.
+    expect(profile.skills.map((item) => [item.concept.id, item.need, item.via])).toEqual([
+      ...more.map(({ occupation, skill }) => [skill, "essential", { occupation, match: "broad" }]),
+      [S(1), "essential", { occupation: O(3), match: "broad" }],
+      [S(7), "optional", { occupation: O(3), match: "broad" }],
+    ]);
+    // The crosswalk is read once and then each source's relations together: three reads of
+    // relations, not one for every occupation.
+    expect(reads).toEqual(["from", "fromAny", "fromAny"]);
+    reads.length = 0;
+    expect((await new Taxonomy(counted).profile(O(2)))!.counterparts).toHaveLength(1);
+    expect(reads).toEqual(["to", "fromAny", "fromAny"]);
   });
 
   it("is nothing for a concept that isn't an occupation, and ignores a match it can't read", async () => {

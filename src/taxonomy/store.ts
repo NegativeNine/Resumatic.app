@@ -13,6 +13,8 @@ export interface TaxonomyStore {
   labels(norms: readonly string[], kinds?: readonly ConceptKind[]): Promise<Label[]>;
   /** Relations that start at `src`. */
   from(src: string, rels?: readonly Relation[]): Promise<Edge[]>;
+  /** Relations that start at any of `srcs`, read together however many concepts are asked about. */
+  fromAny(srcs: readonly string[], rels?: readonly Relation[]): Promise<Edge[]>;
   /** Relations that end at `dst`. */
   to(dst: string, rels?: readonly Relation[]): Promise<Edge[]>;
 }
@@ -60,6 +62,10 @@ export class MemoryStore implements TaxonomyStore {
 
   async from(src: string, rels?: readonly Relation[]): Promise<Edge[]> {
     return (this.bySrc.get(src) ?? []).filter((edge) => !rels || rels.includes(edge.rel));
+  }
+
+  async fromAny(srcs: readonly string[], rels?: readonly Relation[]): Promise<Edge[]> {
+    return [...new Set(srcs)].flatMap((src) => this.bySrc.get(src) ?? []).filter((edge) => !rels || rels.includes(edge.rel));
   }
 
   async to(dst: string, rels?: readonly Relation[]): Promise<Edge[]> {

@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
-import { D1Store, MemoryStore, Taxonomy, taxonomyFor, type ConceptKind, type Relation, type TaxonomyStore } from "../../src/taxonomy";
+import { D1Store, MemoryStore, Taxonomy, taxonomyFor, type Concept, type ConceptKind, type Edge, type Relation, type TaxonomyStore } from "../../src/taxonomy";
 import { TAXONOMY_FIXTURE, TAXONOMY_FIXTURE_SQL } from "../support/taxonomy-fixture";
 
 // The same synthetic taxonomy two ways: the records in memory, and the SQL the builder writes for
@@ -9,6 +9,7 @@ import { TAXONOMY_FIXTURE, TAXONOMY_FIXTURE_SQL } from "../support/taxonomy-fixt
 const S = (n: number) => `esco:skill:00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const O = (n: number) => `esco:occupation:00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const DEV = "onet:occ:99-1001.00";
+const BA = "onet:occ:99-1003.00";
 
 const db = () => env.TAXONOMY!;
 const memory = new MemoryStore(TAXONOMY_FIXTURE);
@@ -46,6 +47,14 @@ describe("the taxonomy in D1", () => {
         expect(sorted(await d1.to(id, only)), `${id} to ${only}`).toEqual(sorted(await memory.to(id, only)));
       }
     expect(await d1.from(DEV, [])).toEqual([]);
+    // Relations from several concepts at once are the relations from each.
+    for (const only of rels) {
+      expect(sorted(await d1.fromAny(ids, only)), `from any ${only}`).toEqual(sorted(await memory.fromAny(ids, only)));
+      expect(sorted(await d1.fromAny([DEV, O(1), DEV], only)), `from two ${only}`).toEqual(sorted([...(await memory.from(DEV, only)), ...(await memory.from(O(1), only))]));
+    }
+    expect((await d1.fromAny(ids)).length).toBe(TAXONOMY_FIXTURE.edges.length);
+    expect(await d1.fromAny(ids, [])).toEqual([]);
+    expect(await d1.fromAny([])).toEqual([]);
   });
 
   it("reads more values than one statement may bind, and is not moved by hostile ones", async () => {
@@ -56,11 +65,16 @@ describe("the taxonomy in D1", () => {
     expect(sorted(await d1.labels(many, ["tool"]))).toEqual(sorted(await memory.labels(many, ["tool"])));
     const manyIds = [...Array.from({ length: 300 }, (_, n) => S(1000 + n)), S(1), DEV];
     expect((await d1.concepts(manyIds)).map((concept) => concept.id).sort()).toEqual([S(1), DEV].sort());
+    expect(sorted(await d1.fromAny(manyIds))).toEqual(sorted(await memory.fromAny(manyIds)));
+    expect(sorted(await d1.fromAny(manyIds, ["matches", "uses", "broader"]))).toEqual(sorted(await memory.fromAny(manyIds, ["matches", "uses", "broader"])));
+    expect((await d1.fromAny(manyIds, ["matches"])).map((edge) => edge.dst).sort()).toEqual(["esco:isco:C2512", O(1)].sort());
 
     const hostile = ["' OR 1=1 --", "python'; DROP TABLE labels; --", "", "x".repeat(500)];
     expect(await d1.labels(hostile)).toEqual([]);
     expect(await d1.concepts(hostile)).toEqual([]);
     expect(await d1.from("' OR 1=1 --")).toEqual([]);
+    expect(await d1.fromAny(hostile)).toEqual([]);
+    expect(await d1.fromAny([DEV], ["'; DROP TABLE relations; --" as Relation])).toEqual([]);
     expect(await d1.to(DEV, ["matches", "'; DROP TABLE relations; --" as Relation])).toEqual([]);
     expect((await d1.labels(["python"])).length).toBe(2);
   });
@@ -76,6 +90,37 @@ describe("the taxonomy in D1", () => {
     expect(await bound.broader(S(1))).toEqual(await inMemory.broader(S(1)));
     for (const id of [DEV, O(2), O(3), S(1)]) expect(await bound.profile(id), id).toEqual(await inMemory.profile(id));
     expect((await bound.info()).version).toBe(TAXONOMY_FIXTURE.info.version);
+  });
+
+  it("gives an occupation every occupation the crosswalk relates it to, read in more than one statement", async () => {
+    // Ninety ESCO occupations matched to one O*NET occupation, each with a skill of its own: more
+    // occupations than one statement may bind.
+    const more = Array.from({ length: 90 }, (_, n) => ({ occupation: O(100 + n), skill: S(100 + n) }));
+    const concepts = more.flatMap(({ occupation, skill }, n): Concept[] => [
+      { id: occupation, kind: "occupation", scheme: "esco", code: null, label: `budget specialist ${n}`, description: null, meta: {} },
+      { id: skill, kind: "skill", scheme: "esco", code: null, label: `budget skill ${n}`, description: null, meta: {} },
+    ]);
+    const edges = more.flatMap(({ occupation, skill }): Edge[] => [
+      { src: BA, rel: "matches", dst: occupation, meta: { type: "broad" } },
+      { src: occupation, rel: "essential", dst: skill, meta: null },
+    ]);
+    await db().batch([
+      ...concepts.map((concept) => db().prepare(`INSERT INTO concepts (id, kind, scheme, label) VALUES (?, ?, ?, ?)`).bind(concept.id, concept.kind, concept.scheme, concept.label)),
+      ...edges.map((edge) => db().prepare(`INSERT INTO relations (src, rel, dst, meta) VALUES (?, ?, ?, ?)`).bind(edge.src, edge.rel, edge.dst, edge.meta ? JSON.stringify(edge.meta) : null)),
+    ]);
+    try {
+      const inMemory = new Taxonomy(new MemoryStore({ ...TAXONOMY_FIXTURE, concepts: [...TAXONOMY_FIXTURE.concepts, ...concepts], edges: [...TAXONOMY_FIXTURE.edges, ...edges] }));
+      const profile = (await taxonomyFor(env)!.profile(BA))!;
+      // Its own counterpart and the ninety, and the two skills of the first with one from each of the rest.
+      expect(profile.counterparts.map((counterpart) => counterpart.concept.id)).toEqual([O(3), ...more.map(({ occupation }) => occupation)]);
+      expect(profile.skills).toHaveLength(92);
+      expect(profile).toEqual(await inMemory.profile(BA));
+    } finally {
+      await db().batch([
+        ...concepts.map((concept) => db().prepare(`DELETE FROM concepts WHERE id = ?`).bind(concept.id)),
+        ...edges.map((edge) => db().prepare(`DELETE FROM relations WHERE src = ? AND rel = ? AND dst = ?`).bind(edge.src, edge.rel, edge.dst)),
+      ]);
+    }
   });
 
   it("says nothing is loaded for a database without a taxonomy in it", async () => {

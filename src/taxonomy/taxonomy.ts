@@ -7,6 +7,7 @@ import {
   MATCH_TYPES,
   type Concept,
   type ConceptKind,
+  type Edge,
   type MatchType,
   type Mention,
   type OccupationProfile,
@@ -16,7 +17,6 @@ import {
 
 /** The longest text looked through in one call. A resume line or a job requirement is far shorter. */
 export const MAX_MENTION_TEXT_CHARS = 20_000;
-const MAX_COUNTERPARTS = 8;
 const MAX_DEPTH = 12;
 
 const typeRank = (type: string) => LABEL_TYPES.indexOf(type as (typeof LABEL_TYPES)[number]);
@@ -118,7 +118,9 @@ export class Taxonomy {
   /**
    * One occupation seen through both sources. What ESCO or O*NET says of the occupation itself
    * comes first; what they say of the occupations the official crosswalk relates it to follows,
-   * closest match first, and every item says which occupation's record it comes from.
+   * closest match first, and every item says which occupation's record it comes from. Every
+   * occupation the crosswalk relates is read. Those of one match type are in ID order, which says
+   * nothing of them, so none is left out for coming later.
    */
   async profile(occupationId: string): Promise<OccupationProfile | null> {
     const occupation = (await this.get([occupationId])).get(occupationId);
@@ -135,27 +137,32 @@ export class Taxonomy {
         const concept = linked.get(link.id);
         return concept?.kind === "occupation" && isMatch(link.type) ? [{ concept, match: link.type }] : [];
       })
-      .sort((a, b) => matchRank(a.match) - matchRank(b.match) || (a.concept.id < b.concept.id ? -1 : 1))
-      .slice(0, MAX_COUNTERPARTS);
+      .sort((a, b) => matchRank(a.match) - matchRank(b.match) || (a.concept.id < b.concept.id ? -1 : 1));
 
     const sources: { concept: Concept; via: Via }[] = [
       { concept: occupation, via: { occupation: occupation.id, match: null } },
       ...counterparts.map(({ concept, match }) => ({ concept, via: { occupation: concept.id, match } })),
     ];
+    // Each source's occupations are read together, so the reads do not grow with the crosswalk,
+    // which relates some O*NET occupations to dozens of ESCO's.
+    const ids = (scheme: Concept["scheme"]) => sources.filter(({ concept }) => concept.scheme === scheme).map(({ concept }) => concept.id);
+    const said = new Map<string, Edge[]>();
+    for (const edge of [...(await this.store.fromAny(ids("esco"), ["essential", "optional"])), ...(await this.store.fromAny(ids("onet"), ["performs", "uses"]))]) {
+      const known = said.get(edge.src);
+      if (known) known.push(edge);
+      else said.set(edge.src, [edge]);
+    }
     const skills = new Map<string, { via: Via; need: "essential" | "optional" }>();
     const activities = new Map<string, { via: Via; tasks: number }>();
     const tools = new Map<string, { via: Via; inDemand: boolean; hot: boolean }>();
     // Sources are in order of closeness, so the first record to name a concept is the one kept.
     for (const { concept, via } of sources) {
-      if (concept.scheme === "esco") {
-        for (const edge of await this.store.from(concept.id, ["essential", "optional"]))
-          if (!skills.has(edge.dst)) skills.set(edge.dst, { via, need: edge.rel === "essential" ? "essential" : "optional" });
-      } else {
-        for (const edge of await this.store.from(concept.id, ["performs", "uses"])) {
-          if (edge.rel === "performs") {
-            if (!activities.has(edge.dst)) activities.set(edge.dst, { via, tasks: typeof edge.meta?.tasks === "number" ? edge.meta.tasks : 0 });
-          } else if (!tools.has(edge.dst)) tools.set(edge.dst, { via, inDemand: edge.meta?.inDemand === true, hot: edge.meta?.hot === true });
-        }
+      for (const edge of said.get(concept.id) ?? []) {
+        if (edge.rel === "essential" || edge.rel === "optional") {
+          if (!skills.has(edge.dst)) skills.set(edge.dst, { via, need: edge.rel });
+        } else if (edge.rel === "performs") {
+          if (!activities.has(edge.dst)) activities.set(edge.dst, { via, tasks: typeof edge.meta?.tasks === "number" ? edge.meta.tasks : 0 });
+        } else if (edge.rel === "uses" && !tools.has(edge.dst)) tools.set(edge.dst, { via, inDemand: edge.meta?.inDemand === true, hot: edge.meta?.hot === true });
       }
     }
     const named = await this.get([...skills.keys(), ...activities.keys(), ...tools.keys()]);

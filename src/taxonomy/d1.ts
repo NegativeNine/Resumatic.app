@@ -135,6 +135,22 @@ export class D1Store implements TaxonomyStore {
     return this.edges("src", src, rels);
   }
 
+  async fromAny(srcs: readonly string[], rels?: readonly Relation[]): Promise<Edge[]> {
+    const wanted = [...new Set(srcs)].filter(validConceptId);
+    const only = rels ? [...new Set(rels)].filter(isRel) : null;
+    if (only && only.length === 0) return [];
+    const out: Edge[] = [];
+    for (const part of chunks(wanted, CHUNK - (only?.length ?? 0))) {
+      const { results } = await this.db
+        .prepare(`SELECT src, rel, dst, meta FROM relations WHERE src IN (${marks(part.length)})` + (only ? ` AND rel IN (${marks(only.length)})` : ""))
+        .bind(...part, ...(only ?? []))
+        .all<EdgeRow>();
+      for (const row of results)
+        if (isRel(row.rel)) out.push({ src: row.src, rel: row.rel, dst: row.dst, meta: object<RelationMeta>(row.meta) });
+    }
+    return out;
+  }
+
   to(dst: string, rels?: readonly Relation[]): Promise<Edge[]> {
     return this.edges("dst", dst, rels);
   }
