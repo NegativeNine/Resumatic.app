@@ -130,7 +130,7 @@ describe("reading an upload with shadow divisions switched on", () => {
       shadow: true,
       proposedBy: "model",
       model: `${env.MODEL_EXTRACT}+${env.MODEL_JUDGE}`,
-      method: "split/1",
+      method: "split/2",
       decidedBy: null,
     });
     expect(record.shadow!.parts.map((part) => [part.kind, part.text])).toEqual([

@@ -34,6 +34,8 @@ A line stays whole if it has any of these in it. The list is wide on purpose: it
 - **Intention, attempt and possibility:** proposed, planned, intended, expected, will, would, could, should, may, might, pending, potential, tried, attempted, learning, exploring, if, unless, up to, plans to, in progress.
 - The commonest negations in Spanish, German and French, as the reader already guards skills.
 
+The list is read against the line's words, whichever mark stands for an apostrophe and whatever spacing they came with. "Didn`t", "didn´t" and "didn‘t" are *didn't*, and "up to" is the same phrase across a line break or a space that does not break.
+
 "May 2021" is a month and does not count. A line of fewer than four words or more than eighty is not divided either.
 
 ## What only the judge can stop
@@ -47,7 +49,7 @@ So the safety of dividing rests, for that kind of error, on the judge. The label
 With `SPLIT_SHADOW_ENABLED=true`, reading an upload gains one stage after its facts are embedded and before it is marked ready:
 
 - It asks about the lines the reading proposed, other than skills.
-- What passes every check is stored as a shadow division on its fact, stamped `split/1` and with the two models that made and judged it.
+- What passes every check is stored as a shadow division on its fact, stamped `split/2` and with the two models that made and judged it.
 - **It cannot fail an upload.** A model failure, a refused answer or running out of time leaves every line whole and the upload finishes as it would have. It gets one short try.
 - It adds model calls to every upload, and the upload is marked ready after them. Before this is switched on anywhere people are waiting, move it after "ready".
 - The Workflow's own state holds counts only: how many lines, how many divided, and how many stayed whole for each reason.

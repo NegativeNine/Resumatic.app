@@ -92,12 +92,19 @@ describe("starting rule 1: a qualified line stays whole", () => {
     ["Did not manage the budget but ran the roadmap", "not"],
     ["Didn't own on-call but wrote every runbook", "didn't"],
     ["Didn\u2019t own on-call but wrote every runbook", "didn't"],
+    // Whatever was typed or read for the apostrophe: a quotation mark of either hand, an accent
+    // standing alone, a prime, or a letter that only looks like one.
+    ...["\u2018", "\u201b", "\u02bc", "\u02bb", "`", "\u00b4", "\u2032", "\uff07"].map((mark): [string, string] => [`Didn${mark}t own on-call but wrote every runbook`, "didn't"]),
+    ["Ran the roadmap but COULDN\u00b4T hire for it in 2020", "couldn't"],
     ["Shipped the API without downtime and trained the team", "without"],
     ["Built services in Python or Go and deployed them weekly", "or"],
     ["Proposed a redesign of billing, cutting costs by 20%", "proposed"],
     ["Planning to migrate 40 services and retire the old cluster", "planning"],
     ["Reduced latency by up to 40% and doubled throughput", "up to"],
     ["Was part of the team that rebuilt search and shipped it", "part of"],
+    // A phrase is the same phrase across a line break, two spaces or a space that does not break.
+    ["Reduced latency by up to 40% and tripled throughput", "up to"],
+    ["Was part  of the team that rebuilt billing\nand shipped it", "part of"],
     ["This may reduce costs and should speed up releases", "may"],
     ["Built the pipeline and will migrate the rest next year", "will"],
     ["Currently learning Rust and building a parser", "learning"],

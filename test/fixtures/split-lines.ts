@@ -184,6 +184,9 @@ export const SPLIT_LINES: SplitExample[] = [
   },
   { line: "Helped lead the migration and the rollout", expect: "qualified" },
   { line: "Did not manage the budget but ran the roadmap", expect: "qualified" },
+  // Typed with an accent and with an opening quotation mark where the apostrophe belongs.
+  { line: "Didn´t manage the budget but ran the roadmap", expect: "qualified" },
+  { line: "Wasn‘t on the on-call rota but wrote every runbook", expect: "qualified" },
   { line: "Built services in Python or Go and deployed them weekly", expect: "qualified" },
   { line: "Proposed a redesign of billing, cutting costs by 20%", expect: "qualified" },
   { line: "Reduced latency by up to 40% and doubled throughput", expect: "qualified" },

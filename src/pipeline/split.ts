@@ -20,7 +20,7 @@ import { MAX_PART_RANGES, MAX_SPLIT_PARTS, lineRuns, partText, partsProblem, typ
 // Nothing here stores anything. A caller keeps the divisions that pass, in shadow.
 
 /** The check that made a division, stamped on it. Raise the number when a rule or the prompt changes. */
-export const SPLIT_METHOD = "split/1";
+export const SPLIT_METHOD = "split/2";
 
 /** Why a line stays whole. Counted, never stored with the line. */
 export const SPLIT_REFUSALS = [
@@ -85,13 +85,20 @@ const QUALIFYING_WORDS = new Set([
 const QUALIFYING_PHRASES =
   /(?<![\p{L}\p{N}])(?:part of|member of|one of|some of|up to|rather than|instead of|other than|failed to|and\/or|plans? to|aim(?:s|ed|ing)? to|in progress|ning[u\u00FA]n(?:a|o|as|os)?|kein(?:e|en|er|es|em)?|aucun(?:e|s|es)?)(?![\p{L}\p{N}])/iu;
 
+// Whatever was typed or read where an apostrophe belongs: a quotation mark of either hand, an
+// accent standing alone, a prime, or a modifier letter that only looks like one. "Didn`t" and
+// "didn\u2018t" deny exactly what "didn't" denies.
+const APOSTROPHES = /['\u2032\u2035\uff07\p{Pi}\p{Pf}\p{Sk}\p{Lm}]/gu;
+
 /** The hedge, negation, alternative or intention that keeps a line whole, or null when it has none. */
 export function qualifier(line: string): string | null {
-  const phrase = QUALIFYING_PHRASES.exec(line);
+  // The list is read against the words alone, whichever apostrophe and whatever spacing they came with.
+  const text = line.replace(APOSTROPHES, "'").replace(/\s+/gu, " ");
+  const phrase = QUALIFYING_PHRASES.exec(text);
   if (phrase) return phrase[0].toLowerCase();
-  for (const match of line.matchAll(/[\p{L}\p{N}]+(?:['\u2019][\p{L}]+)?/gu)) {
+  for (const match of text.matchAll(/[\p{L}\p{N}]+(?:'[\p{L}]+)?/gu)) {
     const word = match[0];
-    const lower = word.toLowerCase().replace("\u2019", "'");
+    const lower = word.toLowerCase();
     if (lower.endsWith("n't")) return lower;
     // "May 2021" is a month. Only the verb is a possibility.
     if (word === "may" || QUALIFYING_WORDS.has(lower)) return lower;
