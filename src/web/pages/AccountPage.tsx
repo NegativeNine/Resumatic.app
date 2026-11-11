@@ -4,6 +4,7 @@ import { api, ApiError } from "../api";
 import { ActionError, Field, Glyph, PageHeader } from "../components/ui";
 import { BillingTools, CoachSharingTools } from "../components/AccountTools";
 import { ConnectedApps } from "../components/ConnectedApps";
+import { OwnerComments } from "../components/ShareComments";
 import { useAction } from "../hooks";
 import { href } from "../router";
 import { useSession } from "../session";
@@ -24,6 +25,7 @@ export function AccountPage() {
         <Appearance />
         <BillingTools />
         <CoachSharingTools />
+        <OwnerComments />
         {me.capabilities?.connectedApps && <ConnectedApps />}
         <SignOutCard />
         <section className="card" aria-labelledby="data-heading">

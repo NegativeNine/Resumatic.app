@@ -817,3 +817,32 @@ main:focus {
 /* A quiet button has no edge of its own, so when it comes first its words line up with the name above. */
 .app-client__actions > .rs-btn--quiet:first-child { margin-inline-start: calc(-1 * var(--space-3)); }
 .app-clients__foot { margin: var(--space-6) 0 0; max-width: 70ch; }
+
+/* Comments on a shared copy: a thread is what it is about, then each comment under who wrote it. */
+.app-threads { display: grid; gap: var(--space-4); }
+.app-thread { display: grid; gap: var(--space-3); padding: var(--space-4); background: var(--paper); border: 1px solid var(--rule); border-radius: var(--radius-lg); }
+/* Inside a card on Account a thread is set off by a rule, not by a second box. */
+.card .app-thread { padding: var(--space-4) 0 0; background: none; border: 0; border-top: 1px solid var(--rule); border-radius: 0; }
+.app-thread__on { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; overflow-wrap: anywhere; }
+.app-thread__comments { display: grid; gap: var(--space-3); }
+.app-thread__comment + .app-thread__comment { padding-top: var(--space-3); border-top: 1px solid var(--rule); }
+.app-thread__byline { margin: 0; }
+/* Another person's words, shown as the text they typed: their line breaks kept, and nothing else read into them. */
+.app-thread__body { margin: 2px 0 0; font-size: 15px; line-height: 22px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.app-thread__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-1) 0 0; }
+/* A quiet button has no edge of its own, so when it comes first its words line up with the comment above. */
+.app-thread__actions > .rs-btn--quiet:first-child { margin-inline-start: calc(-1 * var(--space-3)); }
+.app-thread__from, .app-thread__closed { margin: 0; overflow-wrap: anywhere; }
+.app-comment-form { margin-top: var(--space-4); }
+/* Inside a thread the card's own spacing already sets the form apart. */
+.app-thread .app-comment-form { margin-top: 0; }
+.app-comment-form .actions { margin-top: var(--space-3); }
+.app-comments__none { margin: 0; }
+
+/* New since the person last looked: a coach's comment, and the count of them beside Account in the menu. */
+.rs-mark--new { color: var(--ballpoint); background: var(--ballpoint-soft); }
+.app-nav-new { margin-inline-start: 6px; padding: 0 6px; }
+@media (max-width: 600px) {
+  /* The menu is tight here, so the mark is the number alone. The link's name still says what it counts. */
+  .app-nav-new__word { display: none; }
+}
