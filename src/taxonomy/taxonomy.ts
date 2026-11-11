@@ -1,6 +1,6 @@
 import { AppError } from "../shared/errors";
 import { validConceptId } from "./ids.mjs";
-import { normalizeLabel, wordRuns, words } from "./normalize.mjs";
+import { asSeen, normalizeLabel, wordRuns, words } from "./normalize.mjs";
 import type { TaxonomyStore } from "./store";
 import {
   LABEL_TYPES,
@@ -15,7 +15,10 @@ import {
   type Via,
 } from "./types";
 
-/** The longest text looked through in one call. A resume line or a job requirement is far shorter. */
+/**
+ * The longest text read in one call, for the labels in it or as a label itself. A resume line or a
+ * job requirement is far shorter, and so is every label: the builder keeps none over 200 characters.
+ */
 export const MAX_MENTION_TEXT_CHARS = 20_000;
 const MAX_DEPTH = 12;
 
@@ -44,8 +47,12 @@ export class Taxonomy {
     return new Map(found.map((concept) => [concept.id, concept]));
   }
 
-  /** The concepts that carry exactly this label, strongest label type first. */
+  /**
+   * The concepts that carry exactly this label, strongest label type first. A text longer than
+   * any that is looked through for mentions is no label, and is not read: nothing carries it.
+   */
   async lookup(label: string, opts: { kinds?: readonly ConceptKind[] } = {}): Promise<Mention["concepts"]> {
+    if (label.length > MAX_MENTION_TEXT_CHARS) return [];
     const norm = normalizeLabel(label);
     if (!norm) return [];
     return (await this.store.labels([norm], opts.kinds))
@@ -193,9 +200,23 @@ export class Taxonomy {
  */
 function weakWord(written: string, norm: string, concepts: Mention["concepts"]): boolean {
   if (norm.length <= 2) return true;
-  // How an accent is encoded is not a different way of writing a word.
-  const asWritten = written.normalize("NFC");
+  // A word is written the way a person reads it. A character nobody sees is no part of that, in
+  // the text or in a label, and neither is how an accent is encoded: the two are compared
+  // decomposed.
+  const word = asSeen(written);
+  let decomposed: string | undefined;
   return concepts
     .filter((concept) => concept.type !== "derived")
-    .every((concept) => concept.matched !== concept.matched.toLowerCase() && concept.matched.normalize("NFC") !== asWritten);
+    .every((concept) => {
+      if (concept.matched === concept.matched.toLowerCase()) return false;
+      const label = asSeen(concept.matched).normalize("NFD");
+      // The word is someone else's text and can carry any number of marks, and decomposing puts
+      // them in order in time that grows with the square of their number. So a word too long to
+      // be the label is not decomposed to find that out. Decomposing never makes fewer characters
+      // of a text, and a character is at most two units of length, so no way of writing the
+      // label is more than twice as long as the label decomposed.
+      if (word.length > 2 * label.length) return true;
+      decomposed ??= word.normalize("NFD");
+      return decomposed !== label;
+    });
 }

@@ -84,7 +84,7 @@ node scripts/taxonomy/build.mjs \
 
 It writes `concepts.ndjson`, `labels.ndjson` and `relations.ndjson`, the SQL that loads them (`d1/0001.sql` onwards), and `manifest.json`: every input file with its SHA-256 and row count, what came out by kind, what was set aside, and the credits below. The same files always give the same bytes, and the version (`esco-1.2.1+onet-31.0+<first eight characters of the content hash>`) names them.
 
-The output folder is replaced, not added to, so that no file of an earlier build is left to be loaded with the new ones. The builder does that only to a folder that is new, empty, or holds an earlier build, which it knows by the `manifest.json` a build writes last. It refuses any other folder with something in it, and any folder that the files it is reading are in, and it removes nothing when it refuses. Naming the folder the downloads are kept in, or a checkout, as `--out` stops the build.
+The output folder is replaced, not added to, so that no file of an earlier build is left to be loaded with the new ones. The builder does that only to a folder that is new, empty, or holds an earlier build, which it knows by the `manifest.json` a build writes last. It refuses any other folder with something in it, and any folder that the files it is reading are in, and it removes nothing when it refuses. Naming the folder the downloads are kept in, or a checkout, as `--out` stops the build. The folder the files are in is known by what it is on disk and not by how a path to it is written, so it is refused all the same when `--out` or the files are named through a link.
 
 ### Getting the files
 
@@ -111,11 +111,11 @@ A taxonomy is loaded once into a D1 database of its own and never changed. A new
 
 ```sh
 npx wrangler d1 create resumatic-taxonomy-<version>
-for f in <folder>/d1/*.sql; do npx wrangler d1 execute resumatic-taxonomy-<version> --remote --file "$f" || break; done
+for f in <folder>/d1/*.sql; do npx wrangler d1 execute resumatic-taxonomy-<version> --remote --yes --file "$f" || break; done
 npx wrangler d1 execute resumatic-taxonomy-<version> --remote --command "SELECT key, value FROM taxonomy_meta"
 ```
 
-Every file is run, in order, and the loop stops at the first one that fails. The last statement of the last file says what the taxonomy is: its format, version, content hash and sources, and how many concepts, labels and relations it has (`records`). It writes those rows together or not at all, and only when the three tables hold exactly as many rows as the builder wrote. So a database names a version only if every record is in it:
+Every file is run, in order, and the loop stops at the first one that fails. `--yes` answers the question wrangler asks before it runs a file on a remote database (the database serves no queries meanwhile, and nothing reads this one yet). Asked at a terminal and answered "no", wrangler leaves the file out without an error, and the loop would go on to the next. The last statement of the last file says what the taxonomy is: its format, version, content hash and sources, and how many concepts, labels and relations it has (`records`). It writes those rows together or not at all, and only when the three tables hold exactly as many rows as the builder wrote. So a database names a version only if every record is in it:
 
 - The last command above prints the version that is in `manifest.json`, and how many records the database was found to hold. If it prints no rows, the load is not complete.
 - A load that left a file out ends with the last file failing: `NOT NULL constraint failed: taxonomy_meta.value`.
@@ -150,7 +150,11 @@ A mention of one word is `weak` when any of these holds:
 - only a label the builder made carries it ("Testing", which is O\*NET's "Testing software" shortened);
 - every label a source wrote for it has a capital, and the text writes it as none of them does: "excel" for Excel, "Did" or "did" for DID, "PYTHON" for Python.
 
-A capital alone is not evidence, because every line starts with one. A label that is itself lower case ("communication") is an everyday word and is matched however the text writes it. The flag goes by spelling and nothing else: an everyday word that the text writes exactly as its label is written ("Chef at a 40-seat bistro", beside the software called Chef) is not marked, and telling those apart belongs to the checked step.
+A capital alone is not evidence, because every line starts with one. A label that is itself lower case ("communication") is an everyday word and is matched however the text writes it. How the text writes a word is how a person reads it: a character nobody sees in the word or straight after it, and an accent encoded another way, are not another spelling, in the text or in a label. The flag goes by spelling and nothing else: an everyday word that the text writes exactly as its label is written ("Chef at a 40-seat bistro", beside the software called Chef) is not marked, and telling those apart belongs to the checked step.
+
+In every other way the comparison is exact. These count as other spellings: two letters a typesetter joined into one character ("Conﬂuence"), a curly apostrophe where the label has a straight one, a plain digit where the label has a superscript ("PM2" for PM²). A word is compared without the punctuation around it, so one word is never a firm match for a label that ends in punctuation the word reader leaves out: "Act!", "Kahoot!" and four more in the 10 November build are weak however the text writes them.
+
+The text these reads are given is someone else's (an upload, a job posting), so what reading it can cost is bounded. `mentions` refuses a text of more than 20,000 characters, and `lookup` finds nothing for one: no label is over a hundredth of that. Within the limit, a word may carry any number of combining marks and unseen characters. They are dropped before the word is put in its comparison form, and a word too long to be any way of writing its label is not compared with it, so the time a pile of marks on one letter takes to read grows with the pile and not with its square.
 
 Limits today: English only, and exact wording only. Finding the activity or skill a line describes in other words needs a vector index of the concepts, which is the next step.
 

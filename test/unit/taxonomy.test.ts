@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { D1Store, MemoryStore, Taxonomy, MAX_MENTION_TEXT_CHARS, normalizeLabel, taxonomyFor, words, type Concept, type Edge, type Label, type Mention, type TaxonomyStore } from "../../src/taxonomy";
 import { TAXONOMY_FIXTURE } from "../support/taxonomy-fixture";
 
@@ -15,6 +15,28 @@ const withLabels = (...labels: Omit<Label, "norm">[]) =>
   new Taxonomy(new MemoryStore({ ...TAXONOMY_FIXTURE, labels: [...TAXONOMY_FIXTURE.labels, ...labels.map((label) => ({ ...label, norm: normalizeLabel(label.text) }))] }));
 /** An accent written as its letter and then a combining mark, as some editors and PDF text layers write it. */
 const decomposed = (text: string) => text.normalize("NFD");
+/** A text with every character that is not plain ASCII written as its code, to name a case whose point is a character nobody sees. */
+const coded = (text: string) => text.replace(/[^\x20-\x7e]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
+/**
+ * A run of combining marks of five classes, the highest class first. Normalising a text puts each
+ * run of marks in canonical order, and here every mark has to pass all the marks of a higher class
+ * before it, so the time grows with the square of the run.
+ */
+const pile = (marks: number) => ["\u0315", "\u0301", "\u0323", "\u0327", "\u0334"].map((mark) => mark.repeat(marks / 5)).join("");
+/**
+ * Does a read, and says how long the longest run of marks was in anything normalised on the way.
+ * That run is what the time to read a word someone else wrote hangs on. It is counted, not timed.
+ */
+async function marksNormalised<T>(read: () => T | Promise<T>): Promise<[T, number]> {
+  const normalize = vi.spyOn(String.prototype, "normalize");
+  try {
+    const result = await read();
+    const runs = normalize.mock.contexts.flatMap((text) => [...String(text).matchAll(/\p{M}+/gu)].map((run) => run[0].length));
+    return [result, Math.max(0, ...runs)];
+  } finally {
+    normalize.mockRestore();
+  }
+}
 
 describe("the combined taxonomy", () => {
   it("says which taxonomy it is, and that none is loaded when none is", async () => {
@@ -62,6 +84,11 @@ describe("the combined taxonomy", () => {
     expect(await t.lookup("Senior Backend Engineer", { kinds: ["occupation"] })).toEqual([{ id: DEV, kind: "occupation", type: "alternative", matched: "Senior Backend Engineer" }]);
     expect(await t.lookup("no such label")).toEqual([]);
     expect(await t.lookup("!!!")).toEqual([]);
+    // A text longer than any that is looked through for mentions is no label, and is not read.
+    const spaced = (length: number) => `budget${" ".repeat(length - 16)}management`;
+    expect(await t.lookup(spaced(MAX_MENTION_TEXT_CHARS))).toEqual([{ id: S(1), kind: "skill", type: "alternative", matched: "budget management" }]);
+    expect(await marksNormalised(() => t.lookup(spaced(MAX_MENTION_TEXT_CHARS + 1)))).toEqual([[], 0]);
+    expect(await marksNormalised(() => t.lookup(`Python${pile(3 * MAX_MENTION_TEXT_CHARS)}`))).toEqual([[], 0]);
   });
 });
 
@@ -206,6 +233,62 @@ describe("labels found in a line of text", () => {
     expect(brief(await t.mentions("Communication with clients"))).toEqual([["Communication", [S(63)], false]]);
     // How an accent is encoded is not a different spelling.
     for (const line of ["Proven\u00e7al", decomposed("Proven\u00e7al")]) expect(brief(await t.mentions(line)), line).toEqual([[line, [S(62)], false]]);
+  });
+
+  it("do not take a character nobody sees for a different spelling", async () => {
+    const t = withLabels(
+      { conceptId: S(60), kind: "knowledge", type: "alternative", text: "DID" },
+      { conceptId: S(62), kind: "knowledge", type: "preferred", text: "Proven\u00e7al" },
+      // A source's own label can carry such a character: two of ESCO's start with a zero-width space.
+      { conceptId: S(64), kind: "knowledge", type: "preferred", text: "\u200bKanban" },
+    );
+    const python = ["onet:tool:python", S(3)];
+    // A zero-width space, a soft hyphen or a direction mark, after the word or inside it. The word
+    // found has the character in it, and is still the word its label writes.
+    for (const line of ["Python\u200b", "Python\u00ad", "Python\u200e", "Py\u200bthon", "Py\u00adthon", "Python\u200b\u200b\u200b"])
+      expect(brief(await t.mentions(line)), coded(line)).toEqual([[line, python, false]]);
+    expect(brief(await t.mentions("Python\u200b, SQL\u00ad"))).toEqual([
+      ["Python\u200b", python, false],
+      ["SQL\u00ad", [S(8)], false],
+    ]);
+    // With the encoding of an accent as well, and in a label as much as in the text.
+    for (const line of ["Proven\u00e7al\u200b", decomposed("Proven\u00e7\u200bal")]) expect(brief(await t.mentions(line)), coded(line)).toEqual([[line, [S(62)], false]]);
+    expect(brief(await t.mentions("Kanban"))).toEqual([["Kanban", [S(64)], false]]);
+    // It makes no word firm that is not written as its label is.
+    for (const line of ["python\u200b", "PYTHON\u200b", "Pyth\u00adON"]) expect(brief(await t.mentions(line)), coded(line)).toEqual([[line, python, true]]);
+    expect(brief(await t.mentions("Did\u200b not use SAP"))).toEqual([["Did\u200b", [S(60)], true]]);
+    expect(brief(await t.mentions("kanban\u200b boards"))).toEqual([["kanban\u200b", [S(64)], true]]);
+  });
+
+  it("read a word with any number of marks piled on it without putting the pile in order", async () => {
+    const t = withLabels({ conceptId: S(62), kind: "knowledge", type: "preferred", text: "Proven\u00e7al" });
+    const python = ["onet:tool:python", S(3)];
+    // One word nearly as long as a text may be: six letters, and marks on the last of them.
+    const word = `Python${pile(MAX_MENTION_TEXT_CHARS - 15)}`;
+    expect(`${word}, SQL`).toHaveLength(MAX_MENTION_TEXT_CHARS - 4);
+    // It is read as the word it is, and none of its marks is ever normalised: not to compare it
+    // with labels, not to look it up, and not to see whether it is written as its label is.
+    expect(await marksNormalised(() => words(word))).toEqual([[{ start: 0, end: word.length, norm: "python" }], 0]);
+    expect(await marksNormalised(() => normalizeLabel(`budget${pile(5000)} manage${pile(5000)}ment`))).toEqual(["budget management", 0]);
+    const [found, inMentions] = await marksNormalised(() => t.mentions(`${word}, SQL`));
+    expect(brief(found)).toEqual([
+      [word, python, true],
+      ["SQL", [S(8)], false],
+    ]);
+    expect(inMentions).toBe(0);
+    const [carried, inLookup] = await marksNormalised(() => t.lookup(word));
+    expect(carried.map((concept) => concept.id)).toEqual(python);
+    expect(inLookup).toBe(0);
+    // Dropping the marks first changes no form: a letter that comes with its accent is still parted from it.
+    expect(words(`\u00e9${pile(40)}cole fran\u00e7aise, \u1ea4n`).map((word) => word.norm)).toEqual(["ecole", "francaise", "an"]);
+    // A word that could be its label is compared with it, marks and all. With more on it than any
+    // way of writing the label has, it is not the label, and is not put in order to find that out.
+    const accented = decomposed("Proven\u00e7al");
+    expect(await marksNormalised(async () => brief(await t.mentions(accented)))).toEqual([[[accented, [S(62)], false]], 1]);
+    const twice = accented.replace("\u0327", "\u0327\u0301");
+    expect(await marksNormalised(async () => brief(await t.mentions(twice)))).toEqual([[[twice, [S(62)], true]], 2]);
+    const piled = accented.replace("\u0327", `\u0327${pile(20)}`);
+    expect(await marksNormalised(async () => brief(await t.mentions(piled)))).toEqual([[[piled, [S(62)], true]], 0]);
   });
 
   it("refuse a text too long to be a line, and find nothing in nothing", async () => {
