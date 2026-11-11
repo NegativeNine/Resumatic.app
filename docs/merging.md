@@ -29,7 +29,7 @@ With `MATCH_SHADOW_ENABLED=true`, reading an upload gains one stage after its fa
 - Each finding is stored as a shadow link from the copy to the earliest row, stamped `identical-role/2` or `identical-wording/2`. What was found before is not stored again.
 - **Nothing is merged.** A shadow link stands for nothing: every fact still stands for itself with its own one quote, the lists show every row, and tailoring hides repeats as it already does.
 - It makes no model call, so it costs nothing and adds almost no time.
-- **It cannot fail an upload.** A failure leaves the upload exactly as it is read today.
+- **It cannot fail an upload.** A failure leaves the upload exactly as it is read today. It gets one try of at most three minutes and is not run again.
 
 A person's export includes these links, marked as in shadow.
 
@@ -51,6 +51,8 @@ Lines that differ in wording are never merged by a rule. With `OFFER_SHADOW_ENAB
 **What only the judge can stop.** "Wrote the on-call runbooks" and "Reviewed the on-call runbooks" have no figure, name or hedge to tell them apart. No check stops them being offered as the same; only the judge does. The labelled pairs mark which wrong offers are stopped without a model and which are not (`test/fixtures/match-pairs.ts`), and the eval puts each to the real judge (`test/evals/match.eval.ts`). It has not been run.
 
 An offer is only ever an offer. Nothing here confirms one, and in shadow nobody is shown one.
+
+Like the matcher, this step cannot fail an upload and gets one try of at most three minutes. If it runs out of time it is not run again, so the judge is never asked the same questions twice, and nothing is kept.
 
 ## What is not built
 

@@ -18,8 +18,12 @@ import { MODEL_STEP, STEP, once, retrySafely, sourceFailureMessage } from "./ste
 
 export type DistillParams = { vaultId: string; sourceId: string };
 
-/** Work kept in shadow gets one short try. It is never worth holding an upload for. */
-const SHADOW_STEP = { retries: { limit: 1, delay: "5 seconds" }, timeout: "3 minutes" } as const;
+/**
+ * Work kept in shadow gets one short try. It is never worth holding an upload for. `limit` counts
+ * the tries after the first, so it is 0: a stage that runs out of time is not run again, which
+ * would repeat every model call it had made. Leaving `retries` out would allow five more.
+ */
+const SHADOW_STEP = { retries: { limit: 0, delay: "5 seconds" }, timeout: "3 minutes" } as const;
 
 /**
  * Distill: convert an upload to Markdown, extract quoted facts, embed them. Each step writes to

@@ -60,7 +60,7 @@ With `SPLIT_SHADOW_ENABLED=true`, reading an upload gains one stage after its fa
 
 - It asks about the lines the reading proposed, other than skills.
 - What passes every check is stored as a shadow division on its fact, stamped `split/2` and with the two models that made and judged it.
-- **It cannot fail an upload.** A model failure, a refused answer or running out of time leaves every line whole and the upload finishes as it would have. It gets one short try.
+- **It cannot fail an upload.** A model failure, a refused answer or running out of time leaves every line whole and the upload finishes as it would have. It gets one try of at most three minutes. A stage that runs out of time is not run again, so no model call is made twice for it.
 - It adds model calls to every upload, and the upload is marked ready after them. Before this is switched on anywhere people are waiting, move it after "ready".
 - The Workflow's own state holds counts only: how many lines, how many divided, and how many stayed whole for each reason.
 

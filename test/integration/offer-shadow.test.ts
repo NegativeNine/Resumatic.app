@@ -1,4 +1,4 @@
-import { runInDurableObject } from "cloudflare:test";
+import { introspectWorkflow, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it } from "vitest";
 import { setModels, type Models } from "../../src/ai/models";
@@ -115,6 +115,23 @@ describe("reading with shadow offers switched on", () => {
     expect(links.all.filter((link) => link.proposedBy === "rule").map((link) => link.method).sort()).toEqual([...Array(3).fill("identical-role/2"), ...Array(7).fill("identical-wording/2")].sort());
     expect(links.all.filter((link) => link.proposedBy === "model")).toMatchObject([{ relation: "fuller", from: long.id, to: short.id, method: "entailment/1" }]);
     expect(links.all.every((link) => link.shadow && !link.holds)).toBe(true);
+  });
+
+  it("gets one try: when the stage runs out of time the judge is not asked again, and the upload finishes", async () => {
+    settings.OFFER_SHADOW_ENABLED = "true";
+    const reading = await introspectWorkflow(env.DISTILL);
+    try {
+      // The stage's first try runs out of time before it does anything. A second try would ask the judge.
+      await reading.modifyAll(async (step) => {
+        await step.forceStepTimeout({ name: "offer" }, 1);
+      });
+      const { facts, links, calls } = await twice({});
+      expect(facts).toHaveLength(16);
+      expect(calls.judge).toBeUndefined();
+      expect(links.all).toEqual([]);
+    } finally {
+      await reading.dispose();
+    }
   });
 
   it("finishes the upload with every fact when the judge fails", async () => {
