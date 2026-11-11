@@ -3040,7 +3040,12 @@ export class Vault extends DurableObject<Env> {
     return { epoch: this.meta("security_epoch") ?? "legacy" };
   }
   async createMcpGrant(who: Who, input: NewMcpGrant) {
-    return this.mcpGrants.create(who, input);
+    const grant = this.mcpGrants.create(who, input);
+    // A grant is erased by the alarm when it ends, so holding one sets it. Its end is fixed here:
+    // nothing later moves it.
+    const next = this.mcpGrants.nextAlarm();
+    if (next !== null) await this.scheduleRunAlarm(next);
+    return grant;
   }
   async bindMcpGrant(claims: McpClaims, remoteId: string) {
     if (claims.vid !== this.vaultId)
@@ -5654,6 +5659,9 @@ export class Vault extends DurableObject<Env> {
       // to be cleared at its own time. Under the fence an entry already due is looked at again in
       // a minute, not at once.
       clientDue !== null && fenced ? Math.max(clientDue, Date.now() + 60_000) : clientDue,
+      // The same for a connected app's grant. Grants never move with a vault, so the fence does
+      // not hold them back.
+      this.mcpGrants.nextAlarm(),
       // An unresolved source write blocks expiry cleanup. Do not turn its
       // immediate retry into a one-second alarm loop; the retry already
       // installed at the top of this alarm remains scheduled.

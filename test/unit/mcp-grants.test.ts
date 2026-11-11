@@ -135,6 +135,31 @@ describe("MCP grant gate", () => {
       db.close();
     }
   });
+  it("says when its next grant is due to be erased, which is the moment erasing takes it", () => {
+    const { db, store, claims } = fixture();
+    try {
+      expect(store.nextAlarm()).toBe(input.expiresAt);
+      store.bind(claims, "remote_grant_1", now);
+      // A bound grant is erased when it ends, revoked or not.
+      const later = store.create(who, { ...input, id: "1653389a-0d6d-4e90-94eb-23cc98b95c19", expiresAt: now + MCP_GRANT_TTL_MS }, now);
+      expect(store.nextAlarm()).toBe(input.expiresAt);
+      store.revoke(who, id, now);
+      expect(store.nextAlarm()).toBe(input.expiresAt);
+      store.purgeExpired(input.expiresAt - 1);
+      expect(store.list(who)).toHaveLength(2);
+      store.purgeExpired(input.expiresAt);
+      expect(store.list(who).map((grant) => grant.id)).toEqual([later.id]);
+      // A grant still waiting for its token is erased ten minutes after it was made.
+      expect(store.nextAlarm()).toBe(now + 600_000);
+      store.purgeExpired(now + 600_000 - 1);
+      expect(store.list(who)).toHaveLength(1);
+      store.purgeExpired(now + 600_000);
+      expect(store.list(who)).toEqual([]);
+      expect(store.nextAlarm()).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
   it("rejects missing read scope, excessive lifetime and unauthorized owner methods", () => {
     const { db, store } = fixture();
     try {
