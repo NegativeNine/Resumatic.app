@@ -4,6 +4,7 @@ import { api, ApiError } from "../api";
 import { ActionError, Field, Glyph, PageHeader } from "../components/ui";
 import { BillingTools, CoachSharingTools } from "../components/AccountTools";
 import { ConnectedApps } from "../components/ConnectedApps";
+import { JobPreferences } from "../components/Preferences";
 import { useAction } from "../hooks";
 import { href } from "../router";
 import { useSession } from "../session";
@@ -21,6 +22,7 @@ export function AccountPage() {
       <PageHeader title="Account" />
       <div className="stack">
         <ProfileForm />
+        <JobPreferences />
         <Appearance />
         <BillingTools />
         <CoachSharingTools />
