@@ -4,6 +4,8 @@ import {
   type WorkflowStep,
 } from "cloudflare:workers";
 import { runModels } from "./models";
+import { modelFor } from "../ai/models";
+import { SPLIT_METHOD, splitLines } from "../pipeline/split";
 import { extractFacts } from "../pipeline/distill";
 import { extractorById } from "../pipeline/extract";
 import { validateTranscriptionInput } from "../ai/transcribe";
@@ -14,6 +16,9 @@ import { vault } from "../shared/stubs";
 import { MODEL_STEP, STEP, once, retrySafely, sourceFailureMessage } from "./steps";
 
 export type DistillParams = { vaultId: string; sourceId: string };
+
+/** Work kept in shadow gets one short try. It is never worth holding an upload for. */
+const SHADOW_STEP = { retries: { limit: 1, delay: "5 seconds" }, timeout: "3 minutes" } as const;
 
 /**
  * Distill: convert an upload to Markdown, extract quoted facts, embed them. Each step writes to
@@ -182,6 +187,38 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
           return { embedded: pending.length };
         }),
       );
+      // How lines divide is measured before anyone is shown a division. Where this is switched
+      // on, whatever passes every check is kept in shadow. A failure here costs nothing: every
+      // line stays whole, as it is read today, and the upload finishes as it would have.
+      if (this.env.SPLIT_SHADOW_ENABLED === "true")
+        try {
+          await step.do(
+            "split",
+            SHADOW_STEP,
+            once(async () => {
+              try {
+                const lines = await v.splitCandidates(sourceId, event.instanceId);
+                if (lines.length === 0) return { lines: 0, divided: 0 };
+                const decisions = await splitLines(runModels(this.env, vaultId, event.instanceId, "split", "distill"), lines);
+                const text = new Map(lines.map((line) => [line.id, line.text]));
+                const refused: Record<string, number> = {};
+                for (const decision of decisions) if (decision.refusal) refused[decision.refusal] = (refused[decision.refusal] ?? 0) + 1;
+                const { stored } = await v.saveShadowSplits(
+                  sourceId,
+                  event.instanceId,
+                  { model: `${modelFor(this.env, "extract")}+${modelFor(this.env, "judge")}`, method: SPLIT_METHOD },
+                  decisions.flatMap((decision) => (decision.parts ? [{ factId: decision.id, line: text.get(decision.id)!, parts: decision.parts }] : [])),
+                );
+                // Counts only: no line and no part is kept in the Workflow's own state.
+                return { lines: lines.length, divided: stored, refused };
+              } catch (error) {
+                return { lines: 0, divided: 0, failed: errorCode(error) ?? "error" };
+              }
+            }),
+          );
+        } catch {
+          // The step ran out of time. Nothing was kept, and the lines stay whole.
+        }
       await step.do(
         "finish",
         STEP,

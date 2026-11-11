@@ -41,6 +41,10 @@ Normal deployment and staging lifecycle preflight require a finite positive `DAI
 
 Enable it in staging first by adding the variable to `env.staging.vars`. Before lifting the production guard, confirm against the deployed staging Worker that each of these gives "couldn't be reached" and that nothing inward is contacted: a public name that resolves to a private address, one that resolves to a cloud metadata address, a redirect to each, and an address on this app's own zone. The address rules, redirect handling, size and time limits are covered by unit tests; what the platform's outbound requests can reach is not something a local test can show. The reader identifies itself with a `Resumatic/1.0` user agent and sends no cookies.
 
+### Dividing lines in shadow
+
+`SPLIT_SHADOW_ENABLED=true` has the reading of an upload also work out how its lines divide into separate claims, and keep what passes every check in shadow: stored in the person's vault to be measured, shown to nobody and read by nothing ([splitting.md](splitting.md)). It is absent from every environment, and `scripts/validate-config.mjs` refuses it in production configuration (`SPLIT_SHADOW_ROLLOUT_UNVERIFIED`) until it has been measured on lines given with consent and the privacy notice names what is kept. Switched on, every upload makes extra model calls on the extract and judge routes and is marked ready after them. A failure in it never fails an upload.
+
 ## Billing configuration
 
 Billing stays disabled unless `BILLING_ENABLED=true` and all required values are valid. Provide `APP_ORIGIN`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, an explicit `STRIPE_API_VERSION`, and `BILLING_PLANS_JSON`:
