@@ -2,6 +2,7 @@
 import { writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { readConfig, httpsOrigin } from "./lib/config.mjs";
+import { senderAddress } from "../src/shared/email-address.mjs";
 
 export function livePrerequisites(env, purpose = "eval") {
   const missing = [];
@@ -144,6 +145,11 @@ export async function validate({
     // precision is measured on lines given with consent and the notice and credits are in place.
     if (environment === "production" && config.vars?.TAG_SHADOW_ENABLED === "true")
       missing.push("TAG_SHADOW_ROLLOUT_UNVERIFIED");
+    // Email notices hand the owner's address to Cloudflare Email Service, a processor the DPA
+    // doesn't yet name, and Email Sending states no EU region. Keep them out of production until
+    // both are settled.
+    if (environment === "production" && config.vars?.EMAIL_ENABLED === "true")
+      missing.push("EMAIL_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.R2_CACHE_FENCE_ENABLED && config.vars.R2_CACHE_FENCE_ENABLED !== "false")
       missing.push("R2_CACHE_FENCE_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.PLACEMENT_FENCE_ENABLED && config.vars.PLACEMENT_FENCE_ENABLED !== "false")
@@ -185,6 +191,14 @@ export async function validate({
         )
       )
         missing.push("CIMD_PUBLIC_FETCH_COMPATIBILITY_FLAG");
+    }
+    // Where notices are switched on, they need a sender, the binding and the app's https origin,
+    // or the app would offer nothing. The sender's pattern is the Worker's own. The origin is
+    // listed once, whether or not connected apps asked for it above.
+    if (config.vars?.EMAIL_ENABLED === "true") {
+      if (senderAddress(config.vars.EMAIL_FROM) === null) missing.push("vars.EMAIL_FROM");
+      if (!config.send_email?.some((binding) => binding?.name === "EMAIL")) missing.push("EMAIL_BINDING");
+      if (!httpsOrigin(config.vars.APP_ORIGIN) && !missing.includes("APP_ORIGIN_HTTPS_ORIGIN")) missing.push("APP_ORIGIN_HTTPS_ORIGIN");
     }
   }
   return {

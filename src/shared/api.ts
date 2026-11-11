@@ -121,6 +121,8 @@ export interface Me {
     roleDateUnknownEnd?: boolean;
     /** A posting can be read from its link. */
     postingReader?: boolean;
+    /** The deployment sends email notices, so Account offers them. */
+    emailNotices?: boolean;
   };
   userId: string;
   profile: Profile;

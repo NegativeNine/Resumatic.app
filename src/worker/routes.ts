@@ -57,6 +57,7 @@ import type { CommentThread, NewSuggestion, OwnerCommentThread } from "../shared
 import { MAX_VAULT_COMMENTS } from "../vault/share-comments";
 import { hintFor, type CfLocation } from "../shared/location";
 import { PREFERENCES_REFUSED, cleanPreferences } from "../shared/preferences";
+import { EMAIL_OFF, NOTICE_KINDS, emailConfigured, type EmailNotices } from "../shared/email-notices";
 import { docxKey, pdfKey, sourceKey } from "../shared/r2";
 import { directoryForSignIn, settleRoutedPlacement } from "../directory/routing";
 import { validShardInviteClaim, type ShardInviteClaim } from "../directory/shard-invite-binding";
@@ -345,7 +346,8 @@ export async function startSession(env: Env, input: SignInInput): Promise<string
   else
     await directory(env).bindIdentityHome(input.provider, input.subject, userId, input.authEpoch, input.authExpiryMs, requireBound);
   if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
-  const { gen, epoch } = await vault(env, vaultId).openSession(userId);
+  // The address goes with the sign-in, so the vault can pause email notices turned on with another.
+  const { gen, epoch } = await vault(env, vaultId).openSession(userId, input.email ?? null);
   const cookie = sessionCookie(
     await createSession(env.SESSION_KEY, {
       uid: userId,
@@ -502,6 +504,8 @@ api.get("/me", async (c) => {
     roleDateUnknownEnd: c.env.ROLE_UNKNOWN_END_ENABLED === "true" && me.capabilities?.roleDateUnknownEnd === true,
     // The Worker does the reading, so its own setting decides.
     postingReader: c.env.POSTING_READER_ENABLED === "true",
+    // Both this Worker and the Vault must send them.
+    emailNotices: emailConfigured(c.env) && me.capabilities?.emailNotices === true,
   } });
 });
 
@@ -562,6 +566,29 @@ api.put("/preferences", JSON_LIMIT, async (c) => {
   const clean = cleanPreferences(values);
   if (!clean) throw new AppError("invalid", PREFERENCES_REFUSED);
   return c.json(await myVault(c).updatePreferences(c.get("who"), clean, expectedRevision));
+});
+
+// Email notices belong to the session's own vault. The kind comes from the path, and the address a
+// notice is turned on with only from the verified session, never from the request. Neither route
+// reaches the Directory: only the Vault's alarm asks it for the address a notice goes to.
+function requireEmail(c: C): void {
+  if (!emailConfigured(c.env)) throw new AppError("unavailable", EMAIL_OFF);
+}
+
+api.get("/email-notices", async (c) => {
+  requireEmail(c);
+  const settings = await myVault(c).emailNotices(c.get("who"));
+  return c.json({ ...settings, address: c.get("session").email ?? null } satisfies EmailNotices);
+});
+
+api.put("/email-notices/:kind", JSON_LIMIT, async (c) => {
+  requireEmail(c);
+  const kind = z.enum(NOTICE_KINDS).safeParse(c.req.param("kind"));
+  if (!kind.success) throw new AppError("invalid", "choose a notice to turn on or off");
+  const { on } = await jsonBody(c, z.object({ on: z.boolean() }).strict());
+  const session = c.get("session");
+  const settings = await myVault(c).setEmailNotice(c.get("who"), kind.data, on, session.email ?? null);
+  return c.json({ ...settings, address: session.email ?? null } satisfies EmailNotices);
 });
 
 api.post("/account/sign-out-everywhere", async (c) => {

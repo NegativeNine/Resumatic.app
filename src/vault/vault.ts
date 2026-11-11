@@ -48,6 +48,10 @@ import type {
 import { DATE_PATTERN, MAX_JOB_NAME_CHARS, MAX_LINE_CHARS, MAX_SENSITIVE_IDS, MAX_UPLOAD_BYTES, isWebUrl, normalizePosting } from "../shared/api";
 import type { Preferences, PreferenceValues } from "../shared/preferences";
 import { PreferencesStore } from "./preferences";
+import { EMAIL_OFF, NOTICE_KINDS, emailConfigured, emailFrom, emailOrigin, noticeMessage, type NoticeKind, type NoticeSettings } from "../shared/email-notices";
+import { EmailNoticeStore, MAX_NOTICE_ATTEMPTS, noticeAddressCheck } from "./email-notices";
+import { cloudflareSender, type NoticeErrorCode } from "./email-sender";
+import { sessionEmail } from "../worker/session";
 import { AppError, errorCode } from "../shared/errors";
 import { isMissingWorkflowInstance } from "../shared/workflow-errors";
 import { directoryForUser } from "../shared/stubs";
@@ -258,6 +262,8 @@ export interface VaultExport extends RecordExport {
   profile: Profile;
   /** Job preferences as stored. Revision 0, with nothing said, until the first save. */
   preferences: Preferences;
+  /** Which email notices are on and how each last went, as stored: a check of the sign-in address, never the address. */
+  emailNotices: Record<string, string | number | null>[];
   /** `file` is the download path of the original upload. */
   sources: {
     id: string;
@@ -542,10 +548,25 @@ export class Vault extends DurableObject<Env> {
 
   // ---------------------------------------------------------------- sessions
 
-  async openSession(userId: string): Promise<{ gen: number; epoch: string }> {
+  /**
+   * `signInEmail` is the address this sign-in was made with, or null for none. Where any email
+   * notice is on, each kind turned on with another address is paused, and one turned on with this
+   * address is resumed. It is checked whether or not the deployment sends email now, so a later
+   * switch-on never sends on a stale check. A caller that passes nothing (an older Worker) changes
+   * no notice.
+   */
+  async openSession(userId: string, signInEmail?: string | null): Promise<{ gen: number; epoch: string }> {
     this.requireOpen();
     if (this.meta("user_id") !== userId)
       throw new AppError("forbidden", "not this user's vault");
+    if (signInEmail !== undefined && this.notices.anyOn()) {
+      const address = sessionEmail(signInEmail);
+      const check = address ? await noticeAddressCheck(address) : null;
+      this.requireOpen();
+      if (this.meta("user_id") !== userId)
+        throw new AppError("forbidden", "not this user's vault");
+      this.ctx.storage.transactionSync(() => this.notices.signedIn(check));
+    }
     return {
       gen: Number(this.meta("session_gen")),
       epoch: this.meta("security_epoch") ?? "legacy",
@@ -695,6 +716,7 @@ export class Vault extends DurableObject<Env> {
         connectedApps: this.env.MCP_ENABLED === "true",
         roleDateUnknownEnd: this.env.ROLE_UNKNOWN_END_ENABLED === "true",
         postingReader: this.env.POSTING_READER_ENABLED === "true",
+        emailNotices: emailConfigured(this.env),
       },
     };
   }
@@ -749,6 +771,129 @@ export class Vault extends DurableObject<Env> {
     // The store reads the revision and writes in one synchronous turn: nothing is awaited
     // between the owner check above and the write.
     return this.preferences.save(values, expectedRevision);
+  }
+
+  // ---------------------------------------------------------------- email notices
+  // Turned on kind by kind by the owner, and sent by this vault's alarm to the address the
+  // Directory holds for its owner, only while that address is the one the kind was turned on with
+  // and the one used at the latest sign-in. A notice holds fixed words and the app's address.
+
+  private get notices(): EmailNoticeStore {
+    return new EmailNoticeStore(this.sql);
+  }
+
+  async emailNotices(who: Who): Promise<NoticeSettings> {
+    this.requireOwner(who);
+    if (!emailConfigured(this.env)) throw new AppError("unavailable", EMAIL_OFF);
+    return this.notices.view();
+  }
+
+  /**
+   * Turns one kind on or off. `signInEmail` is the verified session's address, never one a request
+   * names. Setting a kind as it already is changes nothing, so a repeated request is harmless.
+   */
+  async setEmailNotice(who: Who, kind: NoticeKind, on: boolean, signInEmail: string | null | undefined): Promise<NoticeSettings> {
+    this.requireOwner(who);
+    if (!emailConfigured(this.env)) throw new AppError("unavailable", EMAIL_OFF);
+    if (!(NOTICE_KINDS as readonly unknown[]).includes(kind) || typeof on !== "boolean")
+      throw new AppError("invalid", "choose a notice to turn on or off");
+    const address = sessionEmail(signInEmail);
+    if (on && !address) throw new AppError("conflict", "sign out and in again to turn on email notices");
+    const check = on && address ? await noticeAddressCheck(address) : null;
+    this.requireOwner(who);
+    this.ctx.storage.transactionSync(() => this.notices.set(kind, on, check, Date.now()));
+    await this.scheduleNotices();
+    return this.notices.view();
+  }
+
+  /** Brings the alarm forward to the next notice that may be due. Best effort: the alarm's own pass schedules it too. */
+  private async scheduleNotices(): Promise<void> {
+    try {
+      const now = Date.now();
+      const at = emailConfigured(this.env) ? this.notices.nextDue() : null;
+      if (at !== null) await this.scheduleRunAlarm(Math.max(at, now + 1000));
+    } catch {
+      // A notice is never worth failing the write that queued it. The next alarm or write retries.
+    }
+  }
+
+  /** One data point for a notice. It holds the kind, a code from a fixed list and the outcome: never an address or a provider's words. */
+  private noticeMetric(kind: NoticeKind, code: NoticeErrorCode | null, outcome: "ok" | "retry" | "failed" | "paused", attempt: number): void {
+    this.env.METRICS?.writeDataPoint({
+      indexes: [this.vaultId],
+      blobs: ["email", "email_notice", kind, code ?? "", outcome],
+      doubles: [attempt, 0, 0, 0],
+    });
+    if (outcome === "retry" || outcome === "failed") console.error("email notice failed", { code, kind });
+  }
+
+  /**
+   * Sends whatever notices are due, from the alarm. Where the deployment no longer sends email,
+   * everything queued is dropped. Under the maintenance fence nothing is sent: the replacement's
+   * alarm sends what was due. Each attempt is recorded before anything is awaited, and every step
+   * after an await checks again that the vault is open and the kind is on as it was.
+   */
+  private async sendDueNotices(fenced: boolean, canContinue: () => boolean): Promise<void> {
+    if (!emailConfigured(this.env)) {
+      this.ctx.storage.transactionSync(() => this.notices.dropPending());
+      return;
+    }
+    if (fenced) return;
+    const origin = emailOrigin(this.env);
+    const from = emailFrom(this.env);
+    const userId = this.meta("user_id");
+    if (!origin || !from || !userId) return;
+    // The Directory is asked once an alarm, and only once a notice is due.
+    let lookup: { address: string | null } | "unavailable" | undefined;
+    for (const kind of NOTICE_KINDS) {
+      if (!canContinue()) return;
+      const attempt = this.ctx.storage.transactionSync(() => this.notices.begin(kind, Date.now()));
+      if (!attempt) continue;
+      if ("exhausted" in attempt) {
+        this.noticeMetric(kind, "E_UNANSWERED", "failed", MAX_NOTICE_ATTEMPTS);
+        continue;
+      }
+      // The next attempt is armed before anything leaves the vault, so a send that never returns
+      // still has its retry, and its last one is settled.
+      await this.scheduleRunAlarm(attempt.retryAt);
+      if (!canContinue()) return;
+      if (lookup === undefined) {
+        try {
+          lookup = { address: await directoryForUser(this.env, userId).noticeAddress(userId, this.vaultId) };
+        } catch {
+          lookup = "unavailable";
+        }
+        if (!canContinue()) return;
+      }
+      if (lookup === "unavailable") {
+        // Temporary: the row stays in its retry, and a last attempt is settled when its time comes.
+        this.noticeMetric(kind, "E_ADDRESS_UNAVAILABLE", "retry", attempt.attempt);
+        continue;
+      }
+      const to = lookup.address;
+      if (to === null) {
+        this.ctx.storage.transactionSync(() => this.notices.settle(kind, attempt.onAt, "failed"));
+        this.noticeMetric(kind, "E_NO_ADDRESS", "failed", attempt.attempt);
+        continue;
+      }
+      const check = await noticeAddressCheck(to);
+      if (!canContinue()) return;
+      if (check !== attempt.addressCheck) {
+        this.ctx.storage.transactionSync(() => this.notices.settle(kind, attempt.onAt, "paused"));
+        this.noticeMetric(kind, "E_ADDRESS_CHANGED", "paused", attempt.attempt);
+        continue;
+      }
+      if (!canContinue() || !this.notices.current(attempt)) continue;
+      const outcome = await cloudflareSender(this.env.EMAIL, from).send(to, noticeMessage(kind, origin));
+      if (!canContinue()) return;
+      if (outcome.ok) {
+        this.ctx.storage.transactionSync(() => this.notices.settle(kind, attempt.onAt, "sent"));
+        this.noticeMetric(kind, null, "ok", attempt.attempt);
+      } else if (!outcome.retry || attempt.attempt >= MAX_NOTICE_ATTEMPTS) {
+        this.ctx.storage.transactionSync(() => this.notices.settle(kind, attempt.onAt, "failed"));
+        this.noticeMetric(kind, outcome.code, "failed", attempt.attempt);
+      } else this.noticeMetric(kind, outcome.code, "retry", attempt.attempt);
+    }
   }
 
   // ---------------------------------------------------------------- sources (user)
@@ -3604,7 +3749,15 @@ export class Vault extends DurableObject<Env> {
   }
 
   async commentAsCoach(grantId: string, coach: CoachAccount, input: NewShareComment, requestKey: string): Promise<ShareComment> {
-    return this.ctx.storage.transactionSync(() => this.shareComments.addAsCoach(grantId, coach, input, requestKey));
+    const made = this.ctx.storage.transactionSync(() => {
+      const now = Date.now();
+      const made = this.shareComments.addAsCoach(grantId, coach, input, requestKey, now);
+      // Only a comment made now marks a notice: a retry gets the earlier row, made before now.
+      if (made.createdAt === now && emailConfigured(this.env)) this.notices.note("comment", now);
+      return made;
+    });
+    await this.scheduleNotices();
+    return made;
   }
 
   async removeCommentAsCoach(grantId: string, coach: CoachAccount, id: string): Promise<void> {
@@ -3649,7 +3802,7 @@ export class Vault extends DurableObject<Env> {
 
   /** A coach's suggested wording for one line of a copy that is open to them now. */
   async suggestOnShare(grantId: string, coach: CoachAccount, input: NewSuggestion, requestKey: string): Promise<ShareComment> {
-    return this.ctx.storage.transactionSync(() => {
+    const made = this.ctx.storage.transactionSync((): ShareComment => {
       const now = Date.now();
       const { view } = this.shares.copyForCoach(grantId, coach, now);
       if (typeof requestKey !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(requestKey)) throw new AppError("invalid", "invalid request key");
@@ -3686,8 +3839,12 @@ export class Vault extends DurableObject<Env> {
       // Written as a comment is, so the comments' three limits count it, then marked as a suggestion.
       const made = this.shareComments.addAsCoach(grantId, coach, { target, body: text }, requestKey, now, "suggest");
       this.sql.exec(`UPDATE share_comments SET suggestion_state = 'open' WHERE id = ?`, made.id);
+      // Only a new suggestion marks a notice. A retry returned above, with the row it made before.
+      if (emailConfigured(this.env)) this.notices.note("suggestion", now);
       return { ...made, suggestion: { state: "waiting" } };
     });
+    await this.scheduleNotices();
+    return made;
   }
 
   /**
@@ -4588,6 +4745,7 @@ export class Vault extends DurableObject<Env> {
       exportedAt: new Date().toISOString(),
       profile: this.readProfile(),
       preferences: this.preferences.read(),
+      emailNotices: this.notices.export(),
       sources: this.sql
         .exec<SourceRow>(`SELECT * FROM sources ORDER BY created_at`)
         .toArray()
@@ -4981,6 +5139,9 @@ export class Vault extends DurableObject<Env> {
     // replacement starts with no alarm of its own.
     const next = this.coachClients.nextAlarm();
     if (next !== null) await this.scheduleRunAlarm(next);
+    // Email notices that came with the content, a retry among them, are sent from here on.
+    const due = this.notices.nextDue();
+    if (due !== null && emailConfigured(this.env)) await this.scheduleRunAlarm(Math.max(due, Date.now() + 1000));
   }
 
   // ---------------------------------------------------------------- helpers
@@ -6117,6 +6278,14 @@ export class Vault extends DurableObject<Env> {
     const results = await Promise.allSettled([...cleanupLanes, ...lanes]);
     for (const result of results) if (result.status === "rejected") throw result.reason;
     if (this.closing || this.gone || !this.initialised || this.meta("state") !== "open") return;
+    try {
+      await this.sendDueNotices(fenced, canContinue);
+    } catch {
+      // A notice that couldn't be decided or sent keeps its row as it was left, and the
+      // candidates below bring the alarm back for it.
+    }
+    if (!canContinue()) return;
+    const noticeDue = emailConfigured(this.env) ? this.notices.nextDue() : null;
     const expiry = this.sql
       .exec<{ at: number | null }>(
         `SELECT MIN(expires_at) AS at FROM share_grants`,
@@ -6133,6 +6302,8 @@ export class Vault extends DurableObject<Env> {
       // The same for a connected app's grant. Grants never move with a vault, so the fence does
       // not hold them back.
       this.mcpGrants.nextAlarm(),
+      // An email notice's next look. Under the fence nothing is sent, so a due one waits a minute.
+      noticeDue !== null && fenced ? Math.max(noticeDue, Date.now() + 60_000) : noticeDue,
       // An unresolved source write blocks expiry cleanup. Do not turn its
       // immediate retry into a one-second alarm loop; the retry already
       // installed at the top of this alarm remains scheduled.

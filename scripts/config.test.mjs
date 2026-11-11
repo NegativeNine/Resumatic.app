@@ -11,6 +11,7 @@ import { extractionConfiguration } from "../test/extract-evals/configuration.mjs
 import { SEED_KINDS, SEED_VERSION } from "../test/evals/seed-kinds.mjs";
 import { configuredExtractors } from "./lib/extractor-routes.mjs";
 import { validEvaluationSecretNames, validProductionSecretNames } from "./lib/release-secret-names.mjs";
+import { ACCEPTED_SENDERS, REFUSED_SENDERS } from "../test/support/sender-addresses.mjs";
 
 test("production secrets cannot shadow reviewed variables or activate guarded settings", () => {
   const vars = { DAILY_SPEND_CAP_USD: "1", ACCESS_AUD: "configured", FUTURE_SETTING: "reviewed" };
@@ -83,6 +84,50 @@ test("the posting reader cannot be enabled in production configuration, and can 
     for (const off of [{}, { TAG_SHADOW_ENABLED: "false" }, { TAG_SHADOW_ENABLED: "" }])
       assert.ok(!(await report("production", off)).includes("TAG_SHADOW_ROLLOUT_UNVERIFIED"), JSON.stringify(off));
     assert.ok(!(await report("staging", {}, { TAG_SHADOW_ENABLED: "true" })).includes("TAG_SHADOW_ROLLOUT_UNVERIFIED"));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("email notices cannot be switched on in production configuration; in staging they need a sender, the EMAIL binding and an https origin", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "email-notices-config-"));
+  try {
+    const path = join(dir, "wrangler.jsonc");
+    const sender = "notices@notices.example.com";
+    const origin = "https://app.example.com";
+    const binding = [{ name: "EMAIL" }];
+    const report = async (environment, vars, extra = {}) => {
+      const config = environment === "production"
+        ? { name: "example", vars, ...extra, env: { staging: { vars: {} } } }
+        : { name: "example", vars: {}, env: { staging: { vars, ...extra } } };
+      await writeFile(path, JSON.stringify(config));
+      return (await validate({ environment, purpose: "deploy", configPath: path, env: {} })).missing;
+    };
+    const email = (missing) => missing.filter((entry) => entry.startsWith("EMAIL") || entry === "vars.EMAIL_FROM" || entry === "APP_ORIGIN_HTTPS_ORIGIN");
+    const complete = { EMAIL_ENABLED: "true", EMAIL_FROM: sender, APP_ORIGIN: origin };
+    // Production: refused while switched on, even with everything else in place.
+    assert.deepEqual(email(await report("production", complete, { send_email: binding })), ["EMAIL_ROLLOUT_UNVERIFIED"]);
+    // Off is off: "false", empty or absent asks for nothing, in either environment.
+    for (const off of [{ EMAIL_ENABLED: "false" }, { EMAIL_ENABLED: "" }, {}]) {
+      assert.deepEqual(email(await report("production", off)), [], JSON.stringify(off));
+      assert.deepEqual(email(await report("staging", off)), [], JSON.stringify(off));
+    }
+    // Staging: allowed once it has a sender, the binding and an https origin.
+    assert.deepEqual(email(await report("staging", complete, { send_email: binding })), []);
+    assert.deepEqual(email(await report("staging", complete)), ["EMAIL_BINDING"]);
+    assert.deepEqual(email(await report("staging", complete, { send_email: [{ name: "OTHER" }] })), ["EMAIL_BINDING"]);
+    assert.deepEqual(email(await report("staging", { ...complete, APP_ORIGIN: "http://app.example.com" }, { send_email: binding })), ["APP_ORIGIN_HTTPS_ORIGIN"]);
+    assert.deepEqual(email(await report("staging", { EMAIL_ENABLED: "true", EMAIL_FROM: sender }, { send_email: binding })), ["APP_ORIGIN_HTTPS_ORIGIN"]);
+    // The origin is listed once when connected apps ask for it too.
+    assert.deepEqual(email(await report("staging", { ...complete, APP_ORIGIN: "https://app.example.com/path", MCP_ENABLED: "true" }, { send_email: binding })), ["APP_ORIGIN_HTTPS_ORIGIN"]);
+    // A malformed sender, by the Worker's own table of them.
+    for (const address of ACCEPTED_SENDERS)
+      assert.deepEqual(email(await report("staging", { ...complete, EMAIL_FROM: address }, { send_email: binding })), [], address);
+    for (const [address, why] of REFUSED_SENDERS) {
+      const vars = { ...complete, EMAIL_FROM: address };
+      if (address === undefined) delete vars.EMAIL_FROM;
+      assert.deepEqual(email(await report("staging", vars, { send_email: binding })), ["vars.EMAIL_FROM"], why);
+    }
+    // In production the refusal stands beside whatever else is missing.
+    assert.deepEqual(email(await report("production", { EMAIL_ENABLED: "true" })), ["EMAIL_ROLLOUT_UNVERIFIED", "vars.EMAIL_FROM", "EMAIL_BINDING", "APP_ORIGIN_HTTPS_ORIGIN"]);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

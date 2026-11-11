@@ -5,6 +5,7 @@ import { directory } from "../../src/shared/stubs";
 import { base64url, fromBase64url, sha256 } from "../../src/worker/crypto";
 import { GOOGLE } from "../../src/worker/oidc";
 import { createSession } from "../../src/worker/session";
+import { installEmail, restoreEmail } from "../support/email";
 import { nowSeconds, rsaSigner } from "../support/keys";
 import { call, cookieFrom, signIn, testLogin, uniqueEmail } from "./support";
 
@@ -62,8 +63,9 @@ describe("invites", () => {
 describe("the control plane", () => {
   it("is never on the path of an /api request", async () => {
     const user = await signIn();
-    const methods = ["signIn", "deleteAccount", "listVaults", "addInvite", "removeInvite", "listInvites"] as const;
+    const methods = ["signIn", "deleteAccount", "listVaults", "addInvite", "removeInvite", "listInvites", "noticeAddress"] as const;
     const spies = methods.map((m) => vi.spyOn(Directory.prototype, m));
+    installEmail(env);
     try {
       for (const path of ["/api/me", "/api/profile", "/api/sources", "/api/roles", "/api/facts", "/api/applications", "/api/export"]) {
         expect((await user.fetch(path)).status, path).toBe(200);
@@ -73,6 +75,9 @@ describe("the control plane", () => {
       // Job preferences, read and saved.
       expect((await user.fetch("/api/preferences")).status).toBe(200);
       expect((await user.send("PUT", "/api/preferences", { place: "Toronto", jobTypes: ["full_time"], availableFrom: "now", payFloor: null, expectedRevision: 0 })).status).toBe(200);
+      // Email notices, read and turned on. Only the Vault's alarm asks the Directory for an address.
+      expect((await user.fetch("/api/email-notices")).status).toBe(200);
+      expect((await user.send("PUT", "/api/email-notices/comment", { on: true })).status).toBe(200);
       for (const spy of spies) expect(spy).not.toHaveBeenCalled();
 
       // The spies do see Directory calls: signing in again is one.
@@ -80,6 +85,7 @@ describe("the control plane", () => {
       expect(spies[0]).toHaveBeenCalled();
     } finally {
       for (const spy of spies) spy.mockRestore();
+      restoreEmail();
     }
   });
 });
