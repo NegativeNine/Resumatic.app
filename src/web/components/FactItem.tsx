@@ -15,6 +15,7 @@ import { useAction, type Reload } from "../hooks";
 import { groupFacts, roleLabel, sourceLabel } from "../vault";
 import { ReviewButtons, useReview } from "./ReviewButtons";
 import { useQueueItem } from "./ReviewQueue";
+import { SENSITIVE_HINT, SensitiveButton, SensitiveWell, useSensitive } from "./SensitiveControl";
 import { SourceEvidence } from "./SourceEvidence";
 import { ActionError, Badge, CharCount, Quote, Tick, type TickState } from "./ui";
 
@@ -62,6 +63,7 @@ function FactItem({
   const [editing, setEditing] = useState(false);
   const ref = useRef<HTMLLIElement>(null);
   const review = useReview(fact.id, reload, ref, fact.revision ?? 1, duplicates);
+  const sensitive = useSensitive(fact, duplicates, reload);
   const textId = useId();
   const role = roles.find((item) => item.id === fact.roleId);
   const roleRejected = role?.state === "rejected";
@@ -73,11 +75,14 @@ function FactItem({
   }
 
   function startEditing() {
+    sensitive.close();
     onEditingChange(`fact:${fact.id}`, true);
     setEditing(true);
   }
 
-  const busy = review.deciding !== null || reviewLocked;
+  const busy = review.deciding !== null || reviewLocked || sensitive.pending !== null;
+  // A rejected fact is used for nothing already, so it shows its mark and offers no control.
+  const canMark = fact.state !== "rejected";
   const active = useQueueItem(fact.id, {
     confirm: fact.state !== "confirmed" && !roleRejected && !busy ? () => void review.decide("confirm") : undefined,
     edit: fact.state !== "rejected" && !editing && !busy ? startEditing : undefined,
@@ -114,6 +119,7 @@ function FactItem({
         <span>{FACT_KIND_LABEL[fact.kind]}</span>
         {fact.level && <span>Level: {LEVEL_LABEL[fact.level]}</span>}
         {fact.origin === "user" && <Badge tone="mine">Your own claim</Badge>}
+        {fact.sensitive && <Badge tone="sensitive">Sensitive</Badge>}
         {fact.evidenceOrigin === "ocr" && <Badge tone="queued">Read from an image</Badge>}
         {fact.reviewReasons?.length || (fact.confidence != null && fact.confidence < 0.8) ? (
           <Badge tone="proposed">Check closely</Badge>
@@ -125,6 +131,7 @@ function FactItem({
           words and numbers.
         </p>
       )}
+      {fact.sensitive && canMark && <p className="hint">{SENSITIVE_HINT}</p>}
       {fact.levelNeedsReview && (
         <p className="hint">The earlier ownership level{fact.previousLevel ? ` (${LEVEL_LABEL[fact.previousLevel]})` : ""} needs your confirmation before it is used.</p>
       )}
@@ -149,12 +156,24 @@ function FactItem({
           describedBy={textId}
           review={review}
           confirmDisabled={roleRejected}
-          disabled={reviewLocked}
+          disabled={reviewLocked || sensitive.pending !== null}
           onEdit={fact.state === "rejected" ? undefined : startEditing}
           showKeys={active}
+          extra={
+            canMark ? (
+              <SensitiveButton
+                control={sensitive}
+                marked={fact.sensitive === true}
+                describedBy={textId}
+                disabled={reviewLocked || review.deciding !== null}
+              />
+            ) : undefined
+          }
         />
       )}
+      {!editing && canMark && <SensitiveWell control={sensitive} disabled={reviewLocked || review.deciding !== null} />}
       <ActionError message={review.error} />
+      <ActionError message={sensitive.error} />
       </div>
     </li>
   );
@@ -275,7 +294,7 @@ function FactEditor(props: {
         value={text}
         disabled={pending}
         onChange={(e) => setText(e.target.value)}
-        aria-describedby={`${id}-note ${id}-count`}
+        aria-describedby={original.sensitive ? `${id}-note ${id}-sensitive ${id}-count` : `${id}-note ${id}-count`}
         autoFocus
       />
       <CharCount
@@ -316,6 +335,12 @@ function FactEditor(props: {
         and role, and the original quote stays beside it for reference. Changing
         the wording clears its prior level unless you choose a level again. Only write what’s true.
       </p>
+      {original.sensitive && (
+        <p className="hint" id={`${id}-sensitive`}>
+          This fact stays sensitive after you save. To use a different wording, add it as a new fact and leave this
+          one marked.
+        </p>
+      )}
       <div className="actions">
         <button
           type="submit"

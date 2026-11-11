@@ -157,7 +157,8 @@ function Privacy() {
           <li>create documents, which count toward your plan’s limit.</li>
         </ul>
         <p>
-          A connected app never receives your uploaded files, the words a fact came from, or your notes on a job. Its
+          A connected app never receives your uploaded files, the words a fact came from, or your notes on a job. It
+          never receives a fact you have marked sensitive, or a resume that uses one. Its
           access lasts an hour, or up to thirty days if you allow it to continue, and you can revoke it at any time
           under <a href={href.account}>Account</a>. What an app has already read is then held by the company that
           runs it, under that company’s terms, and revoking access does not remove it from there.
@@ -168,6 +169,14 @@ function Privacy() {
           <li>
             <strong>See and correct it:</strong> every fact, role and profile detail can be edited or rejected under{" "}
             <a href={href.facts}>Facts</a> and <a href={href.account}>Account</a>.
+          </li>
+          <li>
+            <strong>Keep a fact to yourself:</strong> mark a fact sensitive under <a href={href.facts}>Facts</a> and it
+            is left out of every new resume, letter, interview preparation and fit preview, never put in a shared copy
+            and never shown to a connected app. A resume that already uses it can’t be downloaded, shared or read by an
+            app until you remove those lines. It stays in your search index, so the model that indexes your facts can
+            still receive its words when you edit it or the index is rebuilt. Marking cannot take back what a model, a
+            reader or an app received before.
           </li>
           <li>
             <strong>Take it with you:</strong> the data export under Account downloads everything in your account, with

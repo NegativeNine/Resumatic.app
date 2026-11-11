@@ -16,6 +16,7 @@ import type {
   ReviewState,
   RolePatch,
   RoleView,
+  SensitiveRequest,
   SourceView,
 } from "../shared/api";
 import type { DocumentView, NewDocument } from "../shared/documents";
@@ -219,6 +220,8 @@ export const api = {
   editFact: (id: string, patch: FactPatch) =>
     request<void>("PATCH", `/api/facts/${encodeURIComponent(id)}`, patch),
   review: (r: ReviewRequest) => request<void>("POST", "/api/review", r),
+  /** Marks facts sensitive, or unmarks them. Facts with the same words go with them. */
+  markSensitive: (r: SensitiveRequest) => request<void>("POST", "/api/facts/sensitive", r),
 
   /** `name` is what the posting's own page calls the job, when the text was read from its link. */
   addApplication: (jdText: string, url?: string, name?: { title: string | null; company: string | null }) =>
