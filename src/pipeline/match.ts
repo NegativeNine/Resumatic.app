@@ -16,8 +16,8 @@ import { roleKey, wording, type RoleIdentity } from "../shared/record";
 // offered to the owner, and `offers` below is what works out which to offer.
 
 /** The rules that made a match, stamped on it. Raise the number when what counts as identical changes. */
-export const IDENTICAL_ROLE_METHOD = "identical-role/1";
-export const IDENTICAL_WORDING_METHOD = "identical-wording/1";
+export const IDENTICAL_ROLE_METHOD = "identical-role/2";
+export const IDENTICAL_WORDING_METHOD = "identical-wording/2";
 
 export interface MatchRole extends RoleIdentity {
   id: string;

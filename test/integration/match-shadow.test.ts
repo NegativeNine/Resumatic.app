@@ -80,7 +80,7 @@ describe("reading with shadow matching switched on", () => {
     expect(links.filter((link) => link.kind === "role")).toHaveLength(3);
     expect(links.filter((link) => link.kind === "fact")).toHaveLength(8);
     for (const link of links) {
-      expect(link).toMatchObject({ relation: "same", state: "proposed", shadow: true, holds: false, proposedBy: "rule", model: null, decidedBy: null, method: link.kind === "role" ? "identical-role/1" : "identical-wording/1" });
+      expect(link).toMatchObject({ relation: "same", state: "proposed", shadow: true, holds: false, proposedBy: "rule", model: null, decidedBy: null, method: link.kind === "role" ? "identical-role/2" : "identical-wording/2" });
       // The later copy points at the earlier one.
       expect([sourceOf.get(link.from), sourceOf.get(link.to)], link.id).toEqual([second, first]);
     }

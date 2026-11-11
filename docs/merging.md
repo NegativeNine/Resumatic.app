@@ -11,7 +11,7 @@ It is step 6 of the [pipeline design](taxonomy-pipelines-design.md), in shadow. 
 Nothing here is decided by likeness, and no model is asked.
 
 - **Two roles** match when every field that names a role is the same: kind, organisation, title, a known start, and the same end or none in both. A role with no title, no known start, or an end that isn't known matches nothing, however alike two such roles look.
-- **Two facts** match when they are of the same kind, sit in roles that match, and have the same wording once presentation is removed. Outside any role, only skills and credentials match: an accomplishment read without a job has no role that was found to be the same one.
+- **Two facts** match when they are of the same kind, sit in roles that match, and have the same wording once presentation is removed. A bullet is presentation. A number or a sign a line starts with is not: "1. Staatsexamen" and "2. Staatsexamen" are two credentials. Outside any role, only skills and credentials match: an accomplishment read without a job has no role that was found to be the same one.
 
 These are exactly the two findings the record will confirm without the owner ([record.md](record.md), "Merging without asking"), and both use one definition of each (`roleKey` and `wording` in `src/shared/record.ts`). A test puts every finding the matcher makes in a real vault to the record's own check, and all are accepted.
 
@@ -26,7 +26,7 @@ Rows are read oldest first, and each later copy points at the **earliest** row t
 With `MATCH_SHADOW_ENABLED=true`, reading an upload gains one stage after its facts are embedded:
 
 - It looks across the whole record, not only the new upload, so copies that were already there are found too.
-- Each finding is stored as a shadow link from the copy to the earliest row, stamped `identical-role/1` or `identical-wording/1`. What was found before is not stored again.
+- Each finding is stored as a shadow link from the copy to the earliest row, stamped `identical-role/2` or `identical-wording/2`. What was found before is not stored again.
 - **Nothing is merged.** A shadow link stands for nothing: every fact still stands for itself with its own one quote, the lists show every row, and tailoring hides repeats as it already does.
 - It makes no model call, so it costs nothing and adds almost no time.
 - **It cannot fail an upload.** A failure leaves the upload exactly as it is read today.

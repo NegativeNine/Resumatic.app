@@ -391,6 +391,28 @@ describe("merging what says the same thing", () => {
     expect(refusal(() => record.proposeLink({ kind: "fact", from: "placed", to: "skill-1", relation: "same", stamp: rule, confirm: true }))).toBe("conflict");
   });
 
+  it("never merges unasked two lines or two roles that differ in the number or the sign they start with", () => {
+    const { record, fact, role } = vault();
+    // Two state examinations are two credentials, and a figure's sign is part of the figure.
+    for (const [kind, first, second] of [
+      ["credential", "1. Staatsexamen", "2. Staatsexamen"],
+      ["accomplishment", "+ 5% churn", "- 5% churn"],
+    ] as const) {
+      const within = kind === "credential" ? null : "r1";
+      fact(`${kind}-1`, first, { role: within, kind });
+      fact(`${kind}-2`, second, { role: within, kind, source: "upload-2" });
+      expect(refusal(() => record.proposeLink({ kind: "fact", from: `${kind}-2`, to: `${kind}-1`, relation: "same", stamp: rule, confirm: true })), first).toBe("invalid");
+      expect(record.root("fact", `${kind}-2`)).toBe(`${kind}-2`);
+      // The likeness can still be offered to the owner.
+      expect(record.proposeLink({ kind: "fact", from: `${kind}-2`, to: `${kind}-1`, relation: "same", stamp: rule }).state, first).toBe("proposed");
+    }
+    // The first chair of a board is not the second.
+    role("chair-1", { title: "1. Vorsitzender" });
+    role("chair-2", { title: "2. Vorsitzender" });
+    expect(refusal(() => record.proposeLink({ kind: "role", from: "chair-2", to: "chair-1", relation: "same", stamp: { ...rule, method: "identical-role/1" }, confirm: true }))).toBe("invalid");
+    expect(record.root("role", "chair-2")).toBe("chair-2");
+  });
+
   it("merges nothing: both rows and both quotes stay as they were", () => {
     const { record, db } = twice();
     const before = JSON.stringify(db.prepare(`SELECT * FROM facts ORDER BY id`).all().concat(db.prepare(`SELECT * FROM evidence ORDER BY id`).all(), db.prepare(`SELECT * FROM roles ORDER BY id`).all()));

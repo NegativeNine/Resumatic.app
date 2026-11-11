@@ -18,7 +18,7 @@ None of these changes a fact, a role or a quote. Each is a row beside them, and 
 
 ## What every judgement carries
 
-- **What made it:** a rule in the code, a model, or the owner; the model's name if one did; the rule or check and its version (`identical-wording/1`); the taxonomy build it was made against; and how sure the check was, where it says.
+- **What made it:** a rule in the code, a model, or the owner; the model's name if one did; the rule or check and its version (`identical-wording/2`); the taxonomy build it was made against; and how sure the check was, where it says.
 - **What was decided:** it starts as *proposed*. Only the owner confirms or rejects it, with the one exception under "Merging without asking" below. A model never decides.
 - **Whether it is in shadow.** A shadow judgement is stored to be measured and shown to nobody. The owner cannot decide it, it merges nothing, and nothing but measurement reads it. A judgement that shows and one in shadow can exist side by side.
 
@@ -81,7 +81,7 @@ The record checks that the ID is in the taxonomy's own form. It cannot check tha
 
 One judgement can be confirmed by a rule instead of the owner, and the record checks the grounds itself before it stores it:
 
-- **Two facts** of the same kind, in one role, whose wording is identical once presentation is removed: list markers, paired Markdown marks, runs of spaces, the shape of quotation marks, and one full stop at the very end. Case, numbers, dates, and every other mark must match. Outside any role this applies to skills and credentials only: an accomplishment that was read without a job has no role that was found to be the same one, so it is offered instead.
+- **Two facts** of the same kind, in one role, whose wording is identical once presentation is removed: bullets, paired Markdown marks, runs of spaces, the shape of quotation marks, and one full stop at the very end. Case, numbers, dates, and every other mark must match. That includes a number or a sign a line starts with: "1. Staatsexamen" and "2. Staatsexamen" are two credentials, and "- 5% churn" is not "+ 5% churn". A dash, a plus or a heading mark is a bullet only when a word follows it, and a leading number never is one, because what was read from an upload lost its list numbers when it was read. Outside any role this applies to skills and credentials only: an accomplishment that was read without a job has no role that was found to be the same one, so it is offered instead.
 - **Two roles** alike in every field that names a role: the same kind, organisation and title, the same known start, and the same end or none in both. A missing title, an unknown date, or a date written more exactly in one than the other is not enough.
 
 Anything else a rule or a model finds is stored as an offer. The owner can separate a merge made this way, and the rule will not make it again.
