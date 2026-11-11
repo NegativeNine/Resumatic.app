@@ -309,6 +309,30 @@ export class SnapshotStore {
     return false;
   }
 
+  /**
+   * True when this run captured exactly the facts in `ids`, each still at the incarnation it was
+   * captured at, so nothing it measured has been edited, rejected, replaced or added to since. A run
+   * with no captured inputs (one that moved with its vault), a captured row without a valid
+   * incarnation, or an incarnation write in progress never matches.
+   */
+  factsUnchanged(runId: string, ids: ReadonlySet<string>): boolean {
+    if (!this.metadata(runId)) return false;
+    if (this.sql.exec(`SELECT slot FROM entity_incarnation_guard LIMIT 1`).toArray().length) return false;
+    // As `incarnation()` reads it: a live value past a valid clock authenticates nothing.
+    const rows = this.sql
+      .exec<{ item_id: string; captured: number | null; live: number | null }>(
+        `SELECT g.item_id, g.incarnation AS captured, i.value AS live FROM generation_input_items g
+         LEFT JOIN entity_incarnations i ON i.kind = 'fact' AND i.item_id = g.item_id AND i.value <=
+           (SELECT c.value FROM entity_incarnation_clock c WHERE c.slot = 1 AND typeof(c.value) = 'integer' AND c.value BETWEEN 0 AND 9007199254740991)
+         WHERE g.run_id = ? AND g.kind = 'fact'`,
+        runId,
+      )
+      .toArray();
+    return rows.length === ids.size && rows.every((row) =>
+      ids.has(row.item_id) && typeof row.captured === "number" && Number.isSafeInteger(row.captured) &&
+      row.captured >= 0 && row.captured === row.live);
+  }
+
   assertCurrent(runId: string, body: ResumeBody): void {
     this.requireNoIncarnationWrite();
     const invalidFact = () => new AppError(

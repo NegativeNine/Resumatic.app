@@ -23,6 +23,8 @@ Set the real Google client, Access team/audience, Cloudflare account and gateway
 
 When connected apps are enabled, provision the `OAUTH_KV` namespace. Setup prints its identifier; place that identifier in the selected environment's binding. Configure `APP_ORIGIN` as an exact HTTPS origin, `MCP_ENABLED=true`, and the `global_fetch_strictly_public` compatibility flag. Configure `MCP_ALLOWED_ORIGINS` only for browser clients that need cross-origin MCP access; it is a comma-separated list of exact HTTPS origins. Native clients without an Origin header still work. Keep OAuth storage configured during deletion cleanup even if new connections are disabled.
 
+Deploy the change that adds `preview_fit` before `MCP_ENABLED=true` is set anywhere, so no grant predates its consent sentence. An environment that ever ran connected apps on an earlier build has every grant revoked at that deploy; no tool does this across accounts, and removing that environment's `grant:` and `token:` keys from `OAUTH_KV`, which ends every credential, has not been exercised.
+
 ```sh
 node scripts/validate-config.mjs --environment staging --purpose deploy --report config-report.json
 ```
@@ -172,6 +174,8 @@ Completed-run latency uses a separate `run_total` event. The dashboard aggregate
 To enable the fifteen-minute alert job, set `ALERTS_ENABLED=true`, `CF_ANALYTICS_TOKEN` with Account Analytics Read, `ALERT_WEBHOOK_URL`, and `ALERT_SPEND_USD_PER_15M`. Optional thresholds are `ALERT_FAILURE_RATE` and `ALERT_HTTP_5XX_RATE` (defaults 0.05), and `ALERT_MIN_ATTEMPTS` (default 20). Unknown model cost raises a separate alert. The webhook receives only window totals and error-category codes. Disabled alerts make no network request. Alerts can repeat while a threshold remains breached; operational acknowledgement belongs in the configured receiver.
 
 Queries weight rows by `_sample_interval`; these are sampled operational measurements, not a billing ledger. Quota and spend reservations in the Vault remain authoritative. The profile, role, and fact reads retry at most twice on transient retryable Durable Object errors, recreating the stub each time; overloaded errors are never retried. The `AUTH_LIMIT` and `WRITE_LIMIT` bindings limit bursts per Cloudflare location. Authenticated writes use the user ID; guest authentication/OAuth requests use an HMAC of the IP address. Shared networks can still hit a guest limit. Missing optional bindings skip burst protection, so configure them before public launch.
+
+Connected apps together can start at most 20 fit previews per UTC day on one account (`MAX_APP_FIT_STARTS_PER_DAY`), counted in the Vault; the owner's own are not counted. Tool calls have no limiter of their own: `/mcp` passes `AUTH_LIMIT` like any guest request.
 
 ## Interview answer provenance
 

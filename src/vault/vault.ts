@@ -17,6 +17,8 @@ import { base64url, sha256 } from "../worker/crypto";
 import { extractorFor, sourceFormat } from "../pipeline/extract";
 import { McpGrantStore } from "./mcp-grants";
 import type { McpClaims, McpScope, McpGrant, NewMcpGrant } from "../shared/mcp";
+import { MAX_APP_FIT_STARTS_PER_DAY, MCP_FIT_SCOPES, MCP_FIT_TEXT, type McpFit } from "../shared/mcp";
+import { fitForApp } from "./mcp-fit";
 import type {
   ApplicationDetail,
   ApplicationRef,
@@ -3150,6 +3152,110 @@ export class Vault extends DurableObject<Env> {
       `mcp_${claims.grantId}_${requestKey}`,
       () => { this.requireMcp(claims, "vault:generate"); },
     );
+  }
+
+  /**
+   * A fit preview of one saved job, for a connected app holding read, jobs and generation together.
+   * A preview that is still current (same posting, same usable facts) is returned, whoever asked for
+   * it; otherwise one is started, at most once per grant and request key, and the app asks again.
+   * Everything from the grant check after the one await to the start happens in one turn, so the
+   * checks, the day's count and the run's rows can't be interleaved. Refusals are thrown; states are
+   * answers.
+   */
+  async mcpFit(claims: McpClaims, applicationId: string, requestKey: string): Promise<McpFit> {
+    const guard = (): Who => {
+      let who: Who | undefined;
+      for (const scope of MCP_FIT_SCOPES) who = this.requireMcp(claims, scope);
+      return who!;
+    };
+    guard();
+    const key = `mcp_${claims.grantId}_${requestKey}`;
+    if (!requestKey || !/^[a-zA-Z0-9_-]{1,100}$/.test(key)) throw new AppError("invalid", "invalid request key");
+    const digest = await this.documentDigest(applicationId, { kind: "fit" });
+    const who = guard();
+    const answer = (state: Exclude<McpFit["state"], "ready">, message: string): McpFit => ({ state, applicationId, message });
+    const app = this.sql
+      .exec<ApplicationRow>(`SELECT * FROM applications WHERE id = ?`, applicationId)
+      .toArray()[0];
+    if (!app) throw new AppError("not_found", "no such application");
+    const prior = this.runs.findRequest(`document:${key}`);
+    if (prior && prior.inputDigest !== digest)
+      throw new AppError("conflict", "request key already used with other input");
+    // The only facts an app may be told of, read in the same turn as the answer.
+    const facts = this.usableFacts();
+    const current = this.currentFit(applicationId, app.jd_text, facts);
+    if (current) {
+      const requirements = fitForApp(current.data, facts);
+      return {
+        state: "ready",
+        applicationId,
+        checkedAt: current.createdAt,
+        requirements,
+        note: requirements.length ? MCP_FIT_TEXT.note : MCP_FIT_TEXT.noRequirements,
+      };
+    }
+    // A preview of this job is under way, whoever started it: never a second one beside it.
+    if (this.sql.exec(`SELECT 1 FROM documents WHERE application_id = ? AND kind = 'fit' AND state = 'running' LIMIT 1`, applicationId).toArray().length) {
+      await this.rearmPendingRuns();
+      guard();
+      return answer("preparing", MCP_FIT_TEXT.preparing);
+    }
+    // This key's run has ended. It is never started again by asking again.
+    if (prior) {
+      const document = this.sql
+        .exec<{ state: string; error: string | null }>(`SELECT state, error FROM documents WHERE id = ?`, prior.targetId)
+        .toArray()[0];
+      if (document?.state === "ready") return answer("changed", MCP_FIT_TEXT.changed);
+      return answer("failed", document?.error === "quota" ? MCP_FIT_TEXT.stopped : MCP_FIT_TEXT.failed);
+    }
+    if (this.runs.listPending().some((run) => GENERATION_RUN_KINDS.includes(run.kind)))
+      return answer("busy", MCP_FIT_TEXT.busy);
+    if (this.appFitStartsToday() >= MAX_APP_FIT_STARTS_PER_DAY) return answer("limit", MCP_FIT_TEXT.limit);
+    const begun = this.beginDocument(who, applicationId, { kind: "fit" }, key, digest);
+    if (begun.replay) return answer("preparing", MCP_FIT_TEXT.preparing);
+    this.broadcast("document", begun.id);
+    await this.dispatchRun(this.runs.get(begun.id)!);
+    guard();
+    return answer("preparing", MCP_FIT_TEXT.preparing);
+  }
+
+  /**
+   * The newest finished fit preview of this job that measured this posting against exactly these
+   * facts, each unchanged since. Nothing is measured afresh and nothing stored is changed: a preview
+   * stops being current when the posting or the usable facts do, a fact marked sensitive included.
+   */
+  private currentFit(applicationId: string, jdText: string, facts: FactRecord[]): { createdAt: number; data: unknown } | null {
+    const ids = new Set(facts.map((fact) => fact.id));
+    for (const row of this.sql
+      .exec<{ id: string; created_at: number; data: string }>(
+        `SELECT d.id, d.created_at, v.data FROM documents d
+         JOIN document_versions v ON v.document_id = d.id AND v.version = d.version
+         WHERE d.application_id = ? AND d.kind = 'fit' AND d.state = 'ready'
+         ORDER BY d.created_at DESC, d.id LIMIT 5`,
+        applicationId,
+      )
+      .toArray()) {
+      if (this.snapshots.metadata(row.id)?.jdText !== jdText || !this.snapshots.factsUnchanged(row.id, ids)) continue;
+      let data: unknown = null;
+      try {
+        data = JSON.parse(row.data);
+      } catch {
+        // fitForApp refuses what can't be read.
+      }
+      return { createdAt: row.created_at, data };
+    }
+    return null;
+  }
+
+  /** Fit previews connected apps have started on this account since UTC midnight, the day model spend is counted by. */
+  private appFitStartsToday(now = Date.now()): number {
+    // GLOB, because `_` is a wildcard in LIKE. The web app's keys are UUIDs, so the owner's own never match.
+    return this.sql
+      .exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM runs WHERE kind = 'fit' AND request_key GLOB 'document:mcp_*' AND created_at >= ?`,
+        Math.floor(now / 86_400_000) * 86_400_000,
+      )
+      .one().n;
   }
 
   private get coachClients(): CoachClientStore {
