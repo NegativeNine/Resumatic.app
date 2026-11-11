@@ -111,11 +111,11 @@ A taxonomy is loaded once into a D1 database of its own and never changed. A new
 
 ```sh
 npx wrangler d1 create resumatic-taxonomy-<version>
-for f in <folder>/d1/*.sql; do npx wrangler d1 execute resumatic-taxonomy-<version> --remote --file "$f" || break; done
+for f in <folder>/d1/*.sql; do npx wrangler d1 execute resumatic-taxonomy-<version> --remote --yes --file "$f" || break; done
 npx wrangler d1 execute resumatic-taxonomy-<version> --remote --command "SELECT key, value FROM taxonomy_meta"
 ```
 
-Every file is run, in order, and the loop stops at the first one that fails. The last statement of the last file says what the taxonomy is: its format, version, content hash and sources, and how many concepts, labels and relations it has (`records`). It writes those rows together or not at all, and only when the three tables hold exactly as many rows as the builder wrote. So a database names a version only if every record is in it:
+Every file is run, in order, and the loop stops at the first one that fails. `--yes` answers the question wrangler asks before it runs a file on a remote database (the database serves no queries meanwhile, and nothing reads this one yet). Asked at a terminal and answered "no", wrangler leaves the file out without an error, and the loop would go on to the next. The last statement of the last file says what the taxonomy is: its format, version, content hash and sources, and how many concepts, labels and relations it has (`records`). It writes those rows together or not at all, and only when the three tables hold exactly as many rows as the builder wrote. So a database names a version only if every record is in it:
 
 - The last command above prints the version that is in `manifest.json`, and how many records the database was found to hold. If it prints no rows, the load is not complete.
 - A load that left a file out ends with the last file failing: `NOT NULL constraint failed: taxonomy_meta.value`.
