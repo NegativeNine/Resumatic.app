@@ -103,6 +103,8 @@ describe("what to offer about two lines", () => {
       ["AWS Solutions Architect certification", "AWS Solutions Architect certification (in-progress)"],
       ["AWS Solutions Architect certification", "AWS Solutions Architect certification (work\u2011in\u2011progress)"],
       ["Led the launch in two regions", "Led the up-coming launch in two regions"],
+      // "Up to" written as one word, which the check on figures does not read as a bound.
+      ["Cut cloud costs by 30%", "Cut cloud costs by upto 30%"],
       // A listed word with a soft hyphen inside it, as text read from a PDF can have.
       ["Handled customer escalations", "Ne\u00ADver handled customer escalations"],
       ["AWS Solutions Architect certification", "AWS Solutions Architect certification (in pro\u00ADgress)"],

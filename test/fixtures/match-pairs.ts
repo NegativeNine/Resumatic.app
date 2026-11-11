@@ -33,6 +33,7 @@ export const MATCH_PAIRS: PairExample[] = [
   { later: "Led a team of 8 engineers", earlier: "Led a team of 5 engineers", expect: "different", stoppedBy: "check", why: "a different figure" },
   { later: "Built the billing API in Python", earlier: "Built the billing API in Go", expect: "different", stoppedBy: "check", why: "a different tool" },
   { later: "Cut costs by 30%", earlier: "Cut costs by up to 30%", expect: "different", stoppedBy: "check", why: "one figure is hedged" },
+  { later: "Cut cloud costs by 30%", earlier: "Cut cloud costs by upto 30%", expect: "different", stoppedBy: "check", why: "one figure is hedged, with the hedge written as one word" },
   { later: "Handled 2 million events a day", earlier: "Handled 2 events a day", expect: "different", stoppedBy: "check", why: "one figure is scaled" },
   { later: "Managed the budget", earlier: "Did not manage the budget", expect: "different", stoppedBy: "check", why: "one denies what the other says" },
   { later: "Led the migration to Kubernetes", earlier: "Helped lead the migration to Kubernetes", expect: "different", stoppedBy: "check", why: "one claims more of the credit" },

@@ -124,6 +124,8 @@ describe("starting rule 1: a qualified line stays whole", () => {
     ["AWS Solutions Architect certification in-progress and two exams passed", "in progress"],
     ["Thesis is a work\u2010in\u2010progress with two chapters drafted", "in progress"],
     ["Reduced latency by up-to 40% and doubled throughput", "up to"],
+    // And with nothing between its words, as "up to" is often written.
+    ["Reduced latency by upto 40% and halved the error rate", "upto"],
     ["Reduced latency by up\u2013to\u201340% and tripled throughput", "up to"],
     ["Preparing the up-coming launch in two regions and three languages", "upcoming"],
     ["Preparing the UP\u2011COMING launch in two regions and four languages", "upcoming"],

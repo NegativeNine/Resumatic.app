@@ -89,6 +89,8 @@ const QUALIFYING_WORDS = new Set([
   "expected", "expecting", "anticipated", "anticipating", "will", "would", "could", "should", "might", "shall", "pending",
   "upcoming", "ongoing", "potential", "potentially", "prospective", "tentative", "hoped", "hoping", "tried", "trying",
   "attempted", "attempting", "seeking", "pursuing", "learning", "studying", "exploring", "if", "unless",
+  // "Up to", a phrase below, as it is often written.
+  "upto",
   // The same in the other languages the reader already guards skills against.
   "sin", "nunca", "ohne", "nicht", "niemals", "sans", "jamais",
 ]);
