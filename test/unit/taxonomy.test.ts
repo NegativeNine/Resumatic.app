@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MemoryStore, Taxonomy, MAX_MENTION_TEXT_CHARS, taxonomyFor, type Mention, type TaxonomyStore } from "../../src/taxonomy";
+import { MemoryStore, Taxonomy, MAX_MENTION_TEXT_CHARS, normalizeLabel, taxonomyFor, words, type Label, type Mention, type TaxonomyStore } from "../../src/taxonomy";
 import { TAXONOMY_FIXTURE } from "../support/taxonomy-fixture";
 
 const S = (n: number) => `esco:skill:00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -10,6 +10,11 @@ const BA = "onet:occ:99-1003.00";
 
 const taxonomy = () => new Taxonomy(new MemoryStore(TAXONOMY_FIXTURE));
 const brief = (mentions: Mention[]) => mentions.map((mention) => [mention.text, mention.concepts.map((concept) => concept.id), mention.weak]);
+/** The test taxonomy with more labels, each stored in the form the builder would store it in. */
+const withLabels = (...labels: Omit<Label, "norm">[]) =>
+  new Taxonomy(new MemoryStore({ ...TAXONOMY_FIXTURE, labels: [...TAXONOMY_FIXTURE.labels, ...labels.map((label) => ({ ...label, norm: normalizeLabel(label.text) }))] }));
+/** An accent written as its letter and then a combining mark, as some editors and PDF text layers write it. */
+const decomposed = (text: string) => text.normalize("NFD");
 
 describe("the combined taxonomy", () => {
   it("says which taxonomy it is, and that none is loaded when none is", async () => {
@@ -86,6 +91,51 @@ describe("labels found in a line of text", () => {
       ["SQL", [S(8)], false],
     ]);
     for (const line of ["Pythonic code", "NoSQL stores", "gopher", "MySQL", "Excellent results"]) expect(await t.mentions(line), line).toEqual([]);
+  });
+
+  it("read an accent the same however the text encodes it", async () => {
+    expect(decomposed("r\u00e9sum\u00e9")).toHaveLength(8);
+    expect(words(decomposed("Wrote a r\u00e9sum\u00e9 for the caf\u00e9")).map((word) => word.norm)).toEqual(["wrote", "a", "resume", "for", "the", "cafe"]);
+    expect(normalizeLabel(decomposed("ma\u00eetre d'h\u00f4tel"))).toBe("maitre d'hotel");
+    expect(normalizeLabel("ma\u00eetre d'h\u00f4tel")).toBe("maitre d'hotel");
+    // A label written with combining marks is stored in the form its composed twin is.
+    expect(normalizeLabel(decomposed("comprehend spoken Proven\u00e7al"))).toBe("comprehend spoken provencal");
+
+    const t = withLabels(
+      { conceptId: O(4), kind: "occupation", type: "alternative", text: "ma\u00eetre d'h\u00f4tel" },
+      { conceptId: O(5), kind: "occupation", type: "alternative", text: "SEN" },
+      { conceptId: S(9), kind: "skill", type: "alternative", text: "RE" },
+    );
+    for (const line of ["Ma\u00eetre d'h\u00f4tel at a 120-cover restaurant", decomposed("Ma\u00eetre d\u2019h\u00f4tel at a 120-cover restaurant")]) {
+      const found = await t.mentions(line);
+      expect(found.map((mention) => mention.concepts.map((concept) => concept.id)), line).toEqual([[O(4)]]);
+      // The mention is where the label is in the text as given, with every mark of its last letter.
+      expect(found[0]!.start).toBe(0);
+      expect(line.slice(found[0]!.start, found[0]!.end)).toBe(found[0]!.text);
+      expect(found[0]!.text.normalize("NFC")).toMatch(/^Ma\u00eetre d['\u2019]h\u00f4tel$/);
+    }
+    // The letters before an accent are not a word of their own: no "Sen" in the first line, no "Re" in the second.
+    for (const line of ["Se\u00f1or engineer", "R\u00e9sum\u00e9 screening"]) {
+      expect(await t.mentions(line), line).toEqual([]);
+      expect(await t.mentions(decomposed(line)), line).toEqual([]);
+    }
+    expect(brief(await t.mentions("SEN support"))).toEqual([["SEN", [O(5)], false]]);
+  });
+
+  it("read a word through the characters in it that are not seen", async () => {
+    const t = taxonomy();
+    // A soft hyphen, a zero-width space and a zero-width joiner: none is something a person reads.
+    expect(words("manage\u00adment, Py\u200bthon and Kuber\u200dnetes").map((word) => word.norm)).toEqual(["management", "python", "and", "kubernetes"]);
+    const line = "strong budget manage\u00adment in Py\u200bthon";
+    const found = await t.mentions(line);
+    expect(found.map((mention) => [mention.text, mention.norm, mention.concepts.map((concept) => concept.id)])).toEqual([
+      ["budget manage\u00adment", "budget management", [S(1)]],
+      ["Py\u200bthon", "python", ["onet:tool:python", S(3)]],
+    ]);
+    for (const mention of found) expect(line.slice(mention.start, mention.end)).toBe(mention.text);
+    // Such a character between two words still leaves two words, and one before a word starts nothing.
+    expect(words("\ufeffPython \u200bSQL").map((word) => word.norm)).toEqual(["python", "sql"]);
+    expect(normalizeLabel("\u200bpublic relations consultant")).toBe("public relations consultant");
   });
 
   it("mark a short or everyday word as thin evidence", async () => {

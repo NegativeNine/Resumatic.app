@@ -59,6 +59,13 @@ test("labels and text are compared word for word, keeping what makes a tool's na
   assert.deepEqual(forms("T-SQL, CI/CD. PL/SQL."), ["t", "sql", "ci", "cd", "pl", "sql"]);
   assert.equal(normalizeLabel("  Front-end   development "), "front end development");
   assert.equal(normalizeLabel("R\u00e9sum\u00e9 writing"), "resume writing");
+  // An accent is the same accent as one character or as a letter and a combining mark, and a soft
+  // hyphen or a zero-width character inside a word is not the end of it. A label is stored whole either way.
+  assert.equal(normalizeLabel("R\u00e9sum\u00e9 writing".normalize("NFD")), "resume writing");
+  assert.deepEqual(forms("fa\u00e7ade cleaner, ma\u00eetre d'h\u00f4tel".normalize("NFD")), ["facade", "cleaner", "maitre", "d'hotel"]);
+  assert.equal(normalizeLabel("manage\u00adment of Java\u200bScript"), "management of javascript");
+  const marked = "the cafe\u0301 menu";
+  assert.deepEqual(words(marked).map((word) => marked.slice(word.start, word.end)), ["the", "cafe\u0301", "menu"]);
   assert.equal(normalizeLabel("the team\u2019s work"), "the team's work");
   assert.equal(normalizeLabel("Python (computer programming)"), "python computer programming");
   assert.equal(normalizeLabel("\u2026 \u2014 !"), "");

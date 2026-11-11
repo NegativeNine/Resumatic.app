@@ -42,7 +42,7 @@ Three kinds of record, written by the builder and read by the app (`src/taxonomy
 
 An ID names its source first. An ESCO ID is the concept's URI with `http://data.europa.eu/esco/` removed, so the URI can always be given back.
 
-**Labels.** Every name a concept is known by, as the source writes it and in a comparison form (lower case, no accents, punctuation around words dropped, `c++`, `c#`, `.net` and `node.js` kept whole). Types: `preferred`, `alternative` (including O\*NET job titles), `hidden` (ESCO's hidden terms) and `derived` (made by the builder, below). Task statements are not labels.
+**Labels.** Every name a concept is known by, as the source writes it and in a comparison form (lower case, no accents, punctuation around words dropped, `c++`, `c#`, `.net` and `node.js` kept whole). An accent is dropped however the text encodes it, as one character or as a letter followed by a combining mark, and a character nobody sees (a soft hyphen, a zero-width space) does not end a word. Types: `preferred`, `alternative` (including O\*NET job titles), `hidden` (ESCO's hidden terms) and `derived` (made by the builder, below). Task statements are not labels.
 
 **Relations.**
 
