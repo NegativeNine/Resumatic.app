@@ -111,20 +111,33 @@ const targetKey = (target: ShareTarget) =>
 
 const SEND_FAILED = "That didn’t go through. Check your connection, then try again.";
 
+/** The copy's route refusing a copy that isn't in this account's client list, as against a server with no such route. */
+const NOT_LISTED = "no such client";
+
 /**
  * The threads a coach has written on a client's copy, and the form to write another. It stands
  * beside the copy at /share, which has no signed-in session of the app around it, so it asks the
  * API itself. `selected` is the line or fact chosen on the copy. `onUnlisted` is called when the
- * copy turns out not to be in this account's client list.
+ * copy turns out not to be in this account's client list. `onEnded` is called with the one
+ * sentence left when commenting is over for this reader, because the copy ended or they must sign
+ * in again: the page then shows that sentence in place of the threads, and nothing to choose.
  */
-export function CoachComments({ view, selected, onUnlisted }: { view: SharedView; selected: ShareTarget | null; onUnlisted: () => void }) {
+export function CoachComments({
+  view,
+  selected,
+  onUnlisted,
+  onEnded,
+}: {
+  view: SharedView;
+  selected: ShareTarget | null;
+  onUnlisted: () => void;
+  onEnded: (sentence: string) => void;
+}) {
   const id = useId();
   const grantId = view.grantId;
   const owner = view.snapshot.owner?.name || null;
   const [threads, setThreads] = useState<CommentThread[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
-  /** The one sentence left when commenting is over for this reader: the copy ended, or they must sign in again. */
-  const [over, setOver] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
@@ -136,23 +149,28 @@ export function CoachComments({ view, selected, onUnlisted }: { view: SharedView
       mounted.current = false;
     };
   }, []);
-  // The page's handler is read when it is needed, so a new one on each render doesn't load the threads again.
+  // The page's handlers are read when they are needed, so new ones on each render don't load the threads again.
   const unlisted = useRef(onUnlisted);
+  const ended = useRef(onEnded);
   useEffect(() => {
     unlisted.current = onUnlisted;
+    ended.current = onEnded;
   });
 
   /**
-   * Sorts a refusal. The copy isn't in the list: the page offers to add it. The copy has ended,
-   * or the session has: only that sentence is left. Anything else is the caller's to word, with
-   * the server's own sentence when it sent one the reader can act on.
+   * Sorts a refusal. The copy isn't in the list: the page offers to add it. That is the route's own
+   * refusal, by its sentence; any other 404, such as a server from before comments answering "no
+   * such route", is a failure like any other, so it never sends the reader round adding a copy their
+   * list already holds. The copy has ended, or the session has: only that sentence is left.
+   * Anything else is the caller's to word, with the server's own sentence when it sent one the
+   * reader can act on.
    */
   const refused = useCallback((e: unknown, otherwise: (sentence: string | null) => void) => {
     if (!mounted.current) return;
     const status = e instanceof ApiError ? e.status : 0;
-    if (status === 404) unlisted.current();
+    if (status === 404 && e instanceof ApiError && e.message === NOT_LISTED) unlisted.current();
     else if (status === 401 || status === 409 || status === 410)
-      setOver(describeError(e, { unauthenticated: "Sign in to Resumatic again, then reload this page.", gone: ACCOUNT_DELETED_NOTE }));
+      ended.current(describeError(e, { unauthenticated: "Sign in to Resumatic again, then reload this page.", gone: ACCOUNT_DELETED_NOTE }));
     else otherwise(status === 422 || status === 429 ? describeError(e) : null);
   }, []);
 
@@ -215,7 +233,6 @@ export function CoachComments({ view, selected, onUnlisted }: { view: SharedView
     }
   }
 
-  if (over) return <ErrorNote message={over} />;
   if (loadFailed) return <ErrorNote message="Comments couldn’t be loaded. Check your connection, then try again." onRetry={load} />;
   if (!threads) return <Loading>Loading comments…</Loading>;
 

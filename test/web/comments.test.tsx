@@ -250,6 +250,36 @@ describe("a coach commenting on a client's copy", () => {
     expect(state.coachComments.flatMap((held) => held.comments.map((item) => item.body))).toEqual(["From before"]);
   });
 
+  it("reads a 404 from a server without the comment routes as a failure, not as a copy that left the list", async () => {
+    const { api, state } = open(joined());
+    state.coachComments = [{ target: onFact, quote: LED, comments: [comment("c1", "coach", "Loaded once the routes are back")] }];
+    // A Worker from before comments answers every one of these paths so.
+    api.fail("GET", /\/comments$/, 404, "not_found", "no such route");
+    const aside = within(await screen.findByRole("complementary", { name: "Comments" }));
+    expect(await aside.findByRole("alert")).toHaveTextContent("Comments couldn’t be loaded. Check your connection, then try again.");
+    // The copy is still in the list, so the page offers no add.
+    expect(screen.queryByRole("button", { name: "Add to my clients" })).toBeNull();
+    expect(screen.queryByText(/named you as their coach/)).toBeNull();
+    expect(screen.getByText(/^Shared with you until /)).toBeInTheDocument();
+    await userEvent.click(aside.getByRole("button", { name: "Try again" }));
+    expect(await aside.findByText("Loaded once the routes are back")).toBeInTheDocument();
+
+    // The same for a comment sent or deleted: the words stay, and so does the copy's place in the list.
+    await userEvent.click(screen.getByRole("button", { name: LED_LINE }));
+    await userEvent.type(box(), "Kept through a rollback");
+    api.fail("POST", /\/comments$/, 404, "not_found", "no such route");
+    await userEvent.click(form().getByRole("button", { name: "Comment" }));
+    expect(await form().findByRole("alert")).toHaveTextContent("That didn’t go through. Check your connection, then try again.");
+    expect(box()).toHaveValue("Kept through a rollback");
+    api.fail("DELETE", /\/comments\//, 404, "not_found", "no such route");
+    await userEvent.click(within(thread(LED)).getByRole("button", { name: "Delete" }));
+    await userEvent.click(within(thread(LED)).getByRole("button", { name: "Delete comment" }));
+    await waitFor(() => expect(api.callsTo("DELETE", /\/comments\//)).toHaveLength(1));
+    expect(screen.getByText("Loaded once the routes are back")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add to my clients" })).toBeNull();
+    expect(api.calls.filter((call) => call.path === "/api/coach/clients")).toEqual([]);
+  });
+
   it("says a copy of documents alone can be opened later, not commented on, before it is added", async () => {
     open(
       joined((view) => {
@@ -280,8 +310,14 @@ describe("a coach commenting on a client's copy", () => {
       expect(aside.queryByText("Before the end")).toBeNull();
       expect(aside.queryByRole("textbox")).toBeNull();
       expect(aside.queryByRole("button")).toBeNull();
-      // The copy is still there to read.
+      // The copy is still there to read, as text: nothing on it can be chosen, and the notice no
+      // longer says the reader can comment.
       expect(screen.getByText(LED_LINE)).toBeInTheDocument();
+      expect(screen.getByText(LED_LINE).closest("button")).toBeNull();
+      expect(screen.queryAllByRole("button", { pressed: false })).toEqual([]);
+      expect(document.querySelector(".app-share__pick")).toBeNull();
+      expect(screen.queryByText(/You can comment/)).toBeNull();
+      expect(screen.getByText(/^Shared with you until \d+ Nov 2026\. Only Sam Rivera can change it\.$/)).toBeInTheDocument();
       loading.page.unmount();
 
       // Refused as a comment is sent: what was on the page goes too.
@@ -294,6 +330,15 @@ describe("a coach commenting on a client's copy", () => {
       expect(await form().findByRole("alert")).toHaveTextContent(sentence);
       expect(form().queryByText("Before the end")).toBeNull();
       expect(form().queryByRole("textbox")).toBeNull();
+      // The line that was chosen is text again, and so is every other.
+      expect(screen.queryAllByRole("button", { pressed: true })).toEqual([]);
+      expect(screen.queryAllByRole("button", { pressed: false })).toEqual([]);
+      expect(screen.getByText(LED_LINE).closest("button")).toBeNull();
+      expect(screen.queryByText(/You can comment/)).toBeNull();
+      // Nothing more is asked of the server on the reader's behalf.
+      const asked = commentCalls(sending.api).length;
+      await userEvent.click(screen.getByText(LED_LINE));
+      expect(commentCalls(sending.api)).toHaveLength(asked);
       sending.page.unmount();
     }
   });

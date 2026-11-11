@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiError } from "../api";
 import { CoachComments } from "../components/ShareComments";
 import { ShareFrame, ShareSnapshotContent, sameTarget } from "../components/ShareSnapshotContent";
-import { Badge, Loading, Message } from "../components/ui";
+import { Badge, ErrorNote, Loading, Message } from "../components/ui";
 import { describeError } from "../errors";
 import { formatDate } from "../format";
 import "../components/share.css";
@@ -76,9 +76,12 @@ export function SharePage() {
   const [selected, setSelected] = useState<ShareTarget | null>(null);
   /** The copy turned out not to be in the reader's client list after all, as when another tab took it off. */
   const [unlisted, setUnlisted] = useState(false);
+  /** Why commenting is over for this reader, as the comments were refused: the copy ended, or they must sign in again. */
+  const [ended, setEnded] = useState<string | null>(null);
   // Each reading of the copy starts over: once the copy is added again, it can be commented on again.
   useEffect(() => {
     setUnlisted(false);
+    setEnded(null);
   }, [view]);
   useEffect(() => {
     let active = true;
@@ -145,25 +148,36 @@ export function SharePage() {
   return (
     <ShareSnapshotContent
       view={view}
-      notice={reviewer && <CoachNotice view={view} reviewer={reviewer} commentable={commentable} onChanged={() => setAttempt((value) => value + 1)} />}
+      notice={
+        reviewer && (
+          <CoachNotice view={view} reviewer={reviewer} commentable={commentable && ended === null} onChanged={() => setAttempt((value) => value + 1)} />
+        )
+      }
       comments={
-        commenting
-          ? {
-              selected,
-              // Choosing the chosen one again lets go of it.
-              onSelect: (target) => setSelected((current) => (sameTarget(current, target) ? null : target)),
-              aside: (
-                <CoachComments
-                  view={view}
-                  selected={selected}
-                  onUnlisted={() => {
-                    setSelected(null);
-                    setUnlisted(true);
-                  }}
-                />
-              ),
-            }
-          : undefined
+        !commenting
+          ? undefined
+          : ended !== null
+            ? // Commenting is over: its one sentence stands in place of the threads, and nothing on the copy can be chosen.
+              { selected: null, aside: <ErrorNote message={ended} /> }
+            : {
+                selected,
+                // Choosing the chosen one again lets go of it.
+                onSelect: (target) => setSelected((current) => (sameTarget(current, target) ? null : target)),
+                aside: (
+                  <CoachComments
+                    view={view}
+                    selected={selected}
+                    onUnlisted={() => {
+                      setSelected(null);
+                      setUnlisted(true);
+                    }}
+                    onEnded={(sentence) => {
+                      setSelected(null);
+                      setEnded(sentence);
+                    }}
+                  />
+                ),
+              }
       }
     />
   );
@@ -181,7 +195,7 @@ async function conflictSentence(response: Response): Promise<string | null> {
  * What a copy that names a coach says to whoever is reading it. Only the account that signs in
  * with the named address can keep the copy in its client list, and comment on it once it is there.
  * Everyone else just reads. `reviewer` is how this reader stands, and `commentable` whether the
- * copy holds a line or a fact to comment on.
+ * copy holds a line or a fact to comment on, and commenting isn't over for this reader.
  */
 function CoachNotice({
   view,
