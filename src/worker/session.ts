@@ -11,15 +11,33 @@ export interface Session {
   vid: string;
   gen: number;
   exp: number;
+  /**
+   * The address the person signed in with, as the sign-in provider verified it, in lower case.
+   * It is what lets someone be named as a coach by address. A session from before it was carried
+   * has none, and acts as nobody's coach until the person signs in again.
+   */
+  email?: string;
+}
+
+/** A sign-in address as sessions and coach grants compare it. Null for anything that isn't one. */
+export function sessionEmail(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const email = value.trim().toLowerCase();
+  return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
 }
 
 export async function createSession(
   secret: string,
-  s: { uid: string; vid: string; gen: number; epoch?: string },
+  s: { uid: string; vid: string; gen: number; epoch?: string; email?: string },
   now = Date.now(),
 ): Promise<string> {
+  const email = sessionEmail(s.email);
   return signToken(secret, {
-    ...s,
+    uid: s.uid,
+    vid: s.vid,
+    gen: s.gen,
+    ...(s.epoch === undefined ? {} : { epoch: s.epoch }),
+    ...(email ? { email } : {}),
     exp: now + SESSION_TTL_MS,
   } satisfies Session);
 }
@@ -38,6 +56,10 @@ export async function readSession(
   )
     return null;
   if (typeof s.exp !== "number" || s.exp <= now) return null;
+  // Only a well-formed address counts. Anything else is a session without one.
+  const email = sessionEmail(s.email);
+  if (email) s.email = email;
+  else delete s.email;
   return s;
 }
 

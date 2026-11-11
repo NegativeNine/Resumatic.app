@@ -29,7 +29,8 @@ const RESUME_CHECK: Readonly<Record<SharedResume["verification"], { tone: string
 };
 
 /** Kept separate so the same read-only snapshot can be tested without a browser session. */
-export function ShareSnapshotContent({ view }: { view: SharedView }) {
+/** `notice` is said under the heading, before the copy: what a named coach can do with it, say. */
+export function ShareSnapshotContent({ view, notice }: { view: SharedView; notice?: ReactNode }) {
   const { facts, resumes } = view.snapshot;
   const documents = view.snapshot.documents ?? [];
   const owner = view.snapshot.owner?.name || null;
@@ -58,6 +59,7 @@ export function ShareSnapshotContent({ view }: { view: SharedView }) {
           Privacy notice
         </a>
       </p>
+      {notice && <div className="app-share__notice">{notice}</div>}
       {facts.length > 0 && (
         <section className="rs-panel app-share__facts" aria-labelledby="share-facts">
           <h2 id="share-facts">Confirmed facts</h2>

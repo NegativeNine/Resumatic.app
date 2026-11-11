@@ -1,7 +1,7 @@
 import type { ApplicationView, FactView, Me, ResumeView, RoleView, SourceView } from "../../src/shared/api";
 import type { DocumentView } from "../../src/shared/documents";
 import type { McpGrant } from "../../src/shared/mcp";
-import type { ShareGrant, SharedView } from "../../src/shared/sharing";
+import type { CoachClient, ShareGrant, SharedView } from "../../src/shared/sharing";
 import type { BillingView } from "../../src/web/api";
 import data from "./fixtures.json";
 import full from "./fixtures-full.json";
@@ -17,6 +17,8 @@ export interface Fixtures {
   /** The screens that are empty by default: documents, share links, connected apps, plans. */
   documents?: DocumentView[];
   shares?: ShareGrant[];
+  /** The copies other people have shared with this account as their coach. */
+  clients?: CoachClient[];
   mcpGrants?: McpGrant[];
   billing?: BillingView;
 }

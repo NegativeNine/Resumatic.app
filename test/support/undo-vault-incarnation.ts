@@ -1,5 +1,13 @@
-/** Test-only helper to reconstruct a Vault schema before the record held parts, tags and links, the latest migration. */
+/** Test-only helper to reconstruct a Vault schema before a link could name a coach, the latest migration. */
+export function removeCoachMigration(sql: SqlStorage): void {
+  sql.exec(`DROP TABLE IF EXISTS coach_clients`);
+  for (const column of ["coach_joined_at", "coach_name", "coach_user_id", "coach_email"])
+    sql.exec(`ALTER TABLE share_grants DROP COLUMN ${column}`);
+}
+
+/** Test-only helper to reconstruct a Vault schema before the record held parts, tags and links, and so before every later migration. */
 export function removeRecordMigration(sql: SqlStorage): void {
+  removeCoachMigration(sql);
   for (const trigger of ["fact_deleted", "role_deleted", "split_deleted", "part_deleted", "fact_reworded", "role_retitled", "role_changed"])
     sql.exec(`DROP TRIGGER IF EXISTS record_${trigger}`);
   for (const table of ["record_links", "record_tags", "fact_parts", "fact_splits"]) sql.exec(`DROP TABLE IF EXISTS ${table}`);

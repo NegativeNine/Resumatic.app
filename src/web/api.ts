@@ -20,7 +20,7 @@ import type {
 } from "../shared/api";
 import type { DocumentView, NewDocument } from "../shared/documents";
 import type { PostingRead } from "../shared/postings";
-import type { ShareableDocument, ShareGrant } from "../shared/sharing";
+import type { CoachClient, ShareableDocument, ShareGrant } from "../shared/sharing";
 
 export interface BillingView {
   enabled: boolean;
@@ -325,6 +325,12 @@ export const api = {
   cancelCheckout: () => request<void>("POST", "/api/billing/checkout/cancel"),
   billingPortal: () => request<{ url: string }>("POST", "/api/billing/portal"),
   shares: () => request<{ grants: ShareGrant[] }>("GET", "/api/shares"),
+  /** The copies other people have shared with this account as their coach. */
+  coachClients: () => request<{ clients: CoachClient[]; needsSignIn: boolean }>("GET", "/api/coach/clients"),
+  /** Opens a client's copy from the list, without its link. The copy then reads at /share?g=. */
+  openCoachClient: (grantId: string) =>
+    request<{ grantId: string }>("POST", `/api/coach/clients/${encodeURIComponent(grantId)}/open`),
+  removeCoachClient: (grantId: string) => request<void>("DELETE", `/api/coach/clients/${encodeURIComponent(grantId)}`),
   /** Finished cover letters and interview preparation, and whether each can be shared. */
   shareableDocuments: () => request<{ documents: ShareableDocument[] }>("GET", "/api/documents"),
   createShare: (selection: {
@@ -338,6 +344,8 @@ export const api = {
     showName?: boolean;
     /** True says which job each shared resume or document was made for. */
     showJobs?: boolean;
+    /** The sign-in address of the one account that may act as this copy's coach. */
+    coachEmail?: string;
   }) =>
     request<{ grant: ShareGrant; url: string }>(
       "POST",

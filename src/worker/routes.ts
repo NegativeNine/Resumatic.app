@@ -51,7 +51,7 @@ import {
   type RoleKind,
 } from "../shared/api";
 import { AppError, errorCode, errorDetail, httpStatus } from "../shared/errors";
-import { MAX_SHARE_LABEL_CHARS } from "../shared/sharing";
+import { MAX_SHARE_LABEL_CHARS, type CoachClient } from "../shared/sharing";
 import { hintFor, type CfLocation } from "../shared/location";
 import { docxKey, pdfKey, sourceKey } from "../shared/r2";
 import { directoryForSignIn, settleRoutedPlacement } from "../directory/routing";
@@ -348,6 +348,8 @@ export async function startSession(env: Env, input: SignInInput): Promise<string
       vid: vaultId,
       gen,
       epoch,
+      // The address the provider verified for this sign-in.
+      email: input.email,
     }),
   );
   if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
@@ -488,7 +490,8 @@ api.post("/test/model-budget", JSON_LIMIT, async (c) => {
 
 api.get("/me", async (c) => {
   const me = await myVault(c).me(c.get("who"));
-  return c.json({ ...me, capabilities: {
+  const signInEmail = c.get("session").email;
+  return c.json({ ...me, ...(signInEmail ? { signInEmail } : {}), capabilities: {
     ocr: me.capabilities?.ocr ?? false,
     connectedApps: me.capabilities?.connectedApps ?? false,
     // Both this Worker and the Vault must understand v2 writes.
@@ -1275,6 +1278,8 @@ api.post("/shares", JSON_LIMIT, async (c) => {
         .optional(),
       showName: z.boolean().optional(),
       showJobs: z.boolean().optional(),
+      // The one account that may act as this copy's coach, by the address it signs in with.
+      coachEmail: z.string().trim().max(254).optional(),
     }),
   );
   const grant = await myVault(c).createShare(c.get("who"), selection);
@@ -1291,6 +1296,95 @@ api.post("/shares", JSON_LIMIT, async (c) => {
 });
 api.delete("/shares/:id", async (c) => {
   await myVault(c).revokeShare(c.get("who"), c.req.param("id"));
+  return c.body(null, 204);
+});
+
+// ------------------------------------------------------------------ coaches
+// A copy can name a coach by the address they sign in with. That account, and no other, can keep
+// the copy in its client list and open it again without the link. Naming a coach never widens who
+// can read: the copy's owner's vault checks the account on every one of these calls.
+
+/**
+ * An ended copy, said as a conflict. Under /api a 410 means the caller's own vault is gone, and the
+ * app signs them out on it, so a client's copy ending must never be said that way here.
+ */
+const copyEnded = () => new AppError("conflict", "this copy has ended; the person who shared it can share again");
+/** For a call into the copy's owner's vault. Its error arrives without its class, so the code is read from the message. */
+async function unlessEnded<T>(work: Promise<T>): Promise<T> {
+  try {
+    return await work;
+  } catch (error) {
+    if (errorCode(error) === "gone") throw copyEnded();
+    throw error;
+  }
+}
+
+/** The signed-in account as an owner's vault is told of it. A session without an address is nobody's coach. */
+function coachAccount(c: C): { userId: string; email: string } {
+  const session = c.get("session");
+  if (!session.email)
+    throw new AppError("conflict", "sign out and in again to use this account as a coach");
+  return { userId: session.uid, email: session.email };
+}
+
+// Takes up a copy the reader has open. The link's own session says which copy, and the reader's
+// account has to be the one the owner named.
+api.post("/coach/clients", JSON_LIMIT, async (c) => {
+  const { grantId } = await jsonBody(c, z.object({ grantId: z.string().max(100) }));
+  const claims = await readShareToken(c.env.SESSION_KEY, getCookie(c, shareCookieName(grantId)), "coach-session");
+  if (!claims || claims.grantId.toLowerCase() !== grantId.toLowerCase()) throw copyEnded();
+  const account = coachAccount(c);
+  if (claims.vid === c.get("session").vid) throw new AppError("conflict", "this is your own copy");
+  // Reading their own account both proves the session is current and gives the name they go by.
+  const me = await myVault(c).me(c.get("who"));
+  const joined = await unlessEnded(
+    vault(c.env, claims.vid).joinShareAsCoach(
+      { grantId: claims.grantId, epoch: claims.epoch },
+      { ...account, name: me.profile.name },
+    ),
+  );
+  await myVault(c).addCoachClient(c.get("who"), {
+    grantId: claims.grantId,
+    ownerVault: claims.vid,
+    ownerName: joined.ownerName,
+    expiresAt: joined.expiresAt,
+  });
+  return c.body(null, 204);
+});
+
+// The coach's list, with what each owner's vault says about its copy now. A copy whose link has
+// ended, or whose owner is gone, is listed as ended and says nothing else.
+api.get("/coach/clients", async (c) => {
+  const entries = await myVault(c).listCoachClients(c.get("who"));
+  const email = c.get("session").email;
+  const account = email ? { userId: c.get("session").uid, email } : null;
+  const clients: CoachClient[] = await Promise.all(
+    entries.map(async (entry) => {
+      const ended = { grantId: entry.grantId, ownerName: entry.ownerName, addedAt: entry.addedAt, expiresAt: entry.expiresAt, active: false, factCount: 0, resumeCount: 0, documentCount: 0 };
+      if (!account) return ended;
+      const live = await vault(c.env, entry.ownerVault).coachShareStatus(entry.grantId, account).catch(() => null);
+      return live ? { ...ended, ...live } : ended;
+    }),
+  );
+  return c.json({ clients, needsSignIn: account === null && entries.length > 0 });
+});
+
+// Opens a client's copy from the list: the same session the link would give, for the same hour.
+api.post("/coach/clients/:grantId/open", async (c) => {
+  const entry = await myVault(c).coachClient(c.get("who"), c.req.param("grantId"));
+  if (!entry) throw new AppError("not_found", "no such client");
+  const opened = await unlessEnded(vault(c.env, entry.ownerVault).openShareForCoach(entry.grantId, coachAccount(c)));
+  // Shaped as the link's own claims are, because the session it makes is the one the link makes.
+  const claims = { kind: "coach-link" as const, vid: entry.ownerVault, grantId: entry.grantId, epoch: opened.epoch, exp: opened.expiresAt };
+  const now = Date.now();
+  c.header("set-cookie", await createShareSession(c.env.SESSION_KEY, claims, now, shareCookieName(entry.grantId)), { append: true });
+  c.header("set-cookie", await createShareSession(c.env.SESSION_KEY, claims, now), { append: true });
+  return c.json({ grantId: entry.grantId });
+});
+
+// Takes a copy off the coach's own list. The owner's link is theirs to end.
+api.delete("/coach/clients/:grantId", async (c) => {
+  await myVault(c).removeCoachClient(c.get("who"), c.req.param("grantId"));
   return c.body(null, 204);
 });
 app.post("/share/session", JSON_LIMIT, async (c) => {
@@ -1334,12 +1428,21 @@ app.get("/share/snapshot", async (c) => {
     throw new AppError("gone", "this share link is unavailable or expired");
   // The owner looking at their own copy, signed in in the same browser, isn't the copy being opened.
   const own = await readSession(c.env.SESSION_KEY, getCookie(c, SESSION_COOKIE));
-  return c.json(
-    await vault(c.env, claims.vid).readShare(
-      { grantId: claims.grantId, epoch: claims.epoch },
-      own?.vid !== claims.vid,
-    ),
+  const view = await vault(c.env, claims.vid).readShare(
+    { grantId: claims.grantId, epoch: claims.epoch },
+    own?.vid !== claims.vid,
+    own?.email ? { userId: own.uid, email: own.email } : null,
   );
+  // What the copy says about its named coach depends on who is reading. Its owner is told nothing,
+  // and so is everyone when it names no coach.
+  const { reviewer, ...copy } = view;
+  const standing =
+    reviewer === "none" || own?.vid === claims.vid
+      ? null
+      : reviewer === "named"
+        ? own ? "sign-in-again" : "sign-in"
+        : reviewer;
+  return c.json(standing ? { ...copy, reviewer: standing } : copy);
 });
 api.get("/billing", async (c) =>
   c.json(await myVault(c).billingInfo(c.get("who"))),

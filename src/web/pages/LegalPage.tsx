@@ -63,7 +63,11 @@ function Privacy() {
           <li>The resumes, cover letters, interview preparation and fit previews made from your facts for those jobs.</li>
           <li>
             The links you make to share a copy: what each copy holds, the label you give it and when it was last
-            opened.
+            opened. If you name a coach on a link, their sign-in address is kept with it.
+          </li>
+          <li>
+            If someone names you as their coach and you add their copy to your client list: whose copy it is, when
+            you added it and when it ends.
           </li>
           <li>The apps you connect, what you allowed each one to do and when its access ends.</li>
           <li>How many resumes and documents you have made in the current period, for your plan’s limit.</li>
@@ -122,12 +126,24 @@ function Privacy() {
             We keep when a copy was last opened, to the minute, and show you that time. We keep nothing else about
             the person who opens it, and the copy tells them what you can see.
           </li>
+          <li>
+            You can name a coach by the address they sign in to Resumatic with. That one account can add the copy to
+            its client list and open it from there without the link, for as long as the link lasts. You see the name
+            on their account and when they added it. Naming a coach doesn’t close the link to anyone else who has it.
+          </li>
         </ul>
         <p>
           <strong>If you are reading a copy someone shared with you:</strong> we don’t ask who you are. We keep the
           time the copy was last opened, which its owner can see, and nothing else about you. Cookies keep the copy
           open in your browser for up to an hour. To limit abuse, opening a link is rate-limited with a short-lived
           code made from your network address, which is not kept with the copy.
+        </p>
+        <p>
+          <strong>If you are signed in to Resumatic when you read it:</strong> we check whether your sign-in address
+          is the one the copy names as its coach, and keep nothing from that check. If it is and you add the copy to
+          your client list, we keep your account ID and the name on your account with the owner’s link, and the owner
+          sees that name and when you added it. Your list keeps the owner’s name as the copy gives it. An entry leaves
+          your list when you remove it, or thirty days after the copy’s last day.
         </p>
       </Section>
       <Section title="Connecting an app">

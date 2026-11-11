@@ -66,7 +66,8 @@ describe("opening a shared copy", () => {
     ]);
     // Reloading this address opens this copy, whichever others the reader has open.
     expect(address()).toBe(`/share?g=${GRANT}`);
-    expect(document.title).toBe("Sam Rivera, shared copy – Resumatic");
+    // The title is set once the copy is on the page, a moment after the heading is.
+    await vi.waitFor(() => expect(document.title).toBe("Sam Rivera, shared copy – Resumatic"));
   });
 
   it("opens the copy its address names when there is no link to exchange", async () => {
@@ -94,7 +95,7 @@ describe("opening a shared copy", () => {
     expect(await page.screen.findByRole("heading", { name: "Shared career snapshot" })).toBeInTheDocument();
     expect(page.calls.map((call) => call.path)).toEqual(["/share/session", "/share/snapshot"]);
     expect(address()).toBe("/share");
-    expect(document.title).toBe("Shared copy – Resumatic");
+    await vi.waitFor(() => expect(document.title).toBe("Shared copy – Resumatic"));
   });
 
   it("asks again for the same copy after a failure that may pass, without the link", async () => {

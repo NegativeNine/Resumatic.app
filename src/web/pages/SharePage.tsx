@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ShareFrame, ShareSnapshotContent } from "../components/ShareSnapshotContent";
-import { Loading } from "../components/ui";
+import { Loading, Message } from "../components/ui";
 import "../components/share.css";
 import type { SharedView } from "../../shared/sharing";
 
@@ -123,5 +123,87 @@ export function SharePage() {
         <Loading>Opening the shared copy…</Loading>
       </ShareFrame>
     );
-  return <ShareSnapshotContent view={view} />;
+  return (
+    <ShareSnapshotContent
+      view={view}
+      notice={view.reviewer && <CoachNotice view={view} onChanged={() => setAttempt((value) => value + 1)} />}
+    />
+  );
 }
+
+/**
+ * What a copy that names a coach says to whoever is reading it. Only the account that signs in
+ * with the named address can keep the copy in its client list. Everyone else just reads.
+ */
+function CoachNotice({ view, onChanged }: { view: SharedView; onChanged: () => void }) {
+  const [state, setState] = useState<"idle" | "adding" | "failed" | "refused">("idle");
+  const owner = view.snapshot.owner?.name ?? "The owner of this copy";
+  async function add() {
+    setState("adding");
+    try {
+      const response = await fetch("/api/coach/clients", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ grantId: view.grantId }),
+      });
+      if (response.status === 204) return onChanged();
+      // Refused for good, or for now: the reader can't fix the first by trying again.
+      setState(response.status === 401 || response.status === 403 || response.status === 409 || response.status === 410 ? "refused" : "failed");
+    } catch {
+      setState("failed");
+    }
+  }
+  switch (view.reviewer) {
+    case "joined":
+      return (
+        <Message tone="success">
+          This copy is in your client list.{" "}
+          <a className="rs-link" href="/#/clients">
+            Open your clients
+          </a>
+        </Message>
+      );
+    case "you":
+      return (
+        <Message tone="info" live={false}>
+          <p>
+            {owner} named you as their coach. Add this copy to your client list to open it later without the link.
+            They’ll see that you added it, and the name on your account.
+          </p>
+          <p>
+            <button type="button" className="rs-btn rs-btn--primary rs-btn--sm" disabled={state === "adding"} onClick={() => void add()}>
+              {state === "adding" ? "Adding…" : "Add to my clients"}
+            </button>
+          </p>
+          {state === "failed" && <p role="alert">That didn’t go through. Check your connection, then try again.</p>}
+          {state === "refused" && <p role="alert">This copy couldn’t be added. Reload the page and try again.</p>}
+        </Message>
+      );
+    case "other":
+      return (
+        <Message tone="info" live={false}>
+          This copy names a different sign-in address as its coach. You can still read it.
+        </Message>
+      );
+    case "sign-in-again":
+      return (
+        <Message tone="info" live={false}>
+          This copy names a coach. If that’s you, sign out of Resumatic and in again, then reload this page.
+        </Message>
+      );
+    case "sign-in":
+      return (
+        <Message tone="info" live={false}>
+          This copy names a coach. If that’s you,{" "}
+          <a className="rs-link" href="/" target="_blank" rel="noopener">
+            sign in to Resumatic
+          </a>{" "}
+          with that address, then reload this page to keep the copy in your client list.
+        </Message>
+      );
+    default:
+      return null;
+  }
+}
+

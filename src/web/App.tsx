@@ -6,6 +6,7 @@ import { Shell } from "./components/Shell";
 import { EmptyState, ErrorNote, Loading, PageHeader } from "./components/ui";
 import { describeError, signInErrorMessage } from "./errors";
 import { AccountPage } from "./pages/AccountPage";
+import { ClientsPage } from "./pages/ClientsPage";
 import { JobsPage } from "./pages/JobsPage";
 import { LEGAL_TITLES, LegalPage } from "./pages/LegalPage";
 import { ResumePage } from "./pages/ResumePage";
@@ -122,6 +123,7 @@ const TITLES: Record<Route["page"], string> = {
   jobs: "Jobs",
   resume: "Tailored resume",
   account: "Account",
+  clients: "Clients",
   privacy: LEGAL_TITLES.privacy,
   terms: LEGAL_TITLES.terms,
   notFound: "Page not found",
@@ -168,6 +170,8 @@ function Page({ route }: { route: Route }) {
       return <ResumePage key={route.id} id={route.id} />;
     case "account":
       return <AccountPage />;
+    case "clients":
+      return <ClientsPage />;
     case "privacy":
     case "terms":
       return <LegalPage doc={route.page} />;

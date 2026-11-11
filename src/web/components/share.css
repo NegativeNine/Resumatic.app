@@ -9,6 +9,11 @@
 .app-share__main > .rs-lede strong { font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
 .app-share__main > .app-share__opened { margin: var(--space-3) 0 var(--space-8); max-width: 80ch; }
 .app-share__resume-head .app-share__job { margin: 2px 0 0; overflow-wrap: anywhere; }
+/* What a named coach can do with the copy. It sits between the heading and the copy, never in print. */
+.app-share__notice { margin: calc(-1 * var(--space-4)) 0 var(--space-8); max-width: 80ch; }
+.app-share__notice p { margin: 0; }
+.app-share__notice p + p { margin-top: var(--space-3); }
+@media print { .app-share__notice { display: none; } }
 .app-share__facts h2 { margin: 0 0 var(--space-2); }
 .app-share__facts li { padding: var(--space-3) 0; border-top: 1px solid var(--rule); }
 .app-share__facts li:first-child { border-top: 0; }

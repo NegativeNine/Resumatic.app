@@ -26,6 +26,9 @@ export class FakeApi {
 
   constructor(readonly state: Fixtures) {}
 
+  /** The account's session is from before the sign-in address was carried. */
+  coachNeedsSignIn = false;
+
   /** Documents written before their evidence was kept, which can't go into a copy. */
   readonly unshareable = new Set<string>();
 
@@ -77,6 +80,16 @@ export class FakeApi {
     ["GET", /^\/api\/v2\/vault$/, () => ok({ sources: this.state.sources, roles: this.state.roles, facts: this.state.facts })],
     ["GET", /^\/api\/billing$/, () => ok(this.state.billing ?? { enabled: false, plans: [], current: null })],
     ["GET", /^\/api\/shares$/, () => ok({ grants: this.state.shares ?? [] })],
+    ["GET", /^\/api\/coach\/clients$/, () => ok({ clients: this.state.clients ?? [], needsSignIn: this.coachNeedsSignIn })],
+    ["POST", /^\/api\/coach\/clients\/([^/]+)\/open$/, (_call, [grantId]) => ok({ grantId })],
+    [
+      "DELETE",
+      /^\/api\/coach\/clients\/([^/]+)$/,
+      (_call, [grantId]) => {
+        this.state.clients = (this.state.clients ?? []).filter((client) => client.grantId !== grantId);
+        return { status: 204 };
+      },
+    ],
     [
       "GET",
       /^\/api\/documents$/,
@@ -91,10 +104,11 @@ export class FakeApi {
       "POST",
       /^\/api\/shares$/,
       (call) => {
-        const { factIds, resumes, documents, expiresAt, label } = call.body as { factIds: string[]; resumes: unknown[]; documents?: unknown[]; expiresAt: number; label?: string };
+        const { factIds, resumes, documents, expiresAt, label, coachEmail } = call.body as { factIds: string[]; resumes: unknown[]; documents?: unknown[]; expiresAt: number; label?: string; coachEmail?: string };
         const grant = {
           id: this.id("share"), epoch: "e", createdAt: Date.now(), expiresAt, revokedAt: null,
           factCount: factIds.length, resumeCount: resumes.length, documentCount: documents?.length ?? 0, available: true, label: label ?? null, lastReadAt: null,
+          coach: coachEmail ? { email: coachEmail.toLowerCase(), name: null, joinedAt: null } : null,
         };
         (this.state.shares ??= []).unshift(grant);
         return { status: 201, body: { grant, url: `https://resumatic.test/share#synthetic-${grant.id}` } };

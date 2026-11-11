@@ -120,6 +120,10 @@ export interface Me {
   userId: string;
   profile: Profile;
   quota: Quota;
+  /** The address this session signed in with. Absent from a session issued before it was carried. */
+  signInEmail?: string;
+  /** How many copies other people have shared with this account as their coach. */
+  clients?: number;
 }
 
 export interface SourceView {
