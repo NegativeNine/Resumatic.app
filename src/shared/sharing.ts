@@ -170,6 +170,8 @@ export interface ShareComment {
   id: string; author: "coach" | "owner"; body: string; createdAt: number;
   /** Only in the owner's view of a coach's comment. */
   name?: string | null; seen?: boolean;
+  /** Set when the row is a coach's suggested wording for a line: `body` is the wording, the thread's `quote` the copy's line. */
+  suggestion?: ShareSuggestion;
 }
 /** Everything said about one line or fact of one copy, oldest first. `quote` is the target's words as the copy showed them. */
 export interface CommentThread { target: ShareTarget; quote: string; comments: ShareComment[] }
@@ -202,3 +204,31 @@ export function targetText(snapshot: ShareSnapshot, target: ShareTarget): string
   }
   return null;
 }
+
+// Suggested wording. The coach a copy names proposes new words for one line of a resume in it. A
+// suggestion is kept with the comments, and changes nothing: its owner accepts it, and then it is
+// their own verified line edit with exactly those words.
+
+export interface NewSuggestion { target: ShareTarget & { kind: "line" }; text: string }
+/** All a coach is told: waiting for the owner, used, or not used. Never why, and never a version. */
+export type CoachSuggestionState = "waiting" | "used" | "not_used";
+/** The owner's view: `stale` is a line that has changed or gone since the copy was made. */
+export type OwnerSuggestionState = "waiting" | "checking" | "applied" | "not_applied" | "declined" | "stale";
+export interface ShareSuggestion {
+  /** A coach is only ever sent the three coach states. */
+  state: CoachSuggestionState | OwnerSuggestionState;
+  /** Owner only, as are the next two: the resume version the accepted wording is in, when known. */
+  appliedVersion?: number;
+  /** Why the last check ended without a verdict: the resume or its facts changed, or it didn't finish. */
+  lastCheck?: "changed" | "unfinished";
+  /** The check was asked for, and its start isn't confirmed yet. */
+  startUnconfirmed?: boolean;
+}
+
+/**
+ * One line of text, every character of which shows: no control, format, private-use, surrogate,
+ * separator, variation-selector or other ignorable character, so what a coach suggests is all
+ * there is to read. Written with escapes only, so this file holds none of them.
+ */
+export const isVisibleLine = (text: string): boolean =>
+  !/[\p{Cc}\p{Cf}\p{Co}\p{Cs}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]/u.test(text);

@@ -12,6 +12,7 @@ import { MAX_COACH_COMMENTS_PER_HOUR } from "../../src/vault/share-comments";
 import { fromBase64url } from "../../src/worker/crypto";
 import { createSession } from "../../src/worker/session";
 import { removeCommentMigration } from "../support/undo-vault-incarnation";
+import { outwardParts } from "./outward";
 import { JOB_DESCRIPTION, RESUME, call, cookieFrom, eventually, fakeModels, signIn, uniqueEmail, waitForResume, waitForSource, User } from "./support";
 
 // Comments on a shared copy, over HTTP: who may read and write a thread, what ends it, and where a
@@ -672,6 +673,11 @@ describe("where a comment's words go", () => {
       };
       for (const [name, text] of Object.entries(surfaces))
         for (const word of ["ZEBRAFISH", "QUOKKA", lineComment.id, factComment.id]) expect(text.includes(word), `${word} in ${name}`).toBe(false);
+      // Everything the vault sends anyone but its owner, gathered in one place: the comments and the
+      // reply reach the coach's own list of what they wrote, and nothing else.
+      const parts = await outwardParts({ owner: sam, copies: [{ ...shared, coach: dana }, again], inputs });
+      expect(parts.some((part) => part.surface === "copy as its coach")).toBe(true);
+      expect(parts.filter((part) => ["ZEBRAFISH", "QUOKKA"].some((word) => part.text.includes(word))).map((part) => part.surface)).toEqual(["coach's comments"]);
 
       // They are where they belong: the thread, read by its two people, and the owner's export.
       expect(JSON.stringify(await coachThreads(dana, shared.grant.id))).toContain(CANARY);
@@ -681,10 +687,14 @@ describe("where a comment's words go", () => {
         {
           id: lineComment.id, grant_id: shared.grant.id, target_kind: "line", target_id: line.id, resume_id: resume.id, resume_version: resume.version, quote: line.text,
           coach_email: address, coach_name: null, author: "coach", body: `${CANARY} (line)`, created_at: lineComment.createdAt, seen_at: null,
+          // A comment is no suggestion: both of suggested wording's columns are empty.
+          suggestion_state: null, document_id: null,
         },
         {
           id: factComment.id, grant_id: shared.grant.id, target_kind: "fact", target_id: factIds[0], resume_id: null, resume_version: null, quote: facts[0]!.text,
           coach_email: address, coach_name: null, author: "coach", body: `${CANARY} (fact)`, created_at: factComment.createdAt, seen_at: null,
+          // A comment is no suggestion: both of suggested wording's columns are empty.
+          suggestion_state: null, document_id: null,
         },
         expect.objectContaining({ author: "owner", body: REPLY_CANARY, target_id: line.id, coach_email: address }),
       ]);

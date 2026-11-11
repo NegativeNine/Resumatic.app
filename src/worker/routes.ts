@@ -53,7 +53,7 @@ import {
 } from "../shared/api";
 import { AppError, errorCode, errorDetail, httpStatus } from "../shared/errors";
 import { MAX_SHARE_LABEL_CHARS, type CoachClient, type SharedView } from "../shared/sharing";
-import type { CommentThread, OwnerCommentThread } from "../shared/sharing";
+import type { CommentThread, NewSuggestion, OwnerCommentThread } from "../shared/sharing";
 import { MAX_VAULT_COMMENTS } from "../vault/share-comments";
 import { hintFor, type CfLocation } from "../shared/location";
 import { PREFERENCES_REFUSED, cleanPreferences } from "../shared/preferences";
@@ -1388,6 +1388,15 @@ api.delete("/shares/comments/:id", async (c) => {
   await myVault(c).removeShareComment(c.get("who"), c.req.param("id"));
   return c.body(null, 204);
 });
+// A coach's suggested wording, which its owner accepts or declines. Accepting starts the owner's
+// own verified line edit, with the wording the vault holds: nothing in the request can pass for it.
+api.post("/shares/suggestions/:id/accept", async (c) =>
+  c.json(await myVault(c).acceptSuggestion(c.get("who"), c.req.param("id"), requestKey(c)), 202),
+);
+api.post("/shares/suggestions/:id/decline", async (c) => {
+  await myVault(c).declineSuggestion(c.get("who"), c.req.param("id"));
+  return c.body(null, 204);
+});
 
 // ------------------------------------------------------------------ coaches
 // A copy can name a coach by the address they sign in with. That account, and no other, can keep
@@ -1519,6 +1528,15 @@ api.delete("/coach/clients/:grantId/comments/:id", async (c) => {
   const { entry, account } = await coachCopy(c);
   await unlessEnded(vault(c.env, entry.ownerVault).removeCommentAsCoach(entry.grantId, account, c.req.param("id")));
   return c.body(null, 204);
+});
+// Suggested wording for one line, kept with the comments and reached the same way. A coach deletes
+// one with the comments' delete. Only the shape is checked here, so what the coach reads about the
+// wording is the owner's vault's own sentence.
+api.post("/coach/clients/:grantId/suggestions", JSON_LIMIT, async (c) => {
+  const { entry, account } = await coachCopy(c);
+  const input = await jsonBody(c, z.object({ target: CommentTarget, text: z.string().max(4 * MAX_LINE_CHARS) }));
+  const key = requestKey(c);
+  return c.json(await unlessEnded(vault(c.env, entry.ownerVault).suggestOnShare(entry.grantId, account, input as NewSuggestion, key)), 201);
 });
 app.post("/share/session", JSON_LIMIT, async (c) => {
   const { token } = await jsonBody(

@@ -6,6 +6,7 @@ import {
   type NewShareComment,
   type OwnerCommentThread,
   type ShareComment,
+  type ShareSuggestion,
   type ShareTarget,
   type SharedJob,
 } from "../shared/sharing";
@@ -16,7 +17,9 @@ import type { CoachAccount, ShareStore } from "./shares";
 // writes them on a line or a fact of the copy, and the owner answers. A comment is another person's
 // words: it is shown to the owner and to the account that wrote it, and it is in the owner's export.
 // It is never evidence, and nothing but this store reads the table, so it reaches no prompt, check,
-// copy or connected app.
+// copy or connected app. The one exception is a coach's suggested wording (`share-suggestions.ts`):
+// the Vault reads that row when its owner accepts it, and the wording becomes the line their own
+// verified edit checks.
 //
 // A row outlives its copy. Revoking a link clears the snapshot, expiry deletes the grant and a
 // replacement vault arrives without grants, and through all of it the owner keeps what was said. So
@@ -111,17 +114,21 @@ const targetKey = (target: ShareTarget): string =>
 /** A thread is one coach account's comments on one target of one copy, with the replies to them. */
 const threadKey = (row: Stored): string => JSON.stringify([row.grant_id, row.coach_user_id, targetKey(targetOf(row))]);
 
-/** A comment as the account that wrote on the copy reads it. */
-const comment = (row: Stored): ShareComment => ({
+/** A comment as the account that wrote on the copy reads it, with where a suggestion stands when the row is one. */
+const comment = (row: Stored, suggestion?: ShareSuggestion): ShareComment => ({
   id: row.id,
   author: row.author === "owner" ? "owner" : "coach",
   body: row.body,
   createdAt: row.created_at,
+  ...(suggestion ? { suggestion } : {}),
 });
 
 /** The same for the owner, who is also told the name a coach's comment came under and whether they have seen it. */
-const ownerComment = (row: Stored): ShareComment =>
-  row.author === "coach" ? { ...comment(row), name: row.coach_name ?? null, seen: row.seen_at !== null } : comment(row);
+const ownerComment = (row: Stored, suggestion?: ShareSuggestion): ShareComment =>
+  row.author === "coach" ? { ...comment(row, suggestion), name: row.coach_name ?? null, seen: row.seen_at !== null } : comment(row);
+
+/** Where a suggestion stands, as one side may be told it. The Vault answers, from the check its owner started. */
+export type SuggestionFor = (row: Record<string, SqlStorageValue>, side: "coach" | "owner") => ShareSuggestion;
 
 function requireKey(key: unknown): asserts key is string {
   if (typeof key !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(key)) throw new AppError("invalid", "invalid request key");
@@ -141,27 +148,35 @@ export class ShareCommentStore {
     private readonly sql: SqlStorage,
     private readonly shares: ShareStore,
     private readonly authorizeOwner: (who: Who) => void,
+    private readonly suggestionFor?: SuggestionFor,
   ) {}
+
+  /** A suggested wording's standing for one side, or nothing for a comment. */
+  private suggestion(row: Row, side: "coach" | "owner"): ShareSuggestion | undefined {
+    return row.author === "coach" && row.suggestion_state != null ? this.suggestionFor?.(row, side) : undefined;
+  }
 
   /**
    * A coach's comment on a line or a fact of a copy that is open to them now. The words it is
    * about are taken from the copy as it is delivered, never from the request and never from the
    * owner's facts. The address and name are the grant's, from when this account took the copy up.
+   * A suggested wording is written here too, under a request key of its own kind, so a key used for
+   * a comment is never taken as the same request as one used for a suggestion.
    */
-  addAsCoach(grantId: string, coach: CoachAccount, input: NewShareComment, key: string, now = Date.now()): ShareComment {
+  addAsCoach(grantId: string, coach: CoachAccount, input: NewShareComment, key: string, now = Date.now(), kind: "coach" | "suggest" = "coach"): ShareComment {
     const { view, coach: named } = this.shares.copyForCoach(grantId, coach, now);
     requireKey(key);
     const given: { target?: unknown; body?: unknown } = typeof input === "object" && input !== null ? input : {};
     const body = requireBody(given.body);
     const target = readTarget(given.target);
-    const requestKey = `coach_${view.grantId}_${key}`;
+    const requestKey = `${kind}_${view.grantId}_${key}`;
     const prior = this.byKey(requestKey);
     if (prior) {
       // A retry of the request that made the comment gets the comment. The key under any other
       // account, target or words is a different request.
       if (prior.author === "coach" && prior.coach_user_id === coach.userId && target !== null &&
           targetKey(targetOf(prior)) === targetKey(target) && prior.body === body)
-        return comment(prior);
+        return comment(prior, this.suggestion(prior, "coach"));
       throw reused();
     }
     const quote = target === null ? null : targetText(view.snapshot, target);
@@ -250,7 +265,7 @@ export class ShareCommentStore {
       if (targetText(view.snapshot, target) === null) continue;
       const key = targetKey(target);
       const thread = threads.get(key) ?? { target, quote: row.quote, comments: [] };
-      thread.comments.push(comment(row));
+      thread.comments.push(comment(row, this.suggestion(row, "coach")));
       threads.set(key, thread);
     }
     return [...threads.values()];
@@ -305,7 +320,7 @@ export class ShareCommentStore {
         };
         threads.set(key, entry);
       }
-      entry.thread.comments.push(ownerComment(row));
+      entry.thread.comments.push(ownerComment(row, this.suggestion(row, "owner")));
       entry.latest = row.created_at;
     }
     return [...threads.values()].sort((a, b) => b.latest - a.latest || b.order - a.order).map((entry) => entry.thread);
@@ -345,10 +360,16 @@ export class ShareCommentStore {
     this.sql.exec(`DELETE FROM share_comments WHERE id = ? AND grant_id = ? AND author = 'coach' AND coach_user_id = ?`, id, view.grantId, coach.userId);
   }
 
-  /** The owner deletes any comment, a coach's or their own, whether or not its copy is still open. */
+  /**
+   * The owner deletes any comment, a coach's or their own, whether or not its copy is still open,
+   * except a suggestion whose check is running: the check finishes first.
+   */
   removeAsOwner(who: Who, id: string): void {
     this.authorizeOwner(who);
     if (typeof id !== "string") return;
+    const row = this.byId(id);
+    if (row && this.suggestion(row, "owner")?.state === "checking")
+      throw new AppError("conflict", "This suggestion is being checked. Wait for the check to finish, then try again.");
     this.sql.exec(`DELETE FROM share_comments WHERE id = ?`, id);
   }
 

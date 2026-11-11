@@ -83,6 +83,10 @@ import type { CoachAccount } from "./shares";
 import type { ShareableDocument } from "../shared/sharing";
 import { ShareCommentStore } from "./share-comments";
 import type { CommentThread, NewShareComment, OwnerCommentThread, ShareComment } from "../shared/sharing";
+import { isVisibleLine, targetText, type NewSuggestion, type ShareSuggestion } from "../shared/sharing";
+import { appliedVersion, boundCheck, coachStanding, currentLine, lineAsShown, ownerStanding } from "./share-suggestions";
+import { rewritten } from "../pipeline/documents";
+import type { ResumeLine } from "../shared/api";
 import { mergeRefinementEvidence } from "./refinement-evidence";
 import { validateTailorCheckpoint, validateTailorPublication } from "./tailor-publication";
 import { finalLegacyEvidence, legacyReceipt, legacyReview } from "./legacy-remediation";
@@ -3161,9 +3165,13 @@ export class Vault extends DurableObject<Env> {
     });
   }
 
-  /** Comments on shared copies. Nothing else reads their table: not tailoring, a check, a copy or a connected app. */
+  /**
+   * Comments on shared copies. Nothing else reads their table: not tailoring, a check, a copy or a
+   * connected app. The suggestion methods below read a suggested wording's row, and only its owner's
+   * accepting puts the wording into a check.
+   */
   private get shareComments(): ShareCommentStore {
-    return new ShareCommentStore(this.sql, this.shares, (who) => this.requireOwner(who));
+    return new ShareCommentStore(this.sql, this.shares, (who) => this.requireOwner(who), (row, side) => this.suggestionFor(row, side));
   }
 
   async createShare(
@@ -3322,6 +3330,10 @@ export class Vault extends DurableObject<Env> {
   // The owner's side of the same threads.
 
   async listShareComments(who: Who): Promise<OwnerCommentThread[]> {
+    // The list says where each suggestion's check stands, so it re-arms a run that lost its alarm,
+    // as every status read does, and asks again who is calling once that is done.
+    this.requireOwner(who);
+    await this.rearmPendingRuns();
     return this.ctx.storage.transactionSync(() => this.shareComments.listForOwner(who));
   }
 
@@ -3344,6 +3356,171 @@ export class Vault extends DurableObject<Env> {
   /** Marks seen only the comments the page says it showed, so one written since stays new. */
   async markShownShareCommentsSeen(who: Who, ids: string[]): Promise<void> {
     this.ctx.storage.transactionSync(() => this.shareComments.markSeen(who, ids));
+  }
+
+  // Suggested wording. A coach writes it as they write a comment, through the copy and nothing
+  // else; it reads no resume. Its owner accepts it as their own verified line edit with exactly
+  // that wording, or declines it. What the coach is told is worked out from the copy and from the
+  // check its owner started, never from the owner's resume as it is now.
+
+  /** A coach's suggested wording for one line of a copy that is open to them now. */
+  async suggestOnShare(grantId: string, coach: CoachAccount, input: NewSuggestion, requestKey: string): Promise<ShareComment> {
+    return this.ctx.storage.transactionSync(() => {
+      const now = Date.now();
+      const { view } = this.shares.copyForCoach(grantId, coach, now);
+      if (typeof requestKey !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(requestKey)) throw new AppError("invalid", "invalid request key");
+      const given: { target?: unknown; text?: unknown } = typeof input === "object" && input !== null ? input : {};
+      const text = typeof given.text === "string" ? given.text.trim() : "";
+      const target = given.target as NewSuggestion["target"] | undefined;
+      // A retry of the request that made the suggestion gets it back. The comments' store checks
+      // the account and the line; the wording has to be the same exactly.
+      const prior = this.sql
+        .exec<{ body: string }>(`SELECT body FROM share_comments WHERE request_key = ?`, `suggest_${view.grantId}_${requestKey}`)
+        .toArray()[0];
+      if (prior) {
+        if (prior.body !== text) throw new AppError("conflict", "the request key was already used with different input");
+        return this.shareComments.addAsCoach(grantId, coach, { target: target as NewShareComment["target"], body: text }, requestKey, now, "suggest");
+      }
+      if (text.length < 1 || text.length > MAX_LINE_CHARS || !isVisibleLine(text))
+        throw new AppError("invalid", "Suggested wording is one line of up to 300 characters, all of which show on the page.");
+      // The line's words are the copy's, never the request's.
+      const quote = target?.kind === "line" ? targetText(view.snapshot, target) : null;
+      if (!target || quote === null) throw new AppError("invalid", "That line isn't in this copy.");
+      if (text === quote) throw new AppError("invalid", "That's the wording the line already has.");
+      const theirs = this.sql
+        .exec<{ suggestion_state: string | null; quote: string; document_id: string | null }>(
+          `SELECT suggestion_state, quote, document_id FROM share_comments
+           WHERE grant_id = ? AND coach_user_id = ? AND author = 'coach' AND suggestion_state IS NOT NULL
+             AND target_kind = 'line' AND resume_id = ? AND resume_version = ? AND target_id = ?`,
+          view.grantId, coach.userId, target.resumeId, target.version, target.lineId,
+        )
+        .toArray();
+      if (theirs.some((row) => coachStanding(row, boundCheck(this.sql, row.document_id)) === "waiting"))
+        throw new AppError("conflict", "You already have a suggestion waiting on this line. Delete it to suggest another.");
+      // Written as a comment is, so the comments' three limits count it, then marked as a suggestion.
+      const made = this.shareComments.addAsCoach(grantId, coach, { target, body: text }, requestKey, now, "suggest");
+      this.sql.exec(`UPDATE share_comments SET suggestion_state = 'open' WHERE id = ?`, made.id);
+      return { ...made, suggestion: { state: "waiting" } };
+    });
+  }
+
+  /**
+   * The owner accepts a suggestion: their own verified line edit, with the suggestion's exact
+   * wording, on the resume the copy's line came from. It is refused before anything is reserved
+   * when the check couldn't save its result. Accepting again, with any key, finds the check it
+   * started. Everything up to the run's own rows is one transaction with nothing awaited, so two
+   * at once can't both start one.
+   */
+  async acceptSuggestion(who: Who, id: string, requestKey: string): Promise<{ documentId: string; runId: string }> {
+    this.requireOwner(who);
+    const started = this.ctx.storage.transactionSync(() => {
+      this.requireOwner(who);
+      const row = this.suggestionRow(id);
+      const resume = this.sql.exec<ResumeRow>(`SELECT * FROM resumes WHERE id = ?`, row.resume_id).toArray()[0];
+      const base = resume?.state === "ready" && resume.body ? this.resumeVersion(resume) : undefined;
+      const standing = ownerStanding(row, boundCheck(this.sql, row.document_id), lineAsShown(base?.render.body, row.target_id));
+      if ((standing === "checking" || standing === "applied" || standing === "not_applied") && row.document_id)
+        return { id: row.document_id, replay: true };
+      if (standing !== "waiting" && standing !== "stale") throw new AppError("conflict", "You've already answered this suggestion.");
+      if (standing === "stale" || !resume || !base)
+        throw new AppError("conflict", "This line has changed since the copy was made, so this suggestion can't be applied.");
+      const cannotCheck = () =>
+        new AppError(
+          "conflict",
+          "A fact this resume cites has changed or is no longer in use, or the version is still being reviewed, so this wording can't be checked. Tailor a new version or finish the review, then accept again.",
+        );
+      // The checked path would refuse at its finish what isn't true now, after spending an output.
+      // So the version has to pass the gate, cite only facts in use, sit under confirmed roles and
+      // print only skills in use, and the new line has to merge as the finish will merge it.
+      try {
+        assertGroundedResume(base.render, base.facts, base.provenance, base.evidence, base.roleEvidence, withheldFacts(this.sql));
+      } catch {
+        throw cannotCheck();
+      }
+      const usable = this.usableFacts();
+      const roles = this.confirmedRoles();
+      const factIds = new Set(usable.map((fact) => fact.id));
+      const roleIds = new Set(roles.map((role) => role.id));
+      const body = base.render.body;
+      const lines = [...(body.summary ? [body.summary] : []), ...body.sections.flatMap((section) => section.lines)];
+      if (lines.some((line) => line.factIds.some((factId) => !factIds.has(factId))) ||
+          body.sections.some((section) => !roleIds.has(section.roleId)) ||
+          body.skills.some((skill) => !usable.some((fact) => fact.kind === "skill" && fact.text === skill)))
+        throw cannotCheck();
+      const next = structuredClone(body);
+      const change = (line: ResumeLine): ResumeLine =>
+        line.id === row.target_id ? rewritten(line, { text: row.body, factIds: line.factIds, status: "kept" }) : line;
+      if (next.summary) next.summary = change(next.summary);
+      for (const section of next.sections) section.lines = section.lines.map(change);
+      try {
+        mergeRefinementEvidence(base, next, usable, roles);
+      } catch {
+        throw cannotCheck();
+      }
+      const begun = this.beginDocument(
+        who,
+        resume.application_id,
+        { kind: "refine", resumeId: resume.id, expectedVersion: resume.version, lineIds: [row.target_id], manualText: row.body },
+        `suggestion_${row.id}_${requestKey}`,
+        `suggestion:${row.id}:${resume.version}`,
+      );
+      // A replayed key never rebinds the row: the check it names is the one that key started.
+      if (!begun.replay) this.sql.exec(`UPDATE share_comments SET document_id = ? WHERE id = ?`, begun.id, row.id);
+      return begun;
+    });
+    if (!started.replay) await this.dispatchRun(this.runs.get(started.id)!);
+    return { documentId: started.id, runId: started.id };
+  }
+
+  /** The owner declines a suggestion. Declining again changes nothing; one being checked, or already checked, can't be. */
+  async declineSuggestion(who: Who, id: string): Promise<void> {
+    this.requireOwner(who);
+    this.ctx.storage.transactionSync(() => {
+      this.requireOwner(who);
+      const row = this.suggestionRow(id);
+      const standing = ownerStanding(row, boundCheck(this.sql, row.document_id), currentLine(this.sql, row.resume_id, row.target_id));
+      if (standing === "declined") return;
+      if (standing === "checking")
+        throw new AppError("conflict", "This suggestion is being checked. Wait for the check to finish, then try again.");
+      if (standing === "applied" || standing === "not_applied") throw new AppError("conflict", "You've already answered this suggestion.");
+      this.sql.exec(`UPDATE share_comments SET suggestion_state = 'declined' WHERE id = ?`, row.id);
+    });
+  }
+
+  /** A suggestion in this vault, by ID. Call it only for the owner. */
+  private suggestionRow(id: string) {
+    const row = typeof id === "string"
+      ? this.sql
+          .exec<{ id: string; resume_id: string | null; target_id: string; quote: string; body: string; suggestion_state: string | null; document_id: string | null }>(
+            `SELECT id, resume_id, target_id, quote, body, suggestion_state, document_id FROM share_comments
+             WHERE id = ? AND author = 'coach' AND target_kind = 'line' AND suggestion_state IS NOT NULL`,
+            id,
+          )
+          .toArray()[0]
+      : undefined;
+    if (!row) throw new AppError("not_found", "That suggestion has been deleted. Reload to see the thread as it stands.");
+    return row;
+  }
+
+  /**
+   * Where a suggestion stands, for the comments' store to show. Its coach is told one of three
+   * things, from the row and its check alone. Its owner is told more: the line as it is now, the
+   * version the wording went into, why a check ended without a verdict, and a start not confirmed.
+   */
+  private suggestionFor(row: Record<string, SqlStorageValue>, side: "coach" | "owner"): ShareSuggestion {
+    const suggested = { suggestion_state: typeof row.suggestion_state === "string" ? row.suggestion_state : null, quote: String(row.quote) };
+    const documentId = typeof row.document_id === "string" ? row.document_id : null;
+    const check = boundCheck(this.sql, documentId);
+    if (side === "coach") return { state: coachStanding(suggested, check) };
+    const lineNow = currentLine(this.sql, typeof row.resume_id === "string" ? row.resume_id : null, String(row.target_id));
+    const state = ownerStanding(suggested, check, lineNow);
+    const version = state === "applied" && documentId ? appliedVersion(this.sql, documentId) : undefined;
+    return {
+      state,
+      ...(version !== undefined ? { appliedVersion: version } : {}),
+      ...(state === "waiting" && check ? { lastCheck: check.error === "conflict" ? ("changed" as const) : ("unfinished" as const) } : {}),
+      ...(state === "checking" && this.dispatchUncertain(documentId) ? { startUnconfirmed: true } : {}),
+    };
   }
 
   // The rest are the coach's own list, in the coach's own vault.

@@ -27,7 +27,7 @@ export interface OutwardCopy {
 
 /** One thing sent out, and where it went. */
 export interface OutwardPart {
-  surface: "copy by its link" | "copy as its coach" | "coach's client list" | "list_facts" | "search_facts" | "list_jobs" | "get_resume" | "PDF" | "Word" | "print preview" | "model input";
+  surface: "copy by its link" | "copy as its coach" | "coach's client list" | "coach's comments" | "list_facts" | "search_facts" | "list_jobs" | "get_resume" | "PDF" | "Word" | "print preview" | "model input";
   text: string;
 }
 
@@ -80,6 +80,10 @@ export async function outwardParts({ owner, copies, inputs }: { owner: User; cop
       const read = await call(`/share/snapshot?g=${copy.grant.id}`, { cookie: jar(link, copy.coach.cookie) });
       if (read.status === 200) add("copy as its coach", await read.text());
     }
+    // What the coach wrote on the copy, suggested wording included, with the owner's replies and
+    // where each suggestion stands, as the coach's page reads them.
+    const comments = await copy.coach.fetch(`/api/coach/clients/${copy.grant.id}/comments`);
+    if (comments.status === 200) add("coach's comments", await comments.text());
   }
 
   const jobs = (await owner.json<{ applications: ApplicationView[] }>("/api/applications")).applications;
