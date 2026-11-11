@@ -153,6 +153,8 @@ export interface FakeModelOptions {
   toMarkdownError?: string;
   /** Each route's call count. */
   calls?: Partial<Record<Route | "embed" | "rerank" | "toMarkdown", number>>;
+  /** When given, the text of every complete, embed and rerank call is added to it, in order. */
+  inputs?: string[];
 }
 
 const TOPICS = ["kubernetes", "deploy", "\\bgo\\b", "events?", "\\bapis?\\b", "billing", "mentor", "react", "dashboards?", "sales", "rust", "postgres"];
@@ -174,6 +176,7 @@ export function fakeModels(o: FakeModelOptions = {}): Models {
   return {
     async complete<T>(route: Route, messages: ChatMessage[], schema: z.ZodType<T>): Promise<T> {
       count(route);
+      o.inputs?.push(JSON.stringify(messages));
       const user = messages.filter((m) => m.role === "user").at(-1)?.content ?? "";
       let raw: unknown;
       switch (route) {
@@ -209,10 +212,12 @@ export function fakeModels(o: FakeModelOptions = {}): Models {
     },
     async embed(texts) {
       count("embed");
+      o.inputs?.push(...texts);
       return texts.map(topicVector);
     },
     async rerank(query, texts) {
       count("rerank");
+      o.inputs?.push(query, ...texts);
       const q = words(query);
       return texts.map((t) => {
         const w = words(t);

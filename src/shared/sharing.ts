@@ -54,6 +54,8 @@ export interface ShareableDocument {
   createdAt: number;
   /** False for one written before its evidence was kept: it has to be written again to be shared. */
   shareable: boolean;
+  /** True when a fact its owner has marked sensitive is the only reason it can't be shared. */
+  usesSensitive?: boolean;
 }
 /** The job a shared resume or document was made for, as the owner had it named when the copy was made. */
 export interface SharedJob {

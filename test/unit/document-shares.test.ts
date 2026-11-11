@@ -97,6 +97,31 @@ describe("a document's words for a copy", () => {
     refused(version("letter", (data) => { (data.evidence.f2 as { level?: string }).level = "expert"; }));
   });
 
+  it("isn't shared when a sentence cites a fact marked sensitive, or a fact stored with its line", () => {
+    const marked = (ids: string[], quotes: string[] = []) => ({ ids: new Set(ids), quotes: new Set(quotes) });
+    for (const kind of ["letter", "prep"] as const) {
+      // Each cited fact in turn: the first sentence's, the second's, and the one its owner wrote.
+      for (const [id, quote] of [["f1", MIGRATION], ["f2", LATENCY], ["f3", null]] as const) {
+        const withheld = marked([id], quote === null ? [] : [quote]);
+        expect(() => sharedDocument("doc1", 1, kind, version(kind), withheld), `${kind} ${id}`).toThrow("can't be shared as it is");
+        expect(canShareDocument("doc1", 1, kind, version(kind), withheld)).toBe(false);
+      }
+      // A fact the document never cites is no reason, and with nothing marked it is as it was.
+      expect(canShareDocument("doc1", 1, kind, version(kind), marked(["f9"], ["Another line of the upload"]))).toBe(true);
+      expect(sharedDocument("doc1", 1, kind, version(kind), marked([]))).toEqual(sharedDocument("doc1", 1, kind, version(kind)));
+    }
+    // A sentence checked against a line that a marked fact was also read from may rest on its words.
+    const LINE = "Led the migration of 40 services from Heroku to Kubernetes, and ran the Postgres upgrade.";
+    const shared = version("letter", (data) => {
+      data.evidence.f1!.quote = LINE;
+      data.facts.f1!.quote = LINE;
+    });
+    expect(canShareDocument("doc1", 1, "letter", shared)).toBe(true);
+    expect(canShareDocument("doc1", 1, "letter", shared, marked(["postgres"], [LINE]))).toBe(false);
+    // The fact was captured after the mark, with its own words as its only evidence.
+    expect(canShareDocument("doc1", 1, "letter", version("letter"), marked(["postgres"], [MIGRATION]))).toBe(true);
+  });
+
   it("isn't shared unless every sentence was kept, repaired or replaced by the check", () => {
     for (const status of ["edited", "unverified", "", undefined, null, 1])
       refused(version("letter", (data) => { (data.result.units[0] as { status?: unknown }).status = status; }));

@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { expect, it } from "vitest";
 import type { ResumeBody } from "../../src/shared/api";
 import type { FactRecord, RoleRecord } from "../../src/shared/types";
+import { setSensitive } from "../../src/vault/sensitive";
 import { SnapshotStore } from "../../src/vault/snapshots";
 
 function captureItem(sql: SqlStorage, runId: string, kind: "fact" | "role", id: string, data: string) {
@@ -140,5 +141,75 @@ it("accepts a duplicate skill only when its captured role remains confirmed and 
     captureItem(sql, runId, "role", roles[1]!.id, JSON.stringify(roles[1]));
     captureItem(sql, runId, "fact", facts[1]!.id, JSON.stringify(facts[1]));
     expect(() => snapshots.assertCurrent(runId, body)).not.toThrow();
+  });
+});
+
+it("rejects a draft once any fact it captured, or the line one was captured with, is marked sensitive", async () => {
+  const stub = env.VAULT.get(env.VAULT.newUniqueId());
+  await stub.init("snapshot-sensitive-owner");
+  await runInDurableObject(stub, (_instance, state) => {
+    const sql = state.storage.sql, snapshots = new SnapshotStore(sql);
+    const SKILLS = "Go, TypeScript, Kubernetes";
+    const sourceId = crypto.randomUUID();
+    sql.exec(`INSERT INTO sources(id,filename,r2_key,markdown,state,created_at) VALUES (?, 'resume.pdf', 'key', ?, 'ready', 1)`, sourceId, SKILLS);
+    /** A skill read from the skills line, as the vault holds it and as a run captures it. */
+    const skill = (text: string): FactRecord => {
+      const id = crypto.randomUUID(), evidenceId = crypto.randomUUID();
+      sql.exec(`INSERT INTO evidence(id,source_id,quote) VALUES (?, ?, ?)`, evidenceId, sourceId, SKILLS);
+      sql.exec(`INSERT INTO facts(id,kind,text,evidence_id,source_id,origin,state,updated_at) VALUES (?, 'skill', ?, ?, ?, 'extracted', 'confirmed', 1)`, id, text, evidenceId, sourceId);
+      return { id, revision: 1, roleId: null, kind: "skill", text, origin: "extracted", level: null, quote: SKILLS };
+    };
+    const go = skill("Go"), kubernetes = skill("Kubernetes");
+    const typedId = crypto.randomUUID();
+    sql.exec(`INSERT INTO facts(id,kind,text,origin,state,updated_at) VALUES (?, 'accomplishment', 'Ran the on-call rotation', 'user', 'confirmed', 1)`, typedId);
+    const typed: FactRecord = { id: typedId, revision: 1, roleId: null, kind: "accomplishment", text: "Ran the on-call rotation", origin: "user", level: null, quote: null, levelExplicit: false };
+    const capture = (...facts: FactRecord[]) => {
+      const runId = crypto.randomUUID();
+      for (const fact of facts) captureItem(sql, runId, "fact", fact.id, JSON.stringify(fact));
+      return runId;
+    };
+    // The draft cites only the fact its owner typed, and prints no skill.
+    const body: ResumeBody = { summary: { id: "line", text: typed.text, factIds: [typed.id], status: "kept" }, skills: [], sections: [] };
+    const rejected = (runId: string, draft = body) => expect(() => snapshots.assertCurrent(runId, draft)).toThrow("Your facts changed while this draft was being made");
+    const accepted = (runId: string, draft = body) => expect(() => snapshots.assertCurrent(runId, draft)).not.toThrow();
+
+    const all = capture(go, kubernetes, typed);
+    const withoutMarked = capture(go, typed);
+    const apart = capture(typed);
+    for (const runId of [all, withoutMarked, apart]) {
+      expect(snapshots.holdsWithheld(runId)).toBe(false);
+      accepted(runId);
+    }
+
+    setSensitive(sql, [kubernetes.id], true);
+    // It captured the marked fact. The draft doesn't cite it, and the run stops all the same.
+    expect(snapshots.holdsWithheld(all)).toBe(true);
+    rejected(all);
+    // It never captured the marked fact, but it captured "Go" with the whole line as its quote.
+    expect(snapshots.holdsWithheld(withoutMarked)).toBe(true);
+    rejected(withoutMarked);
+    // It captured nothing the mark touches.
+    expect(snapshots.holdsWithheld(apart)).toBe(false);
+    accepted(apart);
+    // A run with no captured facts at all, such as the reading of an upload, holds nothing.
+    expect(snapshots.holdsWithheld(crypto.randomUUID())).toBe(false);
+
+    // A run started after the mark captures "Go" with its own word as its only evidence, and is whole.
+    const after = capture({ ...go, quote: go.text }, typed);
+    const citesGo: ResumeBody = { summary: { id: "line", text: "Go", factIds: [go.id], status: "kept" }, skills: ["Go"], sections: [] };
+    expect(snapshots.holdsWithheld(after)).toBe(false);
+    accepted(after);
+    accepted(after, citesGo);
+
+    // The mark moved no revision and no incarnation, so unmarking leaves the earlier runs as they were made.
+    setSensitive(sql, [kubernetes.id], false);
+    for (const runId of [all, withoutMarked, apart]) {
+      expect(snapshots.holdsWithheld(runId)).toBe(false);
+      accepted(runId);
+    }
+    accepted(all, citesGo);
+    // The run from while it was marked was checked against other evidence than "Go" has now.
+    accepted(after);
+    rejected(after, citesGo);
   });
 });

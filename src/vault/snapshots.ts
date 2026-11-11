@@ -9,6 +9,7 @@ import type {
   RoleRecord,
 } from "../shared/types";
 import { packVector, topMatches, unpackVector } from "./search";
+import { isWithheld, sensitiveUse, usableQuote, withheldFacts, type Withheld } from "./sensitive";
 
 export interface InputMetadata {
   embeddingModel?: string;
@@ -96,13 +97,18 @@ export function sameEvidence(a: FactRecord | undefined, b: FactRecord | undefine
     a.level === b.level && a.levelExplicit === b.levelExplicit && a.quote === b.quote;
 }
 
-/** A historical version is printable only if its stored evidence remains attached. */
+/**
+ * A historical version is printable only if its stored evidence remains attached. Given the facts
+ * withheld now, it is also refused while a line cites one or was checked against the line one was
+ * read from, or a printed skill has only marked facts behind it.
+ */
 export function assertGroundedResume(
   render: RenderData,
   facts: ResumeVersion["facts"] | undefined,
   provenance: ResumeVersion["provenance"] | undefined,
   evidence?: ResumeVersion["evidence"],
   roleEvidence?: ResumeVersion["roleEvidence"],
+  withheld?: Withheld,
 ): void {
   const unavailable = () => new AppError("conflict", "this resume version contains unverified content; review it before exporting or sharing");
   if (provenance !== "snapshot" || !facts || typeof facts !== "object" || Array.isArray(facts) ||
@@ -171,6 +177,13 @@ export function assertGroundedResume(
           return completeEvidence(full) && full.id === id && full.kind === "skill" &&
             full.text === stored.text && full.quote === stored.quote;
         })) throw unavailable();
+  }
+  // The version is sound, and still its owner's to read. What it took from a fact marked since
+  // goes no further until those lines, those skills or the mark are removed.
+  if (withheld) {
+    const used = sensitiveUse(render.body, facts, evidence, withheld);
+    if (used.lineIds.length > 0 || used.skills.length > 0)
+      throw new AppError("conflict", "This version uses a fact you marked sensitive. Remove those lines or tailor a new version, then try again.");
   }
 }
 
@@ -268,12 +281,43 @@ export class SnapshotStore {
     return topMatches(queries, vectors, k);
   }
 
+  /**
+   * True when this run captured a fact that is marked sensitive now, or captured a fact with the
+   * line a marked fact was read from as its quote. Either way the run holds words its owner has
+   * withheld since, cited or not, and goes no further.
+   */
+  holdsWithheld(runId: string): boolean {
+    return this.capturedWithheld(runId, withheldFacts(this.sql));
+  }
+
+  private capturedWithheld(runId: string, withheld: Withheld): boolean {
+    if (withheld.ids.size === 0) return false;
+    for (const row of this.sql
+      .exec<{ item_id: string; data: string }>(`SELECT item_id, data FROM generation_input_items WHERE run_id = ? AND kind = 'fact'`, runId)
+      .toArray()) {
+      if (withheld.ids.has(row.item_id)) return true;
+      let captured: { text?: unknown; quote?: unknown } | null;
+      try {
+        captured = JSON.parse(row.data) as { text?: unknown; quote?: unknown } | null;
+      } catch {
+        // A captured row that can't be read has no quote to compare. assertCurrent refuses any line that cites it.
+        continue;
+      }
+      if (captured && typeof captured === "object" && typeof captured.text === "string" && typeof captured.quote === "string" &&
+          isWithheld(row.item_id, { text: captured.text, quote: captured.quote }, withheld)) return true;
+    }
+    return false;
+  }
+
   assertCurrent(runId: string, body: ResumeBody): void {
     this.requireNoIncarnationWrite();
     const invalidFact = () => new AppError(
       "conflict",
       "Your facts changed while this draft was being made. Create it again.",
     );
+    // Before the draft is looked at: a run that captured a fact marked since publishes nothing.
+    const withheld = withheldFacts(this.sql);
+    if (this.capturedWithheld(runId, withheld)) throw invalidFact();
     const invalidRole = () => new AppError(
       "conflict",
       "a role changed while this draft was being made; generate it again",
@@ -319,7 +363,9 @@ export class SnapshotStore {
         kind: current.kind as FactRecord["kind"], text: current.text, origin: current.origin as FactRecord["origin"],
         level: (current.origin === "user" && current.level_revision !== current.revision ? null : current.level) as FactRecord["level"],
         ...(current.origin === "user" ? { levelExplicit: current.level !== null && current.level_revision === current.revision } : {}),
-        quote: current.origin === "user" ? null : current.quote,
+        // As the run would capture it now: a fact read from a marked fact's line has its own words
+        // for a quote, so a run that captured it that way still matches.
+        quote: usableQuote(current, withheld),
       };
       // Older user snapshots without a level flag did not claim an explicit
       // level when their captured effective level was null.
