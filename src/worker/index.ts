@@ -12,6 +12,7 @@ export { TailorWorkflow } from "../workflows/tailor";
 export { FleetReembedWorkflow } from "../workflows/fleet";
 export { ReembedWorkflow } from "../workflows/reembed";
 export { DocumentWorkflow } from "../workflows/documents";
+export { TaxonomyIndexWorkflow } from "../workflows/taxonomy-index";
 
 export default {
   async fetch(request, env, ctx) {
