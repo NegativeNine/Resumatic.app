@@ -200,4 +200,18 @@ export class McpGrantStore {
       now - 600_000,
     );
   }
+
+  /**
+   * When `purgeExpired` next has a row to delete, or null when none is held. The Vault sets its
+   * alarm by this: an account that only connected an app has nothing else that would wake it.
+   */
+  nextAlarm(): number | null {
+    const row = this.sql
+      .exec<{ at: number | null }>(
+        `SELECT MIN(CASE WHEN state = 'pending' THEN MIN(expires_at, created_at + ?) ELSE expires_at END) AS at FROM mcp_grants`,
+        600_000,
+      )
+      .toArray()[0];
+    return row?.at ?? null;
+  }
 }

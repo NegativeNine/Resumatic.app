@@ -78,6 +78,11 @@ test("the posting reader cannot be enabled in production configuration, and can 
     for (const off of [{}, { OFFER_SHADOW_ENABLED: "false" }, { OFFER_SHADOW_ENABLED: "" }])
       assert.ok(!(await report("production", off)).includes("OFFER_SHADOW_ROLLOUT_UNVERIFIED"), JSON.stringify(off));
     assert.ok(!(await report("staging", {}, { OFFER_SHADOW_ENABLED: "true" })).includes("OFFER_SHADOW_ROLLOUT_UNVERIFIED"));
+    // And for tagging in shadow, which also sends each line's words to the taxonomy's database.
+    assert.ok((await report("production", { TAG_SHADOW_ENABLED: "true" })).includes("TAG_SHADOW_ROLLOUT_UNVERIFIED"));
+    for (const off of [{}, { TAG_SHADOW_ENABLED: "false" }, { TAG_SHADOW_ENABLED: "" }])
+      assert.ok(!(await report("production", off)).includes("TAG_SHADOW_ROLLOUT_UNVERIFIED"), JSON.stringify(off));
+    assert.ok(!(await report("staging", {}, { TAG_SHADOW_ENABLED: "true" })).includes("TAG_SHADOW_ROLLOUT_UNVERIFIED"));
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

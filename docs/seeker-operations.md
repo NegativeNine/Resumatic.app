@@ -23,6 +23,8 @@ Set the real Google client, Access team/audience, Cloudflare account and gateway
 
 When connected apps are enabled, provision the `OAUTH_KV` namespace. Setup prints its identifier; place that identifier in the selected environment's binding. Configure `APP_ORIGIN` as an exact HTTPS origin, `MCP_ENABLED=true`, and the `global_fetch_strictly_public` compatibility flag. Configure `MCP_ALLOWED_ORIGINS` only for browser clients that need cross-origin MCP access; it is a comma-separated list of exact HTTPS origins. Native clients without an Origin header still work. Keep OAuth storage configured during deletion cleanup even if new connections are disabled.
 
+Deploy the change that adds `preview_fit` before `MCP_ENABLED=true` is set anywhere, so no grant predates its consent sentence. An environment that ever ran connected apps on an earlier build has every grant revoked at that deploy; no tool does this across accounts, and removing that environment's `grant:` and `token:` keys from `OAUTH_KV`, which ends every credential, has not been exercised.
+
 ```sh
 node scripts/validate-config.mjs --environment staging --purpose deploy --report config-report.json
 ```
@@ -50,6 +52,12 @@ Enable it in staging first by adding the variable to `env.staging.vars`. Before 
 `MATCH_SHADOW_ENABLED=true` has the reading of an upload also look across the person's record for roles and facts that repeat an earlier one word for word, and note each in shadow ([merging.md](merging.md)). Nothing is merged and nothing the app shows changes. It is absent from every environment, and `scripts/validate-config.mjs` refuses it in production configuration (`MATCH_SHADOW_ROLLOUT_UNVERIFIED`) for the same reason as dividing lines: what it finds is stored in people's vaults. It makes no model call, and gets one try of at most three minutes. A failure in it never fails an upload.
 
 `OFFER_SHADOW_ENABLED=true` has the reading of an upload also ask the judge whether lines that differ in wording say the same thing as lines already in the same role, and keep each answer as an offer in shadow ([merging.md](merging.md)). Nothing is offered to anyone and nothing is merged. It is absent from every environment and refused in production configuration (`OFFER_SHADOW_ROLLOUT_UNVERIFIED`). Switched on, an upload makes extra calls on the judge route, at most 120 questions, and is marked ready after them. It gets one try of at most three minutes, as dividing lines does. A failure in it never fails an upload.
+
+### Tagging in shadow
+
+`TAG_SHADOW_ENABLED=true` has the reading of an upload also work out which taxonomy concepts its facts and job titles show, and keep each tag in shadow: stored in the person's vault to be measured, shown to nobody and read by nothing ([tagging.md](tagging.md)). It does nothing unless a taxonomy is bound as `TAXONOMY` and wholly loaded. It is absent from every environment, and `scripts/validate-config.mjs` refuses it in production configuration (`TAG_SHADOW_ROLLOUT_UNVERIFIED`). Switched on, an upload sends the words of each line and job title to the taxonomy's database to be looked up, makes extra calls on the judge route, at most 120 questions, and is marked ready after them. The stage gets one try of at most three minutes, which "ready" waits for, and is not run again if it runs out of time. A failure in it never fails an upload, and it keeps what was stored before it failed: tags are stored as they are decided, where a division or an offer is stored only at the end.
+
+Before the production guard is lifted, all of these must hold: the precision of each method's tags, measured on lines given with consent; the privacy notice naming the tags as data held and the lookup in the taxonomy's database; the ESCO and O\*NET credits on the legal pages ([taxonomy.md](taxonomy.md), "Credits"); what D1 keeps of the values bound to a query, established for the taxonomy's database; and the stage's D1 statements at its caps (about 400 for the words of an upload, 120 for the rule and eight occupation profiles) run against a deployed Worker.
 
 ## Billing configuration
 
@@ -172,6 +180,8 @@ Completed-run latency uses a separate `run_total` event. The dashboard aggregate
 To enable the fifteen-minute alert job, set `ALERTS_ENABLED=true`, `CF_ANALYTICS_TOKEN` with Account Analytics Read, `ALERT_WEBHOOK_URL`, and `ALERT_SPEND_USD_PER_15M`. Optional thresholds are `ALERT_FAILURE_RATE` and `ALERT_HTTP_5XX_RATE` (defaults 0.05), and `ALERT_MIN_ATTEMPTS` (default 20). Unknown model cost raises a separate alert. The webhook receives only window totals and error-category codes. Disabled alerts make no network request. Alerts can repeat while a threshold remains breached; operational acknowledgement belongs in the configured receiver.
 
 Queries weight rows by `_sample_interval`; these are sampled operational measurements, not a billing ledger. Quota and spend reservations in the Vault remain authoritative. The profile, role, and fact reads retry at most twice on transient retryable Durable Object errors, recreating the stub each time; overloaded errors are never retried. The `AUTH_LIMIT` and `WRITE_LIMIT` bindings limit bursts per Cloudflare location. Authenticated writes use the user ID; guest authentication/OAuth requests use an HMAC of the IP address. Shared networks can still hit a guest limit. Missing optional bindings skip burst protection, so configure them before public launch.
+
+Connected apps together can start at most 20 fit previews per UTC day on one account (`MAX_APP_FIT_STARTS_PER_DAY`), counted in the Vault; the owner's own are not counted. Tool calls have no limiter of their own: `/mcp` passes `AUTH_LIMIT` like any guest request.
 
 ## Interview answer provenance
 

@@ -43,6 +43,14 @@ interface ResumaticSecrets {
    * leaves the upload as it is read today.
    */
   OFFER_SHADOW_ENABLED?: string;
+  /**
+   * "true" has the reading of an upload also work out which taxonomy concepts its facts and job
+   * titles show, and keep each tag in shadow as it is decided: stored to be measured, shown to
+   * nobody. Off everywhere by default. It does nothing unless a wholly loaded taxonomy is bound
+   * as TAXONOMY, and it sends the words of each line and job title to that database to be looked
+   * up. It adds judge calls to an upload, and a failure in it leaves the upload as it is read today.
+   */
+  TAG_SHADOW_ENABLED?: string;
   /** The combined ESCO and O*NET taxonomy, in a D1 database of its own. Optional: nothing reads it where it isn't bound. */
   TAXONOMY?: D1Database;
   METRICS?: AnalyticsEngineDataset;

@@ -124,6 +124,28 @@ describe("a posting's markup as text", () => {
     expect(htmlToText("<div><div><p></p></div></div>")).toBe("");
   });
 
+  it.each([
+    "202A", "202B", "202C", "202D", "202E", "2066", "2067", "2068", "2069", "200E", "200F", "061C",
+  ])("removes the mark of direction U+%s, so a posting is read in the order it is shown", (hex) => {
+    const mark = String.fromCodePoint(Number.parseInt(hex, 16));
+    // A word with a mark inside it is shown as the word, and read as the word.
+    expect(htmlToText(`<p>Run our Kuber${mark}netes fleet</p>`)).toBe("Run our Kubernetes fleet");
+    expect(htmlToText(`Run our ${mark}Kubernetes${mark} fleet`)).toBe("Run our Kubernetes fleet");
+    // Written as an entity, it is removed once decoded.
+    expect(htmlToText(`Run our Kuber&#x${hex};netes fleet`)).toBe("Run our Kubernetes fleet");
+  });
+
+  it("shows a posting in the order it is read, once a mark has reordered it for display", () => {
+    // "‮" shows what follows right to left: "‮setenrebuk‬" is shown as "kubernetes"
+    // but read as "setenrebuk". Without the mark it is shown as it is read.
+    expect(htmlToText("Run our ‮setenrebuk‬ fleet")).toBe("Run our setenrebuk fleet");
+  });
+
+  it("keeps right-to-left writing and every other letter as it was", () => {
+    expect(htmlToText("<p>Hebrew: שלום; Arabic: مرحبا; café — naïve</p>"))
+      .toBe("Hebrew: שלום; Arabic: مرحبا; café — naïve");
+  });
+
   it("reads a page built to be slow to read in a moment", () => {
     const started = Date.now();
     for (const hostile of ["<script>".repeat(100_000), "<!--".repeat(100_000), "<style>".repeat(50_000), "<".repeat(300_000), "&".repeat(300_000), "<li>".repeat(80_000), "\n-".repeat(150_000), `<script type="application/ld+json">`.repeat(30_000)]) {

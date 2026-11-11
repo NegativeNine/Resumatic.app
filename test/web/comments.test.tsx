@@ -185,6 +185,18 @@ describe("a coach commenting on a client's copy", () => {
     expect(box()).toHaveAccessibleDescription(/^The owner of this copy will see this the next time they open Resumatic\./);
   });
 
+  it("never shows the owner's reply under “You”, whatever name the owner chose", async () => {
+    const threads: CommentThread[] = [
+      { target: onLine, quote: LED_LINE, comments: [comment("c1", "coach", "Lead with what it saved."), comment("c2", "owner", "It saved two days a release.")] },
+    ];
+    open(joined((view) => { view.snapshot.owner = { name: "You" }; }), { ...fixtures(), coachComments: threads });
+    const card = await screen.findByRole("article", { name: `On “${LED_LINE}”` });
+    expect(within(card).getAllByRole("listitem").map((item) => item.querySelector(".app-thread__byline")!.textContent)).toEqual([
+      expect.stringMatching(/^You, \d+ Nov 2026$/),
+      expect.stringMatching(/^The owner, \d+ Nov 2026$/),
+    ]);
+  });
+
   it("gives other readers, and a copy of documents alone, nothing to choose", async () => {
     for (const reviewer of [undefined, "sign-in", "sign-in-again", "other", "you"] as const) {
       const { api, page } = open(joined((view) => { view.reviewer = reviewer; }));
@@ -250,6 +262,36 @@ describe("a coach commenting on a client's copy", () => {
     expect(state.coachComments.flatMap((held) => held.comments.map((item) => item.body))).toEqual(["From before"]);
   });
 
+  it("reads a 404 from a server without the comment routes as a failure, not as a copy that left the list", async () => {
+    const { api, state } = open(joined());
+    state.coachComments = [{ target: onFact, quote: LED, comments: [comment("c1", "coach", "Loaded once the routes are back")] }];
+    // A Worker from before comments answers every one of these paths so.
+    api.fail("GET", /\/comments$/, 404, "not_found", "no such route");
+    const aside = within(await screen.findByRole("complementary", { name: "Comments" }));
+    expect(await aside.findByRole("alert")).toHaveTextContent("Comments couldn’t be loaded. Check your connection, then try again.");
+    // The copy is still in the list, so the page offers no add.
+    expect(screen.queryByRole("button", { name: "Add to my clients" })).toBeNull();
+    expect(screen.queryByText(/named you as their coach/)).toBeNull();
+    expect(screen.getByText(/^Shared with you until /)).toBeInTheDocument();
+    await userEvent.click(aside.getByRole("button", { name: "Try again" }));
+    expect(await aside.findByText("Loaded once the routes are back")).toBeInTheDocument();
+
+    // The same for a comment sent or deleted: the words stay, and so does the copy's place in the list.
+    await userEvent.click(screen.getByRole("button", { name: LED_LINE }));
+    await userEvent.type(box(), "Kept through a rollback");
+    api.fail("POST", /\/comments$/, 404, "not_found", "no such route");
+    await userEvent.click(form().getByRole("button", { name: "Comment" }));
+    expect(await form().findByRole("alert")).toHaveTextContent("That didn’t go through. Check your connection, then try again.");
+    expect(box()).toHaveValue("Kept through a rollback");
+    api.fail("DELETE", /\/comments\//, 404, "not_found", "no such route");
+    await userEvent.click(within(thread(LED)).getByRole("button", { name: "Delete" }));
+    await userEvent.click(within(thread(LED)).getByRole("button", { name: "Delete comment" }));
+    await waitFor(() => expect(api.callsTo("DELETE", /\/comments\//)).toHaveLength(1));
+    expect(screen.getByText("Loaded once the routes are back")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add to my clients" })).toBeNull();
+    expect(api.calls.filter((call) => call.path === "/api/coach/clients")).toEqual([]);
+  });
+
   it("says a copy of documents alone can be opened later, not commented on, before it is added", async () => {
     open(
       joined((view) => {
@@ -280,8 +322,14 @@ describe("a coach commenting on a client's copy", () => {
       expect(aside.queryByText("Before the end")).toBeNull();
       expect(aside.queryByRole("textbox")).toBeNull();
       expect(aside.queryByRole("button")).toBeNull();
-      // The copy is still there to read.
+      // The copy is still there to read, as text: nothing on it can be chosen, and the notice no
+      // longer says the reader can comment.
       expect(screen.getByText(LED_LINE)).toBeInTheDocument();
+      expect(screen.getByText(LED_LINE).closest("button")).toBeNull();
+      expect(screen.queryAllByRole("button", { pressed: false })).toEqual([]);
+      expect(document.querySelector(".app-share__pick")).toBeNull();
+      expect(screen.queryByText(/You can comment/)).toBeNull();
+      expect(screen.getByText(/^Shared with you until \d+ Nov 2026\. Only Sam Rivera can change it\.$/)).toBeInTheDocument();
       loading.page.unmount();
 
       // Refused as a comment is sent: what was on the page goes too.
@@ -294,6 +342,15 @@ describe("a coach commenting on a client's copy", () => {
       expect(await form().findByRole("alert")).toHaveTextContent(sentence);
       expect(form().queryByText("Before the end")).toBeNull();
       expect(form().queryByRole("textbox")).toBeNull();
+      // The line that was chosen is text again, and so is every other.
+      expect(screen.queryAllByRole("button", { pressed: true })).toEqual([]);
+      expect(screen.queryAllByRole("button", { pressed: false })).toEqual([]);
+      expect(screen.getByText(LED_LINE).closest("button")).toBeNull();
+      expect(screen.queryByText(/You can comment/)).toBeNull();
+      // Nothing more is asked of the server on the reader's behalf.
+      const asked = commentCalls(sending.api).length;
+      await userEvent.click(screen.getByText(LED_LINE));
+      expect(commentCalls(sending.api)).toHaveLength(asked);
       sending.page.unmount();
     }
   });
@@ -502,7 +559,7 @@ describe("an owner reading what their coach wrote", () => {
     ]);
 
     const line = within(thread(LED_LINE));
-    expect(line.getByText(/^Dana Okafor, \d+ Nov 2026/)).toBeInTheDocument();
+    expect(line.getByText(/^Dana Okafor \(dana@example\.test\), \d+ Nov 2026/)).toBeInTheDocument();
     expect(line.getByText("From dana@example.test, on version 2 of your resume for Platform Engineer at Initrode.")).toBeInTheDocument();
     expect(line.getByRole("link", { name: "Open this resume" })).toHaveAttribute("href", "#/resumes/res-ready");
     // A job with no name is a resume, and an account with no name is its address.
@@ -515,6 +572,31 @@ describe("an owner reading what their coach wrote", () => {
     expect(fact.getByText("From dana@example.test, on a fact you shared.")).toBeInTheDocument();
     expect(fact.getByRole("link", { name: "Open Facts" })).toHaveAttribute("href", "#/facts");
     expect(await violations()).toEqual([]);
+  });
+
+  it("never bylines a coach's comment as the owner's own, or as the product's, whatever name the coach chose", async () => {
+    const state = fixtures();
+    state.shareComments = [
+      fromDana({
+        comments: [
+          comment("c1", "coach", "Agreed, I’ll say I led the migration.", { name: "You", seen: true }),
+          comment("c2", "owner", "It saved two days."),
+          comment("c3", "coach", "From the product, honest.", { name: " resumatic ", seen: true }),
+        ],
+      }),
+    ];
+    installFakeApi(state);
+    renderWithSession(<OwnerComments />, state.me);
+    await screen.findByRole("region", { name: "Comments from your coach" });
+    const bylines = within(thread(LED_LINE)).getAllByRole("listitem").map((item) => item.querySelector(".app-thread__byline")!.textContent);
+    // Only the owner's own reply is "You". A name that would read as the owner or the product is no name: the address stands.
+    expect(bylines).toEqual([
+      expect.stringMatching(/^dana@example\.test, \d+ Nov 2026$/),
+      expect.stringMatching(/^You, \d+ Nov 2026$/),
+      expect.stringMatching(/^dana@example\.test, \d+ Nov 2026$/),
+    ]);
+    // Nor does the name stand in the page's own sentences.
+    expect(screen.getByRole("textbox", { name: "Reply to dana@example.test" })).toHaveAccessibleDescription(/^dana@example\.test sees your reply/);
   });
 
   it("says on the share form that the coach it names can comment, and nobody else", async () => {
@@ -547,9 +629,9 @@ describe("an owner reading what their coach wrote", () => {
     const items = within(thread(LED_LINE)).getAllByRole("listitem");
     expect(items.map((item) => within(item).queryByText("New") !== null)).toEqual([true, false, true]);
     expect(within(thread(LED)).queryByText("New")).toBeNull();
-    // Told once, and the count beside Account is read again afterwards.
+    // Told once, naming what was shown as new, and the count beside Account is read again afterwards.
     await waitFor(() => expect(refreshed).toHaveBeenCalledTimes(1));
-    expect(api.callsTo("POST", /^\/api\/shares\/comments\/seen$/)).toHaveLength(1);
+    expect(api.callsTo("POST", /^\/api\/v2\/shares\/comments\/seen$/).map((call) => call.body)).toEqual([{ ids: ["c1", "c3"] }]);
     expect(state.me.newFromCoach).toBe(0);
     expect(within(thread(LED_LINE)).getAllByText("New")).toHaveLength(2);
     first.unmount();
@@ -558,8 +640,53 @@ describe("an owner reading what their coach wrote", () => {
     render(<Session><OwnerComments /></Session>);
     await screen.findByRole("region", { name: "Comments from your coach" });
     expect(screen.queryByText("New")).toBeNull();
-    expect(api.callsTo("POST", /^\/api\/shares\/comments\/seen$/)).toHaveLength(1);
+    expect(api.callsTo("POST", /^\/api\/v2\/shares\/comments\/seen$/)).toHaveLength(1);
     expect(refreshed).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks nothing and says nothing when a server from before the named list refuses it", async () => {
+    const state = fixtures();
+    state.me.newFromCoach = 1;
+    state.shareComments = [fromDana()];
+    const api = installFakeApi(state);
+    // A Worker from before the v2 path answers it so. Nothing falls back to marking everything.
+    api.fail("POST", /\/seen$/, 404, "not_found", "no such route");
+    const first = renderWithSession(<OwnerComments />, state.me);
+    const section = await screen.findByRole("region", { name: "Comments from your coach" });
+    await waitFor(() => expect(api.calls.filter((call) => call.path.endsWith("/seen"))).toHaveLength(1));
+    expect(api.calls.filter((call) => call.path.endsWith("/seen")).map((call) => call.path)).toEqual(["/api/v2/shares/comments/seen"]);
+    expect(within(section).queryByRole("alert")).toBeNull();
+    expect(within(section).getByText("New")).toBeInTheDocument();
+    expect(state.me.newFromCoach).toBe(1);
+    expect(state.shareComments[0]!.comments[0]!.seen).toBe(false);
+    first.unmount();
+    // The next showing tries again.
+    renderWithSession(<OwnerComments />, state.me);
+    await screen.findByRole("region", { name: "Comments from your coach" });
+    await waitFor(() => expect(state.me.newFromCoach).toBe(0));
+    expect(api.callsTo("POST", /^\/api\/v2\/shares\/comments\/seen$/).map((call) => call.body)).toEqual([{ ids: ["c1"] }, { ids: ["c1"] }]);
+  });
+
+  it("leaves new a comment written after the list was read", async () => {
+    const state = fixtures();
+    state.me.newFromCoach = 1;
+    state.shareComments = [fromDana()];
+    const api = installFakeApi(state);
+    // The coach writes again in the moment between the page reading the list and saying what it showed.
+    const reading = api.fetch.bind(api);
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const answered = await reading(input, init);
+      if (String(input).endsWith("/api/shares/comments") && (init?.method ?? "GET") === "GET")
+        state.shareComments![0]!.comments.push(comment("c7", "coach", "Written while the page was open.", { name: "Dana Okafor", seen: false }));
+      return answered;
+    });
+    renderWithSession(<OwnerComments />, state.me);
+    await screen.findByRole("region", { name: "Comments from your coach" });
+    await waitFor(() => expect(api.callsTo("POST", /^\/api\/v2\/shares\/comments\/seen$/)).toHaveLength(1));
+    expect(api.callsTo("POST", /^\/api\/v2\/shares\/comments\/seen$/)[0]!.body).toEqual({ ids: ["c1"] });
+    // It was never on the page, so it is still counted, and still new when the list is next read.
+    expect(state.me.newFromCoach).toBe(1);
+    expect(state.shareComments[0]!.comments.map((item) => [item.id, item.seen])).toEqual([["c1", true], ["c7", false]]);
   });
 
   it("sends a reply to the latest coach comment, and shows it under “You”", async () => {
@@ -662,7 +789,7 @@ describe("an owner reading what their coach wrote", () => {
     await userEvent.click(within(section).getByRole("button", { name: "Try again" }));
     const shown = await screen.findByRole("article", { name: "On “<b>Led</b>”" });
     expect(within(shown).getByText(hostile)).toBeInTheDocument();
-    expect(within(shown).getByText(/^<script>Dana<\/script>, \d+ Nov 2026$/)).toBeInTheDocument();
+    expect(within(shown).getByText(/^<script>Dana<\/script> \(dana@example\.test\), \d+ Nov 2026$/)).toBeInTheDocument();
     expect(within(shown).getByRole("textbox", { name: "Reply to <script>Dana</script>" })).toBeInTheDocument();
     for (const tag of ["img", "script", "b"]) expect(shown.querySelector(tag), tag).toBeNull();
     // The one link in the thread is the app's own, to the resume.

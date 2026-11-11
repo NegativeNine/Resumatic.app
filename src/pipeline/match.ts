@@ -17,8 +17,8 @@ import { qualifiers } from "./split";
 // offered to the owner, and `offers` below is what works out which to offer.
 
 /** The rules that made a match, stamped on it. Raise the number when what counts as identical changes. */
-export const IDENTICAL_ROLE_METHOD = "identical-role/2";
-export const IDENTICAL_WORDING_METHOD = "identical-wording/2";
+export const IDENTICAL_ROLE_METHOD = "identical-role/3";
+export const IDENTICAL_WORDING_METHOD = "identical-wording/3";
 
 export interface MatchRole extends RoleIdentity {
   id: string;
@@ -77,7 +77,7 @@ export function identicalMatches(roles: readonly MatchRole[], facts: readonly Ma
 // ---------------------------------------------------------------- offers
 
 /** The check that made an offer, stamped on it. Raise the number when the questions or the pre-check change. */
-export const ENTAILMENT_METHOD = "entailment/2";
+export const ENTAILMENT_METHOD = "entailment/3";
 
 /** Two facts of one kind in one role whose wording differs. `later` was read after `earlier`. */
 export interface OfferPair {

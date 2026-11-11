@@ -75,8 +75,8 @@ function Privacy() {
             you added it and when it ends.
           </li>
           <li>
-            Comments a coach writes on a copy you shared, and your replies, with the line or fact each is about and
-            the coach’s name and sign-in address.
+            Comments a coach writes on a copy you shared and wording they suggest, and your replies, with the line or
+            fact each is about and the coach’s name and sign-in address.
           </li>
           <li>The apps you connect, what you allowed each one to do and when its access ends.</li>
           <li>How many resumes and documents you have made in the current period, for your plan’s limit.</li>
@@ -110,6 +110,10 @@ function Privacy() {
           your upload’s text, a job description, or the facts chosen for one resume or document. Lines are checked
           against your confirmed facts, and a line those facts do not support is never shown to you. Comments on a
           shared copy are never sent to a language model or used to write or check a resume.
+        </p>
+        <p>
+          Wording a coach suggests is sent to a model only if you accept it, to be checked against your facts like any
+          edit you make.
         </p>
         <p>
           Our own logs record IDs, counts and error codes. They never record your files, facts, job descriptions or
@@ -147,6 +151,10 @@ function Privacy() {
             where they stay after the copy ends until you delete them. We don’t send email: a count of new comments
             shows the next time you open Resumatic.
           </li>
+          <li>
+            A coach you name can suggest new wording for a line. Nothing changes unless you accept it, and then it is
+            checked against your confirmed facts first. Your coach is told whether you used it, and nothing else.
+          </li>
         </ul>
         <p>
           <strong>If you are reading a copy someone shared with you:</strong> we don’t ask who you are. We keep the
@@ -162,7 +170,10 @@ function Privacy() {
           your list when you remove it, or thirty days after the copy’s last day. If you comment, your words are kept
           in the owner’s account, not yours, with your name, sign-in address and account ID. You can delete a comment
           while the copy is open to you. After that the owner keeps it until they delete it or their account, even if
-          you delete yours.
+          you delete yours. If you suggest wording, it is kept in the owner’s account like a comment and shown to them
+          with the name on your account. If they accept it, it is sent to a model to be checked. You are told whether
+          they used it. You can delete a suggestion while the copy is open to you; if the owner had already accepted
+          it, the check they started, and any resume line it became, keep the wording.
         </p>
       </Section>
       <Section title="Connecting an app">
@@ -173,12 +184,14 @@ function Privacy() {
         <ul>
           <li>read your confirmed facts and finished resumes;</li>
           <li>see your saved jobs and add new ones;</li>
-          <li>create documents, which count toward your plan’s limit.</li>
+          <li>create documents, which count toward your plan’s limit, and check your fit for the saved jobs it can see, which doesn’t.</li>
         </ul>
         <p>
+          A fit check gives the app each requirement read from a job’s posting and the confirmed facts matched to it.
+          Connected apps together can start at most 20 fit checks a day.
           A connected app never receives your uploaded files, the words a fact came from, or your notes on a job. It
           never receives a fact you have marked sensitive, or a resume that uses one. It never receives a coach’s
-          comments either. Its
+          comments or suggested wording either. Its
           access lasts an hour, or up to thirty days if you allow it to continue, and you can revoke it at any time
           under <a href={href.account}>Account</a>. What an app has already read is then held by the company that
           runs it, under that company’s terms, and revoking access does not remove it from there.

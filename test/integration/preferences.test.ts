@@ -6,7 +6,7 @@ import { setModels, type Models } from "../../src/ai/models";
 import { setPdfRenderer } from "../../src/render/pdf";
 import type { FactView, Me, Profile, ResumeView, RoleView } from "../../src/shared/api";
 import type { DocumentView } from "../../src/shared/documents";
-import type { McpClaims } from "../../src/shared/mcp";
+import type { McpClaims, McpFit } from "../../src/shared/mcp";
 import { PREFERENCES_CHANGED, PREFERENCES_REFUSED, type PreferenceValues, type Preferences } from "../../src/shared/preferences";
 import type { CoachClient, ShareGrant } from "../../src/shared/sharing";
 import { directory, vault } from "../../src/shared/stubs";
@@ -638,23 +638,50 @@ describe("job preferences", () => {
     });
     const claims: McpClaims = { uid: who.userId, vid: sessionOf(user).vid, gen: granted.gen, epoch: granted.epoch, grantId: granted.id, clientId: granted.clientId, scopes: granted.scopes, expiresAt: granted.expiresAt };
     await vaultOf(user).bindMcpGrant(claims, "synthetic-oauth-grant");
-    const listed = (await vaultOf(user).mcpFacts(claims, {})) as unknown[];
+    // The Vault's methods for connected apps are asked through this, which notes each one asked, so
+    // that a method added later fails this test until its answer is read here too.
+    const asked = new Set<string>();
+    const apps = new Proxy(vaultOf(user), {
+      get(stub, name) {
+        if (typeof name === "string") asked.add(name);
+        return Reflect.get(stub, name);
+      },
+    });
+    const listed = (await apps.mcpFacts(claims, {})) as unknown[];
     expect(listed.length).toBeGreaterThan(5);
     outward["list_facts"] = JSON.stringify(listed);
-    outward["search_facts"] = JSON.stringify(await vaultOf(user).mcpFacts(claims, { query: "Kubernetes" }));
+    outward["search_facts"] = JSON.stringify(await apps.mcpFacts(claims, { query: "Kubernetes" }));
     // Searching for the place itself finds nothing: it is not a fact, and no fact holds it.
-    expect(await vaultOf(user).mcpFacts(claims, { query: PLACE })).toEqual([]);
-    expect(await vaultOf(user).mcpFacts(claims, { query: String(AMOUNT) })).toEqual([]);
-    outward["get_resume"] = JSON.stringify(await vaultOf(user).mcpResume(claims, resumeId));
+    expect(await apps.mcpFacts(claims, { query: PLACE })).toEqual([]);
+    expect(await apps.mcpFacts(claims, { query: String(AMOUNT) })).toEqual([]);
+    outward["get_resume"] = JSON.stringify(await apps.mcpResume(claims, resumeId));
     outward["add_job"] = JSON.stringify(
-      await vaultOf(user).mcpAddJob(claims, { description: "Platform Engineer at Litware. Run our Kubernetes fleet and build the tools product teams ship with.", url: "https://jobs.example.com/litware/platform-engineer" }, crypto.randomUUID()),
+      await apps.mcpAddJob(claims, { description: "Platform Engineer at Litware. Run our Kubernetes fleet and build the tools product teams ship with.", url: "https://jobs.example.com/litware/platform-engineer" }, crypto.randomUUID()),
     );
-    outward["list_jobs"] = JSON.stringify(await vaultOf(user).mcpJobs(claims, {}));
-    const started = await vaultOf(user).mcpTailor(claims, applicationId, crypto.randomUUID());
+    outward["list_jobs"] = JSON.stringify(await apps.mcpJobs(claims, {}));
+    const started = await apps.mcpTailor(claims, applicationId, crypto.randomUUID());
     outward["start_tailoring"] = JSON.stringify(started);
     const second = (await waitForResume(user, started.resumeId)) as ResumeView;
     expect(second.state, second.error ?? "").toBe("ready");
-    outward["get_resume, for the one the app started"] = JSON.stringify(await vaultOf(user).mcpResume(claims, started.resumeId));
+    outward["get_resume, for the one the app started"] = JSON.stringify(await apps.mcpResume(claims, started.resumeId));
+    // A fit preview of the saved job, asked again with the same key while it is being prepared. What it
+    // was measured from is among the model inputs read below.
+    const fitKey = crypto.randomUUID();
+    let fit = (await apps.mcpFit(claims, applicationId, fitKey)) as McpFit;
+    for (const deadline = Date.now() + 60_000; fit.state === "preparing" && Date.now() < deadline; ) {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      fit = (await apps.mcpFit(claims, applicationId, fitKey)) as McpFit;
+    }
+    expect(fit.state).toBe("ready");
+    outward["preview_fit"] = JSON.stringify(fit);
+    // The epoch an app's grant is checked against, which the consent page asks for with the owner's session.
+    const identity = await apps.mcpIdentity(who);
+    expect(identity).toEqual({ epoch: expect.any(String) });
+    expect(found(JSON.stringify(identity))).toEqual([]);
+    // Every method named for connected apps was asked above, and nothing else was asked of it.
+    const tools = Object.getOwnPropertyNames(Vault.prototype).filter((name) => /^mcp[A-Z]/.test(name) && typeof Object.getOwnPropertyDescriptor(Vault.prototype, name)!.value === "function");
+    expect(tools).toContain("mcpJobs");
+    expect([...asked].sort()).toEqual(tools.sort());
 
     // What is made for the owner to send on: the resume and the letter, in each form they are given in.
     for (const [name, id] of [["the resume", resumeId], ["the resume a connected app started", started.resumeId]] as const) {

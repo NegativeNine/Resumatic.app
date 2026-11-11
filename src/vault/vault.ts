@@ -17,6 +17,8 @@ import { base64url, sha256 } from "../worker/crypto";
 import { extractorFor, sourceFormat } from "../pipeline/extract";
 import { McpGrantStore } from "./mcp-grants";
 import type { McpClaims, McpScope, McpGrant, NewMcpGrant } from "../shared/mcp";
+import { MAX_APP_FIT_STARTS_PER_DAY, MCP_FIT_SCOPES, MCP_FIT_TEXT, type McpFit } from "../shared/mcp";
+import { fitForApp } from "./mcp-fit";
 import type {
   ApplicationDetail,
   ApplicationRef,
@@ -83,16 +85,21 @@ import type { CoachAccount } from "./shares";
 import type { ShareableDocument } from "../shared/sharing";
 import { ShareCommentStore } from "./share-comments";
 import type { CommentThread, NewShareComment, OwnerCommentThread, ShareComment } from "../shared/sharing";
+import { isVisibleLine, targetText, unchangedWording, type NewSuggestion, type ShareSuggestion } from "../shared/sharing";
+import { appliedVersion, boundCheck, coachStanding, currentLine, lineAsShown, ownerStanding } from "./share-suggestions";
+import { rewritten } from "../pipeline/documents";
+import type { ResumeLine } from "../shared/api";
 import { mergeRefinementEvidence } from "./refinement-evidence";
 import { validateTailorCheckpoint, validateTailorPublication } from "./tailor-publication";
 import { finalLegacyEvidence, legacyReceipt, legacyReview } from "./legacy-remediation";
 import { RunStore } from "./runs";
 import { RecordStore } from "./record";
 import { IDENTICAL_ROLE_METHOD, IDENTICAL_WORDING_METHOD, MAX_OFFER_PAIRS, OFFERS_PER_FACT, OFFER_MIN_COSINE, identicalMatches, type JudgedOffer, type OfferPair } from "../pipeline/match";
-import { roleKey, sameWording, wording } from "../shared/record";
+import { roleKey, sameWording, stampProblem } from "../shared/record";
+import { MAX_TAGS_PER_SAVE, MAX_TAG_FACTS, MAX_TAG_ROLES, TAG_JUDGE_METHOD, TAG_RULE_METHOD, skillAsWritten, tagStamp, type HeldTag, type ProposedTag, type TagMade, type TagSubjects } from "../pipeline/tag";
 import type { NewPart, RecordExport } from "../shared/record";
 import { ShareStore } from "./shares";
-import { sensitiveUse, setSensitive, usableQuote, withheldFacts } from "./sensitive";
+import { markedWording, sensitiveUse, setSensitive, usableQuote, withheldFacts } from "./sensitive";
 import { billingConfig } from "../shared/billing";
 import { stripeClient, type Entitlement } from "../worker/billing";
 import { CheckoutCoordinator } from "./checkout";
@@ -1317,7 +1324,7 @@ export class Vault extends DurableObject<Env> {
       const markedWords = new Set<string>();
       for (const id of withheldFacts(this.sql).ids) {
         const marked = this.sql.exec<{ text: string }>(`SELECT text FROM facts WHERE id = ?`, id).toArray()[0];
-        const words = marked ? wording(marked.text) : "";
+        const words = marked ? markedWording(marked.text) : "";
         if (words) markedWords.add(words);
       }
       const arrivingMarked: string[] = [];
@@ -1402,7 +1409,7 @@ export class Vault extends DurableObject<Env> {
           f.confidence ?? null,
           JSON.stringify(f.reviewReasons ?? []),
         );
-        if (markedWords.has(wording(f.text))) arrivingMarked.push(id);
+        if (markedWords.has(markedWording(f.text))) arrivingMarked.push(id);
       }
       setSensitive(this.sql, arrivingMarked, true);
       this.extractionFeedbackStore.proposals(sourceId);
@@ -1673,6 +1680,178 @@ export class Vault extends DurableObject<Env> {
     return { stored };
   }
 
+  /**
+   * What a reading may tag: this upload's first job roles and extracted facts, how many of each
+   * it has in all, and the shadow tags each row already holds or another row with the same words
+   * holds. A skill is marked as written when its text is, character for character, one item of
+   * the line it was read from; the line itself is not given out. A fact marked sensitive is not
+   * given out at all. The rows are read as they stand while the upload is read. Nothing is
+   * awaited and nothing is written.
+   */
+  async tagCandidates(sourceId: string, runId?: string): Promise<TagSubjects> {
+    this.requireReading(sourceId, runId);
+    const roles = this.sql
+      .exec<{ id: string; title: string }>(
+        `SELECT id, title FROM roles WHERE source_id = ? AND kind = 'job' AND title IS NOT NULL AND title <> '' ORDER BY rowid LIMIT ?`,
+        sourceId,
+        MAX_TAG_ROLES,
+      )
+      .toArray();
+    // A line marked sensitive is not tagged, so its words are never looked up in the taxonomy or
+    // put to the judge. It is left out before the cap, so it takes no other line's place.
+    const withheld = withheldFacts(this.sql).ids;
+    const usable = this.sql
+      .exec<{ id: string; role_id: string | null; kind: string; text: string; quote: string | null }>(
+        `SELECT f.id, f.role_id, f.kind, f.text, e.quote FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id
+         WHERE f.source_id = ? AND f.origin = 'extracted' ORDER BY f.rowid`,
+        sourceId,
+      )
+      .toArray()
+      .filter((fact) => !withheld.has(fact.id));
+    const facts = usable.slice(0, MAX_TAG_FACTS);
+    const total = {
+      roles: this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM roles WHERE source_id = ? AND kind = 'job' AND title IS NOT NULL AND title <> ''`, sourceId).one().n,
+      facts: usable.length,
+    };
+    // A tag is a judgement about particular words. One held by any row that says the same words,
+    // in this upload or an earlier one, is that judgement already made.
+    type Held = { subject_id: string; holder_id: string; concept_id: string; method: string; model: string | null; taxonomy_version: string | null };
+    const heldBy = (rows: Held[], returned: readonly { id: string }[]): Map<string, HeldTag[]> => {
+      const held = new Map<string, HeldTag[]>(returned.map((row) => [row.id, []]));
+      const seen = new Set<string>();
+      for (const row of rows) {
+        const tag: HeldTag = { conceptId: row.concept_id, method: row.method, model: row.model, taxonomyVersion: row.taxonomy_version, own: row.holder_id === row.subject_id };
+        // However many rows say these words, one entry says all that matters of what they hold.
+        const key = JSON.stringify([row.subject_id, tag.conceptId, tag.method, tag.model, tag.taxonomyVersion, tag.own]);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        held.get(row.subject_id)?.push(tag);
+      }
+      return held;
+    };
+    const roleTags = heldBy(
+      this.sql
+        .exec<Held>(
+          `SELECT r.id AS subject_id, o.id AS holder_id, t.concept_id, t.method, t.model, t.taxonomy_version
+           FROM roles r JOIN roles o ON o.kind = 'job' AND o.title = r.title
+           JOIN record_tags t ON t.subject_kind = 'role' AND t.subject_id = o.id AND t.shadow = 1
+           WHERE r.source_id = ? AND r.kind = 'job' AND r.title IS NOT NULL AND r.title <> ''`,
+          sourceId,
+        )
+        .toArray(),
+      roles,
+    );
+    const factTags = heldBy(
+      this.sql
+        .exec<Held>(
+          `SELECT f.id AS subject_id, o.id AS holder_id, t.concept_id, t.method, t.model, t.taxonomy_version
+           FROM facts f JOIN facts o ON o.kind = f.kind AND o.text = f.text
+           JOIN record_tags t ON t.subject_kind = 'fact' AND t.subject_id = o.id AND t.shadow = 1
+           WHERE f.source_id = ? AND f.origin = 'extracted'`,
+          sourceId,
+        )
+        .toArray(),
+      facts,
+    );
+    return {
+      roles: roles.map((role) => ({ id: role.id, title: role.title, held: roleTags.get(role.id) ?? [] })),
+      facts: facts.map((fact) => ({
+        id: fact.id,
+        roleId: fact.role_id,
+        kind: fact.kind,
+        text: fact.text,
+        asWritten: fact.kind === "skill" && skillAsWritten(fact.quote, fact.text),
+        held: factTags.get(fact.id) ?? [],
+      })),
+      total,
+    };
+  }
+
+  /**
+   * Which of these facts their owner has marked sensitive since the reading read them. The stage
+   * asks before every call to the judge about facts, and leaves the marked ones out of it, so a
+   * line marked while it is at work is put to the judge no more. It awaits nothing and writes nothing.
+   */
+  async tagWithheld(sourceId: string, runId: string | undefined, factIds: string[]): Promise<string[]> {
+    this.requireReading(sourceId, runId);
+    if (!Array.isArray(factIds) || factIds.length > MAX_TAG_FACTS || factIds.some((id) => typeof id !== "string"))
+      throw new AppError("invalid", "a reading asks about at most one upload's facts at once");
+    const withheld = withheldFacts(this.sql).ids;
+    return factIds.filter((id) => withheld.has(id));
+  }
+
+  /**
+   * Keeps tags a reading decided for this upload's facts and job roles, in shadow: stored to be
+   * measured, shown to nobody and read by nothing else. A tag is about particular words, so one
+   * decided about words its row no longer has is left out, and so is the rule's tag for a skill
+   * that is no longer one item of its line as written. So is a tag for a fact its owner has marked
+   * sensitive since it was read. A tag the same decider stored before is left exactly as it is.
+   * What the record itself refuses is counted, and the rest are kept.
+   */
+  async saveShadowTags(sourceId: string, runId: string | undefined, made: TagMade, tags: ProposedTag[]): Promise<{ stored: number; refused: number }> {
+    this.requireReading(sourceId, runId);
+    if (!Array.isArray(tags)) throw new AppError("invalid", "tags are proposed for facts and job roles");
+    if (tags.length > MAX_TAGS_PER_SAVE) throw new AppError("invalid", "too many tags for one upload");
+    for (const tag of tags) {
+      if (tag?.method !== TAG_JUDGE_METHOD && tag?.method !== TAG_RULE_METHOD) throw new AppError("invalid", "unknown tagging method");
+      if ((tag.subject?.kind !== "fact" && tag.subject?.kind !== "role") || typeof tag.subject.id !== "string")
+        throw new AppError("invalid", "tags are proposed for facts and job roles");
+    }
+    const unstamped = made && typeof made === "object" ? stampProblem(tagStamp(TAG_JUDGE_METHOD, made)) : "a judgement says what made it";
+    if (unstamped) throw new AppError("invalid", unstamped);
+    // A line marked sensitive is not tagged, even where the mark landed while the judge was being asked about it.
+    const withheld = withheldFacts(this.sql).ids;
+    let stored = 0;
+    let refused = 0;
+    for (const tag of tags) {
+      // The judge was asked, and the taxonomy read, before this was called. Nothing is awaited
+      // from here to the tag being stored, so no edit or mark can fall between these checks and the write.
+      if (tag.subject.kind === "fact") {
+        const fact = this.sql
+          .exec<{ kind: string; text: string; quote: string | null }>(
+            `SELECT f.kind, f.text, e.quote FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id WHERE f.id = ? AND f.source_id = ?`,
+            tag.subject.id,
+            sourceId,
+          )
+          .toArray()[0];
+        if (!fact) throw new AppError("conflict", "fact is not part of this source");
+        if (fact.text !== tag.words || withheld.has(tag.subject.id)) continue;
+        if (tag.method === TAG_RULE_METHOD && !(fact.kind === "skill" && skillAsWritten(fact.quote, fact.text))) continue;
+      } else {
+        const role = this.sql.exec<{ kind: string; title: string | null }>(`SELECT kind, title FROM roles WHERE id = ? AND source_id = ?`, tag.subject.id, sourceId).toArray()[0];
+        if (!role) throw new AppError("conflict", "role is not part of this source");
+        // Only a job is given an occupation, and the rule is for listed skills: a job's is always asked about.
+        if (role.kind !== "job" || role.title !== tag.words || tag.method === TAG_RULE_METHOD) continue;
+      }
+      const stamp = tagStamp(tag.method, made);
+      // Found before, by the same decider against the same taxonomy: the row stays as it was stored.
+      const before =
+        typeof tag.conceptId === "string" &&
+        this.sql
+          .exec(
+            `SELECT id FROM record_tags WHERE subject_kind = ? AND subject_id = ? AND concept_id = ? AND shadow = 1
+             AND taxonomy_version IS ? AND method = ? AND model IS ?`,
+            tag.subject.kind,
+            tag.subject.id,
+            tag.conceptId,
+            stamp.taxonomyVersion,
+            stamp.method,
+            stamp.model,
+          )
+          .toArray().length > 0;
+      if (before) continue;
+      try {
+        this.record.proposeTag({ subject: { kind: tag.subject.kind, id: tag.subject.id }, conceptId: tag.conceptId, conceptKind: tag.conceptKind, label: tag.label, stamp });
+        stored++;
+      } catch (error) {
+        // Not a tag the record stores, or as many tags as the row can hold: this one is left, and the rest are kept.
+        if (!["conflict", "invalid", "too_large", "not_found"].includes(errorCode(error) ?? "")) throw error;
+        refused++;
+      }
+    }
+    return { stored, refused };
+  }
+
   // ---------------------------------------------------------------- roles and facts (user)
 
   async listRoles(who: Who): Promise<RoleView[]> {
@@ -1937,7 +2116,7 @@ export class Vault extends DurableObject<Env> {
       for (const id of ids) {
         const fact = this.sql.exec<{ text: string }>(`SELECT text FROM facts WHERE id = ?`, id).toArray()[0];
         if (!fact) throw new AppError("not_found", "no such fact");
-        const own = wording(fact.text);
+        const own = markedWording(fact.text);
         if (own) words.add(own);
       }
       for (const [id, expected] of Object.entries(expectedRevisions)) {
@@ -1948,7 +2127,7 @@ export class Vault extends DurableObject<Env> {
       // The facts named, and every other fact that says the same words.
       const targets = new Set(ids);
       for (const fact of this.sql.exec<{ id: string; text: string }>(`SELECT id, text FROM facts`).toArray())
-        if (words.has(wording(fact.text))) targets.add(fact.id);
+        if (words.has(markedWording(fact.text))) targets.add(fact.id);
       setSensitive(this.sql, targets, r.sensitive);
     });
     this.vectorCache = null;
@@ -3040,7 +3219,12 @@ export class Vault extends DurableObject<Env> {
     return { epoch: this.meta("security_epoch") ?? "legacy" };
   }
   async createMcpGrant(who: Who, input: NewMcpGrant) {
-    return this.mcpGrants.create(who, input);
+    const grant = this.mcpGrants.create(who, input);
+    // A grant is erased by the alarm when it ends, so holding one sets it. Its end is fixed here:
+    // nothing later moves it.
+    const next = this.mcpGrants.nextAlarm();
+    if (next !== null) await this.scheduleRunAlarm(next);
+    return grant;
   }
   async bindMcpGrant(claims: McpClaims, remoteId: string) {
     if (claims.vid !== this.vaultId)
@@ -3143,6 +3327,110 @@ export class Vault extends DurableObject<Env> {
     );
   }
 
+  /**
+   * A fit preview of one saved job, for a connected app holding read, jobs and generation together.
+   * A preview that is still current (same posting, same usable facts) is returned, whoever asked for
+   * it; otherwise one is started, at most once per grant and request key, and the app asks again.
+   * Everything from the grant check after the one await to the start happens in one turn, so the
+   * checks, the day's count and the run's rows can't be interleaved. Refusals are thrown; states are
+   * answers.
+   */
+  async mcpFit(claims: McpClaims, applicationId: string, requestKey: string): Promise<McpFit> {
+    const guard = (): Who => {
+      let who: Who | undefined;
+      for (const scope of MCP_FIT_SCOPES) who = this.requireMcp(claims, scope);
+      return who!;
+    };
+    guard();
+    const key = `mcp_${claims.grantId}_${requestKey}`;
+    if (!requestKey || !/^[a-zA-Z0-9_-]{1,100}$/.test(key)) throw new AppError("invalid", "invalid request key");
+    const digest = await this.documentDigest(applicationId, { kind: "fit" });
+    const who = guard();
+    const answer = (state: Exclude<McpFit["state"], "ready">, message: string): McpFit => ({ state, applicationId, message });
+    const app = this.sql
+      .exec<ApplicationRow>(`SELECT * FROM applications WHERE id = ?`, applicationId)
+      .toArray()[0];
+    if (!app) throw new AppError("not_found", "no such application");
+    const prior = this.runs.findRequest(`document:${key}`);
+    if (prior && prior.inputDigest !== digest)
+      throw new AppError("conflict", "request key already used with other input");
+    // The only facts an app may be told of, read in the same turn as the answer.
+    const facts = this.usableFacts();
+    const current = this.currentFit(applicationId, app.jd_text, facts);
+    if (current) {
+      const requirements = fitForApp(current.data, facts);
+      return {
+        state: "ready",
+        applicationId,
+        checkedAt: current.createdAt,
+        requirements,
+        note: requirements.length ? MCP_FIT_TEXT.note : MCP_FIT_TEXT.noRequirements,
+      };
+    }
+    // A preview of this job is under way, whoever started it: never a second one beside it.
+    if (this.sql.exec(`SELECT 1 FROM documents WHERE application_id = ? AND kind = 'fit' AND state = 'running' LIMIT 1`, applicationId).toArray().length) {
+      await this.rearmPendingRuns();
+      guard();
+      return answer("preparing", MCP_FIT_TEXT.preparing);
+    }
+    // This key's run has ended. It is never started again by asking again.
+    if (prior) {
+      const document = this.sql
+        .exec<{ state: string; error: string | null }>(`SELECT state, error FROM documents WHERE id = ?`, prior.targetId)
+        .toArray()[0];
+      if (document?.state === "ready") return answer("changed", MCP_FIT_TEXT.changed);
+      return answer("failed", document?.error === "quota" ? MCP_FIT_TEXT.stopped : MCP_FIT_TEXT.failed);
+    }
+    if (this.runs.listPending().some((run) => GENERATION_RUN_KINDS.includes(run.kind)))
+      return answer("busy", MCP_FIT_TEXT.busy);
+    if (this.appFitStartsToday() >= MAX_APP_FIT_STARTS_PER_DAY) return answer("limit", MCP_FIT_TEXT.limit);
+    const begun = this.beginDocument(who, applicationId, { kind: "fit" }, key, digest);
+    if (begun.replay) return answer("preparing", MCP_FIT_TEXT.preparing);
+    this.broadcast("document", begun.id);
+    await this.dispatchRun(this.runs.get(begun.id)!);
+    guard();
+    return answer("preparing", MCP_FIT_TEXT.preparing);
+  }
+
+  /**
+   * The newest finished fit preview of this job that measured this posting against exactly these
+   * facts, each unchanged since. Nothing is measured afresh and nothing stored is changed: a preview
+   * stops being current when the posting or the usable facts do, a fact marked sensitive included.
+   */
+  private currentFit(applicationId: string, jdText: string, facts: FactRecord[]): { createdAt: number; data: unknown } | null {
+    const ids = new Set(facts.map((fact) => fact.id));
+    for (const row of this.sql
+      .exec<{ id: string; created_at: number; data: string }>(
+        `SELECT d.id, d.created_at, v.data FROM documents d
+         JOIN document_versions v ON v.document_id = d.id AND v.version = d.version
+         WHERE d.application_id = ? AND d.kind = 'fit' AND d.state = 'ready'
+         ORDER BY d.created_at DESC, d.id LIMIT 5`,
+        applicationId,
+      )
+      .toArray()) {
+      if (this.snapshots.metadata(row.id)?.jdText !== jdText || !this.snapshots.factsUnchanged(row.id, ids)) continue;
+      let data: unknown = null;
+      try {
+        data = JSON.parse(row.data);
+      } catch {
+        // fitForApp refuses what can't be read.
+      }
+      return { createdAt: row.created_at, data };
+    }
+    return null;
+  }
+
+  /** Fit previews connected apps have started on this account since UTC midnight, the day model spend is counted by. */
+  private appFitStartsToday(now = Date.now()): number {
+    // GLOB, because `_` is a wildcard in LIKE. The web app's keys are UUIDs, so the owner's own never match.
+    return this.sql
+      .exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM runs WHERE kind = 'fit' AND request_key GLOB 'document:mcp_*' AND created_at >= ?`,
+        Math.floor(now / 86_400_000) * 86_400_000,
+      )
+      .one().n;
+  }
+
   private get coachClients(): CoachClientStore {
     return new CoachClientStore(this.sql);
   }
@@ -3161,9 +3449,13 @@ export class Vault extends DurableObject<Env> {
     });
   }
 
-  /** Comments on shared copies. Nothing else reads their table: not tailoring, a check, a copy or a connected app. */
+  /**
+   * Comments on shared copies. Nothing else reads their table: not tailoring, a check, a copy or a
+   * connected app. The suggestion methods below read a suggested wording's row, and only its owner's
+   * accepting puts the wording into a check.
+   */
   private get shareComments(): ShareCommentStore {
-    return new ShareCommentStore(this.sql, this.shares, (who) => this.requireOwner(who));
+    return new ShareCommentStore(this.sql, this.shares, (who) => this.requireOwner(who), (row, side) => this.suggestionFor(row, side));
   }
 
   async createShare(
@@ -3322,6 +3614,10 @@ export class Vault extends DurableObject<Env> {
   // The owner's side of the same threads.
 
   async listShareComments(who: Who): Promise<OwnerCommentThread[]> {
+    // The list says where each suggestion's check stands, so it re-arms a run that lost its alarm,
+    // as every status read does, and asks again who is calling once that is done.
+    this.requireOwner(who);
+    await this.rearmPendingRuns();
     return this.ctx.storage.transactionSync(() => this.shareComments.listForOwner(who));
   }
 
@@ -3333,8 +3629,188 @@ export class Vault extends DurableObject<Env> {
     this.ctx.storage.transactionSync(() => this.shareComments.removeAsOwner(who, id));
   }
 
+  /**
+   * Marks every coach's comment seen. Kept, with its old name and arguments, for a page or Worker
+   * from before the page named what it showed, so neither is refused in a mixed rollout.
+   */
   async markShareCommentsSeen(who: Who): Promise<void> {
-    this.ctx.storage.transactionSync(() => this.shareComments.markSeen(who));
+    this.ctx.storage.transactionSync(() => this.shareComments.markAllSeen(who));
+  }
+
+  /** Marks seen only the comments the page says it showed, so one written since stays new. */
+  async markShownShareCommentsSeen(who: Who, ids: string[]): Promise<void> {
+    this.ctx.storage.transactionSync(() => this.shareComments.markSeen(who, ids));
+  }
+
+  // Suggested wording. A coach writes it as they write a comment, through the copy and nothing
+  // else; it reads no resume. Its owner accepts it as their own verified line edit with exactly
+  // that wording, or declines it. What the coach is told is worked out from the copy and from the
+  // check its owner started, never from the owner's resume as it is now.
+
+  /** A coach's suggested wording for one line of a copy that is open to them now. */
+  async suggestOnShare(grantId: string, coach: CoachAccount, input: NewSuggestion, requestKey: string): Promise<ShareComment> {
+    return this.ctx.storage.transactionSync(() => {
+      const now = Date.now();
+      const { view } = this.shares.copyForCoach(grantId, coach, now);
+      if (typeof requestKey !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(requestKey)) throw new AppError("invalid", "invalid request key");
+      const given: { target?: unknown; text?: unknown } = typeof input === "object" && input !== null ? input : {};
+      const text = typeof given.text === "string" ? given.text.trim() : "";
+      const target = given.target as NewSuggestion["target"] | undefined;
+      // A retry of the request that made the suggestion gets it back. The comments' store checks
+      // the account and the line; the wording has to be the same exactly.
+      const prior = this.sql
+        .exec<{ body: string }>(`SELECT body FROM share_comments WHERE request_key = ?`, `suggest_${view.grantId}_${requestKey}`)
+        .toArray()[0];
+      if (prior) {
+        if (prior.body !== text) throw new AppError("conflict", "the request key was already used with different input");
+        return this.shareComments.addAsCoach(grantId, coach, { target: target as NewShareComment["target"], body: text }, requestKey, now, "suggest");
+      }
+      if (text.length < 1 || text.length > MAX_LINE_CHARS || !isVisibleLine(text))
+        throw new AppError("invalid", "Suggested wording is one line of up to 300 characters, all of which show on the page.");
+      // The line's words are the copy's, never the request's.
+      const quote = target?.kind === "line" ? targetText(view.snapshot, target) : null;
+      if (!target || quote === null) throw new AppError("invalid", "That line isn't in this copy.");
+      // As the copy would print it there: wording that only adds a list marker would leave the line
+      // reading as it does, or, accepted, leave the resume as it was while saying it changed.
+      if (unchangedWording(view.snapshot, target, text)) throw new AppError("invalid", "That's the wording the line already has.");
+      const theirs = this.sql
+        .exec<{ suggestion_state: string | null; quote: string; document_id: string | null }>(
+          `SELECT suggestion_state, quote, document_id FROM share_comments
+           WHERE grant_id = ? AND coach_user_id = ? AND author = 'coach' AND suggestion_state IS NOT NULL
+             AND target_kind = 'line' AND resume_id = ? AND resume_version = ? AND target_id = ?`,
+          view.grantId, coach.userId, target.resumeId, target.version, target.lineId,
+        )
+        .toArray();
+      if (theirs.some((row) => coachStanding(row, boundCheck(this.sql, row.document_id)) === "waiting"))
+        throw new AppError("conflict", "You already have a suggestion waiting on this line. Delete it to suggest another.");
+      // Written as a comment is, so the comments' three limits count it, then marked as a suggestion.
+      const made = this.shareComments.addAsCoach(grantId, coach, { target, body: text }, requestKey, now, "suggest");
+      this.sql.exec(`UPDATE share_comments SET suggestion_state = 'open' WHERE id = ?`, made.id);
+      return { ...made, suggestion: { state: "waiting" } };
+    });
+  }
+
+  /**
+   * The owner accepts a suggestion: their own verified line edit, with the suggestion's exact
+   * wording, on the resume the copy's line came from. It is refused before anything is reserved
+   * when the check couldn't save its result. Accepting again, with any key, finds the check it
+   * started. Everything up to the run's own rows is one transaction with nothing awaited, so two
+   * at once can't both start one.
+   */
+  async acceptSuggestion(who: Who, id: string, requestKey: string): Promise<{ documentId: string; runId: string }> {
+    this.requireOwner(who);
+    const started = this.ctx.storage.transactionSync(() => {
+      this.requireOwner(who);
+      const row = this.suggestionRow(id);
+      const resume = this.sql.exec<ResumeRow>(`SELECT * FROM resumes WHERE id = ?`, row.resume_id).toArray()[0];
+      const base = resume?.state === "ready" && resume.body ? this.resumeVersion(resume) : undefined;
+      const standing = ownerStanding(row, boundCheck(this.sql, row.document_id), lineAsShown(base?.render.body, row.target_id));
+      if ((standing === "checking" || standing === "applied" || standing === "not_applied") && row.document_id)
+        return { id: row.document_id, replay: true };
+      if (standing !== "waiting" && standing !== "stale") throw new AppError("conflict", "You've already answered this suggestion.");
+      if (standing === "stale" || !resume || !base)
+        throw new AppError("conflict", "This line has changed since the copy was made, so this suggestion can't be applied.");
+      const cannotCheck = () =>
+        new AppError(
+          "conflict",
+          "A fact this resume cites has changed or is no longer in use, or the version is still being reviewed, so this wording can't be checked. Tailor a new version or finish the review, then accept again.",
+        );
+      // The checked path would refuse at its finish what isn't true now, after spending an output.
+      // So the version has to pass the gate, cite only facts in use, sit under confirmed roles and
+      // print only skills in use, and the new line has to merge as the finish will merge it.
+      try {
+        assertGroundedResume(base.render, base.facts, base.provenance, base.evidence, base.roleEvidence, withheldFacts(this.sql));
+      } catch {
+        throw cannotCheck();
+      }
+      const usable = this.usableFacts();
+      const roles = this.confirmedRoles();
+      const factIds = new Set(usable.map((fact) => fact.id));
+      const roleIds = new Set(roles.map((role) => role.id));
+      const body = base.render.body;
+      const lines = [...(body.summary ? [body.summary] : []), ...body.sections.flatMap((section) => section.lines)];
+      if (lines.some((line) => line.factIds.some((factId) => !factIds.has(factId))) ||
+          body.sections.some((section) => !roleIds.has(section.roleId)) ||
+          body.skills.some((skill) => !usable.some((fact) => fact.kind === "skill" && fact.text === skill)))
+        throw cannotCheck();
+      const next = structuredClone(body);
+      const change = (line: ResumeLine): ResumeLine =>
+        line.id === row.target_id ? rewritten(line, { text: row.body, factIds: line.factIds, status: "kept" }) : line;
+      if (next.summary) next.summary = change(next.summary);
+      for (const section of next.sections) section.lines = section.lines.map(change);
+      try {
+        mergeRefinementEvidence(base, next, usable, roles);
+      } catch {
+        throw cannotCheck();
+      }
+      // The digest names the suggestion alone. The web app keeps a key until a reply reaches it, and
+      // sends nothing that tells one press from the next, so a key whose reply was lost can come back
+      // after the resume has moved on. It is the same request, and gets the check it started, which
+      // settles the key; with the version in the digest it would be refused on every press.
+      const begun = this.beginDocument(
+        who,
+        resume.application_id,
+        { kind: "refine", resumeId: resume.id, expectedVersion: resume.version, lineIds: [row.target_id], manualText: row.body },
+        `suggestion_${row.id}_${requestKey}`,
+        `suggestion:${row.id}`,
+      );
+      // A replayed key never rebinds the row: the check it names is the one that key started.
+      if (!begun.replay) this.sql.exec(`UPDATE share_comments SET document_id = ? WHERE id = ?`, begun.id, row.id);
+      return begun;
+    });
+    if (!started.replay) await this.dispatchRun(this.runs.get(started.id)!);
+    return { documentId: started.id, runId: started.id };
+  }
+
+  /** The owner declines a suggestion. Declining again changes nothing; one being checked, or already checked, can't be. */
+  async declineSuggestion(who: Who, id: string): Promise<void> {
+    this.requireOwner(who);
+    this.ctx.storage.transactionSync(() => {
+      this.requireOwner(who);
+      const row = this.suggestionRow(id);
+      const standing = ownerStanding(row, boundCheck(this.sql, row.document_id), currentLine(this.sql, row.resume_id, row.target_id));
+      if (standing === "declined") return;
+      if (standing === "checking")
+        throw new AppError("conflict", "This suggestion is being checked. Wait for the check to finish, then try again.");
+      if (standing === "applied" || standing === "not_applied") throw new AppError("conflict", "You've already answered this suggestion.");
+      this.sql.exec(`UPDATE share_comments SET suggestion_state = 'declined' WHERE id = ?`, row.id);
+    });
+  }
+
+  /** A suggestion in this vault, by ID. Call it only for the owner. */
+  private suggestionRow(id: string) {
+    const row = typeof id === "string"
+      ? this.sql
+          .exec<{ id: string; resume_id: string | null; target_id: string; quote: string; body: string; suggestion_state: string | null; document_id: string | null }>(
+            `SELECT id, resume_id, target_id, quote, body, suggestion_state, document_id FROM share_comments
+             WHERE id = ? AND author = 'coach' AND target_kind = 'line' AND suggestion_state IS NOT NULL`,
+            id,
+          )
+          .toArray()[0]
+      : undefined;
+    if (!row) throw new AppError("not_found", "That suggestion has been deleted. Reload to see the thread as it stands.");
+    return row;
+  }
+
+  /**
+   * Where a suggestion stands, for the comments' store to show. Its coach is told one of three
+   * things, from the row and its check alone. Its owner is told more: the line as it is now, the
+   * version the wording went into, why a check ended without a verdict, and a start not confirmed.
+   */
+  private suggestionFor(row: Record<string, SqlStorageValue>, side: "coach" | "owner"): ShareSuggestion {
+    const suggested = { suggestion_state: typeof row.suggestion_state === "string" ? row.suggestion_state : null, quote: String(row.quote) };
+    const documentId = typeof row.document_id === "string" ? row.document_id : null;
+    const check = boundCheck(this.sql, documentId);
+    if (side === "coach") return { state: coachStanding(suggested, check) };
+    const lineNow = currentLine(this.sql, typeof row.resume_id === "string" ? row.resume_id : null, String(row.target_id));
+    const state = ownerStanding(suggested, check, lineNow);
+    const version = state === "applied" && documentId ? appliedVersion(this.sql, documentId) : undefined;
+    return {
+      state,
+      ...(version !== undefined ? { appliedVersion: version } : {}),
+      ...(state === "waiting" && check ? { lastCheck: check.error === "conflict" ? ("changed" as const) : ("unfinished" as const) } : {}),
+      ...(state === "checking" && this.dispatchUncertain(documentId) ? { startUnconfirmed: true } : {}),
+    };
   }
 
   // The rest are the coach's own list, in the coach's own vault.
@@ -5654,6 +6130,9 @@ export class Vault extends DurableObject<Env> {
       // to be cleared at its own time. Under the fence an entry already due is looked at again in
       // a minute, not at once.
       clientDue !== null && fenced ? Math.max(clientDue, Date.now() + 60_000) : clientDue,
+      // The same for a connected app's grant. Grants never move with a vault, so the fence does
+      // not hold them back.
+      this.mcpGrants.nextAlarm(),
       // An unresolved source write blocks expiry cleanup. Do not turn its
       // immediate retry into a one-second alarm loop; the retry already
       // installed at the top of this alarm remains scheduled.

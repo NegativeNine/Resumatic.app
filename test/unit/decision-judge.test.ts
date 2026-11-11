@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { CLEF_MODEL, decisionJudge } from "../../src/ai/decision-judge";
+import { AppError } from "../../src/shared/errors";
 import { models } from "../../src/ai/models";
 import { offers } from "../../src/pipeline/match";
 import { splitLines } from "../../src/pipeline/split";
@@ -44,6 +45,31 @@ describe("Clef decision judge", () => {
     await expect(decisionJudge(env, [item], { onAttemptStart: () => { throw new Error("budget exhausted"); } })).rejects.toThrow("budget exhausted");
     await expect(decisionJudge(env, [{ ...item, text: "x".repeat(12_000) }])).rejects.toThrow("unavailable");
     expect(run).not.toHaveBeenCalled();
+  });
+
+  // The reservation runs before the call, outside the catch that replaces a provider's failure, so a
+  // usage limit reaches the person as the usage limit it is and never as a network failure.
+  it.each([
+    new AppError("quota", "the configured model spend budget is exhausted"),
+    new AppError("unavailable", "this model has no configured cost bound"),
+  ])("lets a refusal by the budget out as itself: $message", async (refusal) => {
+    const { run, env } = setup(answer());
+    const thrown = await decisionJudge(env, [item], { onAttemptStart: () => { throw refusal; } }).catch((error: unknown) => error);
+    expect(thrown).toBe(refusal);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  // The binding's run is asynchronous, so a provider's failure arrives as a rejection.
+  it.each([
+    ["a provider error", async () => { throw new Error("upstream said: private provider text"); }, "model provider network failure"],
+    ["a thrown string", async () => { throw "private provider text"; }, "model provider network failure"],
+    ["a malformed answer", async () => ({ answers: { verdict: "private provider text" } }), "model provider HTTP error"],
+  ])("replaces %s with a fixed sentence", async (_case, reply, sentence) => {
+    const env = { AI: { run: vi.fn(reply) }, AI_GATEWAY_ID: "gw", MODEL_JUDGE: CLEF_MODEL } as unknown as Env;
+    const thrown = await decisionJudge(env, [item]).catch((error: unknown) => error);
+    expect(thrown).toBeInstanceOf(AppError);
+    expect((thrown as AppError).message).toBe(`unavailable: ${sentence}`);
+    expect(String((thrown as AppError).message)).not.toContain("private");
   });
 });
 

@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { strFromU8, unzipSync } from "fflate";
 import { setPdfRenderer } from "../../src/render/pdf";
 import type { ApplicationView, FactView } from "../../src/shared/api";
-import { MCP_SCOPES, type McpClaims } from "../../src/shared/mcp";
+import { MCP_SCOPES, type McpClaims, type McpFit } from "../../src/shared/mcp";
 import type { ShareGrant } from "../../src/shared/sharing";
 import { vault } from "../../src/shared/stubs";
 import { fromBase64url } from "../../src/worker/crypto";
@@ -14,7 +14,8 @@ import { call, cookieFrom, type User } from "./support";
 //
 // Not gathered: the owner's own pages, export and document downloads, which are theirs to read;
 // and the answers of the tools that write (add_job, start_tailoring), which hold only IDs. What
-// those tools set going is read here as model inputs and as the resumes they make.
+// those tools set going is read here as model inputs and as the resumes they make. preview_fit's
+// answer is gathered, and a preview it starts is read as model inputs too.
 
 /** A shared copy, as the test that made it holds it. */
 export interface OutwardCopy {
@@ -27,7 +28,7 @@ export interface OutwardCopy {
 
 /** One thing sent out, and where it went. */
 export interface OutwardPart {
-  surface: "copy by its link" | "copy as its coach" | "coach's client list" | "list_facts" | "search_facts" | "list_jobs" | "get_resume" | "PDF" | "Word" | "print preview" | "model input";
+  surface: "copy by its link" | "copy as its coach" | "coach's client list" | "coach's comments" | "list_facts" | "search_facts" | "list_jobs" | "get_resume" | "preview_fit" | "PDF" | "Word" | "print preview" | "model input";
   text: string;
 }
 
@@ -80,6 +81,10 @@ export async function outwardParts({ owner, copies, inputs }: { owner: User; cop
       const read = await call(`/share/snapshot?g=${copy.grant.id}`, { cookie: jar(link, copy.coach.cookie) });
       if (read.status === 200) add("copy as its coach", await read.text());
     }
+    // What the coach wrote on the copy, suggested wording included, with the owner's replies and
+    // where each suggestion stands, as the coach's page reads them.
+    const comments = await copy.coach.fetch(`/api/coach/clients/${copy.grant.id}/comments`);
+    if (comments.status === 200) add("coach's comments", await comments.text());
   }
 
   const jobs = (await owner.json<{ applications: ApplicationView[] }>("/api/applications")).applications;
@@ -95,7 +100,8 @@ export async function outwardParts({ owner, copies, inputs }: { owner: User; cop
   const stub = vault(env, session.vid);
   const grant = await stub.createMcpGrant(who, {
     id: crypto.randomUUID(), clientId: "synthetic-outward-client", clientName: "Outward reader",
-    scopes: [...MCP_SCOPES], expiresAt: Date.now() + 60_000,
+    // Long enough to wait for a fit preview of every job, so none is refused for the grant's age.
+    scopes: [...MCP_SCOPES], expiresAt: Date.now() + 10 * 60_000,
   });
   const claims: McpClaims = {
     uid: session.uid, vid: session.vid, gen: grant.gen, epoch: grant.epoch,
@@ -117,6 +123,21 @@ export async function outwardParts({ owner, copies, inputs }: { owner: User; cop
       await tool("search_facts", () => stub.mcpFacts(claims, { query: text.slice(0, 200), limit: 100 }));
     await tool("list_jobs", () => stub.mcpJobs(claims, { limit: 100 }));
     for (const resume of finished) await tool("get_resume", () => stub.mcpResume(claims, resume.id, resume.version));
+    // A fit preview of every saved job. One that isn't current is started, and asked for again with
+    // the same key while it is being prepared: what it was measured from is then among the model
+    // inputs. A refusal ends the asking at once and contributes nothing.
+    for (const job of jobs) {
+      const requestKey = crypto.randomUUID();
+      await tool("preview_fit", async () => {
+        const deadline = Date.now() + 60_000;
+        for (;;) {
+          const answer = (await stub.mcpFit(claims, job.id, requestKey)) as McpFit;
+          if (answer.state !== "preparing") return answer;
+          if (Date.now() > deadline) throw new Error("timed out waiting for the fit preview");
+          await new Promise((resolve) => setTimeout(resolve, 40));
+        }
+      });
+    }
   } finally {
     await stub.revokeMcpGrant(who, grant.id);
   }

@@ -15,6 +15,7 @@ import { useAction, useResource } from "../hooks";
 import { href } from "../router";
 import { ACCOUNT_DELETED_NOTE, useSession } from "../session";
 import { sameTarget } from "./ShareSnapshotContent";
+import { CoachSuggestion, OwnerSuggestion, SuggestWording } from "./SuggestedWording";
 import { ActionError, Badge, CharCount, ErrorNote, Field, Loading, Success } from "./ui";
 
 // Comments on a shared copy: the coach's side, beside the copy they are reading, and the owner's
@@ -25,7 +26,8 @@ import { ActionError, Badge, CharCount, ErrorNote, Field, Loading, Success } fro
  * One thread: what it is about, then each comment under who wrote it and when, oldest first.
  * `byline` names a comment's writer as this reader should see them. A comment the reader may
  * delete has Delete, which asks before it does anything. `children` sit under the comments: where
- * the thread came from, and the form to add to it.
+ * the thread came from, and the form to add to it. A coach's suggested wording is shown as the
+ * card `suggestion` gives for it, in place of the comment's words.
  */
 export function ThreadCard({
   quote,
@@ -33,6 +35,7 @@ export function ThreadCard({
   byline,
   canDelete,
   onDelete,
+  suggestion,
   children,
 }: {
   quote: string;
@@ -41,6 +44,8 @@ export function ThreadCard({
   canDelete: (comment: ShareComment) => boolean;
   /** Deletes the comment and settles once the thread shows it gone. A failure is the caller's to show. */
   onDelete: (comment: ShareComment) => Promise<unknown>;
+  /** The card for a row that is a suggestion. */
+  suggestion?: (comment: ShareComment) => ReactNode;
   children?: ReactNode;
 }) {
   const id = useId();
@@ -76,12 +81,12 @@ export function ThreadCard({
                   </>
                 )}
               </p>
-              <p className="app-thread__body">{comment.body}</p>
+              {comment.suggestion && suggestion ? suggestion(comment) : <p className="app-thread__body">{comment.body}</p>}
               {canDelete(comment) && (
                 <p className="app-thread__actions">
                   {asking && (
                     <button type="button" className="rs-btn rs-btn--danger rs-btn--sm" disabled={deleting} onClick={() => void remove(comment)}>
-                      {deleting ? "Deleting…" : "Delete comment"}
+                      {deleting ? "Deleting…" : comment.suggestion ? "Delete suggestion" : "Delete comment"}
                     </button>
                   )}
                   {/* One button for Delete and for Keep, so the keyboard stays where it was and a second press keeps.
@@ -112,23 +117,49 @@ const targetKey = (target: ShareTarget) =>
 const SEND_FAILED = "That didn’t go through. Check your connection, then try again.";
 
 /**
+ * A name another person chose, fit to stand where a comment says whose it is, or null. Words that
+ * would read as the reader's own (“You”) or as the product's are no name at all, so the caller
+ * falls back to what it says without one.
+ */
+function chosenName(name: string | null | undefined): string | null {
+  const trimmed = name?.trim() ?? "";
+  return trimmed && !["you", "resumatic"].includes(trimmed.toLowerCase()) ? trimmed : null;
+}
+
+/** The copy's route refusing a copy that isn't in this account's client list, as against a server with no such route. */
+const NOT_LISTED = "no such client";
+
+/**
  * The threads a coach has written on a client's copy, and the form to write another. It stands
  * beside the copy at /share, which has no signed-in session of the app around it, so it asks the
  * API itself. `selected` is the line or fact chosen on the copy. `onUnlisted` is called when the
- * copy turns out not to be in this account's client list.
+ * copy turns out not to be in this account's client list. `onEnded` is called with the one
+ * sentence left when commenting is over for this reader, because the copy ended or they must sign
+ * in again: the page then shows that sentence in place of the threads, and nothing to choose.
  */
-export function CoachComments({ view, selected, onUnlisted }: { view: SharedView; selected: ShareTarget | null; onUnlisted: () => void }) {
+export function CoachComments({
+  view,
+  selected,
+  onUnlisted,
+  onEnded,
+}: {
+  view: SharedView;
+  selected: ShareTarget | null;
+  onUnlisted: () => void;
+  onEnded: (sentence: string) => void;
+}) {
   const id = useId();
   const grantId = view.grantId;
-  const owner = view.snapshot.owner?.name || null;
+  const owner = chosenName(view.snapshot.owner?.name);
   const [threads, setThreads] = useState<CommentThread[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
-  /** The one sentence left when commenting is over for this reader: the copy ended, or they must sign in again. */
-  const [over, setOver] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Suggest mode replaces the comment form for the chosen line, until it is sent or cancelled.
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggested, setSuggested] = useState(false);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -136,25 +167,36 @@ export function CoachComments({ view, selected, onUnlisted }: { view: SharedView
       mounted.current = false;
     };
   }, []);
-  // The page's handler is read when it is needed, so a new one on each render doesn't load the threads again.
+  // The page's handlers are read when they are needed, so new ones on each render don't load the threads again.
   const unlisted = useRef(onUnlisted);
+  const ended = useRef(onEnded);
   useEffect(() => {
     unlisted.current = onUnlisted;
+    ended.current = onEnded;
   });
 
   /**
-   * Sorts a refusal. The copy isn't in the list: the page offers to add it. The copy has ended,
-   * or the session has: only that sentence is left. Anything else is the caller's to word, with
-   * the server's own sentence when it sent one the reader can act on.
+   * Sorts a refusal. The copy isn't in the list: the page offers to add it. That is the route's own
+   * refusal, by its sentence; any other 404, such as a server from before comments answering "no
+   * such route", is a failure like any other, so it never sends the reader round adding a copy their
+   * list already holds. The copy has ended, or the session has: only that sentence is left.
+   * Anything else is the caller's to word, with the server's own sentence when it sent one the
+   * reader can act on.
    */
   const refused = useCallback((e: unknown, otherwise: (sentence: string | null) => void) => {
     if (!mounted.current) return;
     const status = e instanceof ApiError ? e.status : 0;
-    if (status === 404) unlisted.current();
+    if (status === 404 && e instanceof ApiError && e.message === NOT_LISTED) unlisted.current();
     else if (status === 401 || status === 409 || status === 410)
-      setOver(describeError(e, { unauthenticated: "Sign in to Resumatic again, then reload this page.", gone: ACCOUNT_DELETED_NOTE }));
+      ended.current(describeError(e, { unauthenticated: "Sign in to Resumatic again, then reload this page.", gone: ACCOUNT_DELETED_NOTE }));
     else otherwise(status === 422 || status === 429 ? describeError(e) : null);
   }, []);
+
+  // Choosing something else on the copy closes a suggestion that was being written.
+  const chosen = selected ? targetKey(selected) : null;
+  useEffect(() => {
+    setSuggesting(false);
+  }, [chosen]);
 
   const load = useCallback(async () => {
     try {
@@ -215,12 +257,15 @@ export function CoachComments({ view, selected, onUnlisted }: { view: SharedView
     }
   }
 
-  if (over) return <ErrorNote message={over} />;
   if (loadFailed) return <ErrorNote message="Comments couldn’t be loaded. Check your connection, then try again." onRetry={load} />;
   if (!threads) return <Loading>Loading comments…</Loading>;
 
   const kind = selected?.kind ?? null;
   const reader = owner ?? "The owner of this copy";
+  const line = selected?.kind === "line" ? selected : null;
+  const lineText = line ? targetText(view.snapshot, line) : null;
+  // One suggestion of this account's waits on a line at a time, as the owner's vault holds it.
+  const waiting = !!line && threads.some((thread) => sameTarget(thread.target, line) && thread.comments.some((comment) => comment.suggestion?.state === "waiting"));
   return (
     <>
       {threads.length === 0 ? (
@@ -235,11 +280,38 @@ export function CoachComments({ view, selected, onUnlisted }: { view: SharedView
                 byline={(comment) => (comment.author === "coach" ? "You" : (owner ?? "The owner"))}
                 canDelete={(comment) => comment.author === "coach"}
                 onDelete={remove}
+                suggestion={(comment) => <CoachSuggestion comment={comment} quote={thread.quote} ownerName={owner} />}
               />
             </li>
           ))}
         </ul>
       )}
+      {suggesting && line && lineText !== null ? (
+        <SuggestWording
+          // A new line starts a new suggestion, from that line's own words.
+          key={targetKey(line)}
+          grantId={grantId}
+          snapshot={view.snapshot}
+          target={line}
+          line={lineText}
+          ownerName={owner}
+          waiting={waiting}
+          onSent={(made) => {
+            if (!mounted.current) return;
+            setThreads((current) => {
+              const known = current ?? [];
+              if (known.some((thread) => thread.comments.some((comment) => comment.id === made.id))) return known;
+              return known.some((thread) => sameTarget(thread.target, line))
+                ? known.map((thread) => (sameTarget(thread.target, line) ? { ...thread, comments: [...thread.comments, made] } : thread))
+                : [...known, { target: line, quote: lineText, comments: [made] }];
+            });
+            setSuggesting(false);
+            setSuggested(true);
+          }}
+          onCancel={() => setSuggesting(false)}
+          onRefused={refused}
+        />
+      ) : (
       <form
         className="app-comment-form"
         onSubmit={(event) => {
@@ -266,6 +338,7 @@ export function CoachComments({ view, selected, onUnlisted }: { view: SharedView
             onChange={(event) => {
               setText(event.target.value);
               setSent(false);
+              setSuggested(false);
             }}
             aria-describedby={`${id}-text-hint ${id}-count`}
           />
@@ -275,10 +348,26 @@ export function CoachComments({ view, selected, onUnlisted }: { view: SharedView
           <button type="submit" className="rs-btn rs-btn--primary" disabled={!kind || sending || !trimmed || trimmed.length > MAX_COMMENT_CHARS}>
             {sending ? "Sending…" : "Comment"}
           </button>
+          {/* Wording can be suggested for a line, not for a fact. */}
+          <button
+            type="button"
+            className="rs-btn"
+            disabled={!line || lineText === null || sending}
+            onClick={() => {
+              setSent(false);
+              setSuggested(false);
+              setError(null);
+              setSuggesting(true);
+            }}
+          >
+            Suggest wording
+          </button>
           {sent && <Success>Comment added.</Success>}
+          {suggested && <Success>Suggestion sent.</Success>}
         </div>
         <ActionError message={error} />
       </form>
+      )}
     </>
   );
 }
@@ -290,16 +379,31 @@ export function CoachComments({ view, selected, onUnlisted }: { view: SharedView
  */
 export function OwnerComments() {
   const { refreshMe } = useSession();
-  const list = useResource(async () => {
-    try {
-      return (await api.shareComments()).threads;
-    } catch (error) {
-      // A server from before comments has no such list, and so none to show.
-      if (error instanceof ApiError && error.status === 404) return [];
-      throw error;
-    }
-  });
+  const list = useResource(
+    async () => {
+      try {
+        return (await api.shareComments()).threads;
+      } catch (error) {
+        // A server from before comments has no such list, and so none to show.
+        if (error instanceof ApiError && error.status === 404) return [];
+        throw error;
+      }
+    },
+    // A suggestion being checked is read again until its check is over.
+    (threads) => checkingIds(threads).size > 0,
+  );
   const id = useId();
+  const [starting, setStarting] = useState(false);
+
+  // A check that has ended, or whose card has gone, has settled the outputs it reserved.
+  const checking = useRef(new Set<string>());
+  useEffect(() => {
+    if (!list.data) return;
+    const now = checkingIds(list.data);
+    const ended = [...checking.current].some((comment) => !now.has(comment));
+    checking.current = now;
+    if (ended) void refreshMe();
+  }, [list.data, refreshMe]);
 
   // Told once for each comment. The marks stay on this showing of the page, which is what "new" means.
   const told = useRef(new Set<string>());
@@ -310,7 +414,8 @@ export function OwnerComments() {
       .map((comment) => comment.id);
     if (unseen.length === 0) return;
     for (const comment of unseen) told.current.add(comment);
-    api.markShareCommentsSeen().then(
+    // The page names what it showed. A comment written since the list was read stays new.
+    api.markShareCommentsSeen(unseen).then(
       () => refreshMe(),
       () => {
         // Not noted this time. They are still new, and the next showing tries again.
@@ -320,6 +425,8 @@ export function OwnerComments() {
   }, [list.data, refreshMe]);
 
   const threads = list.data ?? [];
+  // Resumatic makes one thing at a time, so no suggestion can be accepted while a check is starting or running.
+  const busy = starting || checkingIds(threads).size > 0;
   if (threads.length === 0 && !list.error) return null;
   return (
     <section className="card" aria-labelledby={`${id}-title`}>
@@ -334,7 +441,7 @@ export function OwnerComments() {
           {threads.map((thread) => (
             // A thread has no ID of its own. Its oldest comment's is the nearest thing that stays put.
             <li key={thread.comments[0]?.id ?? `${thread.grantId}:${targetKey(thread.target)}`}>
-              <OwnerThread thread={thread} onChanged={list.reload} />
+              <OwnerThread thread={thread} onChanged={list.reload} busy={busy} onStarting={setStarting} />
             </li>
           ))}
         </ul>
@@ -343,8 +450,27 @@ export function OwnerComments() {
   );
 }
 
-/** One thread as its owner reads it: who wrote it, about what, where to open that, and a reply while the copy is open. */
-function OwnerThread({ thread, onChanged }: { thread: OwnerCommentThread; onChanged: () => Promise<unknown> }) {
+/** The suggestions whose check is running, by ID. */
+function checkingIds(threads: readonly OwnerCommentThread[]): Set<string> {
+  return new Set(threads.flatMap((thread) => thread.comments).filter((comment) => comment.suggestion?.state === "checking").map((comment) => comment.id));
+}
+
+/**
+ * One thread as its owner reads it: who wrote it, about what, where to open that, and a reply while
+ * the copy is open. A suggestion in it has its own card. `busy` is true while any check is being
+ * started or is running; `onStarting` says when one of this thread's is being started.
+ */
+function OwnerThread({
+  thread,
+  onChanged,
+  busy,
+  onStarting,
+}: {
+  thread: OwnerCommentThread;
+  onChanged: () => Promise<unknown>;
+  busy: boolean;
+  onStarting: (starting: boolean) => void;
+}) {
   const id = useId();
   const reply = useAction();
   const remove = useAction();
@@ -352,7 +478,7 @@ function OwnerThread({ thread, onChanged }: { thread: OwnerCommentThread; onChan
   const trimmed = text.trim();
   // A reply answers the coach's latest comment, and goes to the account that wrote it.
   const latest = thread.comments.filter((comment) => comment.author === "coach").at(-1) ?? null;
-  const coach = latest?.name || thread.coachEmail;
+  const coach = chosenName(latest?.name) ?? thread.coachEmail;
   const closed = `This copy isn’t open to ${coach} any more, so they can’t read a reply. Share a new copy to carry on.`;
   const job = thread.target.kind === "line" ? [thread.job?.title, thread.job?.company].filter(Boolean).join(" at ") : "";
 
@@ -360,14 +486,24 @@ function OwnerThread({ thread, onChanged }: { thread: OwnerCommentThread; onChan
     <ThreadCard
       quote={thread.quote}
       comments={thread.comments}
-      byline={(comment) => (comment.author === "owner" ? "You" : comment.name || thread.coachEmail)}
-      canDelete={() => true}
+      // "You" is the owner's alone. A coach's comment always carries the address they sign in with,
+      // so no name they choose for their account can pass for the owner's words, or the product's.
+      byline={(comment) => {
+        if (comment.author === "owner") return "You";
+        const name = chosenName(comment.name);
+        return name ? `${name} (${thread.coachEmail})` : thread.coachEmail;
+      }}
+      // A suggestion being checked stays until its check is over.
+      canDelete={(comment) => comment.suggestion?.state !== "checking"}
       onDelete={(comment) =>
         remove.run(async () => {
           await api.removeShareComment(comment.id);
           await onChanged();
         })
       }
+      suggestion={(comment) => (
+        <OwnerSuggestion comment={comment} quote={thread.quote} coachName={chosenName(comment.name)} busy={busy} onStarting={onStarting} onChanged={onChanged} />
+      )}
     >
       <ActionError message={remove.error} />
       <p className="rs-meta app-thread__from">

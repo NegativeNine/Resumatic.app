@@ -333,7 +333,9 @@ describe("what a connected app may do", () => {
     expect(permissions(["vault:read", "offline_access"])).toBe("Can read your facts.");
     expect(permissions(["vault:read", "vault:generate"])).toBe("Can read your facts and create documents.");
     expect(permissions(["vault:read", "vault:jobs"])).toBe("Can read your facts and saved jobs, and add jobs.");
-    expect(permissions(["vault:read", "vault:generate", "vault:jobs"])).toBe("Can read your facts and saved jobs, add jobs and create documents.");
+    expect(permissions(["vault:read", "vault:generate", "vault:jobs"])).toBe("Can read your facts and saved jobs, add jobs, check your fit and create documents.");
+    // Only an app with both can check fit, so only its sentence says so.
+    for (const scopes of [["vault:read"], ["vault:read", "vault:generate"], ["vault:read", "vault:jobs"]]) expect(permissions(scopes)).not.toContain("fit");
   });
 });
 

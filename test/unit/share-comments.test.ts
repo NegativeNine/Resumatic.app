@@ -542,26 +542,57 @@ describe("the owner's side of a thread", () => {
     try {
       expect(comments.unseen()).toBe(0);
       const first = comments.addAsCoach(grant.id, dana, { target: onFact, body: "One" }, "key-1", now);
-      comments.addAsCoach(grant.id, dana, { target: onSummary, body: "Two" }, "key-2", now + 1);
+      const second = comments.addAsCoach(grant.id, dana, { target: onSummary, body: "Two" }, "key-2", now + 1);
       expect(comments.unseen()).toBe(2);
       // The owner's own replies are nothing new to the owner.
-      comments.replyAsOwner(who, first.id, "Thanks", "reply-1", now + 2);
+      const reply = comments.replyAsOwner(who, first.id, "Thanks", "reply-1", now + 2);
       expect(comments.unseen()).toBe(2);
       expect(comments.listForOwner(who, now + 3).flatMap((thread) => thread.comments.map((comment) => [comment.author, comment.seen]))).toEqual([
         ["coach", false], ["owner", undefined], ["coach", false],
       ]);
-      expect(refusal(() => comments.markSeen({ ...who, userId: "another" }, now + 4))).toBe("forbidden");
+      expect(refusal(() => comments.markSeen({ ...who, userId: "another" }, [first.id, second.id], now + 4))).toBe("forbidden");
       expect(comments.unseen()).toBe(2);
-      comments.markSeen(who, now + 4);
+      // The owner's own reply is named too, and stays as it was: only a coach's comment is seen.
+      comments.markSeen(who, [first.id, second.id, reply.id, first.id], now + 4);
       expect(comments.unseen()).toBe(0);
       expect(rows().map((row) => row.seen_at)).toEqual([now + 4, now + 4, null]);
       // Seen once is seen: a later look doesn't move the time, and a new comment is new again.
-      comments.addAsCoach(grant.id, dana, { target: onFact, body: "Three" }, "key-3", now + 5);
-      comments.markSeen(who, now + 6);
+      const third = comments.addAsCoach(grant.id, dana, { target: onFact, body: "Three" }, "key-3", now + 5);
+      comments.markSeen(who, [first.id, second.id, third.id], now + 6);
       expect(rows().map((row) => row.seen_at)).toEqual([now + 4, now + 4, null, now + 6]);
       expect(comments.listForOwner(who, now + 7).flatMap((thread) => thread.comments.map((comment) => comment.seen))).toEqual([true, undefined, true, true]);
       // A coach is never told whether the owner has looked.
       expect(JSON.stringify(comments.listForCoach(grant.id, dana, now + 7))).not.toContain("seen");
+    } finally { db.close(); }
+  });
+
+  it("marks seen only the comments the page showed, so one written since stays new", () => {
+    const { comments, grant, rows, db } = taken();
+    try {
+      comments.addAsCoach(grant.id, dana, { target: onFact, body: "Shown" }, "key-1", now);
+      // The page reads the list, and a coach writes again before the page says what it showed.
+      const shown = comments.listForOwner(who, now + 1).flatMap((thread) => thread.comments).filter((comment) => comment.seen === false).map((comment) => comment.id);
+      const later = comments.addAsCoach(grant.id, dana, { target: onFact, body: "Written after the list was read" }, "key-2", now + 2);
+      comments.markSeen(who, shown, now + 3);
+      expect(comments.unseen()).toBe(1);
+      expect(rows().map((row) => [row.body, row.seen_at])).toEqual([["Shown", now + 3], ["Written after the list was read", null]]);
+      // The next reading shows it as new.
+      expect(comments.listForOwner(who, now + 4)[0]!.comments.find((comment) => comment.id === later.id)?.seen).toBe(false);
+      // Naming nothing, or what isn't there, marks nothing.
+      comments.markSeen(who, [], now + 5);
+      comments.markSeen(who, ["not-a-comment"], now + 5);
+      expect(comments.unseen()).toBe(1);
+      // A list that isn't one, or is longer than a vault can hold comments, is refused.
+      for (const ids of [undefined, "all", [7], Array.from({ length: MAX_VAULT_COMMENTS + 1 }, () => later.id)])
+        expect(refusal(() => comments.markSeen(who, ids as string[], now + 6)), JSON.stringify(ids)?.slice(0, 20)).toBe("invalid");
+      expect(comments.unseen()).toBe(1);
+      // A page from before names nothing and marks every coach's comment, as it always did; only for the owner.
+      const reply = comments.replyAsOwner(who, later.id, "Noted", "reply-1", now + 7);
+      expect(refusal(() => comments.markAllSeen({ ...who, userId: "another" }, now + 8))).toBe("forbidden");
+      expect(comments.unseen()).toBe(1);
+      comments.markAllSeen(who, now + 8);
+      expect(comments.unseen()).toBe(0);
+      expect(rows().map((row) => [row.id, row.seen_at])).toEqual([[shown[0], now + 3], [later.id, now + 8], [reply.id, null]]);
     } finally { db.close(); }
   });
 
@@ -647,7 +678,7 @@ describe("the owner's side of a thread", () => {
     try {
       const asked = comments.addAsCoach(grant.id, dana, { target: onBullet, body: "How many teams used it?" }, "key-1", now);
       const reply = comments.replyAsOwner(who, asked.id, "Three.", "reply-1", now + 1);
-      comments.markSeen(who, now + 2);
+      comments.markSeen(who, [asked.id], now + 2);
       shares.revoke(who, grant.id, now + 3);
       const exported = comments.export(who);
       expect(exported).toEqual([

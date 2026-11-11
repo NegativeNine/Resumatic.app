@@ -68,3 +68,26 @@ describe("negated quantity comparisons", () => {
     expect(unsupportedNumbers("Managed at least 10 people", "at least\nManaged 10 people")).not.toEqual([]);
   });
 });
+
+describe("upto, written as one word", () => {
+  it("is the same bound on a figure as up to", () => {
+    expect(unsupportedNumbers("Cut costs by 30%", "Cut costs by upto 30%")).not.toEqual([]);
+    expect(unsupportedNumbers("Cut costs by at least 30%", "Cut costs by Upto 30%")).not.toEqual([]);
+    expect(unsupportedNumbers("Cut costs by upto 30%", "Cut costs by upto 30%")).toEqual([]);
+    expect(unsupportedNumbers("Cut costs by up to 30%", "Cut costs by up to 30%")).toEqual([]);
+    expect(unsupportedNumbers("Cut costs by upto 30%", "Cut costs by up to 30%")).toEqual([]);
+    expect(unsupportedNumbers("Cut costs by up to 30%", "Cut costs by upto 30%")).toEqual([]);
+    expect(unsupportedNumbers("Cut costs by at most 30%", "Cut costs by upto 30%")).toEqual([]);
+  });
+
+  it("is the same bound when it is denied", () => {
+    expect(unsupportedNumbers("Cut costs by upto 30%", "Cut costs by not upto 30%")).not.toEqual([]);
+    expect(unsupportedNumbers("Cut costs by 30%", "Cut costs by not upto 30%")).not.toEqual([]);
+    expect(unsupportedNumbers("Cut costs by not up to 30%", "Cut costs by not upto 30%")).toEqual([]);
+  });
+
+  it("is not read inside a longer word", () => {
+    expect(unsupportedNumbers("Opened 30 stores", "Opened uptown 30 stores")).toEqual([]);
+    expect(unsupportedNumbers("Opened 30 stores", "Set upto 30 stores")).not.toEqual([]);
+  });
+});
