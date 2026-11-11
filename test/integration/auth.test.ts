@@ -70,6 +70,9 @@ describe("the control plane", () => {
       }
       expect((await user.send("PUT", "/api/profile", { name: "Jane" })).status).toBe(200);
       expect((await user.send("POST", "/api/review", { confirm: [], reject: [] })).status).toBe(204);
+      // Job preferences, read and saved.
+      expect((await user.fetch("/api/preferences")).status).toBe(200);
+      expect((await user.send("PUT", "/api/preferences", { place: "Toronto", jobTypes: ["full_time"], availableFrom: "now", payFloor: null, expectedRevision: 0 })).status).toBe(200);
       for (const spy of spies) expect(spy).not.toHaveBeenCalled();
 
       // The spies do see Directory calls: signing in again is one.

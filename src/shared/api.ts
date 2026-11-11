@@ -12,6 +12,8 @@
 //   GET    /api/me                     Me
 //   GET    /api/profile                Profile
 //   PUT    /api/profile                Partial<Profile> -> Profile
+//   GET    /api/preferences            Preferences
+//   PUT    /api/preferences            PreferencesUpdate -> Preferences
 //   POST   /api/account/sign-out-everywhere   204
 //   POST   /api/sources                multipart field "file" (PDF or DOCX, at most 10 MB) -> 201 { sourceId }
 //   GET    /api/sources                { sources: SourceView[] }

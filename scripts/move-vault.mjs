@@ -8,6 +8,7 @@ import { httpsOrigin } from "./lib/config.mjs";
 // in step.
 export const TABLES = new Set([
   "profile",
+  "preferences",
   "sources",
   "source_revisions",
   "evidence",

@@ -1,5 +1,11 @@
-/** Test-only helper to reconstruct a Vault schema before a link could name a coach, the latest migration. */
+/** Test-only helper to reconstruct a Vault schema before job preferences were kept, the latest migration. */
+export function removePreferencesMigration(sql: SqlStorage): void {
+  sql.exec(`DROP TABLE IF EXISTS preferences`);
+}
+
+/** Test-only helper to reconstruct a Vault schema before a link could name a coach, and so before every later migration. */
 export function removeCoachMigration(sql: SqlStorage): void {
+  removePreferencesMigration(sql);
   sql.exec(`DROP TABLE IF EXISTS coach_clients`);
   for (const column of ["coach_joined_at", "coach_name", "coach_user_id", "coach_email"])
     sql.exec(`ALTER TABLE share_grants DROP COLUMN ${column}`);

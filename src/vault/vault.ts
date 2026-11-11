@@ -43,6 +43,8 @@ import type {
   SourceView,
 } from "../shared/api";
 import { DATE_PATTERN, MAX_JOB_NAME_CHARS, MAX_LINE_CHARS, MAX_UPLOAD_BYTES, isWebUrl, normalizePosting } from "../shared/api";
+import type { Preferences, PreferenceValues } from "../shared/preferences";
+import { PreferencesStore } from "./preferences";
 import { AppError, errorCode } from "../shared/errors";
 import { isMissingWorkflowInstance } from "../shared/workflow-errors";
 import { directoryForUser } from "../shared/stubs";
@@ -241,6 +243,8 @@ export interface VaultExport extends RecordExport {
   billing: Entitlement | null;
   exportedAt: string;
   profile: Profile;
+  /** Job preferences as stored. Revision 0, with nothing said, until the first save. */
+  preferences: Preferences;
   /** `file` is the download path of the original upload. */
   sources: {
     id: string;
@@ -709,6 +713,28 @@ export class Vault extends DurableObject<Env> {
     // updateProfile executes its write before returning its promise. There is
     // no await between the revision check and the write in this object.
     return this.updateProfile(who, patch);
+  }
+
+  // ---------------------------------------------------------------- job preferences
+  // Read and saved by their owner, and exported with the vault. Nothing that makes a resume, a
+  // document, a copy or a connected app's answer reads them: test/unit/preferences-reach.test.ts
+  // holds the store to the two calls below and the export.
+
+  private get preferences(): PreferencesStore {
+    return new PreferencesStore(this.sql);
+  }
+
+  async getPreferences(who: Who): Promise<Preferences> {
+    this.requireOwner(who);
+    return this.preferences.read();
+  }
+
+  /** Replaces all four values, or refuses a stale editor as updateProfileChecked does. */
+  async updatePreferences(who: Who, values: PreferenceValues, expectedRevision: number): Promise<Preferences> {
+    this.requireOwner(who);
+    // The store reads the revision and writes in one synchronous turn: nothing is awaited
+    // between the owner check above and the write.
+    return this.preferences.save(values, expectedRevision);
   }
 
   // ---------------------------------------------------------------- sources (user)
@@ -3926,6 +3952,7 @@ export class Vault extends DurableObject<Env> {
         : null,
       exportedAt: new Date().toISOString(),
       profile: this.readProfile(),
+      preferences: this.preferences.read(),
       sources: this.sql
         .exec<SourceRow>(`SELECT * FROM sources ORDER BY created_at`)
         .toArray()
