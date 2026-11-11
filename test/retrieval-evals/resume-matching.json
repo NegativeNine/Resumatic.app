@@ -1,0 +1,733 @@
+{
+  "version": 1,
+  "kind": "hand-authored synthetic smoke evaluation; not real-candidate or promotion evidence",
+  "labels": "3=direct supporting experience, 1=partial or adjacent experience, 0=unrelated, contradictory or absent experience. Omitted candidates have grade 0.",
+  "facts": [
+    {
+      "id": "f00_0",
+      "text": "Built Python REST endpoints with FastAPI and automated API tests."
+    },
+    {
+      "id": "f00_1",
+      "text": "Wrote Python scripts to clean spreadsheets."
+    },
+    {
+      "id": "f00_2",
+      "text": "Have not built Python REST APIs in production."
+    },
+    {
+      "id": "f00_3",
+      "text": "Designed website layouts using CSS."
+    },
+    {
+      "id": "f01_0",
+      "text": "Reduced PostgreSQL query latency by adding indexes and rewriting joins."
+    },
+    {
+      "id": "f01_1",
+      "text": "Created monthly reports using SQL SELECT statements."
+    },
+    {
+      "id": "f01_2",
+      "text": "Read about SQL query optimization but never tuned production databases."
+    },
+    {
+      "id": "f01_3",
+      "text": "Managed a customer contact list."
+    },
+    {
+      "id": "f02_0",
+      "text": "Operated production Kubernetes clusters and resolved failed deployments."
+    },
+    {
+      "id": "f02_1",
+      "text": "Packaged a local application in a Docker container."
+    },
+    {
+      "id": "f02_2",
+      "text": "Completed a Kubernetes tutorial without production cluster experience."
+    },
+    {
+      "id": "f02_3",
+      "text": "Edited product photographs."
+    },
+    {
+      "id": "f03_0",
+      "text": "Managed six software engineers, held one-to-ones and conducted annual performance reviews."
+    },
+    {
+      "id": "f03_1",
+      "text": "Mentored two new developers without line management responsibilities."
+    },
+    {
+      "id": "f03_2",
+      "text": "Attended engineering performance reviews as an individual contributor, not a manager."
+    },
+    {
+      "id": "f03_3",
+      "text": "Processed supplier invoices."
+    },
+    {
+      "id": "f04_0",
+      "text": "Coordinated a product launch across engineering, design and legal, tracking dependencies and milestones."
+    },
+    {
+      "id": "f04_1",
+      "text": "Tracked tasks for one engineering team."
+    },
+    {
+      "id": "f04_2",
+      "text": "Observed a cross-functional launch but had no coordination responsibilities."
+    },
+    {
+      "id": "f04_3",
+      "text": "Cleaned laboratory instruments."
+    },
+    {
+      "id": "f05_0",
+      "text": "Deployed services on AWS using Terraform for EC2, IAM and networking."
+    },
+    {
+      "id": "f05_1",
+      "text": "Used AWS S3 to download existing reports."
+    },
+    {
+      "id": "f05_2",
+      "text": "Have no hands-on AWS deployment or infrastructure-as-code experience."
+    },
+    {
+      "id": "f05_3",
+      "text": "Scheduled retail store shifts."
+    },
+    {
+      "id": "f06_0",
+      "text": "Closed enterprise SaaS contracts after negotiating with procurement, security and executive stakeholders."
+    },
+    {
+      "id": "f06_1",
+      "text": "Qualified incoming sales leads and booked product demonstrations."
+    },
+    {
+      "id": "f06_2",
+      "text": "Supported enterprise sales demos but never negotiated or closed a contract."
+    },
+    {
+      "id": "f06_3",
+      "text": "Maintained office printers."
+    },
+    {
+      "id": "f07_0",
+      "text": "Reduced subscription cancellations through proactive renewal planning and outreach to at-risk accounts."
+    },
+    {
+      "id": "f07_1",
+      "text": "Answered customer billing questions through a support queue."
+    },
+    {
+      "id": "f07_2",
+      "text": "Recorded churn figures but did not manage accounts or retention programs."
+    },
+    {
+      "id": "f07_3",
+      "text": "Assembled electronic components."
+    },
+    {
+      "id": "f08_0",
+      "text": "Processed monthly employee payroll and reconciled tax withholding and statutory filings."
+    },
+    {
+      "id": "f08_1",
+      "text": "Maintained employee timesheets for payroll staff."
+    },
+    {
+      "id": "f08_2",
+      "text": "Have not processed payroll or filed payroll taxes."
+    },
+    {
+      "id": "f08_3",
+      "text": "Translated marketing slogans."
+    },
+    {
+      "id": "f09_0",
+      "text": "Built quarterly financial forecasts and explained actual-versus-budget variances to department leaders."
+    },
+    {
+      "id": "f09_1",
+      "text": "Entered expense receipts into accounting software."
+    },
+    {
+      "id": "f09_2",
+      "text": "Reviewed a financial forecast in training but never built one."
+    },
+    {
+      "id": "f09_3",
+      "text": "Tested mobile screen-reader navigation."
+    },
+    {
+      "id": "f10_0",
+      "text": "Worked as a registered nurse administering medication and monitoring patients on a hospital ward."
+    },
+    {
+      "id": "f10_1",
+      "text": "Scheduled appointments at a medical reception desk."
+    },
+    {
+      "id": "f10_2",
+      "text": "Worked in hospital reception and hold no nursing registration or patient-care responsibilities."
+    },
+    {
+      "id": "f10_3",
+      "text": "Built inventory dashboards."
+    },
+    {
+      "id": "f11_0",
+      "text": "Investigated endpoint security alerts, contained compromised devices and documented incident response findings."
+    },
+    {
+      "id": "f11_1",
+      "text": "Installed antivirus software on office laptops."
+    },
+    {
+      "id": "f11_2",
+      "text": "Escalated security alerts to specialists but did not investigate or contain incidents."
+    },
+    {
+      "id": "f11_3",
+      "text": "Designed exhibition stands."
+    },
+    {
+      "id": "f12_0",
+      "text": "Designed randomized A/B experiments, defined success metrics and analyzed statistical significance."
+    },
+    {
+      "id": "f12_1",
+      "text": "Reported weekly product usage metrics."
+    },
+    {
+      "id": "f12_2",
+      "text": "Read A/B test results but never designed or analyzed experiments."
+    },
+    {
+      "id": "f12_3",
+      "text": "Planned warehouse loading routes."
+    },
+    {
+      "id": "f13_0",
+      "text": "Built scheduled Airflow pipelines that extracted, transformed and loaded data into an analytics warehouse."
+    },
+    {
+      "id": "f13_1",
+      "text": "Manually imported CSV files into a reporting spreadsheet."
+    },
+    {
+      "id": "f13_2",
+      "text": "Used dashboards fed by ETL pipelines but did not build or operate those pipelines."
+    },
+    {
+      "id": "f13_3",
+      "text": "Negotiated real estate leases."
+    },
+    {
+      "id": "f14_0",
+      "text": "Conducted user interviews and moderated usability sessions, synthesizing findings into design recommendations."
+    },
+    {
+      "id": "f14_1",
+      "text": "Created interface mockups based on an existing design brief."
+    },
+    {
+      "id": "f14_2",
+      "text": "Observed user interviews but never conducted research or synthesized findings."
+    },
+    {
+      "id": "f14_3",
+      "text": "Reconciled bank statements."
+    },
+    {
+      "id": "f15_0",
+      "text": "Reduced warehouse stockouts by setting reorder points and implementing regular cycle counts."
+    },
+    {
+      "id": "f15_1",
+      "text": "Packed customer orders using printed pick lists."
+    },
+    {
+      "id": "f15_2",
+      "text": "Received inventory reports but did not manage stock levels or perform cycle counts."
+    },
+    {
+      "id": "f15_3",
+      "text": "Wrote internal API documentation."
+    }
+  ],
+  "cases": [
+    {
+      "id": "python-api",
+      "query": "Develop production Python REST APIs",
+      "candidates": [
+        "f00_1",
+        "f01_0",
+        "f01_2",
+        "f00_2",
+        "f00_0",
+        "f05_1",
+        "f05_2",
+        "f00_3",
+        "f05_3",
+        "f05_0",
+        "f01_3",
+        "f01_1"
+      ],
+      "grades": {
+        "f00_0": 3,
+        "f00_1": 1
+      },
+      "split": "calibration",
+      "category": "positive"
+    },
+    {
+      "id": "sql-performance",
+      "query": "Optimize slow SQL queries in production",
+      "candidates": [
+        "f01_3",
+        "f02_0",
+        "f01_2",
+        "f02_2",
+        "f06_0",
+        "f01_1",
+        "f06_1",
+        "f02_1",
+        "f06_2",
+        "f06_3",
+        "f02_3",
+        "f01_0"
+      ],
+      "grades": {
+        "f01_0": 3,
+        "f01_1": 1
+      },
+      "split": "holdout",
+      "category": "positive"
+    },
+    {
+      "id": "kubernetes",
+      "query": "Operate Kubernetes clusters in production",
+      "candidates": [
+        "f03_1",
+        "f02_1",
+        "f03_2",
+        "f07_3",
+        "f07_1",
+        "f03_0",
+        "f02_2",
+        "f07_2",
+        "f07_0",
+        "f02_0",
+        "f02_3",
+        "f03_3"
+      ],
+      "grades": {
+        "f02_0": 3,
+        "f02_1": 1
+      },
+      "split": "calibration",
+      "category": "positive"
+    },
+    {
+      "id": "people-leadership",
+      "query": "Directly manage engineers and conduct performance reviews",
+      "candidates": [
+        "f08_0",
+        "f04_3",
+        "f08_2",
+        "f08_1",
+        "f04_0",
+        "f03_2",
+        "f04_1",
+        "f04_2",
+        "f03_1",
+        "f03_3",
+        "f08_3",
+        "f03_0"
+      ],
+      "grades": {
+        "f03_0": 3,
+        "f03_1": 1
+      },
+      "split": "holdout",
+      "category": "positive"
+    },
+    {
+      "id": "program-delivery",
+      "query": "Coordinate delivery across engineering, design and legal teams",
+      "candidates": [
+        "f09_2",
+        "f04_1",
+        "f05_1",
+        "f04_2",
+        "f05_0",
+        "f09_0",
+        "f04_0",
+        "f09_1",
+        "f09_3",
+        "f05_2",
+        "f05_3",
+        "f04_3"
+      ],
+      "grades": {
+        "f04_0": 3,
+        "f04_1": 1
+      },
+      "split": "calibration",
+      "category": "positive"
+    },
+    {
+      "id": "aws",
+      "query": "Deploy applications to AWS with infrastructure as code",
+      "candidates": [
+        "f06_0",
+        "f06_2",
+        "f05_0",
+        "f10_3",
+        "f05_2",
+        "f10_2",
+        "f10_1",
+        "f06_1",
+        "f05_3",
+        "f06_3",
+        "f10_0",
+        "f05_1"
+      ],
+      "grades": {
+        "f05_0": 3,
+        "f05_1": 1
+      },
+      "split": "holdout",
+      "category": "positive"
+    },
+    {
+      "id": "enterprise-sales",
+      "query": "Close enterprise software contracts with complex buying committees",
+      "candidates": [
+        "f11_1",
+        "f07_2",
+        "f07_1",
+        "f06_2",
+        "f07_3",
+        "f11_0",
+        "f11_3",
+        "f07_0",
+        "f06_0",
+        "f11_2",
+        "f06_1",
+        "f06_3"
+      ],
+      "grades": {
+        "f06_0": 3,
+        "f06_1": 1
+      },
+      "split": "calibration",
+      "category": "positive"
+    },
+    {
+      "id": "customer-retention",
+      "query": "Reduce customer churn through proactive account management",
+      "candidates": [
+        "f08_1",
+        "f12_1",
+        "f12_3",
+        "f08_3",
+        "f07_3",
+        "f08_2",
+        "f12_0",
+        "f12_2",
+        "f08_0",
+        "f07_0",
+        "f07_1",
+        "f07_2"
+      ],
+      "grades": {
+        "f07_0": 3,
+        "f07_1": 1
+      },
+      "split": "holdout",
+      "category": "positive"
+    },
+    {
+      "id": "payroll",
+      "query": "Run payroll with tax and statutory compliance",
+      "candidates": [
+        "f08_3",
+        "f09_3",
+        "f13_3",
+        "f09_0",
+        "f08_2",
+        "f13_2",
+        "f09_2",
+        "f13_0",
+        "f09_1",
+        "f08_0",
+        "f08_1",
+        "f13_1"
+      ],
+      "grades": {
+        "f08_0": 3,
+        "f08_1": 1
+      },
+      "split": "calibration",
+      "category": "positive"
+    },
+    {
+      "id": "forecasting",
+      "query": "Build financial forecasts and analyze budget variance",
+      "candidates": [
+        "f14_0",
+        "f09_1",
+        "f10_0",
+        "f14_3",
+        "f09_0",
+        "f10_2",
+        "f09_2",
+        "f14_2",
+        "f14_1",
+        "f09_3",
+        "f10_1",
+        "f10_3"
+      ],
+      "grades": {
+        "f09_0": 3,
+        "f09_1": 1
+      },
+      "split": "holdout",
+      "category": "positive"
+    },
+    {
+      "id": "clinical-care",
+      "query": "Provide direct patient care as a registered nurse",
+      "candidates": [
+        "f15_0",
+        "f10_2",
+        "f10_3",
+        "f11_3",
+        "f15_1",
+        "f15_2",
+        "f11_2",
+        "f11_0",
+        "f11_1",
+        "f10_0",
+        "f15_3",
+        "f10_1"
+      ],
+      "grades": {
+        "f10_0": 3,
+        "f10_1": 1
+      },
+      "split": "calibration",
+      "category": "positive"
+    },
+    {
+      "id": "incident-response",
+      "query": "Investigate and contain cybersecurity incidents",
+      "candidates": [
+        "f12_2",
+        "f00_2",
+        "f00_1",
+        "f11_1",
+        "f00_3",
+        "f12_3",
+        "f11_2",
+        "f00_0",
+        "f12_1",
+        "f11_3",
+        "f11_0",
+        "f12_0"
+      ],
+      "grades": {
+        "f11_0": 3,
+        "f11_1": 1
+      },
+      "split": "holdout",
+      "category": "positive"
+    },
+    {
+      "id": "experimentation",
+      "query": "Design and analyze randomized product A/B experiments",
+      "candidates": [
+        "f01_0",
+        "f01_1",
+        "f12_0",
+        "f01_3",
+        "f13_2",
+        "f13_1",
+        "f12_3",
+        "f13_3",
+        "f13_0",
+        "f01_2",
+        "f12_2",
+        "f12_1"
+      ],
+      "grades": {
+        "f12_0": 3,
+        "f12_1": 1
+      },
+      "split": "calibration",
+      "category": "positive"
+    },
+    {
+      "id": "data-pipelines",
+      "query": "Build scheduled ETL pipelines for analytics",
+      "candidates": [
+        "f13_2",
+        "f13_1",
+        "f02_3",
+        "f14_0",
+        "f02_1",
+        "f13_3",
+        "f13_0",
+        "f14_3",
+        "f02_0",
+        "f14_2",
+        "f02_2",
+        "f14_1"
+      ],
+      "grades": {
+        "f13_0": 3,
+        "f13_1": 1
+      },
+      "split": "holdout",
+      "category": "positive"
+    },
+    {
+      "id": "ux-research",
+      "query": "Conduct user interviews and usability research",
+      "candidates": [
+        "f03_2",
+        "f03_0",
+        "f14_3",
+        "f14_1",
+        "f03_3",
+        "f15_0",
+        "f15_2",
+        "f14_0",
+        "f14_2",
+        "f03_1",
+        "f15_3",
+        "f15_1"
+      ],
+      "grades": {
+        "f14_0": 3,
+        "f14_1": 1
+      },
+      "split": "calibration",
+      "category": "positive"
+    },
+    {
+      "id": "inventory",
+      "query": "Reduce warehouse stockouts and improve inventory accuracy",
+      "candidates": [
+        "f00_2",
+        "f04_1",
+        "f15_1",
+        "f00_3",
+        "f15_2",
+        "f00_1",
+        "f04_0",
+        "f04_2",
+        "f15_0",
+        "f00_0",
+        "f15_3",
+        "f04_3"
+      ],
+      "grades": {
+        "f15_0": 3,
+        "f15_1": 1
+      },
+      "split": "holdout",
+      "category": "positive"
+    },
+    {
+      "id": "legal-license",
+      "query": "Hold a California attorney license and represent clients in court",
+      "candidates": [
+        "f01_3",
+        "f01_2",
+        "f04_0",
+        "f00_1",
+        "f04_2",
+        "f01_1",
+        "f04_1",
+        "f01_0",
+        "f00_2",
+        "f04_3",
+        "f00_3",
+        "f00_0"
+      ],
+      "grades": {},
+      "split": "calibration",
+      "category": "gap"
+    },
+    {
+      "id": "japanese",
+      "query": "Speak Japanese fluently at a professional business level",
+      "candidates": [
+        "f07_0",
+        "f04_3",
+        "f07_3",
+        "f07_1",
+        "f03_3",
+        "f07_2",
+        "f03_2",
+        "f04_0",
+        "f03_0",
+        "f04_2",
+        "f04_1",
+        "f03_1"
+      ],
+      "grades": {},
+      "split": "holdout",
+      "category": "gap"
+    },
+    {
+      "id": "pilot",
+      "query": "Hold a commercial airline pilot license",
+      "candidates": [
+        "f07_0",
+        "f06_2",
+        "f10_0",
+        "f06_0",
+        "f10_1",
+        "f07_1",
+        "f06_1",
+        "f06_3",
+        "f10_3",
+        "f07_3",
+        "f10_2",
+        "f07_2"
+      ],
+      "grades": {},
+      "split": "calibration",
+      "category": "gap"
+    },
+    {
+      "id": "doctorate",
+      "query": "Hold a PhD in computational chemistry",
+      "candidates": [
+        "f13_0",
+        "f13_1",
+        "f10_1",
+        "f13_3",
+        "f09_2",
+        "f10_0",
+        "f10_2",
+        "f13_2",
+        "f09_3",
+        "f10_3",
+        "f09_0",
+        "f09_1"
+      ],
+      "grades": {},
+      "split": "holdout",
+      "category": "gap"
+    }
+  ]
+}

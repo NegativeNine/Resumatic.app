@@ -9,6 +9,8 @@ import {
 import { reportUsage, type UsageObserver } from "../../src/ai/usage";
 import { rerankScores } from "../../src/ai/rerank";
 import { usableEmbedding } from "../../src/shared/embedding";
+import { embeddingInput } from "../../src/ai/embedding-input";
+import { relevanceScores } from "../../src/ai/relevance";
 import { EvalBudget, evalBudgetFromEnv } from "../extract-evals/budget";
 import { sharedPilotFromEnv, type SharedPilot } from "./shared-pilot.mjs";
 
@@ -233,7 +235,7 @@ export function restModels(
         const { data } = await workersAi<{ data: number[][] }>(
           creds,
           model,
-          { text: texts.slice(i, i + 50) },
+          embeddingInput(model, texts.slice(i, i + 50), callOpts?.purpose),
           budget,
           pilot,
           onUsage,
@@ -252,6 +254,13 @@ export function restModels(
     },
     async rerank(query, texts) {
       if (texts.length === 0) return [];
+      if (vars.RERANK_MODEL === "@cf/cloudflare/clef") {
+        const remote = { AI_GATEWAY_ID: creds.gatewayId, AI: {
+          run: (model: string, input: unknown) => workersAi<unknown>(creds, model, input, budget, pilot, onUsage, "rerank"),
+        } } as unknown as Env;
+        return relevanceScores(remote, query, texts);
+      }
+      if (vars.RERANK_MODEL && vars.RERANK_MODEL !== "@cf/baai/bge-reranker-base") throw new Error("rerank_model_unknown");
       const result = await workersAi<unknown>(
         creds,
         "@cf/baai/bge-reranker-base",

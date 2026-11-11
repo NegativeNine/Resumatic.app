@@ -67,6 +67,7 @@ interface ResumaticSecrets {
   DIRECTORY_SHARDS?: string;
   RETENTION_REVIEW_ID?: string;
   EMBEDDING_MODEL?: string;
+  RERANK_MODEL?: string;
 
   /** Google OAuth client secret. */
   OIDC_CLIENT_SECRET: string;
