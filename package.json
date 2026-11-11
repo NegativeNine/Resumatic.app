@@ -20,6 +20,8 @@
     "build:production": "vite build",
     "eval:seeded": "node scripts/seeded-evals.mjs",
     "test:scripts": "node --test scripts/*.test.mjs",
+    "taxonomy:build": "node scripts/taxonomy/build.mjs",
+    "taxonomy:fixture": "node scripts/taxonomy/fixture.mjs",
     "models:record": "node scripts/record-models.mjs",
     "check:release": "node scripts/check-release.mjs",
     "audit:deletion": "node scripts/audit-deletion.mjs",

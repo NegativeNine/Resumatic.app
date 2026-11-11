@@ -1,0 +1,10 @@
+O*NET-SOC Code,Title,Workplace Example,Element ID,Element Name,Hot Technology,In Demand
+99-1001.00,Example Software Developers,Python,5.A.1.01,Object or component oriented development software,Y,Y
+99-1001.00,Example Software Developers,Kubernetes,5.A.1.02,Container orchestration software,Y,N
+99-1001.00,Example Software Developers,Go,5.A.1.01,Object or component oriented development software,N,N
+99-1001.00,Example Software Developers,Amazon Web Services AWS software,5.A.1.02,Container orchestration software,Y,Y
+99-1001.00,Example Software Developers,C++,5.A.1.01,Object or component oriented development software,N,N
+99-1002.00,Example Project Management Specialists,python,5.A.1.01,Object or component oriented development software,Y,N
+99-1002.00,Example Project Management Specialists,Microsoft Excel,5.A.2.01,Spreadsheet software,N,N
+99-1003.00,Example Budget Analysts,Microsoft Excel,5.A.2.01,Spreadsheet software,Y,Y
+99-9999.00,No Such Occupation,Ghostware,5.A.2.01,Spreadsheet software,N,N

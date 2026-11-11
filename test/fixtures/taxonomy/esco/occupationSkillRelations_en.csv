@@ -1,0 +1,11 @@
+occupationUri,relationType,skillType,skillUri
+http://data.europa.eu/esco/occupation/00000000-0000-4000-8000-000000000001,essential,knowledge,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000003
+http://data.europa.eu/esco/occupation/00000000-0000-4000-8000-000000000001,optional,knowledge,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000004
+http://data.europa.eu/esco/occupation/00000000-0000-4000-8000-000000000001,optional,skill/competence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000005
+http://data.europa.eu/esco/occupation/00000000-0000-4000-8000-000000000002,essential,skill/competence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000002
+http://data.europa.eu/esco/occupation/00000000-0000-4000-8000-000000000002,essential,skill/competence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000001
+http://data.europa.eu/esco/occupation/00000000-0000-4000-8000-000000000003,essential,skill/competence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000001
+http://data.europa.eu/esco/occupation/00000000-0000-4000-8000-000000000003,optional,skill/competence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000007
+http://data.europa.eu/esco/occupation/00000000-0000-4000-8000-000000000003,optional,skill/competence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000007
+http://data.europa.eu/esco/occupation/00000000-0000-4000-8000-000000000003,sometimes,skill/competence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000002
+http://data.europa.eu/esco/occupation/00000000-0000-4000-8000-000000000003,optional,skill/competence,http://data.europa.eu/esco/skill/00000000-0000-4000-8000-000000000099
