@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { join, posix, relative, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // Job preferences have no switch that keeps them from being used. What keeps them where they are
@@ -11,8 +11,9 @@ import { describe, expect, it } from "vitest";
 // such a file. It could build the store again, or call its own two owner methods with the owner's
 // `who`, which requireMcp hands to every connected app's method. So for the Vault and the
 // Worker's routes the lists also say how many times each way to the row is written, and in which
-// method or route. The last test adds a reader in each of those ways to a copy of the sources and
-// shows that the lists change.
+// method or route. Nor can it see a helper the store's module gives out beside its class, so what
+// that module exports, and every statement in src/ that takes from it, are pinned too. The last
+// test adds a reader in each of those ways to a copy of the sources and shows that the lists change.
 //
 // Everything here reads text, so a name counts wherever it is written, in a comment too.
 
@@ -66,6 +67,29 @@ function written(text: string, heading: RegExp, label: (found: RegExpExecArray) 
   return places;
 }
 
+/** What the store's module gives out: each line of it that exports, as written. */
+const gives = (tree: Tree) => [...tree.get(STORE)!.matchAll(/^[ \t]*export\b.*$/gm)].map((line) => line[0]);
+/** A statement that names a module: an import or export from it, an import of it alone, or `import(...)`. */
+const SPECIFIER = /\b(?:import|export)\b[^;]*?\bfrom\s*["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)|\bimport\s*["']([^"']+)["']/g;
+/**
+ * Who takes anything from the store's module: every statement in a tree whose path leads to it,
+ * by file, with its spaces made single. A path is followed from the file it is written in, so
+ * "./preferences" counts from beside the store and not from elsewhere.
+ */
+function takers(tree: Tree): Record<string, string[]> {
+  const module = STORE.replace(/\.ts$/, "");
+  const found: Record<string, string[]> = {};
+  for (const [path, text] of tree) {
+    for (const statement of text.matchAll(SPECIFIER)) {
+      const specifier = statement[1] ?? statement[2] ?? statement[3]!;
+      if (!specifier.startsWith(".")) continue;
+      const target = posix.join(posix.dirname(path), specifier).replace(/\.(ts|tsx|js|mjs)$/, "").replace(/\/index$/, "");
+      if (target === module) (found[path] ??= []).push(statement[0].replace(/\s+/g, " "));
+    }
+  }
+  return found;
+}
+
 /** Where a tree reaches for job preferences: in the Vault by method, and in the Worker by route. */
 const reach = (tree: Tree) => ({
   vault: written(tree.get(VAULT)!, MEMBER, (found) => found[1]!),
@@ -100,6 +124,13 @@ describe("what can reach job preferences", () => {
     // One place builds the store, and the schema is the only other file that takes anything from it.
     expect(naming("new PreferencesStore(")).toEqual([VAULT]);
     expect(naming("PREFERENCES_MIGRATIONS")).toEqual([STORE, "src/vault/schema.ts"]);
+    // The store's module gives out those two alone, and each goes to one file. A helper beside the
+    // class would be allowed the table's SQL and named by no list here, so it changes these instead.
+    expect(gives(sources)).toEqual(["export const PREFERENCES_MIGRATIONS: readonly string[] = [", "export class PreferencesStore {"]);
+    expect(takers(sources)).toEqual({
+      "src/vault/schema.ts": ['import { PREFERENCES_MIGRATIONS } from "./preferences"'],
+      [VAULT]: ['import { PreferencesStore } from "./preferences"'],
+    });
     // The owner's export holds the row. Only the Vault, which makes it, and the Worker, which sends it, name it.
     expect(naming(/\bexport(Snapshot|All|Json|ArchiveSnapshot|ArchiveStream)\b/)).toEqual([VAULT, ROUTES]);
     // What loads with every page, and what heads every resume, have no field for any of it.
@@ -162,14 +193,16 @@ describe("what can reach job preferences", () => {
   });
 
   it("gains no reader in the Vault or the Worker unseen, whichever way one reaches for the row", () => {
-    /** The sources with one line added directly below a line that is there once. */
-    const adding = (path: string, below: string, line: string): Tree => {
-      const parts = sources.get(path)!.split(`${below}\n`);
-      expect(parts, below).toHaveLength(2);
-      return new Map(sources).set(path, `${parts[0]}${below}\n${line}\n${parts[1]}`);
+    /** A tree with one text that is there once in a file put in place of another. */
+    const replacing = (tree: Tree, path: string, was: string, now: string): Tree => {
+      const parts = tree.get(path)!.split(was);
+      expect(parts, was).toHaveLength(2);
+      return new Map(tree).set(path, parts.join(now));
     };
+    /** The sources, or another tree, with one line added directly below a line that is there once. */
+    const adding = (path: string, below: string, line: string, tree: Tree = sources): Tree => replacing(tree, path, `${below}\n`, `${below}\n${line}\n`);
     /** What the tests above hold about the Vault and the Worker's routes, read from any tree. */
-    const seen = (tree: Tree) => ({ ...reach(tree), sql: namingIn(tree, TABLE_IN_SQL) });
+    const seen = (tree: Tree) => ({ ...reach(tree), sql: namingIn(tree, TABLE_IN_SQL), gives: gives(tree), takers: takers(tree) });
     const asItIs = seen(sources);
     /** The lists as they are, but for one more place under one name. */
     const withPlace = (side: "vault" | "worker", way: string, place: string) => ({
@@ -205,5 +238,26 @@ describe("what can reach job preferences", () => {
     const APPS = "src/worker/mcp.ts";
     const tool = 'const wanted = async (env: Env, claims: McpClaims) => vault(env, claims.vid).getPreferences(await localVault(env, claims.vid).authorizeMcp(claims, "vault:read"));';
     expect(namingIn(adding(APPS, "  vault(env, vid) as unknown as McpVault;", tool), "getPreferences")).toEqual([...naming("getPreferences"), APPS].sort());
+
+    // Through a helper the store's module gives out beside its class, which reads the row with
+    // SQL the store is allowed and is named by no list above. Taken by the Vault, on the line that
+    // already imports the class, and called from a connected app's method.
+    const HELPER = 'export function peekPreferences(sql: SqlStorage) { return sql.exec("SELECT place, pay_amount FROM preferences").toArray(); }';
+    const IMPORT = 'import { PreferencesStore } from "./preferences";';
+    const helper = `${sources.get(STORE)!}${HELPER}\n`;
+    const given = replacing(new Map(sources).set(STORE, helper), VAULT, IMPORT, 'import { PreferencesStore, peekPreferences } from "./preferences";');
+    const gained = [...asItIs.gives, HELPER];
+    expect(seen(adding(VAULT, TOOL, "    const wanted = peekPreferences(this.sql);", given))).toEqual({
+      ...asItIs,
+      gives: gained,
+      takers: { ...asItIs.takers, [VAULT]: ['import { PreferencesStore, peekPreferences } from "./preferences"'] },
+    });
+    // Or taken by another of the Vault's modules, by the same path, which names no list's word.
+    const taken = adding("src/vault/shares.ts", 'import type { Withheld } from "./sensitive";', 'import { peekPreferences } from "./preferences";', new Map(sources).set(STORE, helper));
+    expect(seen(taken)).toEqual({ ...asItIs, gives: gained, takers: { ...asItIs.takers, "src/vault/shares.ts": ['import { peekPreferences } from "./preferences"'] } });
+    // Or by a path written another way, or by asking for the module while running.
+    const DEEP = 'import { peekPreferences } from "../vault/./preferences.ts";';
+    expect(seen(adding("src/worker/mcp.ts", "  vault(env, vid) as unknown as McpVault;", "const wanted = import(\"../vault/preferences\");")).takers["src/worker/mcp.ts"]).toEqual(['import("../vault/preferences")']);
+    expect(seen(adding("src/vault/shares.ts", 'import type { Withheld } from "./sensitive";', DEEP)).takers["src/vault/shares.ts"]).toEqual([DEEP.slice(0, -1)]);
   });
 });
