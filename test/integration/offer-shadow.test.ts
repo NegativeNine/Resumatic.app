@@ -85,7 +85,7 @@ describe("reading with shadow offers switched on", () => {
       holds: false,
       proposedBy: "model",
       model: env.MODEL_JUDGE,
-      method: "entailment/1",
+      method: "entailment/2",
       decidedBy: null,
     });
     expect(links.shown).toEqual([]);
@@ -113,7 +113,7 @@ describe("reading with shadow offers switched on", () => {
     const { links, long, short } = await twice({ judgeRejects: ["every quarter"] });
     // Three roles and seven lines are word for word the same. The eighth line is the offer.
     expect(links.all.filter((link) => link.proposedBy === "rule").map((link) => link.method).sort()).toEqual([...Array(3).fill("identical-role/2"), ...Array(7).fill("identical-wording/2")].sort());
-    expect(links.all.filter((link) => link.proposedBy === "model")).toMatchObject([{ relation: "fuller", from: long.id, to: short.id, method: "entailment/1" }]);
+    expect(links.all.filter((link) => link.proposedBy === "model")).toMatchObject([{ relation: "fuller", from: long.id, to: short.id, method: "entailment/2" }]);
     expect(links.all.every((link) => link.shadow && !link.holds)).toBe(true);
   });
 

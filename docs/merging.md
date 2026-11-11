@@ -39,16 +39,18 @@ Lines that differ in wording are never merged by a rule. With `OFFER_SHADOW_ENAB
 
 **Which pairs are asked about.** For each line the upload proposed, other than skills: the lines of the same kind, in the same role, from another upload or typed by the owner, that are nearest to it in meaning. At most two for each line, none below a set nearness, and at most sixty pairs for an upload. A pair with the same words is left to the rule above, and a pair that was linked or offered before is not asked about again. Roles count as the same role only when they are alike in every field that names a role.
 
-**What is asked.** Each direction separately: does this line say everything that one says?
+**What is asked.** First, of the pair, and without a model: are the two lines qualified by the same words? Each is read against the closed list that keeps a line from being divided ([splitting.md](splitting.md), starting rule 1): shared credit and hedges, denials, alternatives, attempts and intentions. If one line has such a word and the other does not, or the two have different ones, nothing is offered and no model is asked. "Pursuing the PMP certification" is not "Completed the PMP certification", "Never handled customer escalations" is not "Handled customer escalations", and "Helped lead the migration" is not "Led the migration". The list is wide on purpose, so some pairs a person would offer are not.
 
-1. The checks a resume line passes against its facts, which need no model. A different figure, a different name, a hedge on one side, a denial, or an outcome going the other way settles that direction as no, whatever a judge would say.
+Then each direction separately: does this line say everything that one says?
+
+1. The checks a resume line passes against its facts, which need no model. A different figure, a different name, a denial or a plan of an action those checks know, or an outcome going the other way settles that direction as no, whatever a judge would say.
 2. The judge, in the form it already answers. Anything but one plain "supported" is a no, and an answer counts only in the call that asked its question.
 
 | Each says everything the other says | Only one does | Neither does |
 | --- | --- | --- |
 | Offered as the same fact. The earlier one would stand for both | The one that says more is offered as a fuller version of the other. Both stay | Nothing |
 
-**What only the judge can stop.** "Wrote the on-call runbooks" and "Reviewed the on-call runbooks" have no figure, name or hedge to tell them apart. No check stops them being offered as the same; only the judge does. The labelled pairs mark which wrong offers are stopped without a model and which are not (`test/fixtures/match-pairs.ts`), and the eval puts each to the real judge (`test/evals/match.eval.ts`). It has not been run.
+**What only the judge can stop.** "Wrote the on-call runbooks" and "Reviewed the on-call runbooks" have no figure, name or hedge to tell them apart. No check stops them being offered as the same; only the judge does. The same holds for two lines qualified by the same words about different things. "Handled escalations but did not answer tickets" and "Did not handle escalations but answered tickets" each deny what the other says in the same words, and the claim checks read a denial only beside the verbs they know. The labelled pairs mark which wrong offers are stopped without a model and which are not (`test/fixtures/match-pairs.ts`), and the eval puts each to the real judge (`test/evals/match.eval.ts`). It has not been run.
 
 An offer is only ever an offer. Nothing here confirms one, and in shadow nobody is shown one.
 

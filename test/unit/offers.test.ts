@@ -87,6 +87,44 @@ describe("what to offer about two lines", () => {
     expect(asked.flat().map((item) => item.text)).toEqual(["Led a team of engineers"]);
   });
 
+  it("offers nothing, and asks nothing, about a hedge, a denial, an attempt or an intention that only one line has", async () => {
+    // This judge says yes to everything, and no list of verbs knows "handle", "complete",
+    // "negotiate" or "pursue". The closed list of qualifying words settles each pair first.
+    const cases: [stated: string, qualified: string][] = [
+      ["Handled customer escalations", "Never handled customer escalations"],
+      ["Completed the PMP certification", "Did not complete the PMP certification"],
+      ["Negotiated vendor contracts", "Didn't negotiate vendor contracts"],
+      ["Negotiated vendor contracts", "Didn\u00B4t negotiate vendor contracts"],
+      ["Completed the PMP certification", "Pursuing the PMP certification"],
+      ["AWS Solutions Architect certification", "AWS Solutions Architect certification (in progress)"],
+      ["Migrated the billing system", "Tried to migrate the billing system"],
+      ["Built a new billing system", "Planned to build a new billing system"],
+      ["Led the migration to Kubernetes", "Helped lead the migration to Kubernetes"],
+      ["Built services in Python", "Built services in Python or Go"],
+      // Each line is qualified, but not by the same words.
+      ["Never managed the vendor budget", "Did not manage the vendor budget"],
+      ["Helped migrate the billing system", "Tried to migrate the billing system"],
+      // Every qualifying word counts, not only the first a line has.
+      ["Helped design the API and handled escalations", "Helped design the API and never handled escalations"],
+    ];
+    for (const [stated, qualified] of cases)
+      for (const [later, earlier] of [[stated, qualified], [qualified, stated]] as const) {
+        const { models: fake, asked } = models();
+        expect(await offers(fake, [pair(later, earlier)]), `${later} / ${earlier}`).toEqual([]);
+        expect(asked, `${later} / ${earlier}`).toEqual([]);
+      }
+  });
+
+  it("still asks about two lines qualified by the same words", async () => {
+    const { models: fake, asked } = models();
+    expect(await offers(fake, [pair("Helped design the billing API used by 3 product teams", "Helped design the billing API that 3 product teams use")])).toEqual([{ relation: "same", from: "later-1", to: "earlier-1" }]);
+    expect(asked.flat()).toHaveLength(2);
+    // Where the same words qualify both, a denial of a known action is still settled without asking.
+    const denied = models();
+    expect(await offers(denied.models, [pair("Did not manage the budget but led the roadmap", "Managed the budget but did not lead the roadmap")])).toEqual([]);
+    expect(denied.asked).toEqual([]);
+  });
+
   it("asks the typed-decision judge where there is one", async () => {
     const { models: fake, asked } = models({ [LONG]: "unsupported" }, true);
     expect(await offers(fake, [pair(LONG, SHORT)])).toEqual([{ relation: "fuller", from: "later-1", to: "earlier-1" }]);
@@ -136,9 +174,14 @@ describe("what to offer about two lines", () => {
 describe("labelled pairs", () => {
   const never = MATCH_PAIRS.filter((example) => example.expect === "different");
 
-  it.each(never.filter((example) => example.stoppedBy === "check"))("$later / $earlier: never the same, because of $why, whatever a judge says", async (example) => {
-    const found = await offers(models().models, [pair(example.later, example.earlier)]);
-    expect(found.filter((offer) => offer.relation === "same")).toEqual([]);
+  it.each(never.filter((example) => example.stoppedBy === "check"))("$later / $earlier: never offered, because of $why, whatever a judge says", async (example) => {
+    // This judge says yes to everything, so nothing can have been put to it: a check that needs
+    // no model settled both directions.
+    for (const [later, earlier] of [[example.later, example.earlier], [example.earlier, example.later]] as const) {
+      const { models: fake, asked } = models();
+      expect(await offers(fake, [pair(later, earlier)])).toEqual([]);
+      expect(asked).toEqual([]);
+    }
   });
 
   it.each(never.filter((example) => example.stoppedBy === "judge"))("$later / $earlier: only the judge can tell that $why", async (example) => {

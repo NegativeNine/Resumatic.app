@@ -2,6 +2,7 @@ import type { Models } from "../ai/models";
 import { JudgeOut, judgePrompt, type JudgeItem } from "../ai/prompts";
 import { checkClaim } from "../grounding/claims";
 import { roleKey, wording, type RoleIdentity } from "../shared/record";
+import { qualifiers } from "./split";
 
 // Finding what an upload says again (step 6 of docs/taxonomy-pipelines-design.md, first part).
 //
@@ -76,7 +77,7 @@ export function identicalMatches(roles: readonly MatchRole[], facts: readonly Ma
 // ---------------------------------------------------------------- offers
 
 /** The check that made an offer, stamped on it. Raise the number when the questions or the pre-check change. */
-export const ENTAILMENT_METHOD = "entailment/1";
+export const ENTAILMENT_METHOD = "entailment/2";
 
 /** Two facts of one kind in one role whose wording differs. `later` was read after `earlier`. */
 export interface OfferPair {
@@ -102,16 +103,23 @@ export const OFFERS_PER_FACT = 2;
 export const MAX_OFFER_PAIRS = 60;
 
 /**
- * Works out, for each pair, whether one fact says everything the other says. Each direction is
- * asked on its own: first the checks a resume line passes against its facts, which need no model
- * and settle any pair whose figures or names differ, then the judge, in the form it already
- * answers. A direction holds only if both say so. Nothing is composed and no wording changes:
- * the answer is which of the two existing facts, if either, could stand for the other.
+ * Works out, for each pair, whether one fact says everything the other says. A pair is first held
+ * to the closed list of hedges, denials, alternatives and intentions that keeps a line from being
+ * divided (`qualifiers`): if the two lines are not qualified by the same words, neither says
+ * everything the other says and nothing is asked. Each direction is then asked on its own: first
+ * the checks a resume line passes against its facts, which need no model and settle any pair
+ * whose figures or names differ, then the judge, in the form it already answers. A direction
+ * holds only if both say so. Nothing is composed and no wording changes: the answer is which of
+ * the two existing facts, if either, could stand for the other.
  */
 export async function offers(models: Models, pairs: readonly OfferPair[]): Promise<Offer[]> {
   // "x.e": does the later fact say everything the earlier one says? "x.l": the other way round.
   const items: JudgeItem[] = [];
   pairs.forEach((pair, index) => {
+    // "Pursuing the certification" is not "Completed the certification", and "Never handled" is
+    // not "Handled". The claim checks below read a denial or a plan only beside the verbs they
+    // know, so the list settles this for every verb, and for both directions at once.
+    if (qualifiers(pair.later.text).join("\n") !== qualifiers(pair.earlier.text).join("\n")) return;
     if (checkClaim(pair.earlier.text, [{ text: pair.later.text }]).ok)
       items.push({ alias: `${index + 1}.e`, text: pair.earlier.text, facts: [{ text: pair.later.text, quote: null }] });
     if (checkClaim(pair.later.text, [{ text: pair.earlier.text }]).ok)

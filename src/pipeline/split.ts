@@ -89,27 +89,33 @@ const QUALIFYING_WORDS = new Set([
   "sin", "nunca", "ohne", "nicht", "niemals", "sans", "jamais",
 ]);
 const QUALIFYING_PHRASES =
-  /(?<![\p{L}\p{N}])(?:part of|member of|one of|some of|up to|rather than|instead of|other than|failed to|and\/or|plans? to|aim(?:s|ed|ing)? to|in progress|ning[u\u00FA]n(?:a|o|as|os)?|kein(?:e|en|er|es|em)?|aucun(?:e|s|es)?)(?![\p{L}\p{N}])/iu;
+  /(?<![\p{L}\p{N}])(?:part of|member of|one of|some of|up to|rather than|instead of|other than|failed to|and\/or|plans? to|aim(?:s|ed|ing)? to|in progress|ning[u\u00FA]n(?:a|o|as|os)?|kein(?:e|en|er|es|em)?|aucun(?:e|s|es)?)(?![\p{L}\p{N}])/giu;
 
 // Whatever was typed or read where an apostrophe belongs: a quotation mark of either hand, an
 // accent standing alone, a prime, or a modifier letter that only looks like one. "Didn`t" and
 // "didn\u2018t" deny exactly what "didn't" denies.
 const APOSTROPHES = /['\u2032\u2035\uff07\p{Pi}\p{Pf}\p{Sk}\p{Lm}]/gu;
 
-/** The hedge, negation, alternative or intention that keeps a line whole, or null when it has none. */
-export function qualifier(line: string): string | null {
+/**
+ * Every hedge, negation, alternative or intention in a line: the phrases in the order they come,
+ * then the words in theirs. Two lines qualified in the same way give the same list.
+ */
+export function qualifiers(line: string): string[] {
   // The list is read against the words alone, whichever apostrophe and whatever spacing they came with.
   const text = line.replace(APOSTROPHES, "'").replace(/\s+/gu, " ");
-  const phrase = QUALIFYING_PHRASES.exec(text);
-  if (phrase) return phrase[0].toLowerCase();
+  const found = [...text.matchAll(QUALIFYING_PHRASES)].map((phrase) => phrase[0].toLowerCase());
   for (const match of text.matchAll(/[\p{L}\p{N}]+(?:'[\p{L}]+)?/gu)) {
     const word = match[0];
     const lower = word.toLowerCase();
-    if (lower.endsWith("n't")) return lower;
     // "May 2021" is a month. Only the verb is a possibility.
-    if (word === "may" || QUALIFYING_WORDS.has(lower)) return lower;
+    if (lower.endsWith("n't") || word === "may" || QUALIFYING_WORDS.has(lower)) found.push(lower);
   }
-  return null;
+  return found;
+}
+
+/** The hedge, negation, alternative or intention that keeps a line whole, or null when it has none. */
+export function qualifier(line: string): string | null {
+  return qualifiers(line)[0] ?? null;
 }
 
 // ---------------------------------------------------------------- the proposal
