@@ -9,8 +9,9 @@ export { normalizeLabel, words } from "./normalize.mjs";
 export * from "./types";
 
 /**
- * The taxonomy for this deployment, or null where none is bound. Nothing reads it yet: the binding
- * is optional, so a deployment without it behaves exactly as before.
+ * The taxonomy for this deployment, or null where none is bound. The binding is optional, so a
+ * deployment without it behaves exactly as before. One stage reads it, and only where that stage
+ * is switched on: tagging in shadow (src/pipeline/tag.ts).
  */
 export function taxonomyFor(env: { TAXONOMY?: D1Database }): Taxonomy | null {
   return env.TAXONOMY ? new Taxonomy(new D1Store(env.TAXONOMY)) : null;

@@ -139,6 +139,11 @@ export async function validate({
       missing.push("MATCH_SHADOW_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.OFFER_SHADOW_ENABLED === "true")
       missing.push("OFFER_SHADOW_ROLLOUT_UNVERIFIED");
+    // Tagging in shadow stores its tags in people's vaults too, and sends the words of each line
+    // to the taxonomy's database to be looked up. It stays out of production until each method's
+    // precision is measured on lines given with consent and the notice and credits are in place.
+    if (environment === "production" && config.vars?.TAG_SHADOW_ENABLED === "true")
+      missing.push("TAG_SHADOW_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.R2_CACHE_FENCE_ENABLED && config.vars.R2_CACHE_FENCE_ENABLED !== "false")
       missing.push("R2_CACHE_FENCE_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.PLACEMENT_FENCE_ENABLED && config.vars.PLACEMENT_FENCE_ENABLED !== "false")

@@ -22,7 +22,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Comments on a shared copy | Merged in #34 | Suggested wording builds on its table |
 | Suggested wording on a shared copy | Open on branch `now/12-coach-suggestions`, based on comments' review fixes (`fix/comments-review`) | Adds the vault's next migration, the fourth of four after coach accounts, directly after comments'; only that order is deployed. Accepting is the owner's own verified line edit, so the manual-edit release blocker holds it. Real sign-ins on both sides and the real judge on suggested wording are owed |
 | Fit preview through connected apps | Branch `now/10-connected-app-fit`, based on #34 (sensitive facts). No migration | Deployed before connected apps are switched on anywhere; then MCP in staging and a real client |
-| Tagging facts and roles, in shadow | Begun on branch `pipeline/05-tag`; unfinished and untested | Finish, test and review the stage. The taxonomy it reads is loaded on staging |
+| Tagging facts and roles with taxonomy concepts | Built and tested on branch `pipeline/05-tag`, based on #34; in review | Off by default, refused in production configuration, and inert without a wholly loaded taxonomy. No vault migration. The eval against the real judge has not been run and nothing has been measured; vector candidates, parts, postings, screens and any use of tags are not built |
 
 The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments. Suggested wording will add the next. Its branch adds it as two columns on the comments' table, directly after comments' own; a branch that appends another migration first moves it, and its rewind helper, after that one.
 
@@ -39,11 +39,11 @@ The first of those, on preferences, is settled on branch `fix/preferences-review
 
 ## Taxonomy pipeline work
 
-The [pipeline design](taxonomy-pipelines-design.md) is agreed. The rebuilt taxonomy ([manifest](taxonomy-build-2026-11-11.json)) is loaded on staging, and the vault can hold parts, tags and links ([record.md](record.md)); no reading or tailoring pipeline uses either yet.
+The [pipeline design](taxonomy-pipelines-design.md) is agreed. The rebuilt taxonomy ([manifest](taxonomy-build-2026-11-11.json)) is loaded on staging, and the vault can hold parts, tags and links ([record.md](record.md)); nothing uses either except the shadow stages below, switched on nowhere.
 
 1. Load the versioned taxonomy into staging (done on 11 November) and build its vector index (not started).
 2. Add evidence, parts, tags and links without changing existing records. Merged in #34.
-3. Evaluate splitting, tagging and duplicate matching in shadow, using consented labelled examples. Splitting ([splitting.md](splitting.md)) and matching ([merging.md](merging.md)) are merged in #34; none has been run against the real models. Tagging is begun on branch `pipeline/05-tag` and unfinished.
+3. Evaluate splitting, tagging and duplicate matching in shadow, using consented labelled examples. Splitting ([splitting.md](splitting.md)) and matching ([merging.md](merging.md)) are merged in #34; none has been run against the real models. Tagging of facts and roles is built in shadow on branch `pipeline/05-tag` and in review ([tagging.md](tagging.md)); it is switched on nowhere, including staging, where the taxonomy it reads is bound, and has not been run against the real judge.
 4. Add owner review of parts, tags and merge proposals.
 5. Add matching and coverage by concept, retaining evidence checks and similarity fallback.
 6. Add skills with years only where skill-use intervals are evidenced or owner-confirmed; role dates alone are insufficient.

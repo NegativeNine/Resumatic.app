@@ -95,7 +95,8 @@ import { finalLegacyEvidence, legacyReceipt, legacyReview } from "./legacy-remed
 import { RunStore } from "./runs";
 import { RecordStore } from "./record";
 import { IDENTICAL_ROLE_METHOD, IDENTICAL_WORDING_METHOD, MAX_OFFER_PAIRS, OFFERS_PER_FACT, OFFER_MIN_COSINE, identicalMatches, type JudgedOffer, type OfferPair } from "../pipeline/match";
-import { roleKey, sameWording } from "../shared/record";
+import { roleKey, sameWording, stampProblem, wording } from "../shared/record";
+import { MAX_TAGS_PER_SAVE, MAX_TAG_FACTS, MAX_TAG_ROLES, TAG_JUDGE_METHOD, TAG_RULE_METHOD, skillAsWritten, tagStamp, type HeldTag, type ProposedTag, type TagMade, type TagSubjects } from "../pipeline/tag";
 import type { NewPart, RecordExport } from "../shared/record";
 import { ShareStore } from "./shares";
 import { markedWording, sensitiveUse, setSensitive, usableQuote, withheldFacts } from "./sensitive";
@@ -1677,6 +1678,178 @@ export class Vault extends DurableObject<Env> {
       }
     }
     return { stored };
+  }
+
+  /**
+   * What a reading may tag: this upload's first job roles and extracted facts, how many of each
+   * it has in all, and the shadow tags each row already holds or another row with the same words
+   * holds. A skill is marked as written when its text is, character for character, one item of
+   * the line it was read from; the line itself is not given out. A fact marked sensitive is not
+   * given out at all. The rows are read as they stand while the upload is read. Nothing is
+   * awaited and nothing is written.
+   */
+  async tagCandidates(sourceId: string, runId?: string): Promise<TagSubjects> {
+    this.requireReading(sourceId, runId);
+    const roles = this.sql
+      .exec<{ id: string; title: string }>(
+        `SELECT id, title FROM roles WHERE source_id = ? AND kind = 'job' AND title IS NOT NULL AND title <> '' ORDER BY rowid LIMIT ?`,
+        sourceId,
+        MAX_TAG_ROLES,
+      )
+      .toArray();
+    // A line marked sensitive is not tagged, so its words are never looked up in the taxonomy or
+    // put to the judge. It is left out before the cap, so it takes no other line's place.
+    const withheld = withheldFacts(this.sql).ids;
+    const usable = this.sql
+      .exec<{ id: string; role_id: string | null; kind: string; text: string; quote: string | null }>(
+        `SELECT f.id, f.role_id, f.kind, f.text, e.quote FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id
+         WHERE f.source_id = ? AND f.origin = 'extracted' ORDER BY f.rowid`,
+        sourceId,
+      )
+      .toArray()
+      .filter((fact) => !withheld.has(fact.id));
+    const facts = usable.slice(0, MAX_TAG_FACTS);
+    const total = {
+      roles: this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM roles WHERE source_id = ? AND kind = 'job' AND title IS NOT NULL AND title <> ''`, sourceId).one().n,
+      facts: usable.length,
+    };
+    // A tag is a judgement about particular words. One held by any row that says the same words,
+    // in this upload or an earlier one, is that judgement already made.
+    type Held = { subject_id: string; holder_id: string; concept_id: string; method: string; model: string | null; taxonomy_version: string | null };
+    const heldBy = (rows: Held[], returned: readonly { id: string }[]): Map<string, HeldTag[]> => {
+      const held = new Map<string, HeldTag[]>(returned.map((row) => [row.id, []]));
+      const seen = new Set<string>();
+      for (const row of rows) {
+        const tag: HeldTag = { conceptId: row.concept_id, method: row.method, model: row.model, taxonomyVersion: row.taxonomy_version, own: row.holder_id === row.subject_id };
+        // However many rows say these words, one entry says all that matters of what they hold.
+        const key = JSON.stringify([row.subject_id, tag.conceptId, tag.method, tag.model, tag.taxonomyVersion, tag.own]);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        held.get(row.subject_id)?.push(tag);
+      }
+      return held;
+    };
+    const roleTags = heldBy(
+      this.sql
+        .exec<Held>(
+          `SELECT r.id AS subject_id, o.id AS holder_id, t.concept_id, t.method, t.model, t.taxonomy_version
+           FROM roles r JOIN roles o ON o.kind = 'job' AND o.title = r.title
+           JOIN record_tags t ON t.subject_kind = 'role' AND t.subject_id = o.id AND t.shadow = 1
+           WHERE r.source_id = ? AND r.kind = 'job' AND r.title IS NOT NULL AND r.title <> ''`,
+          sourceId,
+        )
+        .toArray(),
+      roles,
+    );
+    const factTags = heldBy(
+      this.sql
+        .exec<Held>(
+          `SELECT f.id AS subject_id, o.id AS holder_id, t.concept_id, t.method, t.model, t.taxonomy_version
+           FROM facts f JOIN facts o ON o.kind = f.kind AND o.text = f.text
+           JOIN record_tags t ON t.subject_kind = 'fact' AND t.subject_id = o.id AND t.shadow = 1
+           WHERE f.source_id = ? AND f.origin = 'extracted'`,
+          sourceId,
+        )
+        .toArray(),
+      facts,
+    );
+    return {
+      roles: roles.map((role) => ({ id: role.id, title: role.title, held: roleTags.get(role.id) ?? [] })),
+      facts: facts.map((fact) => ({
+        id: fact.id,
+        roleId: fact.role_id,
+        kind: fact.kind,
+        text: fact.text,
+        asWritten: fact.kind === "skill" && skillAsWritten(fact.quote, fact.text),
+        held: factTags.get(fact.id) ?? [],
+      })),
+      total,
+    };
+  }
+
+  /**
+   * Which of these facts their owner has marked sensitive since the reading read them. The stage
+   * asks before every call to the judge about facts, and leaves the marked ones out of it, so a
+   * line marked while it is at work is put to the judge no more. It awaits nothing and writes nothing.
+   */
+  async tagWithheld(sourceId: string, runId: string | undefined, factIds: string[]): Promise<string[]> {
+    this.requireReading(sourceId, runId);
+    if (!Array.isArray(factIds) || factIds.length > MAX_TAG_FACTS || factIds.some((id) => typeof id !== "string"))
+      throw new AppError("invalid", "a reading asks about at most one upload's facts at once");
+    const withheld = withheldFacts(this.sql).ids;
+    return factIds.filter((id) => withheld.has(id));
+  }
+
+  /**
+   * Keeps tags a reading decided for this upload's facts and job roles, in shadow: stored to be
+   * measured, shown to nobody and read by nothing else. A tag is about particular words, so one
+   * decided about words its row no longer has is left out, and so is the rule's tag for a skill
+   * that is no longer one item of its line as written. So is a tag for a fact its owner has marked
+   * sensitive since it was read. A tag the same decider stored before is left exactly as it is.
+   * What the record itself refuses is counted, and the rest are kept.
+   */
+  async saveShadowTags(sourceId: string, runId: string | undefined, made: TagMade, tags: ProposedTag[]): Promise<{ stored: number; refused: number }> {
+    this.requireReading(sourceId, runId);
+    if (!Array.isArray(tags)) throw new AppError("invalid", "tags are proposed for facts and job roles");
+    if (tags.length > MAX_TAGS_PER_SAVE) throw new AppError("invalid", "too many tags for one upload");
+    for (const tag of tags) {
+      if (tag?.method !== TAG_JUDGE_METHOD && tag?.method !== TAG_RULE_METHOD) throw new AppError("invalid", "unknown tagging method");
+      if ((tag.subject?.kind !== "fact" && tag.subject?.kind !== "role") || typeof tag.subject.id !== "string")
+        throw new AppError("invalid", "tags are proposed for facts and job roles");
+    }
+    const unstamped = made && typeof made === "object" ? stampProblem(tagStamp(TAG_JUDGE_METHOD, made)) : "a judgement says what made it";
+    if (unstamped) throw new AppError("invalid", unstamped);
+    // A line marked sensitive is not tagged, even where the mark landed while the judge was being asked about it.
+    const withheld = withheldFacts(this.sql).ids;
+    let stored = 0;
+    let refused = 0;
+    for (const tag of tags) {
+      // The judge was asked, and the taxonomy read, before this was called. Nothing is awaited
+      // from here to the tag being stored, so no edit or mark can fall between these checks and the write.
+      if (tag.subject.kind === "fact") {
+        const fact = this.sql
+          .exec<{ kind: string; text: string; quote: string | null }>(
+            `SELECT f.kind, f.text, e.quote FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id WHERE f.id = ? AND f.source_id = ?`,
+            tag.subject.id,
+            sourceId,
+          )
+          .toArray()[0];
+        if (!fact) throw new AppError("conflict", "fact is not part of this source");
+        if (fact.text !== tag.words || withheld.has(tag.subject.id)) continue;
+        if (tag.method === TAG_RULE_METHOD && !(fact.kind === "skill" && skillAsWritten(fact.quote, fact.text))) continue;
+      } else {
+        const role = this.sql.exec<{ kind: string; title: string | null }>(`SELECT kind, title FROM roles WHERE id = ? AND source_id = ?`, tag.subject.id, sourceId).toArray()[0];
+        if (!role) throw new AppError("conflict", "role is not part of this source");
+        // Only a job is given an occupation, and the rule is for listed skills: a job's is always asked about.
+        if (role.kind !== "job" || role.title !== tag.words || tag.method === TAG_RULE_METHOD) continue;
+      }
+      const stamp = tagStamp(tag.method, made);
+      // Found before, by the same decider against the same taxonomy: the row stays as it was stored.
+      const before =
+        typeof tag.conceptId === "string" &&
+        this.sql
+          .exec(
+            `SELECT id FROM record_tags WHERE subject_kind = ? AND subject_id = ? AND concept_id = ? AND shadow = 1
+             AND taxonomy_version IS ? AND method = ? AND model IS ?`,
+            tag.subject.kind,
+            tag.subject.id,
+            tag.conceptId,
+            stamp.taxonomyVersion,
+            stamp.method,
+            stamp.model,
+          )
+          .toArray().length > 0;
+      if (before) continue;
+      try {
+        this.record.proposeTag({ subject: { kind: tag.subject.kind, id: tag.subject.id }, conceptId: tag.conceptId, conceptKind: tag.conceptKind, label: tag.label, stamp });
+        stored++;
+      } catch (error) {
+        // Not a tag the record stores, or as many tags as the row can hold: this one is left, and the rest are kept.
+        if (!["conflict", "invalid", "too_large", "not_found"].includes(errorCode(error) ?? "")) throw error;
+        refused++;
+      }
+    }
+    return { stored, refused };
   }
 
   // ---------------------------------------------------------------- roles and facts (user)

@@ -8,7 +8,7 @@ Resumatic describes work in the terms of two public classifications, held as one
 
 This document says what is in the taxonomy, how it is built and loaded, how the app reads it, and what must be credited. The redesign of the reading and tailoring pipelines that uses it is set out in [taxonomy-pipelines-design.md](taxonomy-pipelines-design.md).
 
-**Status: the builder and the lookup exist and are tested on small synthetic files, and one build from the real downloads was made and checked on 10 November 2026 (see "What has and has not been checked"). The builder changed after it, so the build was made again from the same downloads on 11 November 2026 and that build was loaded into a D1 database on the staging account. The staging deployment binds it as `TAXONOMY` through its hand-applied configuration; the committed configuration binds none, and no pipeline reads it.**
+**Status: the builder and the lookup exist and are tested on small synthetic files, and one build from the real downloads was made and checked on 10 November 2026 (see "What has and has not been checked"). The builder changed after it, so the build was made again from the same downloads on 11 November 2026 and that build was loaded into a D1 database on the staging account. The staging deployment binds it as `TAXONOMY` through its hand-applied configuration; the committed configuration binds none. One stage reads one where it is bound and switched on, which is nowhere yet: tagging in shadow ([tagging.md](tagging.md)).**
 
 ## What each source is used for
 
@@ -170,7 +170,7 @@ Both sources are free to reuse with credit. A product that shows taxonomy data m
 - ESCO: reuse is allowed for any purpose under Commission Decision 2011/833/EU. A modified or adapted version must be clearly indicated as such; "What the builder adds" above is that indication, and it is repeated in each manifest.
 - O\*NET: Creative Commons Attribution 4.0. Credit the named release, link the licence, and say where changes were made.
 
-The notices are not in the app yet because the app shows no taxonomy data yet. They go on the privacy and terms pages in the same change that first shows any.
+The notices are not in the app yet because the app shows no taxonomy data yet. They go on the privacy and terms pages in the same change that first shows any. An export of shadow tags carries concept labels, so the notices go on the legal pages before tagging runs for anyone but test accounts.
 
 ## Tests
 

@@ -30,3 +30,14 @@ export function requireCitedDraft(body: ResumeBody): void {
   if (!lines.some((line) => line.text.trim().length > 0 && line.factIds.length > 0))
     throw new Error("eval_no_cited_lines");
 }
+
+/**
+ * A tagging run that tagged nothing wrong has shown nothing when there was nothing to tag. It is
+ * refused when the labelled lines gave no candidate at all, and when a method the labels expect
+ * tags from proposed none: a judge that declines everything is never wrong, and measures nothing.
+ */
+export function requireTagging(outcomes: readonly { found: boolean; expected: string | null; tagged: string | null }[]): void {
+  if (!outcomes.some((outcome) => outcome.found)) throw new Error("eval_no_tag_candidates");
+  const expected = new Set(outcomes.flatMap((outcome) => (outcome.expected === null ? [] : [outcome.expected])));
+  for (const method of expected) if (!outcomes.some((outcome) => outcome.tagged === method)) throw new Error("eval_no_tags");
+}
