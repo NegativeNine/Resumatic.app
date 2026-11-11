@@ -1,0 +1,27 @@
+// Characters that stand for other characters, or that are not seen at all. Splitting
+// (src/pipeline/split.ts) and the grounding checks (src/grounding/claims.ts) read a line through
+// these one definitions, so what counts as "didn't" cannot drift between them.
+//
+// Both patterns are global, for use with `replace` only.
+
+/**
+ * Whatever was typed or read where an apostrophe belongs: a quotation mark of either hand, an
+ * accent standing alone, a prime, or a modifier letter that only looks like one. "Didn`t" and
+ * "didn‘t" deny exactly what "didn't" denies.
+ */
+export const APOSTROPHES = /['′‵＇\p{Pi}\p{Pf}\p{Sk}\p{Lm}]/gu;
+
+/** A character that is not shown: a soft hyphen, a zero-width space or joiner, a mark of direction. */
+export const UNSEEN = /\p{Default_Ignorable_Code_Point}/gu;
+
+// An apostrophe of any spelling between the "n" and the final "t" of a word: the "n't" of a denial.
+const DENIAL_APOSTROPHE = new RegExp(`(?<=n)${APOSTROPHES.source}(?=t(?!\\p{L}))`, "giu");
+
+/**
+ * The text as a person reads it: without the characters that are not shown, and with "n't" written
+ * with a straight apostrophe whichever one it was written with. Any other apostrophe is left as it
+ * is, because there it is a possessive or a quotation mark and joins nothing.
+ */
+export function asRead(text: string): string {
+  return text.replace(UNSEEN, "").replace(DENIAL_APOSTROPHE, "'");
+}

@@ -3,6 +3,7 @@ import { scaledNumbers } from "./scaled-numbers";
 import { numberQualifier } from "./number-qualifier";
 import { numberRanges } from "./number-ranges";
 import { contradictedDirections } from "./direction";
+import { asRead } from "../shared/characters";
 
 // Deterministic checks that a claim says nothing its evidence does not: numbers, names and scope.
 // They are deliberately strict; the judge model catches what they cannot see.
@@ -716,6 +717,22 @@ function plannedOnlyActions(claim: string, evidence: Evidence[]): string[] {
   return [...asserted].filter((key) => planned.has(key) && !completed.has(key));
 }
 
+/**
+ * The denial, intention and direction checks read a claim and its evidence as written, and again
+ * as a person reads them (`asRead`), so "didn`t", "didnʼt" and "did­n't" deny what "didn't"
+ * denies. Each reading compares the claim only with evidence read the same way, so a line is never
+ * refused for spelling a word as its own fact does. A check finds whatever either reading finds:
+ * it can refuse more than it did on the text as written, never less.
+ */
+function eitherReading(claim: string, evidence: Evidence[], check: (claim: string, evidence: Evidence[]) => string[]): string[] {
+  const found = check(claim, evidence);
+  const readClaim = asRead(claim);
+  const readEvidence = evidence.map((item) => ({ ...item, text: asRead(item.text), quote: item.quote ? asRead(item.quote) : item.quote }));
+  const unchanged = readClaim === claim &&
+    readEvidence.every((item, i) => item.text === evidence[i]!.text && item.quote === evidence[i]!.quote);
+  return unchanged ? found : [...new Set([...found, ...check(readClaim, readEvidence)])];
+}
+
 /** The highest scope the text asserts, 0 if it has no scope verb. "Helped lead" counts as contributed. */
 export function scopeRank(text: string): number {
   const tokens = text.toLowerCase().match(/[a-z]+(?:-[a-z]+)*/g) ?? [];
@@ -775,14 +792,15 @@ export function checkClaim(claim: string, evidence: Evidence[], options: { detec
     problems.push(`names not in the evidence: ${names.join(", ")}`);
     findings.push({ kind: "names", values: findingValues(names) });
   }
-  const denied = contradictedActions(claim, evidence);
+  const denied = eitherReading(claim, evidence, contradictedActions);
   if (denied.length) unsupported(`actions contradicted by the evidence: ${denied.join(", ")}`);
-  const deniedObjects = contradictedActionObjects(claim, evidence);
+  const deniedObjects = eitherReading(claim, evidence, contradictedActionObjects);
   if (deniedObjects.length) unsupported(`actions contradicted by the evidence: ${deniedObjects.join(", ")}`);
-  const planned = plannedOnlyActions(claim, evidence);
+  const planned = eitherReading(claim, evidence, plannedOnlyActions);
   if (planned.length) unsupported(`completed actions stated only as plans: ${planned.join(", ")}`);
   if (options.detectDirection !== false) {
-    const reversed = contradictedDirections(claim, evidence.flatMap((item) => [item.text, item.quote ?? ""]));
+    const reversed = eitherReading(claim, evidence, (line, items) =>
+      contradictedDirections(line, items.flatMap((item) => [item.text, item.quote ?? ""])));
     if (reversed.length) unsupported(`outcome direction contradicted by the evidence: ${reversed.join(", ")}`);
     const swapped = swappedOutcomePercentages(claim, evidence.flatMap((item) => [item.text, item.quote ?? ""]));
     if (swapped.length) unsupported(`outcome percentage assigned to a different metric: ${swapped.join(", ")}`);
