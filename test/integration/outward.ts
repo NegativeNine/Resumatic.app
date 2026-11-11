@@ -6,7 +6,7 @@ import { MCP_SCOPES, type McpClaims, type McpFit } from "../../src/shared/mcp";
 import type { ShareGrant } from "../../src/shared/sharing";
 import { vault } from "../../src/shared/stubs";
 import { fromBase64url } from "../../src/worker/crypto";
-import { call, cookieFrom, eventually, type User } from "./support";
+import { call, cookieFrom, type User } from "./support";
 
 // Everything a vault sends to anyone but its owner, gathered as text, so a test can say of some
 // words "these went nowhere". A feature that adds a way out of a vault adds it here, and every
@@ -96,7 +96,8 @@ export async function outwardParts({ owner, copies, inputs }: { owner: User; cop
   const stub = vault(env, session.vid);
   const grant = await stub.createMcpGrant(who, {
     id: crypto.randomUUID(), clientId: "synthetic-outward-client", clientName: "Outward reader",
-    scopes: [...MCP_SCOPES], expiresAt: Date.now() + 60_000,
+    // Long enough to wait for a fit preview of every job, so none is refused for the grant's age.
+    scopes: [...MCP_SCOPES], expiresAt: Date.now() + 10 * 60_000,
   });
   const claims: McpClaims = {
     uid: session.uid, vid: session.vid, gen: grant.gen, epoch: grant.epoch,
@@ -119,15 +120,19 @@ export async function outwardParts({ owner, copies, inputs }: { owner: User; cop
     await tool("list_jobs", () => stub.mcpJobs(claims, { limit: 100 }));
     for (const resume of finished) await tool("get_resume", () => stub.mcpResume(claims, resume.id, resume.version));
     // A fit preview of every saved job. One that isn't current is started, and asked for again with
-    // the same key until it is answered: what it was measured from is then among the model inputs.
+    // the same key while it is being prepared: what it was measured from is then among the model
+    // inputs. A refusal ends the asking at once and contributes nothing.
     for (const job of jobs) {
       const requestKey = crypto.randomUUID();
-      await tool("preview_fit", () =>
-        eventually(async () => {
+      await tool("preview_fit", async () => {
+        const deadline = Date.now() + 60_000;
+        for (;;) {
           const answer = (await stub.mcpFit(claims, job.id, requestKey)) as McpFit;
-          return answer.state === "preparing" ? null : answer;
-        }, "the fit preview", 60_000),
-      );
+          if (answer.state !== "preparing") return answer;
+          if (Date.now() > deadline) throw new Error("timed out waiting for the fit preview");
+          await new Promise((resolve) => setTimeout(resolve, 40));
+        }
+      });
     }
   } finally {
     await stub.revokeMcpGrant(who, grant.id);

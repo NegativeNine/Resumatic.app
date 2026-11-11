@@ -354,6 +354,25 @@ describe("what a vault sends outward", () => {
     expect(JSON.stringify(answer)).toContain(GO);
     expect(parts.filter((part) => part.surface === "model input").map((part) => part.text).join("\n")).toContain(GO);
   }, 120_000);
+
+  it("refuses a current preview it can't read, starts nothing beside it, and gathers nothing from it at once", async () => {
+    const { user, claims, applicationId } = await person();
+    const own = await ownPreview(user, applicationId);
+    // Still current, but its stored result is not a fit preview's.
+    await sql(user, (db) => void db.exec(`UPDATE document_versions SET data = ? WHERE document_id = ?`, JSON.stringify({ result: { kind: "letter" } }), own.id));
+    const runs = await fitRuns(user);
+    options.calls = {};
+    await runInDurableObject(vaultOf(user), (instance) =>
+      expect(instance.mcpFit(claims, applicationId, crypto.randomUUID())).rejects.toThrow("This fit preview can't be read"));
+    expect(await fitRuns(user)).toBe(runs);
+    expect(modelCalls()).toBe(0);
+    // A refusal is gathered as nothing, and is not asked again as if it were still being prepared.
+    const started = Date.now();
+    const parts = await outwardParts({ owner: user, copies: [], inputs: [] });
+    expect(parts.filter((part) => part.surface === "preview_fit")).toEqual([]);
+    expect(parts.some((part) => part.surface === "list_jobs")).toBe(true);
+    expect(Date.now() - started).toBeLessThan(30_000);
+  }, 120_000);
 });
 
 describe("a day's fit previews started by apps", () => {
