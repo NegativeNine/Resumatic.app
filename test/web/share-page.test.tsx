@@ -152,6 +152,18 @@ describe("opening a shared copy", () => {
     );
   });
 
+  it("tells a coach signed out elsewhere to sign in again, not to reload", async () => {
+    const page = await visit(`/share?g=${GRANT}`, (seen) =>
+      seen.method === "GET"
+        ? { status: 200, body: { ...named(), reviewer: "you" } }
+        : { status: 401, body: { error: "unauthenticated", message: "this session was signed out" } },
+    );
+    page.fireEvent.click(await page.screen.findByRole("button", { name: "Add to my clients" }));
+    expect(await page.screen.findByRole("alert")).toHaveTextContent("Sign in to Resumatic again, then reload this page.");
+    expect(page.screen.queryByText(/this session was signed out/)).toBeNull();
+    expect(page.screen.queryByText(/Reload the page and try again/)).toBeNull();
+  });
+
   it("offers the add again when the copy still isn’t in the list after it was added", async () => {
     // The add went through, and the copy read again can't yet say it is in the list.
     const page = await visit(`/share?g=${GRANT}`, (seen) =>

@@ -215,6 +215,8 @@ function CoachNotice({
       });
       if (response.status === 204) return onChanged();
       if (response.status === 409) setReason(await conflictSentence(response));
+      // A session ended elsewhere: reloading alone can't help, signing in again does.
+      if (response.status === 401) setReason("Sign in to Resumatic again, then reload this page.");
       // Refused for good, or for now: the reader can't fix the first by trying again.
       setState(response.status === 401 || response.status === 403 || response.status === 409 || response.status === 410 ? "refused" : "failed");
     } catch {
