@@ -6,7 +6,7 @@ import { setModels, type Models } from "../../src/ai/models";
 import { setPdfRenderer } from "../../src/render/pdf";
 import type { FactView, Me, Profile, ResumeView, RoleView } from "../../src/shared/api";
 import type { DocumentView } from "../../src/shared/documents";
-import type { McpClaims } from "../../src/shared/mcp";
+import type { McpClaims, McpFit } from "../../src/shared/mcp";
 import { PREFERENCES_CHANGED, PREFERENCES_REFUSED, type PreferenceValues, type Preferences } from "../../src/shared/preferences";
 import type { CoachClient, ShareGrant } from "../../src/shared/sharing";
 import { directory, vault } from "../../src/shared/stubs";
@@ -664,6 +664,16 @@ describe("job preferences", () => {
     const second = (await waitForResume(user, started.resumeId)) as ResumeView;
     expect(second.state, second.error ?? "").toBe("ready");
     outward["get_resume, for the one the app started"] = JSON.stringify(await apps.mcpResume(claims, started.resumeId));
+    // A fit preview of the saved job, asked again with the same key while it is being prepared. What it
+    // was measured from is among the model inputs read below.
+    const fitKey = crypto.randomUUID();
+    let fit = (await apps.mcpFit(claims, applicationId, fitKey)) as McpFit;
+    for (const deadline = Date.now() + 60_000; fit.state === "preparing" && Date.now() < deadline; ) {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      fit = (await apps.mcpFit(claims, applicationId, fitKey)) as McpFit;
+    }
+    expect(fit.state).toBe("ready");
+    outward["preview_fit"] = JSON.stringify(fit);
     // The epoch an app's grant is checked against, which the consent page asks for with the owner's session.
     const identity = await apps.mcpIdentity(who);
     expect(identity).toEqual({ epoch: expect.any(String) });
