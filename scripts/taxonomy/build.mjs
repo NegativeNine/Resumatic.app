@@ -13,8 +13,8 @@
 // nothing else from the folders it is given. docs/taxonomy.md has the whole procedure.
 
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { attribution, combine } from "./combine.mjs";
@@ -41,17 +41,37 @@ async function csvFolder(folder) {
 }
 
 /**
+ * Whether what `path` names is the folder `folder` names, or is inside it. This goes by what is on
+ * disk and not by how the two paths are spelled, because one folder can be reached by several
+ * paths: through a link (a temporary folder on macOS is one), through a second mount, or on a
+ * file system that takes "Taxonomy" and "taxonomy" for one name. The place `path` really is, and
+ * every folder above it, is compared with `folder` by the device and file number that say which
+ * folder a folder is.
+ */
+async function holds(folder, path) {
+  // As whole numbers: a file number can be larger than a floating-point number holds exactly.
+  const sought = await stat(folder, { bigint: true });
+  for (let at = await realpath(path); ; at = dirname(at)) {
+    const here = await stat(at, { bigint: true });
+    if (here.dev === sought.dev && here.ino === sought.ino) return true;
+    if (dirname(at) === at) return false;
+  }
+}
+
+/**
  * The output folder is emptied before it is written, so that no file of an earlier build is left
  * to be loaded with the new ones. That is all it may cost: a folder is emptied only when it holds
- * an earlier build, and never when the files being read are in it. Anything else named by a wrong
- * --out (the folder the downloads are kept in, a checkout, a file) stops the build with nothing
- * removed.
+ * an earlier build, and never when the files being read are in it, by whatever path it or they
+ * were named. Anything else named by a wrong --out (the folder the downloads are kept in, a
+ * checkout, a file) stops the build with nothing removed.
  */
 async function replaceable(target, inputs) {
+  const holdsInputs = () =>
+    new Error(`${target} holds the files being read, and a build written there would remove them. Nothing was removed. Give --out a folder of its own.`);
+  // By how the paths are spelled. This alone covers a link kept in the folder to files kept elsewhere.
   for (const input of inputs) {
     const within = relative(target, resolve(input));
-    if (within !== ".." && !within.startsWith(`..${sep}`) && !isAbsolute(within))
-      throw new Error(`${target} holds the files being read, and a build written there would remove them. Nothing was removed. Give --out a folder of its own.`);
+    if (within !== ".." && !within.startsWith(`..${sep}`) && !isAbsolute(within)) throw holdsInputs();
   }
   let names;
   try {
@@ -62,6 +82,8 @@ async function replaceable(target, inputs) {
     throw error;
   }
   if (names.length === 0) return;
+  // And by what is on disk, now that there is something here to remove.
+  for (const input of inputs) if (await holds(target, input)) throw holdsInputs();
   // An earlier build is known by the manifest it wrote last, which no other manifest.json resembles.
   const manifest = await readFile(join(target, "manifest.json"), "utf8").then(JSON.parse).catch(() => null);
   if (typeof manifest?.contentHash !== "string" || !/^[0-9a-f]{64}$/.test(manifest.contentHash))

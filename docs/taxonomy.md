@@ -84,7 +84,7 @@ node scripts/taxonomy/build.mjs \
 
 It writes `concepts.ndjson`, `labels.ndjson` and `relations.ndjson`, the SQL that loads them (`d1/0001.sql` onwards), and `manifest.json`: every input file with its SHA-256 and row count, what came out by kind, what was set aside, and the credits below. The same files always give the same bytes, and the version (`esco-1.2.1+onet-31.0+<first eight characters of the content hash>`) names them.
 
-The output folder is replaced, not added to, so that no file of an earlier build is left to be loaded with the new ones. The builder does that only to a folder that is new, empty, or holds an earlier build, which it knows by the `manifest.json` a build writes last. It refuses any other folder with something in it, and any folder that the files it is reading are in, and it removes nothing when it refuses. Naming the folder the downloads are kept in, or a checkout, as `--out` stops the build.
+The output folder is replaced, not added to, so that no file of an earlier build is left to be loaded with the new ones. The builder does that only to a folder that is new, empty, or holds an earlier build, which it knows by the `manifest.json` a build writes last. It refuses any other folder with something in it, and any folder that the files it is reading are in, and it removes nothing when it refuses. Naming the folder the downloads are kept in, or a checkout, as `--out` stops the build. The folder the files are in is known by what it is on disk and not by how a path to it is written, so it is refused all the same when `--out` or the files are named through a link.
 
 ### Getting the files
 
