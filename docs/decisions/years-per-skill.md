@@ -29,7 +29,8 @@ When may Resumatic say that a person used a skill for a number of years? What co
 | Rule | Proposal |
 | --- | --- |
 | What counts | An interval read by code from a confirmed fact's own words (option 1), or entered or confirmed by the owner (option 3) |
-| Overlaps | Intervals for one skill are counted once where they overlap |
+| Overlaps | Dated intervals for one skill are counted once where they overlap |
+| Undated durations | A duration with no place in time ("Five years of Python") is never added to anything, because it cannot be checked for overlap. A skill's total is the larger of its longest single stated duration and the de-overlapped union of its dated intervals. Only an interval the owner confirms can place a duration in time, and then it counts as that interval |
 | Precision | Kept as given. "2019 to 2023" is counted in years; an interval given in months is counted in months. A sum is never stated more exactly than its least exact part |
 | An open end | A current role's open end counts up to today only in an interval the owner confirmed |
 | No interval | Duration unknown. Never zero, never "less than" |

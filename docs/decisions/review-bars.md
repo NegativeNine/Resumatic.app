@@ -16,16 +16,16 @@ Pipeline step 7 shows the owner the parts of a line, the tags on a fact and the 
 
 ## The bars proposed
 
-A bar is met only when the whole of a 95% interval around the measured rate is on the right side of it, not just the rate itself. That stops a small, lucky sample from passing. Every number is an **Owner** proposal.
+A rate bar is met only when the whole of an exact two-sided 95% interval (Clopper-Pearson) around the measured rate is on the right side of it, not just the rate itself. That stops a small, lucky sample from passing. A zero bar is met only by zero failures observed on at least the named set; the interval rule does not apply to it, since an interval around zero always reaches above zero. Every number is an **Owner** proposal.
 
 | Stage | Measure | Bar | Labelled set | Why this bar |
 | --- | --- | --- | --- | --- |
 | Splitting (step 4) | Divisions that change a line's meaning, among divisions that pass every check | **Zero**, already set. On at least 300 passing divisions, zero means the true rate is under about 1% with 95% confidence | Lines from at least 30 people, enough to give 300 passing divisions | A part that says something the line doesn't is a fabrication the owner may not notice |
 | Tagging by a label found word for word, decided by the rule (`mention-label/1`) | Precision: proposed tags that are right | Lower 95% bound **at least 0.95** (about 390 right in 400) | At least 400 proposed tags, or every such tag the set yields if fewer, read as a pass only at the same bound | No model decides these; a wrong one is a fault in the rule, and should be rare |
 | Tagging by a label found word for word, decided by the judge (`mention-judge/1`) | Precision | Lower 95% bound **at least 0.95** | At least 400 proposed tags | The owner confirms each tag, but a wrong one shown often teaches them to confirm without reading |
-| Tagging from vector candidates (not built) | Precision | Lower 95% bound **at least 0.85** (about 360 right in 400) | At least 400 proposed tags | Concepts the words do not name are harder; shown labelled as suggestions |
+| Tagging from vector candidates (being built this round, shadow only) | Precision | Lower 95% bound **at least 0.85** (about 355 right in 400) | At least 400 proposed tags | Concepts the words do not name are harder; shown labelled as suggestions |
 | All tagging | Tags from lines that only mention, deny or intend the concept ([tagging.md](../tagging.md), "What only the judge can stop") | **Zero** in the labelled cases of those kinds | At least 50 such lines | Each is a claim the person did not make |
-| Merging (step 6) | False offers: pairs offered as the same fact that are not | Upper 95% bound **at most 5%** (no more than 6 false in 300) | At least 300 offers | An offer is only an offer, but accepting a wrong one hides a fact behind another |
+| Merging (step 6) | False offers: pairs offered as the same fact that are not | Upper 95% bound **at most 5%** (no more than 7 false in 300) | At least 300 offers | An offer is only an offer, but accepting a wrong one hides a fact behind another |
 | Merging | Pairs no deterministic check stops ([merging.md](../merging.md), "What only the judge can stop") | **Zero** offered in the labelled cases of those kinds | At least 50 such pairs | Each would merge two different claims |
 
 Each stage is measured with the models and the taxonomy build it will run with. A change to a prompt, a model, a method or its version stamp (`split/3`, `mention-judge/1`) measures it again.

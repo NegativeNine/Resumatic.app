@@ -51,7 +51,7 @@ The system design always meant more: coaches get "a working view of a client's v
 | --- | --- |
 | Who | One coach account, named by sign-in address and bound to its account ID at take-up, exactly as a copy's coach is today (`openForCoach` in `src/vault/shares.ts`) |
 | How long | At most 30 days, which is how long a connected app's offline access lasts (`MCP_GRANT_TTL_MS` in `src/shared/mcp.ts`). The owner can renew it |
-| Checked when | On every read, and again after every `await`, in the owner's vault: live grant, the coach's account ID and address from their own session, and the owner's security epoch |
+| Checked when | On every read. First in the coach's own vault, reached by `myVault(c)` from the session, as `coachClient` is (`src/worker/routes.ts`, `src/vault/vault.ts`): its `requireOwner` checks the coach's session generation and security epoch, so a sign-out everywhere ends live reads at once, and that vault says which grant and where it is kept, as it does for the coach's comment routes. Then in the owner's vault, again after every `await`: live grant, the coach's account ID and address from their own session, and the owner's security epoch. Live data is never served to a share-session cookie, which a sign-out everywhere does not end (the comment above the coach comment routes in `src/worker/routes.ts`) |
 | Revocation | Ends at the next request. A changed security epoch, deleting the job (for one-job access) or deleting the account ends it too. The coach is told the access ended, with a 409 and never a 410 |
 | Audit | The owner's vault records each day the coach read anything, and what kind (facts, a job, a resume), with counts. The owner sees it. Nothing about the coach's browser or network is kept |
 | Writes | None new. Comments and suggested wording stay as they are |
@@ -62,7 +62,7 @@ The system design always meant more: coaches get "a working view of a client's v
 | Threat | Control proposed |
 | --- | --- |
 | The owner adds something later that they would not have shared | One-job access by default; a plain line on the whole-vault choice saying later facts are included; sensitive marks apply at each read |
-| A coach's account is taken over, and the attacker reads live data for weeks | 30 days at most; the coach's session generation checked at each read; the owner's audit shows the reads |
+| A coach's account is taken over, and the attacker reads live data for weeks | 30 days at most; each read passes the coach's own vault first, so signing out everywhere ends it; never served to a share-session cookie; the owner's audit shows the reads |
 | A coach copies everything | Unchanged from today: what a reader can see they can keep. The notice says so |
 | A second account under the coach's address | Bound to the account ID at take-up, as copies are |
 | Live reads reveal the owner's activity (new jobs, statuses) | Status and dates off by default; notes never |
@@ -78,7 +78,7 @@ The system design always meant more: coaches get "a working view of a client's v
 - Vault methods that return field maps written in the method, never `FactView` or `ApplicationView`, as connected apps' methods do.
 - Owner routes to grant, list and revoke; coach routes reached from the client list (`src/web/pages/ClientsPage.tsx`).
 - A new surface, `"coach's live view"`, in the outward canary (`test/integration/outward.ts`).
-- Tests for each denial: a stranger, the owner, a second account, revoked, expired, a changed epoch, a job out of scope, a deleted job, and a fact marked sensitive after the grant.
+- Tests for each denial: a stranger, the owner, a second account, revoked, expired, a changed epoch, the coach after signing out everywhere, a share-session cookie with no coach session, a job out of scope, a deleted job, and a fact marked sensitive after the grant.
 
 **Docs**
 

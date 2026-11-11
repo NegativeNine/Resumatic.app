@@ -30,6 +30,7 @@ Nothing below is built until all of these hold. Each is a gate in the system des
 | --- | --- | --- | --- |
 | 1 | **Legal sign-off (Gate 3).** Counsel signs off the consent flows, the US notices and licensing in each launch market, and the marketplace entity that charges only organizations | Not started. Listed as decisions for counsel | Design review, "Decisions that need you or counsel" (lines 46 to 56); system design open questions (lines 1081 to 1084) |
 | 2 | **Re-identification test (Gate 3).** Anonymous cards pass a test against an attacker who joins cards to public profiles, holds an employer's internal documents and controls fake accounts | The harness is being built this round, beside the owner-only card preview. **This round** | System design line 1065 |
+| 2a | **Abuse controls and fairness metrics in staging (Gate 3).** The controls under "Threats to add to the threat model" and the impact ratios under "Testing and delivery" work end to end in staging | Not started: nothing they test is built. This gate is met during Phase C's staging work, before anything is opened to an organization | System design line 1065 |
 | 3 | **Paid pilot (Gate 3).** A paid pilot with kill criteria fixed in advance and a loaded cost model, and its result | The plan is [brokered-pilot-plan.md](brokered-pilot-plan.md). Not started | System design lines 308 and 1065 |
 | 4 | **Live billing.** Organizations can be charged, and refunds and failed payments are handled | Seeker billing exists and is off: `BILLING_ENABLED` is `"false"` in both environments. Nothing charges an organization. Stripe test flows are pending | `wrangler.jsonc`; `src/shared/billing.ts`; [release status](seeker-release-status.md), "Billing" |
 | 5 | **Owner review of tags.** A card is built only from confirmed tags, and nobody can confirm a tag today | Pipeline step 7 is not built | [tagging.md](tagging.md), "What is not built"; [taxonomy-pipelines-design.md](taxonomy-pipelines-design.md), "Order of work" |
@@ -90,7 +91,11 @@ The seeker Worker stays as it is. The marketplace adds three Workers and a few c
 | `recruit` (new) | `OrgDirectory`; `RecruiterWorkspace`; `ReqSession`; `MarketLedger`; `FairnessAggregator`; `MatchWorkflow` | Directory: sixteen shards by name, as the `Directory`. Workspace: one per organization. Session: one per opening. Ledger and aggregator: one per jurisdiction | Organizations, seats, openings, pipeline, notes, credit holds; billing and abuse metadata; group counts | Recruiter traffic never shares an isolate with seeker traffic |
 | `partner` (later) | OAuth endpoints | Partner app | Client records and grants | Later phases only |
 
-**Bindings.** `resumatic` gains a service binding to `index` (named entrypoints, below) and a Durable Object binding for `IntroThread`. `recruit` gains service bindings to `index` and to `resumatic`'s thread entrypoint, and its own `OrgDirectory`, `RecruiterWorkspace`, `ReqSession`, `MarketLedger` and `FairnessAggregator` bindings. No recruiter-side binding reaches `Vault`. Each binding goes through one stub file per Worker, as `src/shared/stubs.ts` is today, so the rule "nothing on the recruiter side builds a vault stub" can be read in one place.
+**Bindings.** Each binding reaches one named entrypoint per caller type (below), never a whole class.
+
+- `resumatic` gains a Durable Object binding for `IntroThread`, a service binding to `index` (`ShardForVault`), and a service binding to `recruit` (`WorkspaceForThread`), so a thread can settle credits.
+- `index` gains a service binding to `resumatic` (`VaultForShard`, `ThreadForShard`), so a shard can forward report requests and notices and create threads. It has no other way into a vault.
+- `recruit` gains service bindings to `index` (`ShardForSession`, `ShardForWorkspace`) and to `resumatic` (`ThreadForSeat`), and its own `OrgDirectory`, `RecruiterWorkspace`, `ReqSession`, `MarketLedger` and `FairnessAggregator` bindings. No recruiter-side binding reaches `Vault`. Each binding goes through one stub file per Worker, as `src/shared/stubs.ts` is today, so the rule "nothing on the recruiter side builds a vault stub" can be read in one place.
 
 **A switch.** `MARKETPLACE_ENABLED` is off unless exactly `"true"`, is declared in `src/env.d.ts` beside the shadow flags, and is refused in production configuration by `scripts/validate-config.mjs`, as `TAG_SHADOW_ENABLED` is, until the preconditions hold.
 
@@ -150,14 +155,21 @@ interface ShardForSession {
   search(cap: Capability, org: string, requirements: CanonicalRequirement[], filters: Filters): Promise<ShardResult>;
   matchReports(cap: Capability, org: string, handles: string[], requirements: CanonicalRequirement[]): Promise<MatchReport[]>;
   notify(cap: Capability, org: string, token: string, opening: OpeningSummary): Promise<void>;
+}
+interface ShardForWorkspace {
   openIntro(cap: Capability, org: string, handle: string, request: IntroRequest): Promise<ThreadRef>; // idempotent by intro ID
 }
 
 /** IntroThread. */
+interface ThreadForShard {
+  open(cap: Capability, introId: string, request: IntroRequest): Promise<ThreadRef>; // idempotent by intro ID; the shard's capability names the vault
+}
 interface ThreadForVault {
+  raiseHand(cap: Capability, introId: string, opening: OpeningRef, disclosure: EncryptedDisclosure): Promise<ThreadRef>; // idempotent by intro ID
   decide(cap: Capability, choice: IntroChoice, disclosure?: EncryptedDisclosure): Promise<void>;
   eraseCandidate(cap: Capability): Promise<void>;
   exportForCandidate(cap: Capability): Promise<ThreadExport>;
+  rebind(moveCap: MoveCapability): Promise<void>; // a vault move only; see "Erasure, export and moving a vault"
 }
 interface ThreadForSeat {
   read(threadCap: ThreadCapability): Promise<ThreadView>;
@@ -165,13 +177,31 @@ interface ThreadForSeat {
   reportStage(threadCap: ThreadCapability, stage: Stage): Promise<void>;
 }
 
-/** RecruiterWorkspace, called by the thread. Capture and release are at-least-once, keyed by intro ID. */
+/** RecruiterWorkspace, called by the thread. Every call is at-least-once, keyed by intro ID. */
 interface WorkspaceForThread {
   capture(cap: Capability, introId: string): Promise<void>;
-  release(cap: Capability, introId: string): Promise<void>;
+  release(cap: Capability, introId: string): Promise<void>; // sent only when the seat may see "not now"
+  raised(cap: Capability, introId: string, openingId: string): Promise<void>; // a raised hand: a pipeline row, no hold
+  chargeRaised(cap: Capability, introId: string): Promise<void>; // when a seat first opens a raised hand
   erased(cap: Capability, introId: string): Promise<void>;
 }
+
+/** RecruiterWorkspace, called by an organization admin through /recruit/* with the admin role in the session. */
+interface WorkspaceForAdmin {
+  seats(who: SeatWho): Promise<SeatView[]>;
+  addSeat(who: SeatWho, email: string, requestKey: string): Promise<SeatView>;
+  suspendSeat(who: SeatWho, seatId: string): Promise<void>;  // raises the seat's generation
+  removeSeat(who: SeatWho, seatId: string): Promise<void>;   // raises the generation and reassigns its pipeline rows
+  openings(who: SeatWho): Promise<OpeningView[]>;
+  closeOpening(who: SeatWho, openingId: string): Promise<void>; // withdraws open requests; holds released on the threads' word
+  credits(who: SeatWho): Promise<CreditView>;                // granted, held, used and available; holds shown as the threads settle them
+  buyCredits(who: SeatWho, pack: string, requestKey: string): Promise<CheckoutRef>;
+  atsConnections(who: SeatWho): Promise<AtsConnectionView[]>;
+  closeOrganization(who: SeatWho, confirm: string): Promise<void>; // erases the workspace (system design line 922)
+}
 ```
+
+Seats open, edit and search openings through the workspace's own seat routes, which are not listed here. Credit purchases are recorded in `OrgDirectory` (`credit_purchases`) from the payment provider's events, as seeker purchases are recorded from Stripe's today (`src/worker/billing.ts`), and the workspace learns its granted total from the control plane, which only rises (system design, "Credits", line 424).
 
 A match report holds, per requirement, covered, partly covered or not shown; confirmed or self-declared; within five years or older. It never holds a fact's words below the Open level, and a requirement naming an organization, school or person never matches below Open (system design line 358).
 
@@ -220,15 +250,24 @@ Fails closed: a shard or vault that cannot answer leaves a card out or pending; 
 
 ### An introduction and its credit
 
-1. A seat requests an introduction for a card handle, with a pay range and a plain-text note. The workspace holds one credit and calls `openIntro` through the shard.
-2. The shard re-checks the card for this organization and creates the thread in the candidate's jurisdiction, keyed by the intro ID, so a retry finds the same thread.
+1. A seat requests an introduction for a card handle, with a pay range and a plain-text note. The workspace holds one credit and calls `openIntro` on the shard (`ShardForWorkspace`).
+2. The shard re-checks the card for this organization and creates the thread in the candidate's jurisdiction (`ThreadForShard.open`), keyed by the intro ID, so a retry finds the same thread.
 3. The thread delivers the request to the vault. Work authorisation is checked here, not in search. The vault shows it within the candidate's weekly cap.
-4. The candidate opens it, sees the organization, opening and pay range, and can open a fit preview in their own vault. One click starts tailoring for the opening, free and outside plan quotas (system design line 457).
-5. The candidate declines, or the seven-day deadline passes: the thread tells the workspace to release the hold. The seat sees "not now" after a random delay of up to 72 hours.
+4. The candidate opens it, sees the organization, opening and pay range, and can open a fit preview in their own vault. One click starts tailoring for the opening, free and outside plan quotas (system design line 457). The code has no such exemption today: starting a tailoring run refuses at the month's quota whatever started it (the `quota()` check in `tailor` in `src/vault/vault.ts`), so the marketplace adds one for runs an introduction starts, recorded against the intro ID.
+5. The candidate declines, or the seven-day deadline passes. The thread picks a random delay of up to 72 hours and, only when it has passed, tells the workspace to release the hold. The release is what the seat sees as "not now": the hold's state, the pipeline row and the available credits all change at that one moment, never earlier. A decline and an expiry send the same message, with a reason only if the candidate gave one.
 6. The candidate accepts and chooses what to share. The vault seals the snapshot for the thread. The thread asks the workspace to capture the credit and releases the snapshot only after capture succeeds.
-7. Capture and release are at-least-once, keyed by intro ID. The workspace never releases a hold on its own clock. A reconciler in the workspace asks the thread about any hold still pending after the deadline.
+7. Capture and release are at-least-once, keyed by intro ID. The workspace never releases a hold on its own clock. A reconciler in the workspace asks the thread about any hold still pending 72 hours after the deadline.
 
 Fails closed: if capture fails, nothing is disclosed and the request stays accepted but undelivered until capture succeeds or the candidate withdraws.
+
+What the delay still shows: a "not now" that arrives before the seven-day deadline plus 72 hours can only be a decline. The system design accepts that (line 333). Holding every release until the deadline plus a random delay would hide it too, at the cost of locking each declined credit for up to ten days. **Owner.**
+
+### A raised hand
+
+1. A Notify-me candidate has a notice for an opening (`VaultForShard.notice`). They raise a hand from it and choose what to share, as on acceptance.
+2. The vault seals the snapshot and creates the thread in its own jurisdiction (`ThreadForVault.raiseHand`), keyed by a new intro ID. The thread tells the workspace (`WorkspaceForThread.raised`), which adds a pipeline row and holds no credit.
+3. When a seat first opens the raised hand, the thread asks the workspace to charge it (`chargeRaised`). No part of the thread can be read before that charge succeeds (system design line 344).
+4. If no seat opens it within the deadline, or the opening closes, the thread closes. Nothing was disclosed and nothing was charged.
 
 ### An attestation (Gate 4)
 
@@ -251,15 +290,16 @@ Fails closed: if capture fails, nothing is disclosed and the request stays accep
 The tables are the system design's (lines 688 to 857), with three changes for this code base.
 
 1. **No D1.** The system design's D1 additions move into Durable Object control planes: `organizations`, `agency_clients`, `credit_purchases`, `credit_usage` and `partner_apps` into `OrgDirectory`; `index_shards` into `IndexMap`; `intro_events` and `placements` into `MarketLedger`, one per jurisdiction.
-2. **Confirmed versions reuse what exists.** A fact already has a state and a `revision` that every write raises (`src/vault/schema.ts`, the second migration). A card records each fact by ID and revision, so the system design's `fact_confirmations` table is not needed.
-3. **Vault tables follow the vault's rules.** `discoverability`, `footprint`, `blocks`, `shareable`, `intros`, `notices` and, at Gate 4, `attestations` and `credentials` are appended as new vault migrations. Each is in the owner's export, in `TRANSFER_TABLES` (`src/shared/operations.ts`) and `TABLES` (`scripts/move-vault.mjs`), and erased with the vault, or has a stated reason in a comment. `self_id` is sensitive and is added only with the fairness work.
+2. **Confirmed versions reuse what exists.** A fact's ID and `revision` alone do not name one version. A revision can repeat after a fact is deleted and made again, which is why the vault keeps a separate incarnation for each fact and role (`entity_incarnations` in `src/vault/schema.ts`, and its migration's comment). Generation snapshots already bind to it. A card does the same: it records each fact by ID, incarnation and revision, under the vault's restore epoch that every card push carries. So the system design's `fact_confirmations` table is not needed.
+   Some changes raise no revision. Marking a fact sensitive changes only its `sensitive` column (`setSensitive` in `src/vault/sensitive.ts`). So the card is rebuilt, and pushed again if it changed, on every change that decides what it may hold: a sensitive mark, a fact's state, a tag's state, a withdrawal or a visibility change. A test marks a fact sensitive and shows its tag gone from the shard's copy without any other edit.
+3. **Vault tables follow the vault's rules.** `discoverability`, `footprint`, `blocks`, `shareable`, `intros`, `notices` and, at Gate 4, `attestations` and `credentials` are appended as new vault migrations. Each is in the owner's export, in `TRANSFER_TABLES` (`src/shared/operations.ts`) and `TABLES` (`scripts/move-vault.mjs`), and erased with the vault, or has a stated reason in a comment. A column that holds a vault ID needs a case in `rewriteRow` (`src/vault/operations.ts`); `footprint` and `intros` hold thread and shard handles, not vault IDs, and a move re-binds the threads instead (below). `self_id` is sensitive and is added only with the fairness work.
 
 ### Retention and recovery
 
 | Object | Retention | Recovery |
 | --- | --- | --- |
 | Vault marketplace tables | Until the candidate deletes them or the account | The vault's own |
-| Index shard | A card until hidden, erased or lapsed after 90 days without reconfirmation; tombstones outlast any retry | Point-in-time recovery; failing that, vaults push their cards again |
+| Index shard | A card until hidden or erased. When availability lapses after 90 days without reconfirmation, the card drops back to Notify me: it is still matched for notices and shown to nobody (system design line 325). Tombstones outlast any retry | Point-in-time recovery; failing that, vaults push their cards again |
 | Intro thread | Accepted: closes after 12 months without activity. Declined or expired: metadata only, request text deleted after 90 days | A destroyed key can sit in recovery history for up to 30 days |
 | Workspace | Until the organization closes | Point-in-time recovery |
 | Control planes and ledger | IDs, states and counts; decision records only where a law requires, in a restricted store. **Counsel** sets the periods | Point-in-time recovery |
@@ -268,9 +308,9 @@ Retention periods are the system design's (lines 325 and 346). Each is a proposa
 
 ### Erasure, export and moving a vault
 
-- **Erasure** is driven by the vault's `footprint` table: a tombstone for its card, `eraseCandidate` on each thread, pending notices withdrawn, and delete calls for ATS pushes. Only when each has confirmed does the vault's own deletion run. Today `destroy()` in `src/vault/vault.ts` calls `ctx.storage.deleteAll()`; the footprint step goes before it, so an interrupted erasure can be run again from what the vault still holds.
+- **Erasure** is driven by the vault's `footprint` table: a tombstone for its card, `eraseCandidate` on each thread, pending notices withdrawn, and delete calls for ATS pushes. Only when each has confirmed does the vault's own deletion run. It belongs to account deletion only. `destroy()` in `src/vault/vault.ts` is shared: account deletion reaches it through `destroyForAccountDeletion`, and the Directory also reaches it through `destroyForRetirement` when it retires the source of a moved vault (`src/directory/directory.ts`). So the footprint step is not put in `destroy()`. It is a step of the Directory's account-deletion sequence, after the vault is closed and before `destroyForAccountDeletion`, so an interrupted erasure can be run again from what the vault still holds. Retiring a moved vault's source never erases its threads.
 - **Export** adds the candidate's settings, card, blocks, notices and threads (through `exportForCandidate`) to the existing export (`exportSnapshot` in `src/vault/vault.ts`).
-- **Moving a vault** first tombstones its card and closes its threads; recruiters keep what was already shared, and the candidate turns discoverability on again after the move (system design line 920).
+- **Moving a vault.** Before the source is frozen it tombstones its card, sets discoverability to Off and closes its threads: a closed thread takes no new request, message or disclosure, and recruiters keep what was already shared (system design line 920). `footprint` and `intros` travel, because the candidate must still be able to export and erase what the closed threads hold. A thread knows the one vault it serves, so the move re-binds each one. After `finishImport`, and before the Directory retires the source, the new vault calls `rebind` on each thread in its footprint with a capability the Directory signs for this move, naming the source and the target. The thread accepts it once, only while it is bound to that source, and then answers only the target. The Directory does not retire the source until every thread has confirmed. If the account is deleted while a move is under way, the footprint step runs from both vaults, and each thread accepts erasure from the one vault it answers at that moment. The candidate turns discoverability on again after the move, and the new vault pushes a new card to the shard that owns its new ID.
 
 ## 6. Security
 
@@ -281,7 +321,8 @@ Retention periods are the system design's (lines 325 and 346). Each is a proposa
 | Internet to `recruit` | Seat requests | Recruiter session; seat generation; per-seat and per-organization limits; organization standing (probation, restricted) |
 | `recruit` to `index` | Search, report requests, introductions | Signed capability; the shard re-checks the organization's view of each card |
 | `index` to `resumatic` (vault) | Report requests and notices | Signed capability naming the shard and the card; the vault answers only about what its card publishes |
-| `resumatic` (thread) to `recruit` | Capture, release, erasure | Signed capability; at-least-once, keyed by intro ID |
+| `resumatic` (thread) to `recruit` | Capture, release, raised hands and their charge, erasure | Signed capability; at-least-once, keyed by intro ID; a release only when the seat may see "not now" |
+| `index` to `resumatic` (thread) | Creating a thread for a requested introduction | Signed capability naming the shard, the card and the intro ID; idempotent by intro ID |
 | Seat to thread | Reads, messages, stages | A five-minute capability for that thread and seat |
 | Anyone to the candidate | Notes, messages, openings | Untrusted text, shown as plain text and never used as evidence. Notes and messages never reach a model prompt. An opening's description reaches one only when the candidate starts tailoring for it, as a posting they paste does: inside tags, as data. Links and images only after acceptance, through an interstitial and a proxy |
 
@@ -313,6 +354,8 @@ These rows go into a marketplace section of [seeker-threat-model.md](seeker-thre
 | A hidden card coming back | Versioned tombstones that outlast retries and survive splits; restores re-apply current consent |
 | A suspended seat still reading | Seat generation in the session; five-minute thread capabilities |
 | Credit races | The thread as the only authority; capture before disclosure |
+| A decline's timing read from the organization's own view | The release is the "not now": the hold's state, the pipeline row, the available credits and the `credit.snapshot` totals change only when the thread's random delay has passed, and a decline and an expiry send the same message |
+| A moved vault's threads lost or erased | Retirement of a moved vault's source never runs the footprint erasure; threads are re-bound to the new vault under a move capability before the source is retired |
 | Fake organizations | Registry, domain age, look-alike checks, a payment method or deposit, probation, yearly re-verification |
 | Attestation fraud (Gate 4) | Registry-linked domains, per-attester and per-domain caps, ring detection |
 | A recruiter's note or message as an instruction | Plain text, never in a prompt or a check, as a coach's comment is today ([seeker-threat-model.md](seeker-threat-model.md), "A comment is read as an instruction or as evidence") |
@@ -342,6 +385,9 @@ The outward canary (`test/integration/outward.ts`) lists every surface a vault s
 | --- | --- | --- |
 | Split chaos | A split interrupted at every step loses no card and revives no hidden one | Integration |
 | Credit races | Accept, decline, deadline and withdrawal in every order settle once, and nothing is disclosed before capture | Integration |
+| Decline timing | After a decline, nothing the organization can read (hold state, pipeline row, available credits, `credit.snapshot`) changes before the thread's delay has passed, and a decline and an expiry leave the same trace | Integration |
+| A raised hand | A seat reads nothing in the thread before `chargeRaised` succeeds; an unopened raised hand is never charged | Integration |
+| Moving a vault in the marketplace | Its threads answer the new vault after the move and refuse the old one; retiring the source erases no thread; deleting the account after the move erases every thread | Integration |
 | Restore and erasure cascades | Restore re-applies current consent; erasure reaches every footprint entry and can be run again | Integration, and staging for what workerd cannot run locally |
 | Re-identification | The Gate 3 attacker cannot single out a card. **This round** for the harness | Script, against synthetic cards |
 | Probing | A vault's report says nothing its card does not | Unit and integration |
@@ -437,6 +483,7 @@ Every one is **Counsel**. None is answered here.
 ## 12. Decisions for the owner
 
 - ADR-M1 and the other proposed decisions above.
-- The pilot's niches, markets, sizes, prices and kill criteria ([brokered-pilot-plan.md](brokered-pilot-plan.md)).
+- The pilot's niches, markets, sizes, charge points, prices and kill criteria ([brokered-pilot-plan.md](brokered-pilot-plan.md)).
+- Whether every "not now" waits for the seven-day deadline as well as the random delay ("An introduction and its credit").
 - [Years per skill](decisions/years-per-skill.md) and [who may see the card](decisions/card-sharing.md), which the card needs.
 - The targets in "Operations", which are proposals.

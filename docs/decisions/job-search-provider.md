@@ -66,7 +66,7 @@ None is named here, and no provider's terms are stated as fact. These are the ki
 - Types in `src/shared/listings.ts`: a `ListingQuery` (words and place, each capped), a `Listing` (provider, the provider's ID, title, company, place, remote or not, posted and expiry dates, link, and text when the provider gives it) and a `ListingPage`.
 - A `ListingProvider` interface (`search(query, cursor)`, `get(id)`) in `src/worker/listings/`, with one adapter per provider. The rest of the code sees only the interface.
 - `POST /api/listings/search`: signed in, under its own rate limit, answering only to the person who asked. Nothing is stored.
-- Saving a listing goes through `addApplicationIdempotent`, with its link, title, company and text, so a saved listing is an ordinary job. Two nullable columns on `applications`, the provider and its listing ID, in a new appended vault migration; they are exported and moved with the table as its other columns are.
+- Saving a listing goes through `addApplicationIdempotent`, with its link, title, company and text, so a saved listing is an ordinary job. Two nullable columns on `applications`, the provider and its listing ID, in a new appended vault migration. A move copies them without a change, because transfer copies columns by `PRAGMA table_info` (`src/vault/operations.ts`). The export does not: `exportSnapshot` in `src/vault/vault.ts` maps each `applications` column by name, so the map and the `VaultExport` type each gain the two fields, with a test that a saved listing's provider and ID are in the export.
 - A threat-model row and tests: a listing written as an instruction stays text; a search sends nothing but the query; spend refused at the cap.
 
 **Docs**

@@ -18,7 +18,7 @@ The private card is a short, coded profile built from a person's confirmed recor
 | Viewer | What they would see | Risk |
 | --- | --- | --- |
 | The owner | Their own card, as a preview | None beyond today: it is built from their own confirmed records |
-| A coach the owner names | The card as part of a shared copy | Low for re-identification: a coach already knows who the person is, and a copy's facts say more than a card. It is the first time tags leave a vault |
+| A coach the owner names | The card as part of a shared copy | Low for re-identification: a coach already knows who the person is. But a card built from the whole record would tell a coach about roles and facts the owner left out of that copy, so a copy's card is built only from what the copy holds (below). It is the first time tags leave a vault |
 | A connected app | The card through a tool | Leaves the vault for a third party's model, under that company's terms |
 | Recruiters | The card in search, at a visibility level | Re-identification, employer discovery, probing. The whole of the marketplace's controls apply |
 
@@ -42,8 +42,8 @@ The system design's card has a metro area or remote, job types and availability,
 | Rule | Proposal |
 | --- | --- |
 | The owner | Always sees their own card preview |
-| A coach | Only on a copy the owner makes, and only if the owner ticks the card for that copy. It is a fixed part of the copy, rebuilt and compared on each read as resumes are, and the copy's schema version rises so older code refuses it |
-| What the card holds | Confirmed tags only; never a tag of a fact `usableFacts()` leaves out; no quotes; no shadow judgements; years only as [years-per-skill.md](years-per-skill.md) decides |
+| A coach | Only on a copy the owner makes, and only if the owner ticks the card for that copy. The card in a copy is built only from the facts and roles selected for that copy, never from the whole record, so it says nothing the copy's own facts do not. The copy form shows that card before it is ticked. It is a fixed part of the copy, rebuilt from the copy's own selection and compared on each read as resumes are, and the copy's schema version rises so older code refuses it |
+| What the card holds | Confirmed tags only, on facts the copy selected; never a tag of a fact `usableFacts()` leaves out; no quotes; no shadow judgements; years only as [years-per-skill.md](years-per-skill.md) decides |
 | Preferences | Not read, until visibility is turned on |
 | A connected app | No |
 | Recruiters | Not until every item in the list below holds |
@@ -65,13 +65,13 @@ Nothing a recruiter sees is built. Turning on any level above Off needs all of t
 
 **Code**
 
-- For option 2: a card part in `ShareSelection` and the snapshot's field list, the rebuild in `ShareStore.read`, and a new snapshot schema version (`src/vault/shares.ts`). The outward canary's copy surfaces (`"copy by its link"` and `"copy as its coach"` in `test/integration/outward.ts`) then gather the card, and a test shows it holds no tag of a withheld fact.
+- For option 2: a card part in `ShareSelection` and the snapshot's field list, built by the card builder from the selected facts and their roles only, as `snapshotSelection` copies only the selected facts today; the rebuild in `ShareStore.read`; and a new snapshot schema version (`src/vault/shares.ts`). The outward canary's copy surfaces (`"copy by its link"` and `"copy as its coach"` in `test/integration/outward.ts`) then gather the card. Tests show it holds no tag of a withheld fact, and no tag, occupation or year that comes only from a fact or role left out of the copy.
 - For preferences: nothing now. Later, the card builder joins the lists in `test/unit/preferences-reach.test.ts`.
 
 **Docs**
 
 - [taxonomy-pipelines-design.md](../taxonomy-pipelines-design.md): "Who may see the private card" moves from "Still open" to "Decided".
-- [seeker-threat-model.md](../seeker-threat-model.md): the coach row for a copy that holds a card.
+- [seeker-threat-model.md](../seeker-threat-model.md): the coach row for a copy that holds a card, saying that the card is built from the copy's selection only, so "Owner selects IDs" (line 27) stays true.
 - The privacy notice: a sentence on the card in "Sharing a copy". `test/web/legal.test.tsx` changes with it.
 
 ## Who decides
