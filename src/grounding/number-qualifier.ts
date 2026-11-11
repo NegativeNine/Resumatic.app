@@ -19,11 +19,12 @@ export function numberQualifier(text: string, start: number, end: number): strin
     return match ? qualify(kind, match.index) : undefined;
   };
 
-  const negatedBound = /\b(?:not|never)\s+(at\s+most|at\s+least|up\s+to|no\s+more\s+than|no\s+less\s+than)\s*$/i.exec(before);
-  if (negatedBound) return qualify(`negated:${negatedBound[1]!.toLowerCase().replace(/\s+/g, " ")}`, negatedBound.index);
+  // "Upto", as one word, is "up to", as it is on splitting's closed list of qualifying words.
+  const negatedBound = /\b(?:not|never)\s+(at\s+most|at\s+least|up\s*to|no\s+more\s+than|no\s+less\s+than)\s*$/i.exec(before);
+  if (negatedBound) return qualify(`negated:${negatedBound[1]!.toLowerCase().replace(/\s+/g, " ").replace(/^upto$/, "up to")}`, negatedBound.index);
 
   // These negated comparisons are inclusive bounds, not their positive suffix.
-  const upper = bound(/(?:≤|<=|\b(?:at most|no more than|up[ -]to|(?:a\s+)?maximum(?:\s+of|\s*:)|(?:no|not|never)\s+(?:(?:more|greater)\s+than|over|above)|(?:less|fewer)\s+than\s+or\s+equal\s+to))\s*$/i, "at-most");
+  const upper = bound(/(?:≤|<=|\b(?:at most|no more than|up[ -]?to|(?:a\s+)?maximum(?:\s+of|\s*:)|(?:no|not|never)\s+(?:(?:more|greater)\s+than|over|above)|(?:less|fewer)\s+than\s+or\s+equal\s+to))\s*$/i, "at-most");
   if (upper !== undefined) return upper;
   const lower = bound(/(?:≥|>=|\b(?:at least|no less than|(?:a\s+)?minimum(?:\s+of|\s*:)|(?:no|not|never)\s+(?:(?:less|fewer)\s+than|under|below)|(?:more|greater)\s+than\s+or\s+equal\s+to))\s*$/i, "at-least");
   if (lower !== undefined) return lower;

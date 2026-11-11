@@ -89,10 +89,10 @@ import { finalLegacyEvidence, legacyReceipt, legacyReview } from "./legacy-remed
 import { RunStore } from "./runs";
 import { RecordStore } from "./record";
 import { IDENTICAL_ROLE_METHOD, IDENTICAL_WORDING_METHOD, MAX_OFFER_PAIRS, OFFERS_PER_FACT, OFFER_MIN_COSINE, identicalMatches, type JudgedOffer, type OfferPair } from "../pipeline/match";
-import { roleKey, sameWording, wording } from "../shared/record";
+import { roleKey, sameWording } from "../shared/record";
 import type { NewPart, RecordExport } from "../shared/record";
 import { ShareStore } from "./shares";
-import { sensitiveUse, setSensitive, usableQuote, withheldFacts } from "./sensitive";
+import { markedWording, sensitiveUse, setSensitive, usableQuote, withheldFacts } from "./sensitive";
 import { billingConfig } from "../shared/billing";
 import { stripeClient, type Entitlement } from "../worker/billing";
 import { CheckoutCoordinator } from "./checkout";
@@ -1317,7 +1317,7 @@ export class Vault extends DurableObject<Env> {
       const markedWords = new Set<string>();
       for (const id of withheldFacts(this.sql).ids) {
         const marked = this.sql.exec<{ text: string }>(`SELECT text FROM facts WHERE id = ?`, id).toArray()[0];
-        const words = marked ? wording(marked.text) : "";
+        const words = marked ? markedWording(marked.text) : "";
         if (words) markedWords.add(words);
       }
       const arrivingMarked: string[] = [];
@@ -1402,7 +1402,7 @@ export class Vault extends DurableObject<Env> {
           f.confidence ?? null,
           JSON.stringify(f.reviewReasons ?? []),
         );
-        if (markedWords.has(wording(f.text))) arrivingMarked.push(id);
+        if (markedWords.has(markedWording(f.text))) arrivingMarked.push(id);
       }
       setSensitive(this.sql, arrivingMarked, true);
       this.extractionFeedbackStore.proposals(sourceId);
@@ -1937,7 +1937,7 @@ export class Vault extends DurableObject<Env> {
       for (const id of ids) {
         const fact = this.sql.exec<{ text: string }>(`SELECT text FROM facts WHERE id = ?`, id).toArray()[0];
         if (!fact) throw new AppError("not_found", "no such fact");
-        const own = wording(fact.text);
+        const own = markedWording(fact.text);
         if (own) words.add(own);
       }
       for (const [id, expected] of Object.entries(expectedRevisions)) {
@@ -1948,7 +1948,7 @@ export class Vault extends DurableObject<Env> {
       // The facts named, and every other fact that says the same words.
       const targets = new Set(ids);
       for (const fact of this.sql.exec<{ id: string; text: string }>(`SELECT id, text FROM facts`).toArray())
-        if (words.has(wording(fact.text))) targets.add(fact.id);
+        if (words.has(markedWording(fact.text))) targets.add(fact.id);
       setSensitive(this.sql, targets, r.sensitive);
     });
     this.vectorCache = null;
@@ -3040,7 +3040,12 @@ export class Vault extends DurableObject<Env> {
     return { epoch: this.meta("security_epoch") ?? "legacy" };
   }
   async createMcpGrant(who: Who, input: NewMcpGrant) {
-    return this.mcpGrants.create(who, input);
+    const grant = this.mcpGrants.create(who, input);
+    // A grant is erased by the alarm when it ends, so holding one sets it. Its end is fixed here:
+    // nothing later moves it.
+    const next = this.mcpGrants.nextAlarm();
+    if (next !== null) await this.scheduleRunAlarm(next);
+    return grant;
   }
   async bindMcpGrant(claims: McpClaims, remoteId: string) {
     if (claims.vid !== this.vaultId)
@@ -5654,6 +5659,9 @@ export class Vault extends DurableObject<Env> {
       // to be cleared at its own time. Under the fence an entry already due is looked at again in
       // a minute, not at once.
       clientDue !== null && fenced ? Math.max(clientDue, Date.now() + 60_000) : clientDue,
+      // The same for a connected app's grant. Grants never move with a vault, so the fence does
+      // not hold them back.
+      this.mcpGrants.nextAlarm(),
       // An unresolved source write blocks expiry cleanup. Do not turn its
       // immediate retry into a one-second alarm loop; the retry already
       // installed at the top of this alarm remains scheduled.

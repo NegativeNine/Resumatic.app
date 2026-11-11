@@ -4,6 +4,8 @@ import type { Models } from "../ai/models";
 import { JudgeOut, judgePrompt, type JudgeItem } from "../ai/prompts";
 import { checkClaim, numbersIn } from "../grounding/claims";
 import { MAX_PART_RANGES, MAX_SPLIT_PARTS, lineRuns, partText, partsProblem, type NewPart, type Range } from "../shared/record";
+// Which characters are apostrophes and which are not shown, as the grounding checks read them too.
+import { APOSTROPHES, UNSEEN } from "../shared/characters";
 
 // Dividing a line into the claims it makes (step 4 of docs/taxonomy-pipelines-design.md).
 //
@@ -97,11 +99,6 @@ const QUALIFYING_WORDS = new Set([
 const QUALIFYING_PHRASES =
   /(?<![\p{L}\p{N}])(?:part of|member of|one of|some of|up to|rather than|instead of|other than|failed to|and\/or|plans? to|aim(?:s|ed|ing)? to|in progress|ning[u\u00FA]n(?:a|o|as|os)?|kein(?:e|en|er|es|em)?|aucun(?:e|s|es)?)(?![\p{L}\p{N}])/giu;
 
-// Whatever was typed or read where an apostrophe belongs: a quotation mark of either hand, an
-// accent standing alone, a prime, or a modifier letter that only looks like one. "Didn`t" and
-// "didn\u2018t" deny exactly what "didn't" denies.
-const APOSTROPHES = /['\u2032\u2035\uFF07\p{Pi}\p{Pf}\p{Sk}\p{Lm}]/gu;
-
 // A hyphen of any length, or a minus sign. Where one stands between two letters it joins them:
 // the words of a phrase ("in-progress") or the halves of a word ("up-coming").
 const HYPHEN = "[-\\u2010-\\u2015\\u2212\\uFE63\\uFF0D]";
@@ -112,9 +109,6 @@ const JOINING_HYPHEN = new RegExp(`(?<=\\p{L})${HYPHEN}(?=\\p{L})`, "gu");
 const WORD = "[\\p{L}\\p{N}]+(?:(?<=n)'t(?!\\p{L}))?";
 /** One word, or several with nothing but a hyphen between each and the next. */
 const HYPHENATED = new RegExp(`${WORD}(?:${HYPHEN}${WORD})*`, "giu");
-
-// A character that is not shown: a soft hyphen, a zero-width space or joiner, a mark of direction.
-const UNSEEN = /\p{Default_Ignorable_Code_Point}/gu;
 
 /**
  * Every hedge, negation, alternative or intention in a line: the phrases in the order they come,

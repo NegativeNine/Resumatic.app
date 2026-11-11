@@ -17,6 +17,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Finding what an upload says again | #32 merged in #34 | Off by default; notes identical roles and facts in shadow with no model, and merges nothing |
 | Two wordings of one thing | #33 merged in #34 | Off by default. Not run against the real judge. Which further words belong on the closed list of qualifying words is a starting rule to set once offers are measured |
 | Preferences | Merged in #34 | Kept in the vault and read only by the owner's form and export. Work authorisation and remote work are not stored |
+| Preferences review fixes | On branch `fix/preferences-review`, based on #34 | The test that keeps preferences unread now sees a second reader inside the Vault or the Worker's routes, or a helper beside the store, and the canary fails for a connected-app method it does not ask. No migration. Fit preview adds `mcpFit`: its answer joins the canary when the two merge |
 | Sensitive facts | Merged in #34 | A mark on a fact and its words. Marking a role, and finding sensitive facts for the person, are not built. The embedding model still receives a marked fact's words on an edit or a rebuild |
 | Comments on a shared copy | Merged in #34 | Suggested wording builds on its table |
 | Tagging facts and roles, in shadow | Begun on branch `pipeline/05-tag`; unfinished and untested | Finish, test and review the stage. The taxonomy it reads is loaded on staging |
@@ -31,6 +32,8 @@ A merged PR or a local check is not a claim of production release acceptance. Th
 - Fit preview through connected apps. Designed; builds on sensitive facts.
 
 Built and merged in #34: comments on a shared copy; sensitive facts; preferences. A few low-severity review points on preferences and comments are still open: the test that keeps preferences unread does not see a second way into the store from inside the Vault; marking comments seen can mark one that arrived after the list was read; after a copy ends under a coach, the page still says they can comment until it is reloaded.
+
+The first of those, on preferences, is settled on branch `fix/preferences-review`: the reach test pins where the Vault and the Worker's routes name the store, its two calls and the export, by method and by route, and what the store's module exports and which files take it, and the canary asks every Vault method named for connected apps.
 
 ## Taxonomy pipeline work
 

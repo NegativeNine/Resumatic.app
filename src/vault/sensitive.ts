@@ -1,4 +1,5 @@
 import type { ResumeBody } from "../shared/api";
+import { wording } from "../shared/record";
 import { completeEvidence, type ResumeVersion } from "./snapshots";
 
 // A fact its owner has marked sensitive stays theirs to read, edit and export, and goes nowhere
@@ -39,6 +40,16 @@ export function withheldFacts(sql: SqlStorage): Withheld {
     if (typeof row.quote === "string") quotes.add(row.quote);
   }
   return { ids, quotes };
+}
+
+/**
+ * The words a mark goes by from one copy of a line to another: `wording()`, with every star and
+ * backtick taken out as well. Cleaning once took out a star or backtick set off by spaces and now
+ * keeps it, so one line can be stored either way, and the mark must reach both. Comparing on less
+ * only ever marks more.
+ */
+export function markedWording(text: string): string {
+  return wording(text).replace(/[*`]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 /** Null for a user's own fact, as today; the fact's own `text` when its quote is in `quotes`; otherwise its quote. */

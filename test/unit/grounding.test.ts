@@ -494,6 +494,42 @@ describe("scope", () => {
     expect(checkClaim(claim, [{ text, level: "founded" }]).ok).toBe(false);
   });
 
+  // Whatever was typed or read for the apostrophe, as splitting reads it: an accent, a backtick, a
+  // modifier letter, a quotation mark of either hand, a reversed one, or the full-width form.
+  const APOSTROPHE_SPELLINGS = ["'", "’", "´", "`", "ʼ", "‘", "‛", "＇"];
+
+  it.each(APOSTROPHE_SPELLINGS)("refuses a line that asserts an action its fact denies with didn%st", (mark) => {
+    const denied = checkClaim("Deployed Kubernetes", [{ text: `Didn${mark}t deploy Kubernetes`, level: "founded" }]);
+    expect(denied.ok).toBe(false);
+    expect(denied.problems).toContain("actions contradicted by the evidence: deploy");
+    // The same reading, written in capitals and with the denial further from the verb.
+    expect(checkClaim("Led the migration", [{ text: `DIDN${mark}T actually lead the migration`, level: "founded" }]).ok).toBe(false);
+    // A plan that the fact says did not come about is not a completed action.
+    const planned = checkClaim("Deployed Kubernetes", [{ text: `Planned to deploy Kubernetes; I wouldn${mark}t say we deployed Kubernetes`, level: "founded" }]);
+    expect(planned.problems).toContain("completed actions stated only as plans: deploy:kubernetes");
+    // A direction the fact denies does not support the line that asserts it.
+    const reversed = checkClaim("Increased latency by 20%", [{ text: `Reduced latency by 20%; didn${mark}t increase latency`, level: "founded" }]);
+    expect(reversed.problems).toContain("outcome direction contradicted by the evidence: latency");
+    // The person's own words, as they wrote them, still stand.
+    expect(checkClaim(`Didn${mark}t deploy Kubernetes`,[{ text: `Didn${mark}t deploy Kubernetes`, level: "founded" }]).ok).toBe(true);
+  });
+
+  it("reads the denial in a fact through a character that is not shown", () => {
+    for (const text of ["Did­n't deploy Kubernetes", "Ne­ver deployed Kubernetes", "Didn⁠`t deploy Kubernetes"]) {
+      expect(checkClaim("Deployed Kubernetes", [{ text, level: "founded" }]).ok).toBe(false);
+      expect(checkClaim(text, [{ text, level: "founded" }]).ok).toBe(true);
+    }
+  });
+
+  it("still reads a straight apostrophe, and a word that only looks like a denial, as before", () => {
+    expect(checkClaim("Deployed Kubernetes", [{ text: "Didn't deploy Kubernetes", level: "founded" }]).problems)
+      .toEqual(["actions contradicted by the evidence: deploy", "actions contradicted by the evidence: deploy:kubernetes"]);
+    // An apostrophe that is not in "n't" denies nothing, and a word ending in "nt" is not a denial.
+    expect(checkClaim("Deployed Kubernetes", [{ text: "Deployed the team`s Kubernetes", level: "founded" }]).ok).toBe(true);
+    expect(checkClaim("Deployed Kubernetes", [{ text: "Brant deployed Kubernetes", level: "founded" }]).ok).toBe(true);
+    expect(checkClaim("Deployed Kubernetes", [{ text: "Deployed Kubernetes in the Kalen`tine cluster", level: "founded" }]).ok).toBe(true);
+  });
+
   it.each([
     ["Never led the migration", "Led the migration"],
     ["Did not lead the migration", "Led the migration"],
