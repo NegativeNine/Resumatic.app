@@ -2,11 +2,11 @@ import { env } from "cloudflare:workers";
 import { strFromU8, unzipSync } from "fflate";
 import { setPdfRenderer } from "../../src/render/pdf";
 import type { ApplicationView, FactView } from "../../src/shared/api";
-import { MCP_SCOPES, type McpClaims } from "../../src/shared/mcp";
+import { MCP_SCOPES, type McpClaims, type McpFit } from "../../src/shared/mcp";
 import type { ShareGrant } from "../../src/shared/sharing";
 import { vault } from "../../src/shared/stubs";
 import { fromBase64url } from "../../src/worker/crypto";
-import { call, cookieFrom, type User } from "./support";
+import { call, cookieFrom, eventually, type User } from "./support";
 
 // Everything a vault sends to anyone but its owner, gathered as text, so a test can say of some
 // words "these went nowhere". A feature that adds a way out of a vault adds it here, and every
@@ -14,7 +14,8 @@ import { call, cookieFrom, type User } from "./support";
 //
 // Not gathered: the owner's own pages, export and document downloads, which are theirs to read;
 // and the answers of the tools that write (add_job, start_tailoring), which hold only IDs. What
-// those tools set going is read here as model inputs and as the resumes they make.
+// those tools set going is read here as model inputs and as the resumes they make. preview_fit's
+// answer is gathered, and a preview it starts is read as model inputs too.
 
 /** A shared copy, as the test that made it holds it. */
 export interface OutwardCopy {
@@ -27,7 +28,7 @@ export interface OutwardCopy {
 
 /** One thing sent out, and where it went. */
 export interface OutwardPart {
-  surface: "copy by its link" | "copy as its coach" | "coach's client list" | "list_facts" | "search_facts" | "list_jobs" | "get_resume" | "PDF" | "Word" | "print preview" | "model input";
+  surface: "copy by its link" | "copy as its coach" | "coach's client list" | "list_facts" | "search_facts" | "list_jobs" | "get_resume" | "preview_fit" | "PDF" | "Word" | "print preview" | "model input";
   text: string;
 }
 
@@ -117,6 +118,17 @@ export async function outwardParts({ owner, copies, inputs }: { owner: User; cop
       await tool("search_facts", () => stub.mcpFacts(claims, { query: text.slice(0, 200), limit: 100 }));
     await tool("list_jobs", () => stub.mcpJobs(claims, { limit: 100 }));
     for (const resume of finished) await tool("get_resume", () => stub.mcpResume(claims, resume.id, resume.version));
+    // A fit preview of every saved job. One that isn't current is started, and asked for again with
+    // the same key until it is answered: what it was measured from is then among the model inputs.
+    for (const job of jobs) {
+      const requestKey = crypto.randomUUID();
+      await tool("preview_fit", () =>
+        eventually(async () => {
+          const answer = (await stub.mcpFit(claims, job.id, requestKey)) as McpFit;
+          return answer.state === "preparing" ? null : answer;
+        }, "the fit preview", 60_000),
+      );
+    }
   } finally {
     await stub.revokeMcpGrant(who, grant.id);
   }
