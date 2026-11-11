@@ -1,10 +1,11 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setModels } from "../../src/ai/models";
 import type { Me } from "../../src/shared/api";
 import type { CoachClient, ShareGrant, SharedView } from "../../src/shared/sharing";
 import { MIGRATIONS, migrate, SCHEMA_VERSION } from "../../src/vault/schema";
+import { Vault } from "../../src/vault/vault";
 import { vault } from "../../src/shared/stubs";
 import { fromBase64url } from "../../src/worker/crypto";
 import { createSession } from "../../src/worker/session";
@@ -183,6 +184,39 @@ describe("a copy that names its coach", () => {
     expect((await dana.send("DELETE", `/api/coach/clients/${shared.grant.id}`)).status).toBe(204);
     expect(await clients(dana)).toEqual({ clients: [], needsSignIn: false });
     expect((await dana.send("DELETE", `/api/coach/clients/${shared.grant.id}`)).status).toBe(204);
+  });
+
+  it("says the copy has ended, not the coach's account, when its last moment passes while it is being opened", async () => {
+    const { user: sam, factId } = await owner();
+    const address = uniqueEmail();
+    // A minute left, so the clock below has only a minute to move.
+    const shared = await share(sam, { factIds: [factId], coachEmail: address, expiresAt: Date.now() + 60_000 });
+    const dana = await signIn(address);
+    expect((await takeUp(shared.grant.id, jar(await open(shared), dana.cookie))).status).toBe(204);
+
+    // The owner's vault finds the copy still live, and its last moment passes before the answer is back.
+    const real = Date.now.bind(Date);
+    let ahead = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => real() + ahead);
+    const openShareForCoach = Vault.prototype.openShareForCoach;
+    const opening = vi.spyOn(Vault.prototype, "openShareForCoach").mockImplementation(async function (this: Vault, grantId, coach) {
+      const opened = await openShareForCoach.call(this, grantId, coach);
+      ahead = opened.expiresAt - real();
+      return opened;
+    });
+    try {
+      const late = await dana.send("POST", `/api/coach/clients/${shared.grant.id}/open`);
+      expect(opening).toHaveBeenCalledOnce();
+      expect(late.status).toBe(409);
+      expect(await late.json()).toMatchObject({ error: "conflict", message: expect.stringContaining("this copy has ended") });
+      expect(late.headers.getSetCookie()).toEqual([]);
+    } finally {
+      opening.mockRestore();
+      clock.mockRestore();
+    }
+    // A 410 here would have been read as the coach's own account being gone.
+    expect((await dana.send("GET", "/api/me")).status).toBe(200);
+    expect((await clients(dana)).clients).toMatchObject([{ grantId: shared.grant.id, active: true }]);
   });
 
   it("names nobody unless its owner says so, and takes only an address", async () => {

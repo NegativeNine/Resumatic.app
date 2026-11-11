@@ -1377,6 +1377,9 @@ api.post("/coach/clients/:grantId/open", async (c) => {
   // Shaped as the link's own claims are, because the session it makes is the one the link makes.
   const claims = { kind: "coach-link" as const, vid: entry.ownerVault, grantId: entry.grantId, epoch: opened.epoch, exp: opened.expiresAt };
   const now = Date.now();
+  // The owner's vault found the copy live by its own clock, a moment ago. If its last moment has
+  // passed since, that is the copy ending, and the session below would say it as a 410.
+  if (opened.expiresAt <= now) throw copyEnded();
   c.header("set-cookie", await createShareSession(c.env.SESSION_KEY, claims, now, shareCookieName(entry.grantId)), { append: true });
   c.header("set-cookie", await createShareSession(c.env.SESSION_KEY, claims, now), { append: true });
   return c.json({ grantId: entry.grantId });
