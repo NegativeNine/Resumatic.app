@@ -98,6 +98,12 @@ describe("starting rule 1: a qualified line stays whole", () => {
     // standing alone, a prime, or a letter that only looks like one.
     ...["\u2018", "\u201B", "\u02BC", "\u02BB", "`", "\u00B4", "\u2032", "\uFF07"].map((mark): [string, string] => [`Didn${mark}t own on-call but wrote every runbook`, "didn't"]),
     ["Ran the roadmap but COULDN\u00b4T hire for it in 2020", "couldn't"],
+    // An apostrophe is part of a word only in "n't". Anywhere else it is a quotation mark or a
+    // possessive, and the word on each side of it is read by itself.
+    ["Managed releases, not\u2018hotfixes\u2019, and trained the on-call team", "not"],
+    ["Ran every release without`kubectl` and wrote the runbooks", "without"],
+    ["Would\u2019ve led the migration and the rollout in 2021", "would"],
+    ["Had no\u2018T\u2019 in the title but led the platform team", "no"],
     ["Shipped the API without downtime and trained the team", "without"],
     ["Built services in Python or Go and deployed them weekly", "or"],
     ["Proposed a redesign of billing, cutting costs by 20%", "proposed"],
@@ -131,6 +137,7 @@ describe("starting rule 1: a qualified line stays whole", () => {
     "Migrated 40 services to Kubernetes and trained the on-call team",
     "May 2021 launch lead for two regions and three product lines",
     "Rebuilt the co-located cache and cut read latency by half",
+    "Rebuilt the team\u2019s deploy pipeline and cut its run time by half",
     // "Up-to-date" is not "up to": a hyphenated phrase counts only where it ends the hyphenated word.
     "Kept the runbooks up-to-date and trained the on-call team",
     "Built a one-of-a-kind dashboard for the sales and finance teams",

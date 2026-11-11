@@ -101,6 +101,8 @@ describe("what to offer about two lines", () => {
       ["AWS Solutions Architect certification", "AWS Solutions Architect certification (in-progress)"],
       ["AWS Solutions Architect certification", "AWS Solutions Architect certification (work‑in‑progress)"],
       ["Led the launch in two regions", "Led the up-coming launch in two regions"],
+      // A listed word run straight into a quotation mark.
+      ["Managed releases and hotfixes", "Managed releases, not\u2018hotfixes\u2019"],
       ["Migrated the billing system", "Tried to migrate the billing system"],
       ["Built a new billing system", "Planned to build a new billing system"],
       ["Led the migration to Kubernetes", "Helped lead the migration to Kubernetes"],

@@ -101,9 +101,11 @@ const APOSTROPHES = /['\u2032\u2035\uFF07\p{Pi}\p{Pf}\p{Sk}\p{Lm}]/gu;
 const HYPHEN = "[-\\u2010-\\u2015\\u2212\\uFE63\\uFF0D]";
 const HYPHENS = new RegExp(HYPHEN, "u");
 const JOINING_HYPHEN = new RegExp(`(?<=\\p{L})${HYPHEN}(?=\\p{L})`, "gu");
-const WORD = "[\\p{L}\\p{N}]+(?:'[\\p{L}]+)?";
+// An apostrophe is part of a word only in "n't". Anywhere else it is a possessive or a quotation
+// mark, and the word on each side of it is read by itself: "not" in "not'hotfixes'".
+const WORD = "[\\p{L}\\p{N}]+(?:(?<=n)'t(?!\\p{L}))?";
 /** One word, or several with nothing but a hyphen between each and the next. */
-const HYPHENATED = new RegExp(`${WORD}(?:${HYPHEN}${WORD})*`, "gu");
+const HYPHENATED = new RegExp(`${WORD}(?:${HYPHEN}${WORD})*`, "giu");
 
 /**
  * Every hedge, negation, alternative or intention in a line: the phrases in the order they come,

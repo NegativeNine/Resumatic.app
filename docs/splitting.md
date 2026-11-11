@@ -36,7 +36,7 @@ A line stays whole if it has any of these in it. The list is wide on purpose: it
 - **Intention, attempt and possibility:** proposed, planned, intended, expected, will, would, could, should, may, might, pending, potential, tried, attempted, learning, exploring, if, unless, up to, plans to, in progress.
 - The commonest negations in Spanish, German and French, as the reader already guards skills.
 
-The list is read against the line's words, whichever mark stands for an apostrophe and whatever spacing they came with. "Didn`t", "didn´t" and "didn‘t" are *didn't*, and "up to" is the same phrase across a line break or a space that does not break.
+The list is read against the line's words, whichever mark stands for an apostrophe and whatever spacing they came with. "Didn`t", "didn´t" and "didn‘t" are *didn't*, and "up to" is the same phrase across a line break or a space that does not break. Such a mark is part of a word only in *n't*. Anywhere else it is a possessive or a quotation mark, and the word on each side of it is read by itself: "not‘hotfixes’" has *not* in it, and "would’ve" has *would*.
 
 A hyphen where the words of a phrase join, or inside a word, changes nothing either: "in-progress" is *in progress* and "up-coming" is *upcoming*, with a hyphen of any length. A hyphenated phrase counts only where the hyphenated word ends with it, so "work-in-progress" is *in progress* and "up-to-date" is not *up to*.
 
