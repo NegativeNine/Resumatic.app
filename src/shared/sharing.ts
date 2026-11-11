@@ -232,3 +232,16 @@ export interface ShareSuggestion {
  */
 export const isVisibleLine = (text: string): boolean =>
   !/[\p{Cc}\p{Cf}\p{Co}\p{Cs}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]/u.test(text);
+
+/**
+ * True when `text`, put in place of the line `target` names, would print as the copy's line
+ * already does, so it is no new wording. A line under a role is printed without a list marker
+ * (`targetText`), so wording that only adds one is the same; the summary is printed as it is. False
+ * when the copy holds no such line.
+ */
+export function unchangedWording(snapshot: ShareSnapshot, target: ShareTarget, text: string): boolean {
+  const quote = targetText(snapshot, target);
+  if (quote === null || target.kind !== "line") return false;
+  const resume = snapshot.resumes.find((held) => held.id === target.resumeId && held.version === target.version);
+  return (resume?.summary?.id === target.lineId ? text : presentResumeBullet(text)) === quote;
+}

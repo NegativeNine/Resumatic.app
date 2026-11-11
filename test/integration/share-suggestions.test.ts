@@ -268,7 +268,10 @@ describe("suggested wording on a copy that names its coach", () => {
       { kind: "fact", factId: facts[0]!.id },
     ])
       expect(await refusedWith({ target: elsewhere, text: "Another wording" })).toEqual([422, { error: "invalid", message: NOT_IN_COPY }]);
-    for (const same of [quote, `  ${quote}  `]) expect(await refusedWith({ target, text: same })).toEqual([422, { error: "invalid", message: SAME }]);
+    // A line under a role is printed without a list marker, so wording that only adds one reads the
+    // same: accepted, it would change nothing a reader sees, or nothing at all.
+    for (const same of [quote, `  ${quote}  `, `- ${quote}`, `• ${quote}`, `1. ${quote}`, `* - ${quote}`])
+      expect(await refusedWith({ target, text: same }), same).toEqual([422, { error: "invalid", message: SAME }]);
     for (const text of [
       "",
       "   ",
@@ -487,6 +490,33 @@ describe("suggested wording on a copy that names its coach", () => {
     expect(await accepted(sam, made.id, key)).toBe(first);
     expect(await refineRuns(vaultOf(sam))).toBe(1);
   }, 60_000);
+
+  it("answers a key whose reply was lost with that key's own check, even once the resume has moved on; another key then starts a new one", async () => {
+    const { sam, dana, quote, target, grantId, resume, applicationId, other } = await coached();
+    const made = await suggested(dana, grantId, target, `${quote}.`);
+    // The first check is asked for, and its reply never arrives: the web app keeps the key.
+    const key = crypto.randomUUID();
+    const judge = holdJudge();
+    const lost = await accepted(sam, made.id, key);
+    await judge.entered();
+    expect((await sam.send("POST", `/api/runs/${lost}/cancel`)).status).toBeLessThan(300);
+    await runDurableObjectAlarm(vaultOf(sam));
+    expect(await done(sam, lost)).toMatchObject({ state: "failed" });
+    judge.release();
+    // The owner edits another line of the same resume, so it is a version further on.
+    await ownEdit(sam, applicationId, resume.id, other.id, `${other.text} today`);
+    expect((await resumeOf(sam, resume.id)).version).toBe(resume.version + 1);
+    expect(await asOwner(sam, made.id)).toEqual({ state: "waiting", lastCheck: "unfinished" });
+    // Pressed again, the web app sends the key it kept. The same request answers with the check it
+    // started, which settles that key, rather than a refusal the page would meet on every press.
+    expect(await accepted(sam, made.id, key)).toBe(lost);
+    expect(await asOwner(sam, made.id)).toEqual({ state: "waiting", lastCheck: "unfinished" });
+    // The next press has a new key, and checks the wording on the resume as it is now.
+    const fresh = await accepted(sam, made.id);
+    expect(fresh).not.toBe(lost);
+    expect((await done(sam, fresh)).state).toBe("ready");
+    expect(await asOwner(sam, made.id)).toEqual({ state: "applied", appliedVersion: resume.version + 2 });
+  }, 90_000);
 
   it("refuses to accept, starting nothing and reserving nothing, when the check couldn't save its result", async () => {
     const { sam, dana, line, other, quote, target, grantId, resume, roles } = await coached();

@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import type { ResumeBody } from "../../src/shared/api";
-import { isVisibleLine } from "../../src/shared/sharing";
+import { isVisibleLine, unchangedWording, type ShareSnapshot, type ShareTarget } from "../../src/shared/sharing";
 import { SHARE_COMMENT_MIGRATIONS } from "../../src/vault/share-comments";
 import {
   SHARE_SUGGESTION_MIGRATIONS,
@@ -97,6 +97,19 @@ describe("the line a suggestion is about, as a copy shows it", () => {
     expect(lineAsShown(body, "missing")).toBeNull();
     expect(lineAsShown(null, "summary")).toBeNull();
     expect(lineAsShown({ sections: "x" } as unknown as ResumeBody, "summary")).toBeNull();
+  });
+
+  it("takes wording as the line's own when it would print the same there: a list marker is no change under a role, and is one in the summary", () => {
+    const snapshot = { resumes: [{ id: "r1", version: 1, ...body }], facts: [] } as unknown as ShareSnapshot;
+    const at = (lineId: string, version = 1): ShareTarget => ({ kind: "line", resumeId: "r1", version, lineId });
+    for (const text of [QUOTE, `• ${QUOTE}`, `- ${QUOTE}`, `1. ${QUOTE}`, `* - ${QUOTE}`]) expect(unchangedWording(snapshot, at("bullet"), text), text).toBe(true);
+    for (const text of [`${QUOTE}.`, `Rebuilt ${QUOTE}`, "Backend engineer"]) expect(unchangedWording(snapshot, at("bullet"), text), text).toBe(false);
+    // The summary is printed as it is, so a marker there is wording a reader sees.
+    expect(unchangedWording(snapshot, at("summary"), "Backend engineer")).toBe(true);
+    expect(unchangedWording(snapshot, at("summary"), "- Backend engineer")).toBe(false);
+    // Nothing the copy doesn't hold is anyone's wording.
+    expect(unchangedWording(snapshot, at("missing"), QUOTE)).toBe(false);
+    expect(unchangedWording(snapshot, at("bullet", 2), QUOTE)).toBe(false);
   });
 });
 

@@ -83,7 +83,7 @@ import type { CoachAccount } from "./shares";
 import type { ShareableDocument } from "../shared/sharing";
 import { ShareCommentStore } from "./share-comments";
 import type { CommentThread, NewShareComment, OwnerCommentThread, ShareComment } from "../shared/sharing";
-import { isVisibleLine, targetText, type NewSuggestion, type ShareSuggestion } from "../shared/sharing";
+import { isVisibleLine, targetText, unchangedWording, type NewSuggestion, type ShareSuggestion } from "../shared/sharing";
 import { appliedVersion, boundCheck, coachStanding, currentLine, lineAsShown, ownerStanding } from "./share-suggestions";
 import { rewritten } from "../pipeline/documents";
 import type { ResumeLine } from "../shared/api";
@@ -3386,7 +3386,9 @@ export class Vault extends DurableObject<Env> {
       // The line's words are the copy's, never the request's.
       const quote = target?.kind === "line" ? targetText(view.snapshot, target) : null;
       if (!target || quote === null) throw new AppError("invalid", "That line isn't in this copy.");
-      if (text === quote) throw new AppError("invalid", "That's the wording the line already has.");
+      // As the copy would print it there: wording that only adds a list marker would leave the line
+      // reading as it does, or, accepted, leave the resume as it was while saying it changed.
+      if (unchangedWording(view.snapshot, target, text)) throw new AppError("invalid", "That's the wording the line already has.");
       const theirs = this.sql
         .exec<{ suggestion_state: string | null; quote: string; document_id: string | null }>(
           `SELECT suggestion_state, quote, document_id FROM share_comments
@@ -3457,12 +3459,16 @@ export class Vault extends DurableObject<Env> {
       } catch {
         throw cannotCheck();
       }
+      // The digest names the suggestion alone. The web app keeps a key until a reply reaches it, and
+      // sends nothing that tells one press from the next, so a key whose reply was lost can come back
+      // after the resume has moved on. It is the same request, and gets the check it started, which
+      // settles the key; with the version in the digest it would be refused on every press.
       const begun = this.beginDocument(
         who,
         resume.application_id,
         { kind: "refine", resumeId: resume.id, expectedVersion: resume.version, lineIds: [row.target_id], manualText: row.body },
         `suggestion_${row.id}_${requestKey}`,
-        `suggestion:${row.id}:${resume.version}`,
+        `suggestion:${row.id}`,
       );
       // A replayed key never rebinds the row: the check it names is the one that key started.
       if (!begun.replay) this.sql.exec(`UPDATE share_comments SET document_id = ? WHERE id = ?`, begun.id, row.id);

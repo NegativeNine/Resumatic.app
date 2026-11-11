@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { MAX_LINE_CHARS } from "../../shared/api";
-import { isVisibleLine, type ShareComment, type ShareTarget } from "../../shared/sharing";
+import { isVisibleLine, unchangedWording, type ShareComment, type ShareSnapshot, type ShareTarget } from "../../shared/sharing";
 import { api, ApiError } from "../api";
 import { describeError } from "../errors";
 import { useAction } from "../hooks";
@@ -39,13 +39,15 @@ const isWaitingRefusal = (e: unknown) => e instanceof ApiError && e.status === 4
 
 /**
  * The coach's form for suggesting wording, in place of the comment form while it is open. It
- * starts with the line's own words, as the copy shows them, so “unchanged” is judged as the
- * server judges it. `waiting` is true while a suggestion of this account's waits on the line.
+ * starts with the line's own words, as the copy shows them, and “unchanged” is judged from
+ * `snapshot` as the server judges it. `waiting` is true while a suggestion of this account's waits
+ * on the line.
  * `onRefused` sorts a refusal the copy's page has to act on (the copy ended, or left the list),
  * and calls `otherwise` with the sentence to show here when there isn't one.
  */
 export function SuggestWording({
   grantId,
+  snapshot,
   target,
   line,
   ownerName,
@@ -55,6 +57,7 @@ export function SuggestWording({
   onRefused,
 }: {
   grantId: string;
+  snapshot: ShareSnapshot;
   target: ShareTarget & { kind: "line" };
   line: string;
   ownerName: string | null;
@@ -68,7 +71,7 @@ export function SuggestWording({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const trimmed = text.trim();
-  const sendable = !waiting && !sending && trimmed.length > 0 && trimmed.length <= MAX_LINE_CHARS && trimmed !== line && isVisibleLine(trimmed);
+  const sendable = !waiting && !sending && trimmed.length > 0 && trimmed.length <= MAX_LINE_CHARS && !unchangedWording(snapshot, target, trimmed) && isVisibleLine(trimmed);
   const owner = ownerName ?? "The owner";
 
   async function send() {

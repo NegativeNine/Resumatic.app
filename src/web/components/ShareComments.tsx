@@ -291,6 +291,7 @@ export function CoachComments({
           // A new line starts a new suggestion, from that line's own words.
           key={targetKey(line)}
           grantId={grantId}
+          snapshot={view.snapshot}
           target={line}
           line={lineText}
           ownerName={owner}

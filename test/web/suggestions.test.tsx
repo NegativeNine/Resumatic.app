@@ -75,6 +75,10 @@ describe("a coach suggesting wording", () => {
     expect(send()).toBeDisabled();
     await userEvent.type(box, " ");
     expect(send()).toBeDisabled();
+    // Nor are they with a list marker added: the copy prints a line under a role without one.
+    await userEvent.clear(box);
+    await userEvent.type(box, `• ${LED_LINE}`);
+    expect(send()).toBeDisabled();
     await userEvent.clear(box);
     expect(send()).toBeDisabled();
     await userEvent.type(box, "x".repeat(301));
