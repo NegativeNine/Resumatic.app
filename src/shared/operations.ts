@@ -6,6 +6,9 @@ import { AppError } from "./errors";
  */
 export const TRANSFER_TABLES = [
   "profile",
+  // Job preferences: one row, moved as it is, revision included. A new vault has no row until
+  // its owner first saves, so the table is empty where an import needs it to be.
+  "preferences",
   "sources",
   "source_revisions",
   "evidence",

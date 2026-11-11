@@ -53,6 +53,7 @@ import {
 import { AppError, errorCode, errorDetail, httpStatus } from "../shared/errors";
 import { MAX_SHARE_LABEL_CHARS, type CoachClient, type SharedView } from "../shared/sharing";
 import { hintFor, type CfLocation } from "../shared/location";
+import { PREFERENCES_REFUSED, cleanPreferences } from "../shared/preferences";
 import { docxKey, pdfKey, sourceKey } from "../shared/r2";
 import { directoryForSignIn, settleRoutedPlacement } from "../directory/routing";
 import { validShardInviteClaim, type ShardInviteClaim } from "../directory/shard-invite-binding";
@@ -525,6 +526,39 @@ api.put("/v2/profile", JSON_LIMIT, async (c) => {
   const { expectedRevision, ...patch } = await jsonBody(c,
     ProfilePatch.extend({ expectedRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER - 1) }).strict());
   return c.json(await myVault(c).updateProfileChecked(c.get("who"), patch, expectedRevision));
+});
+
+// Job preferences belong to the session's own vault and to nobody else: the request names no
+// account, vault or row. A save sends all four values with the revision they were read at.
+// Each value is taken as it comes here and judged whole by cleanPreferences, the same rule the
+// form and the Vault run, so the three can't disagree about what a save takes.
+const PreferencesBody = z
+  .object({
+    place: z.unknown(),
+    jobTypes: z.unknown(),
+    availableFrom: z.unknown(),
+    payFloor: z.unknown(),
+    // 0 is a vault where nothing has been saved yet.
+    expectedRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 1),
+  })
+  .strict();
+
+api.get("/preferences", async (c) =>
+  c.json(
+    unwrapResult(
+      await durableReadResult(
+        () => myVault(c),
+        (v) => v.getPreferences(c.get("who")),
+      ),
+    ),
+  ),
+);
+
+api.put("/preferences", JSON_LIMIT, async (c) => {
+  const { expectedRevision, ...values } = await jsonBody(c, PreferencesBody);
+  const clean = cleanPreferences(values);
+  if (!clean) throw new AppError("invalid", PREFERENCES_REFUSED);
+  return c.json(await myVault(c).updatePreferences(c.get("who"), clean, expectedRevision));
 });
 
 api.post("/account/sign-out-everywhere", async (c) => {

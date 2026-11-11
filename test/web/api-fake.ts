@@ -2,6 +2,7 @@ import { vi } from "vitest";
 import type { DocumentView } from "../../src/shared/documents";
 import type { PostingRead } from "../../src/shared/postings";
 import { normalizePosting, type FactPatch, type NewFact, type NewRole, type Profile, type ReviewRequest, type RolePatch } from "../../src/shared/api";
+import { PREFERENCES_CHANGED, PREFERENCES_REFUSED, cleanPreferences, type Preferences, type PreferencesUpdate } from "../../src/shared/preferences";
 import type { Fixtures } from "./fixtures";
 
 export interface Call {
@@ -158,6 +159,21 @@ export class FakeApi {
         const { expectedRevision: _revision, ...patch } = call.body as Partial<Profile> & { expectedRevision?: number };
         this.state.me.profile = { ...this.state.me.profile, ...patch, revision: (this.state.me.profile.revision ?? 0) + 1 };
         return ok(this.state.me.profile);
+      },
+    ],
+    ["GET", /^\/api\/preferences$/, () => ok(this.state.preferences ?? NOTHING_SAID)],
+    [
+      "PUT",
+      /^\/api\/preferences$/,
+      (call) => {
+        // As the server does: the one rule decides what a save takes, and it lands only at the saved revision.
+        const { expectedRevision, ...values } = call.body as PreferencesUpdate;
+        const clean = cleanPreferences(values);
+        if (!clean) return { status: 422, body: { error: "invalid", message: PREFERENCES_REFUSED } };
+        const saved = this.state.preferences ?? NOTHING_SAID;
+        if (expectedRevision !== saved.revision) return { status: 409, body: { error: "conflict", message: PREFERENCES_CHANGED } };
+        this.state.preferences = { ...clean, revision: saved.revision + 1, updatedAt: Date.now() };
+        return ok(this.state.preferences);
       },
     ],
     ["POST", /^\/api\/account\/sign-out-everywhere$/, () => ({ status: 204 })],
@@ -390,6 +406,8 @@ export function installFakeApi(state: Fixtures): FakeApi {
 }
 
 const ok = (body: unknown): Reply => ({ status: 200, body });
+/** Job preferences before the first save. */
+const NOTHING_SAID: Preferences = { revision: 0, place: null, jobTypes: [], availableFrom: null, payFloor: null, updatedAt: null };
 const notFound = (message: string): Reply => ({ status: 404, body: { error: "not_found", message } });
 
 function respond({ status, body }: Reply): Response {

@@ -49,6 +49,11 @@ function Privacy() {
           <li>Your Google account’s email address and account ID, so you can sign in.</li>
           <li>The profile details you enter: name, email, phone, location and links.</li>
           <li>
+            The job preferences you enter: a place, job types, when you’re available and a pay floor. They stay in
+            your database. They are not shown to anyone, not put in a resume or a shared copy, not sent to a
+            connected app or an AI model, and nothing uses them yet.
+          </li>
+          <li>
             The files you upload, the text read from them, and the roles and facts found in that text, each with the
             words it came from.
           </li>
@@ -166,8 +171,8 @@ function Privacy() {
       <Section title="Your choices">
         <ul>
           <li>
-            <strong>See and correct it:</strong> every fact, role and profile detail can be edited or rejected under{" "}
-            <a href={href.facts}>Facts</a> and <a href={href.account}>Account</a>.
+            <strong>See and correct it:</strong> every fact, role, profile detail and job preference can be edited,
+            rejected or cleared under <a href={href.facts}>Facts</a> and <a href={href.account}>Account</a>.
           </li>
           <li>
             <strong>Take it with you:</strong> the data export under Account downloads everything in your account, with

@@ -19,6 +19,7 @@ import type {
   SourceView,
 } from "../shared/api";
 import type { DocumentView, NewDocument } from "../shared/documents";
+import type { PreferenceValues, Preferences } from "../shared/preferences";
 import type { PostingRead } from "../shared/postings";
 import type { CoachClient, ShareableDocument, ShareGrant } from "../shared/sharing";
 
@@ -163,6 +164,11 @@ export const api = {
   profile: () => request<Profile>("GET", "/api/profile"),
   updateProfile: (patch: Partial<Profile>, expectedRevision: number) =>
     request<Profile>("PUT", "/api/v2/profile", { ...patch, expectedRevision }),
+  /** The person's job preferences. Loaded by their own card on Account, never with the session. */
+  preferences: () => request<Preferences>("GET", "/api/preferences"),
+  /** Replaces all four values, if `expectedRevision` is still the saved revision. */
+  updatePreferences: (values: PreferenceValues, expectedRevision: number) =>
+    request<Preferences>("PUT", "/api/preferences", { ...values, expectedRevision }),
   signOutEverywhere: () =>
     request<void>("POST", "/api/account/sign-out-everywhere"),
 
