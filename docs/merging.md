@@ -54,6 +54,8 @@ Then each direction separately: does this line say everything that one says?
 
 An offer is only ever an offer. Nothing here confirms one, and in shadow nobody is shown one.
 
+**An answer is about particular words.** The judge is asked while the upload is still being read, and either line can be reworded in the meantime. Each answer goes back to the vault with the two lines as the judge was asked about them, and an offer is kept only if both facts still say exactly that. Rewording a fact afterwards removes its offers, as it removes every judgement about its words ([record.md](record.md), "When words change").
+
 Like the matcher, this step cannot fail an upload and gets one try of at most three minutes. If it runs out of time it is not run again, so the judge is never asked the same questions twice, and nothing is kept.
 
 ## What is not built

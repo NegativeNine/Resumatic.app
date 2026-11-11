@@ -83,7 +83,7 @@ import { validateTailorCheckpoint, validateTailorPublication } from "./tailor-pu
 import { finalLegacyEvidence, legacyReceipt, legacyReview } from "./legacy-remediation";
 import { RunStore } from "./runs";
 import { RecordStore } from "./record";
-import { IDENTICAL_ROLE_METHOD, IDENTICAL_WORDING_METHOD, MAX_OFFER_PAIRS, OFFERS_PER_FACT, OFFER_MIN_COSINE, identicalMatches, type Offer, type OfferPair } from "../pipeline/match";
+import { IDENTICAL_ROLE_METHOD, IDENTICAL_WORDING_METHOD, MAX_OFFER_PAIRS, OFFERS_PER_FACT, OFFER_MIN_COSINE, identicalMatches, type JudgedOffer, type OfferPair } from "../pipeline/match";
 import { roleKey, sameWording } from "../shared/record";
 import type { NewPart, RecordExport } from "../shared/record";
 import { ShareStore } from "./shares";
@@ -1590,13 +1590,20 @@ export class Vault extends DurableObject<Env> {
     return pairs.slice(0, MAX_OFFER_PAIRS);
   }
 
-  /** Keeps what the judge found about this upload's lines as offers in shadow: shown to nobody, merging nothing. */
-  async saveShadowOffers(sourceId: string, runId: string | undefined, made: { model: string; method: string }, found: Offer[]): Promise<{ stored: number }> {
+  /**
+   * Keeps what the judge found about this upload's lines as offers in shadow: shown to nobody,
+   * merging nothing. An offer about wording that either line no longer has is left out.
+   */
+  async saveShadowOffers(sourceId: string, runId: string | undefined, made: { model: string; method: string }, found: JudgedOffer[]): Promise<{ stored: number }> {
     this.requireReading(sourceId, runId);
+    const says = (factId: string) => this.sql.exec<{ text: string }>(`SELECT text FROM facts WHERE id = ?`, factId).toArray()[0]?.text;
     let stored = 0;
     for (const offer of found) {
       if (!this.sql.exec(`SELECT id FROM facts WHERE id IN (?, ?) AND source_id = ?`, offer.from, offer.to, sourceId).toArray().length)
         throw new AppError("conflict", "fact is not part of this source");
+      // A judgement is about particular words, and the judge was asked before this was called.
+      // Nothing is awaited from here to the link being stored, so no edit can fall between them.
+      if (says(offer.from) !== offer.lines.from || says(offer.to) !== offer.lines.to) continue;
       try {
         this.record.proposeLink({
           kind: "fact",

@@ -226,7 +226,15 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
                 const pairs = await v.offerCandidates(sourceId, event.instanceId);
                 if (pairs.length === 0) return { pairs: 0, same: 0, fuller: 0, stored: 0 };
                 const found = await offers(runModels(this.env, vaultId, event.instanceId, "offer", "distill"), pairs);
-                const { stored } = await v.saveShadowOffers(sourceId, event.instanceId, { model: modelFor(this.env, "judge"), method: ENTAILMENT_METHOD }, found);
+                // The answers are about the lines as they were read here, and either can be
+                // reworded while the judge is asked. Each offer goes back with the words it is about.
+                const text = new Map(pairs.flatMap((pair) => [pair.later, pair.earlier]).map((line) => [line.id, line.text]));
+                const { stored } = await v.saveShadowOffers(
+                  sourceId,
+                  event.instanceId,
+                  { model: modelFor(this.env, "judge"), method: ENTAILMENT_METHOD },
+                  found.map((offer) => ({ ...offer, lines: { from: text.get(offer.from)!, to: text.get(offer.to)! } })),
+                );
                 // Counts only: no line is kept in the Workflow's own state.
                 return { pairs: pairs.length, same: found.filter((offer) => offer.relation === "same").length, fuller: found.filter((offer) => offer.relation === "fuller").length, stored };
               } catch (error) {

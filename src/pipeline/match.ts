@@ -95,6 +95,11 @@ export interface Offer {
   to: string;
 }
 
+/** An offer with each line as the judge was asked about it. It is kept only while both still say exactly that. */
+export interface JudgedOffer extends Offer {
+  lines: { from: string; to: string };
+}
+
 const JUDGE_ITEMS_PER_CALL = 20;
 
 /** How near in meaning two lines must be before the judge is asked about them, and how many are asked. */
