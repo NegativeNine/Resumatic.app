@@ -21,11 +21,34 @@ const WORD = /\.?[\p{L}\p{N}][\p{L}\p{N}\p{M}\p{Cf}]*[+#]*(?:[.&'][\p{L}\p{N}][\
 /** Curly apostrophes read as straight ones. The replacement keeps the length, so offsets hold. */
 const APOSTROPHES = /[\u2018\u2019\u02BC]/g;
 
+/** The characters nobody sees: the format characters a word is read through. */
+const UNSEEN = /\p{Cf}+/gu;
+
+/** What a word can carry that its comparison form leaves out: marks, and the characters nobody sees. */
+const DROPPED = /[\p{M}\p{Cf}]+/gu;
+
+/**
+ * The comparison form of one word. Marks and unseen characters are dropped after the word is
+ * decomposed, because decomposing is what parts an accent from its letter, and before it as well.
+ * Decomposing also puts every run of marks in canonical order, in time that grows with the square
+ * of the run, and a word of someone else's text can carry any number of marks. Dropped first,
+ * they are never put in order, and no word's form changes: a mark or an unseen character
+ * decomposes into nothing but marks and unseen characters, and ordering moves only marks.
+ */
 function fold(word) {
   return word
+    .replace(DROPPED, "")
     .normalize("NFKD")
-    .replace(/[\p{M}\p{Cf}]+/gu, "")
+    .replace(DROPPED, "")
     .toLowerCase();
+}
+
+/**
+ * A stretch of text as a person sees it: without the characters nobody sees. Everything else stays
+ * as it is written, capitals, accents and punctuation included, so this is not a comparison form.
+ */
+export function asSeen(text) {
+  return text.replace(UNSEEN, "");
 }
 
 /**

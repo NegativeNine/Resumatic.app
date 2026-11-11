@@ -39,7 +39,9 @@ Lines that differ in wording are never merged by a rule. With `OFFER_SHADOW_ENAB
 
 **Which pairs are asked about.** For each line the upload proposed, other than skills: the lines of the same kind, in the same role, from another upload or typed by the owner, that are nearest to it in meaning. At most two for each line, none below a set nearness, and at most sixty pairs for an upload. A pair with the same words is left to the rule above, and a pair that was linked or offered before is not asked about again. Roles count as the same role only when they are alike in every field that names a role.
 
-**What is asked.** First, of the pair, and without a model: are the two lines qualified by the same words? Each is read against the closed list that keeps a line from being divided ([splitting.md](splitting.md), starting rule 1): shared credit and hedges, denials, alternatives, attempts and intentions. If one line has such a word and the other does not, or the two have different ones, nothing is offered and no model is asked. "Pursuing the PMP certification" is not "Completed the PMP certification", "Never handled customer escalations" is not "Handled customer escalations", and "Helped lead the migration" is not "Led the migration". The list is wide on purpose, so some pairs a person would offer are not.
+A line marked sensitive is on neither side of a pair, so it is never put to the judge.
+
+**What is asked.** First, of the pair, and without a model: are the two lines qualified by the same words? Each is read against the closed list that keeps a line from being divided ([splitting.md](splitting.md), starting rule 1): shared credit and hedges, denials, alternatives, attempts and intentions. If one line has such a word and the other does not, or the two have different ones, nothing is offered and no model is asked. "Pursuing the PMP certification" is not "Completed the PMP certification", "Never handled customer escalations" is not "Handled customer escalations", and "Helped lead the migration" is not "Led the migration". A listed word or phrase is read however it is joined or marked, so "(in-progress)" and "(in progress)" are the same words. The list is wide on purpose, so some pairs a person would offer are not. It is still a list: it settles the words it holds and no others.
 
 Then each direction separately: does this line say everything that one says?
 
@@ -50,13 +52,21 @@ Then each direction separately: does this line say everything that one says?
 | --- | --- | --- |
 | Offered as the same fact. The earlier one would stand for both | The one that says more is offered as a fuller version of the other. Both stay | Nothing |
 
-**What only the judge can stop.** "Wrote the on-call runbooks" and "Reviewed the on-call runbooks" have no figure, name or hedge to tell them apart. No check stops them being offered as the same; only the judge does. The same holds for two lines qualified by the same words about different things. "Handled escalations but did not answer tickets" and "Did not handle escalations but answered tickets" each deny what the other says in the same words, and the claim checks read a denial only beside the verbs they know. The labelled pairs mark which wrong offers are stopped without a model and which are not (`test/fixtures/match-pairs.ts`), and the eval puts each to the real judge (`test/evals/match.eval.ts`). It has not been run.
+**What only the judge can stop.** Some pairs pass every check that needs no model, in both directions, so nothing but the judge keeps them from being offered as the same. These kinds are known:
+
+- **A different thing done, or the same thing done to something else, with no figure or name to show it.** "Wrote the on-call runbooks" and "Reviewed the on-call runbooks" have no figure, name or hedge to tell them apart. Nor do "Trained the sales team on the new CRM" and "Trained the finance team on the new CRM".
+- **A hedge, a denial or an unfinished state that one line has in words the list does not hold.** "Almost finished the data warehouse migration" against "Finished the data warehouse migration"; "Declined to renew the vendor contract" against "Renewed the vendor contract"; "Ph.D. candidate in Statistics" against "Ph.D. in Statistics"; "Didnt negotiate vendor contracts", written without its apostrophe, against "Negotiated vendor contracts". The list does not know every way of saying that something did not happen or is not finished, and the claim checks read a denial or a plan only beside the verbs they know.
+- **The same qualifying words about different things.** "Handled escalations but did not answer tickets" and "Did not handle escalations but answered tickets" each deny what the other says in the same words.
+
+The labelled pairs mark which wrong offers are stopped without a model and which are not, and hold pairs of each of these kinds (`test/fixtures/match-pairs.ts`). The eval puts each to the real judge (`test/evals/match.eval.ts`). It has not been run.
 
 An offer is only ever an offer. Nothing here confirms one, and in shadow nobody is shown one.
 
 **An answer is about particular words.** The judge is asked while the upload is still being read, and either line can be reworded in the meantime. Each answer goes back to the vault with the two lines as the judge was asked about them, and an offer is kept only if both facts still say exactly that. Rewording a fact afterwards removes its offers, as it removes every judgement about its words ([record.md](record.md), "When words change").
 
-Like the matcher, this step cannot fail an upload and gets one try of at most three minutes. If it runs out of time it is not run again, so the judge is never asked the same questions twice, and nothing is kept.
+Like the matcher, this step cannot fail an upload and gets one try of at most three minutes. If it runs out of time it is not run again, so the judge is never asked the same questions twice, and the upload goes on without it.
+
+**A try that runs out of time is not cancelled.** The Workflow stops waiting for it, and that is all: in the Workflows engine bundled for local runs, the work already started carries on. While the upload is still being read it can ask the rest of its questions, each call reserving budget first as every model call does, and what it stores in that time is kept like any other offer, held to the same checks. Once the upload is marked ready the vault accepts nothing more from that reading and reserves no further call for it. That the work carries on is read from the engine's code: it has not been observed on the deployed platform, and no test runs a stage past its time. That the vault refuses the reading afterwards is tested (`test/integration/offer-shadow.test.ts`).
 
 ## What is not built
 

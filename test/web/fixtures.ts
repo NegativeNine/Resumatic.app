@@ -1,7 +1,8 @@
 import type { ApplicationView, FactView, Me, ResumeView, RoleView, SourceView } from "../../src/shared/api";
 import type { DocumentView } from "../../src/shared/documents";
+import type { Preferences } from "../../src/shared/preferences";
 import type { McpGrant } from "../../src/shared/mcp";
-import type { CoachClient, ShareGrant, SharedView } from "../../src/shared/sharing";
+import type { CoachClient, CommentThread, OwnerCommentThread, ShareGrant, SharedView } from "../../src/shared/sharing";
 import type { BillingView } from "../../src/web/api";
 import data from "./fixtures.json";
 import full from "./fixtures-full.json";
@@ -9,6 +10,8 @@ import full from "./fixtures-full.json";
 /** Everything the fake API serves. The JSON is shared with the screenshot script. */
 export interface Fixtures {
   me: Me;
+  /** The person's job preferences as saved. Absent until they first save: nothing said, at revision 0. */
+  preferences?: Preferences;
   sources: SourceView[];
   roles: RoleView[];
   facts: FactView[];
@@ -19,6 +22,10 @@ export interface Fixtures {
   shares?: ShareGrant[];
   /** The copies other people have shared with this account as their coach. */
   clients?: CoachClient[];
+  /** What this account has written as a coach on the copy it is reading, with the owner's replies. */
+  coachComments?: CommentThread[];
+  /** What coaches have written on the copies this account shared, with its own replies. */
+  shareComments?: OwnerCommentThread[];
   mcpGrants?: McpGrant[];
   billing?: BillingView;
 }

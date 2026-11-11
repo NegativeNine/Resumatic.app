@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "../../src/ai/llm";
 import type { Models } from "../../src/ai/models";
 import type { JudgeItem } from "../../src/ai/prompts";
-import { SPLIT_REFUSALS, numberedWords, partsRefusal, qualifier, splitLines, splitPrompt, toParts, type SplitProposal } from "../../src/pipeline/split";
+import { SPLIT_REFUSALS, numberedWords, partsRefusal, qualifier, qualifiers, splitLines, splitPrompt, toParts, type SplitProposal } from "../../src/pipeline/split";
 import { lineRuns, partText, type NewPart } from "../../src/shared/record";
 import { SPLIT_LINES } from "../fixtures/split-lines";
 
@@ -98,6 +98,12 @@ describe("starting rule 1: a qualified line stays whole", () => {
     // standing alone, a prime, or a letter that only looks like one.
     ...["\u2018", "\u201B", "\u02BC", "\u02BB", "`", "\u00B4", "\u2032", "\uFF07"].map((mark): [string, string] => [`Didn${mark}t own on-call but wrote every runbook`, "didn't"]),
     ["Ran the roadmap but COULDN\u00b4T hire for it in 2020", "couldn't"],
+    // An apostrophe is part of a word only in "n't". Anywhere else it is a quotation mark or a
+    // possessive, and the word on each side of it is read by itself.
+    ["Managed releases, not\u2018hotfixes\u2019, and trained the on-call team", "not"],
+    ["Ran every release without`kubectl` and wrote the runbooks", "without"],
+    ["Would\u2019ve led the migration and the rollout in 2021", "would"],
+    ["Had no\u2018T\u2019 in the title but led the platform team", "no"],
     ["Shipped the API without downtime and trained the team", "without"],
     ["Built services in Python or Go and deployed them weekly", "or"],
     ["Proposed a redesign of billing, cutting costs by 20%", "proposed"],
@@ -107,9 +113,29 @@ describe("starting rule 1: a qualified line stays whole", () => {
     // A phrase is the same phrase across a line break, two spaces or a space that does not break.
     ["Reduced latency by up\u00A0to 40% and tripled throughput", "up to"],
     ["Was part  of the team that rebuilt billing\nand shipped it", "part of"],
+    // A character that is not shown can sit inside a word. Text read from a PDF keeps its soft hyphens.
+    ["Ne\u00ADver handled escalations but wrote every runbook", "never"],
+    ["Pro\u200Bposed a redesign of billing and wrote its tests", "proposed"],
+    ["AWS Solutions Architect certification in pro\u00ADgress and three exams passed", "in progress"],
+    ["Didn\u2060\u2019t own on-call but wrote every playbook", "didn't"],
+    // Or stand between two words, which is how it was already read.
+    ["Built services in Python\u200Bor\u200BGo and deployed them daily", "or"],
+    // A hyphen of any length where the words of a phrase join, or inside a word, changes nothing.
+    ["AWS Solutions Architect certification in-progress and two exams passed", "in progress"],
+    ["Thesis is a work\u2010in\u2010progress with two chapters drafted", "in progress"],
+    ["Reduced latency by up-to 40% and doubled throughput", "up to"],
+    // And with nothing between its words, as "up to" is often written.
+    ["Reduced latency by upto 40% and halved the error rate", "upto"],
+    ["Reduced latency by up\u2013to\u201340% and tripled throughput", "up to"],
+    ["Preparing the up-coming launch in two regions and three languages", "upcoming"],
+    ["Preparing the UP\u2011COMING launch in two regions and four languages", "upcoming"],
     ["This may reduce costs and should speed up releases", "may"],
     ["Built the pipeline and will migrate the rest next year", "will"],
     ["Currently learning Rust and building a parser", "learning"],
+    // Still under way, or only expected: neither is said to be finished.
+    ["Leading the ongoing migration of 40 services to Kubernetes", "ongoing"],
+    ["Leading the on-going migration of 60 services to Kubernetes", "ongoing"],
+    ["Anticipated graduation in May 2027 with honours in statistics", "anticipated"],
     ["Evaluated vendors and/or built tooling for each", "and/or"],
     ["Hizo la migraci\u00F3n sin ayuda y entren\u00F3 al equipo", "sin"],
     ["Hat nicht nur die API gebaut und das Team geschult", "nicht"],
@@ -118,9 +144,46 @@ describe("starting rule 1: a qualified line stays whole", () => {
     expect(qualifier(line)).toBe(because);
   });
 
-  const plain = [API, TEAM, "Migrated 40 services to Kubernetes and trained the on-call team", "May 2021 launch lead for two regions and three product lines", "Rebuilt the co-located cache and cut read latency by half"];
+  const plain = [
+    API,
+    TEAM,
+    "Migrated 40 services to Kubernetes and trained the on-call team",
+    "May 2021 launch lead for two regions and three product lines",
+    "Rebuilt the co-located cache and cut read latency by half",
+    "Rebuilt the team\u2019s deploy pipeline and cut its run time by half",
+    // "Up-to-date" is not "up to": a hyphenated phrase counts only where it ends the hyphenated word.
+    "Kept the runbooks up-to-date and trained the on-call team",
+    "Built a one-of-a-kind dashboard for the sales and finance teams",
+    "Wrote a part-of-speech tagger and trained it on 2 million sentences",
+  ];
   it.each(plain)("%j has nothing that qualifies it", (line) => {
     expect(qualifier(line)).toBeNull();
+  });
+
+  it("reads a phrase or a word the same however its parts are joined", () => {
+    // Two lines qualified in the same way give the same list, which is what offers compare.
+    expect(qualifiers("AWS certification (in-progress), not yet sat")).toEqual(qualifiers("AWS certification (in progress), not yet sat"));
+    expect(qualifiers("AWS certification (in-progress), not yet sat")).toEqual(["in progress", "not"]);
+    expect(qualifiers("Not ready for the up-coming audit")).toEqual(qualifiers("Not ready for the upcoming audit"));
+    expect(qualifiers("Not ready for the up-coming audit")).toEqual(["not", "upcoming"]);
+    // A hyphenated word that spells a listed word is that word, and is not read as its parts as well.
+    expect(qualifiers("Can-not travel in the first quarter")).toEqual(qualifiers("Cannot travel in the first quarter"));
+    expect(qualifiers("Can-not travel in the first quarter")).toEqual(["cannot"]);
+    // A hyphen joins only what it touches, and a hyphenated word is read as its parts when it is not a listed word itself.
+    expect(qualifiers("Re-proposed the redesign, on - going since March")).toEqual(["proposed"]);
+    expect(qualifiers("Python-or-Go services")).toEqual(["or"]);
+  });
+
+  it("reads a line with a character that is not shown as the same words", () => {
+    const plainly = qualifiers("Never handled escalations, and did not answer tickets");
+    expect(plainly).toEqual(["never", "not"]);
+    // Inside a listed word, inside another word, and between two: each is the line a person sees.
+    expect(qualifiers("Ne\u00ADver handled escalations, and did not answer tickets")).toEqual(plainly);
+    expect(qualifiers("Never han\u00ADdled escalations, and did not an\u200Bswer tickets")).toEqual(plainly);
+    expect(qualifiers("Never handled\u200B escalations, and did\uFEFF not answer tickets")).toEqual(plainly);
+    // Read both ways, a line is qualified by everything either reading finds, each once.
+    expect(qualifiers("Never ran Python\u200Bor\u200BGo")).toEqual(["never", "or"]);
+    expect(qualifiers("Kept every tut\u00ADor on the rota")).toEqual(["or"]);
   });
 
   it("is decided before any model is asked", async () => {
@@ -424,6 +487,19 @@ describe("labelled lines", () => {
     expect(lenient.calls.judge[0]!.map((item) => item.text)).toContain(wrong);
     // A judge that reads the claim and its result together, and does not find that in the line, refuses it.
     expect(await one(trap.line, { propose: { [trap.line]: proposal(trap.line, ...trap.parts) }, verdicts: { [wrong]: "unsupported" } })).toEqual({ id: "fact-1", parts: null, refusal: "not_its_outcome" });
+  });
+
+  it("puts a hedge the list does not have, moved to another claim, to the judge as exactly that reading", async () => {
+    const trap = traps.find((found) => found.says === "gives one claim the hedge that belongs to the other, in a word the list does not have")!;
+    const wrong = "Almost shipped the billing API";
+    // The list is a list: it has no "almost", so starting rule 1 does not keep this line whole.
+    expect(qualifier(trap.line)).toBeNull();
+    // A judge that finds nothing wrong keeps the division: no check that needs no model stops it.
+    const lenient = models({ propose: { [trap.line]: proposal(trap.line, ...trap.parts) } });
+    expect((await splitLines(lenient.models, [{ id: "fact-1", text: trap.line }]))[0]!.refusal).toBeNull();
+    expect(lenient.calls.judge[0]!.map((item) => item.text)).toContain(wrong);
+    // A judge that does not find the claim in the line, as the claim reads alone, refuses it.
+    expect(await one(trap.line, { propose: { [trap.line]: proposal(trap.line, ...trap.parts) }, verdicts: { [wrong]: "unsupported" } })).toEqual({ id: "fact-1", parts: null, refusal: "reads_differently" });
   });
 
   it.each(SPLIT_LINES.filter((example) => example.expect === "qualified"))("$line stays whole whatever a model proposes", async (example) => {

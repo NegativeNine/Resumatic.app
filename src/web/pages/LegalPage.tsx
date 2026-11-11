@@ -49,6 +49,11 @@ function Privacy() {
           <li>Your Google account’s email address and account ID, so you can sign in.</li>
           <li>The profile details you enter: name, email, phone, location and links.</li>
           <li>
+            The job preferences you enter: a place, job types, when you’re available and a pay floor. They stay in
+            your database. They are not shown to anyone, not put in a resume or a shared copy, not sent to a
+            connected app or an AI model, and nothing uses them yet.
+          </li>
+          <li>
             The files you upload, the text read from them, and the roles and facts found in that text, each with the
             words it came from.
           </li>
@@ -68,6 +73,10 @@ function Privacy() {
           <li>
             If someone names you as their coach and you add their copy to your client list: whose copy it is, when
             you added it and when it ends.
+          </li>
+          <li>
+            Comments a coach writes on a copy you shared, and your replies, with the line or fact each is about and
+            the coach’s name and sign-in address.
           </li>
           <li>The apps you connect, what you allowed each one to do and when its access ends.</li>
           <li>How many resumes and documents you have made in the current period, for your plan’s limit.</li>
@@ -99,7 +108,8 @@ function Privacy() {
           letters and interview preparation, and check each line against your facts. They are reached through
           Cloudflare AI Gateway with request logging turned off, and each one receives only the text its step needs:
           your upload’s text, a job description, or the facts chosen for one resume or document. Lines are checked
-          against your confirmed facts, and a line those facts do not support is never shown to you.
+          against your confirmed facts, and a line those facts do not support is never shown to you. Comments on a
+          shared copy are never sent to a language model or used to write or check a resume.
         </p>
         <p>
           Our own logs record IDs, counts and error codes. They never record your files, facts, job descriptions or
@@ -131,6 +141,12 @@ function Privacy() {
             its client list and open it from there without the link, for as long as the link lasts. You see the name
             on their account and when they added it. Naming a coach doesn’t close the link to anyone else who has it.
           </li>
+          <li>
+            The coach you name can comment on a line or a fact in the copy once they have added it to their client
+            list. Nobody else with the link can read or write comments. You answer and delete them under Account,
+            where they stay after the copy ends until you delete them. We don’t send email: a count of new comments
+            shows the next time you open Resumatic.
+          </li>
         </ul>
         <p>
           <strong>If you are reading a copy someone shared with you:</strong> we don’t ask who you are. We keep the
@@ -143,7 +159,10 @@ function Privacy() {
           is the one the copy names as its coach, and keep nothing from that check. If it is and you add the copy to
           your client list, we keep your account ID and the name on your account with the owner’s link, and the owner
           sees that name and when you added it. Your list keeps the owner’s name as the copy gives it. An entry leaves
-          your list when you remove it, or thirty days after the copy’s last day.
+          your list when you remove it, or thirty days after the copy’s last day. If you comment, your words are kept
+          in the owner’s account, not yours, with your name, sign-in address and account ID. You can delete a comment
+          while the copy is open to you. After that the owner keeps it until they delete it or their account, even if
+          you delete yours.
         </p>
       </Section>
       <Section title="Connecting an app">
@@ -157,7 +176,9 @@ function Privacy() {
           <li>create documents, which count toward your plan’s limit.</li>
         </ul>
         <p>
-          A connected app never receives your uploaded files, the words a fact came from, or your notes on a job. Its
+          A connected app never receives your uploaded files, the words a fact came from, or your notes on a job. It
+          never receives a fact you have marked sensitive, or a resume that uses one. It never receives a coach’s
+          comments either. Its
           access lasts an hour, or up to thirty days if you allow it to continue, and you can revoke it at any time
           under <a href={href.account}>Account</a>. What an app has already read is then held by the company that
           runs it, under that company’s terms, and revoking access does not remove it from there.
@@ -166,8 +187,16 @@ function Privacy() {
       <Section title="Your choices">
         <ul>
           <li>
-            <strong>See and correct it:</strong> every fact, role and profile detail can be edited or rejected under{" "}
-            <a href={href.facts}>Facts</a> and <a href={href.account}>Account</a>.
+            <strong>See and correct it:</strong> every fact, role, profile detail and job preference can be edited,
+            rejected or cleared under <a href={href.facts}>Facts</a> and <a href={href.account}>Account</a>.
+          </li>
+          <li>
+            <strong>Keep a fact to yourself:</strong> mark a fact sensitive under <a href={href.facts}>Facts</a> and it
+            is left out of every new resume, letter, interview preparation and fit preview, never put in a shared copy
+            and never shown to a connected app. A resume that already uses it can’t be downloaded, shared or read by an
+            app until you remove those lines. It stays in your search index, so the model that indexes your facts can
+            still receive its words when you edit it or the index is rebuilt. Marking cannot take back what a model, a
+            reader or an app received before.
           </li>
           <li>
             <strong>Take it with you:</strong> the data export under Account downloads everything in your account, with

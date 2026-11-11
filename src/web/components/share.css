@@ -44,3 +44,27 @@
   .app-share__bar, .app-share__main > .app-share__opened { display: none; }
   .app-share { background: none; }
 }
+/* Comments, for the coach a copy names: the copy on the left and its threads on the right from 1100px wide, the threads after the copy below that. */
+.app-share__columns { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-10); }
+.app-share__copy { min-width: 0; }
+.app-share__copy > :first-child { margin-top: 0; }
+.app-share__aside { min-width: 0; }
+.app-share__aside > h2 { margin: 0 0 var(--space-4); }
+@media (min-width: 1100px) {
+  .app-share__main--comments { max-width: calc(864px + var(--space-8) + var(--layout-margin)); }
+  .app-share__columns { grid-template-columns: minmax(0, 1fr) var(--layout-margin); gap: var(--space-8); align-items: start; }
+  /* The threads stay in view while the copy is read. The padding keeps a focus ring inside the scrolling box. */
+  .app-share__aside { position: sticky; top: var(--space-6); max-height: calc(100vh - 2 * var(--space-6)); margin: calc(-1 * var(--space-1)); padding: var(--space-1); overflow-y: auto; }
+}
+/* A line or a fact the coach can choose: a button that reads as the text it holds, and can still be selected as text. The selector outranks the app's rules for a plain button. */
+.app-share button.app-share__pick { display: block; width: calc(100% + 0.6em); min-height: 0; margin: -0.07em -0.3em; padding: 0.07em 0.3em; font: inherit; letter-spacing: inherit; color: inherit; text-align: start; text-decoration: none; cursor: pointer; background: none; border: 0; border-radius: var(--radius-sm); transition: none; -webkit-user-select: text; user-select: text; }
+/* On the resume's paper the sheet's own tint marks the chosen line (.rs-sheet .rs-line). A bar in the sheet's ink marks it without relying on the tint. */
+.app-share .rs-sheet button.app-share__pick[aria-pressed="true"] { box-shadow: inset 2px 0 0 var(--sheet-ink); }
+.app-share__facts button.app-share__pick:hover { background: var(--ballpoint-soft); }
+.app-share__facts button.app-share__pick[aria-pressed="true"] { background: var(--ballpoint-soft); box-shadow: inset 2px 0 0 var(--ballpoint); }
+@media print {
+  .app-share__aside { display: none; }
+  /* Paper shows the copy and nothing of what was chosen on screen. */
+  .app-share .rs-sheet button.app-share__pick, .app-share .rs-sheet button.app-share__pick[aria-pressed="true"],
+  .app-share__facts button.app-share__pick, .app-share__facts button.app-share__pick[aria-pressed="true"] { background: none; box-shadow: none; }
+}

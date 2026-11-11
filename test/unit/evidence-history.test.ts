@@ -133,6 +133,71 @@ describe("immutable resume evidence", () => {
     expect(() => assertGroundedResume(render, stored, "snapshot", evidenceForFacts([corrected]))).toThrow(/unverified/);
   });
 
+  describe("with facts their owner has marked sensitive", () => {
+    const SKILLS = "Go, TypeScript, Kubernetes";
+    const role: RoleRecord = { id: "role-1", revision: 1, kind: "job", org: "Employer", title: null, startDate: null, endDate: null };
+    const roles = evidenceForRoles([role]);
+    const skill = (id: string, text: string, quote = SKILLS): FactRecord => ({ ...fact, id, kind: "skill", roleId: null, text, level: null, quote });
+    const go = skill("go", "Go"), kubernetes = skill("kubernetes", "Kubernetes");
+    const stored = (...records: FactRecord[]) => Object.fromEntries(records.map((record) => [record.id, { text: record.text, quote: record.quote }]));
+    const version = (lines: { id: string; text: string; factIds: string[] }[], skills: string[] = [], summary: { id: string; text: string; factIds: string[] } | null = null): RenderData => ({
+      profile: { name: "A User", email: "", phone: "", location: "", links: [] },
+      body: {
+        summary: summary ? { ...summary, status: "kept" } : null,
+        sections: [{ roleId: role.id, kind: role.kind, org: role.org, title: role.title, startDate: null, endDate: null, lines: lines.map((line) => ({ ...line, status: "kept" as const })) }],
+        skills,
+      },
+      version: 1, company: null, title: null,
+    });
+    const marked = (...records: FactRecord[]) => ({ ids: new Set(records.map((record) => record.id)), quotes: new Set(records.flatMap((record) => (record.quote === null ? [] : [record.quote]))) });
+    const nothing = { ids: new Set<string>(), quotes: new Set<string>() };
+
+    it("refuses a version in which a line cites one, and opens it again when the mark is gone", () => {
+      const render = version([{ id: "line", text: fact.text, factIds: [fact.id] }]);
+      const facts = stored(fact), evidence = evidenceForFacts([fact]);
+      // Its owner's own read passes no marks, and neither does removing the line.
+      expect(() => assertGroundedResume(render, facts, "snapshot", evidence, roles)).not.toThrow();
+      expect(() => assertGroundedResume(render, facts, "snapshot", evidence, roles, nothing)).not.toThrow();
+      expect(() => assertGroundedResume(render, facts, "snapshot", evidence, roles, marked(fact))).toThrow("This version uses a fact you marked sensitive");
+      expect(() => assertGroundedResume(render, facts, "snapshot", evidence, roles, marked({ ...fact, id: "another", quote: "Another line" }))).not.toThrow();
+      // The summary is a line like any other.
+      const summarised = version([], [], { id: "summary", text: fact.text, factIds: [fact.id] });
+      expect(() => assertGroundedResume(summarised, facts, "snapshot", evidence, roles, marked(fact))).toThrow("marked sensitive");
+    });
+
+    it("refuses a version in which a line cites a fact stored with a marked fact's line", () => {
+      const render = version([], [], { id: "summary", text: "Go", factIds: [go.id] });
+      // Checked while the whole skills list was the quote: the line may rest on the marked word.
+      expect(() => assertGroundedResume(render, stored(go), "snapshot", evidenceForFacts([go]), roles, marked(kubernetes))).toThrow("marked sensitive");
+      // Captured after the mark, with its own word as its only evidence.
+      const own = { ...go, quote: go.text };
+      expect(() => assertGroundedResume(render, stored(own), "snapshot", evidenceForFacts([own]), roles, marked(kubernetes))).not.toThrow();
+    });
+
+    it("ignores a marked fact the run captured and no line cites", () => {
+      const other: FactRecord = { ...fact, id: "fact-2", text: "Built a billing service", quote: "Built a billing service", level: "implemented" };
+      const render = version([{ id: "line", text: other.text, factIds: [other.id] }], ["Go"]);
+      const facts = stored(fact, other, go, kubernetes), evidence = evidenceForFacts([fact, other, go, kubernetes]);
+      // Captured with the rest, cited by nothing and printed nowhere. "Go" prints as its own word.
+      expect(() => assertGroundedResume(render, facts, "snapshot", evidence, roles, marked(fact, kubernetes))).not.toThrow();
+    });
+
+    it("refuses a printed skill that only marked facts stand behind", () => {
+      const render = version([], ["Go", "Kubernetes"]);
+      const facts = stored(go, kubernetes), evidence = evidenceForFacts([go, kubernetes]);
+      expect(() => assertGroundedResume(render, facts, "snapshot", evidence, roles, marked(kubernetes))).toThrow("marked sensitive");
+      const again = skill("kubernetes-2", "Kubernetes", "Kubernetes, Terraform");
+      expect(() => assertGroundedResume(render, stored(go, kubernetes, again), "snapshot", evidenceForFacts([go, kubernetes, again]), roles, marked(kubernetes))).not.toThrow();
+      expect(() => assertGroundedResume(render, stored(go, kubernetes, again), "snapshot", evidenceForFacts([go, kubernetes, again]), roles, marked(kubernetes, again))).toThrow("marked sensitive");
+    });
+
+    it("says a version is unverified first when it is that as well", () => {
+      const render = version([{ id: "line", text: "Led a migration of 900 services", factIds: [fact.id] }]);
+      expect(() => assertGroundedResume(render, stored(fact), "snapshot", evidenceForFacts([fact]), roles, marked(fact))).toThrow(/unverified/);
+      expect(() => assertGroundedResume(version([{ id: "line", text: fact.text, factIds: [fact.id] }]), stored(fact), "legacy", evidenceForFacts([fact]), roles, marked(fact))).toThrow(/unverified/);
+    });
+  });
+
   it("blocks a historical positive claim that contradicts saved negative evidence", () => {
     const render: RenderData = {
       profile: { name: "A User", email: "", phone: "", location: "", links: [] },

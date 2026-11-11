@@ -51,7 +51,7 @@ async function twice(second: FakeModelOptions, wrap: (models: Models, user: User
     const record = new RecordStore(state.storage.sql, (fn) => state.storage.transactionSync(fn));
     return { all: record.export().recordLinks, shown: facts.flatMap((fact) => record.links("fact", fact.id)) };
   });
-  return { facts, links, calls: options.calls!, long: facts.find((fact) => fact.text === LONG)!, short: facts.find((fact) => fact.text === SHORT)! };
+  return { user, facts, links, calls: options.calls!, long: facts.find((fact) => fact.text === LONG)!, short: facts.find((fact) => fact.text === SHORT)! };
 }
 
 describe("reading a second resume as it is configured everywhere today", () => {
@@ -107,6 +107,42 @@ describe("reading with shadow offers switched on", () => {
     expect(links.all).toEqual([]);
   });
 
+  it("puts no pair to the judge when the earlier line is marked sensitive", async () => {
+    settings.OFFER_SHADOW_ENABLED = "true";
+    const user = await signIn();
+    setModels(() => fakeModels());
+    await read(user, "jane-doe.pdf", RESUME);
+    const short = (await user.json<{ facts: FactView[] }>("/api/facts")).facts.find((fact) => fact.text === SHORT)!;
+    expect((await user.send("POST", "/api/facts/sensitive", { ids: [short.id], sensitive: true })).status).toBe(204);
+    // The second resume says that line more fully: the one pair worth asking about, were it not marked.
+    const options: FakeModelOptions = { calls: {}, extraction: EXTRACTION_2 };
+    setModels(() => fakeModels(options));
+    await read(user, "jane-doe-2024.pdf", RESUME_2);
+    expect(options.calls!.judge).toBeUndefined();
+    const links = await runInDurableObject(vaultOf(user), (_instance, state) => new RecordStore(state.storage.sql, (fn) => state.storage.transactionSync(fn)).export().recordLinks);
+    expect(links).toEqual([]);
+  });
+
+  it("puts no pair to the judge when the later line arrives marked sensitive", async () => {
+    settings.OFFER_SHADOW_ENABLED = "true";
+    const user = await signIn();
+    setModels(() => fakeModels());
+    await read(user, "jane-doe.pdf", RESUME);
+    // The owner has those words marked already. The same words in an upload arrive marked.
+    const typed = await user.send("POST", "/api/facts", { roleId: null, kind: "accomplishment", text: LONG, level: null });
+    expect(typed.status).toBe(201);
+    expect((await user.send("POST", "/api/facts/sensitive", { ids: [((await typed.json()) as { factId: string }).factId], sensitive: true })).status).toBe(204);
+    const options: FakeModelOptions = { calls: {}, extraction: EXTRACTION_2 };
+    setModels(() => fakeModels(options));
+    await read(user, "jane-doe-2024.pdf", RESUME_2);
+    const facts = (await user.json<{ facts: FactView[] }>("/api/facts")).facts;
+    expect(facts.filter((fact) => fact.text === LONG).map((fact) => fact.sensitive)).toEqual([true, true]);
+    expect(facts.find((fact) => fact.text === SHORT)!.sensitive).toBeUndefined();
+    expect(options.calls!.judge).toBeUndefined();
+    const links = await runInDurableObject(vaultOf(user), (_instance, state) => new RecordStore(state.storage.sql, (fn) => state.storage.transactionSync(fn)).export().recordLinks);
+    expect(links).toEqual([]);
+  });
+
   it("keeps offers beside the copies a rule found, without confusing the two", async () => {
     settings.OFFER_SHADOW_ENABLED = "true";
     settings.MATCH_SHADOW_ENABLED = "true";
@@ -159,6 +195,30 @@ describe("reading with shadow offers switched on", () => {
     } finally {
       await reading.dispose();
     }
+  });
+
+  it("accepts nothing more from a reading once its upload is marked ready", async () => {
+    settings.OFFER_SHADOW_ENABLED = "true";
+    settings.MATCH_SHADOW_ENABLED = "true";
+    // This judge finds neither line says everything the other says, so the reading kept no offer.
+    const { user, links, long, short } = await twice({ judgeRejects: ["Mentored"] });
+    const before = links.all.length;
+    expect(links.all.filter((link) => link.proposedBy === "model")).toEqual([]);
+    // A try that ran out of time is not cancelled: the Workflow only stops waiting for it. If it
+    // comes back after the reading has finished, the vault takes nothing from it.
+    await runInDurableObject(vaultOf(user), async (instance, state) => {
+      const source = state.storage.sql.exec<{ id: string; run_id: string }>(`SELECT id, run_id FROM sources WHERE id = (SELECT source_id FROM facts WHERE id = ?)`, long.id).one();
+      const late = { relation: "same" as const, from: long.id, to: short.id, lines: { from: long.text, to: short.text } };
+      await expect(instance.saveShadowOffers(source.id, source.run_id, { model: "judge", method: "entailment/2" }, [late])).rejects.toThrow(/no longer accepts work/);
+      await expect(instance.saveShadowSplits(source.id, source.run_id, { model: "extract+judge", method: "split/2" }, [])).rejects.toThrow(/no longer accepts work/);
+      await expect(instance.matchShadow(source.id, source.run_id)).rejects.toThrow(/no longer accepts work/);
+      await expect(instance.offerCandidates(source.id, source.run_id)).rejects.toThrow(/no longer accepts work/);
+      // Nor is another model call reserved for that reading, so none is sent.
+      const call = { attemptId: crypto.randomUUID(), route: "judge", model: "judge", inputChars: 100, maxOutputTokens: 100 };
+      await expect(instance.reserveModelAttempt(source.run_id, "offer", call, 1_000, 10_000_000)).rejects.toThrow(/no longer accepts writes/);
+      const record = new RecordStore(state.storage.sql, (fn) => state.storage.transactionSync(fn));
+      expect(record.export().recordLinks).toHaveLength(before);
+    });
   });
 
   it("finishes the upload with every fact when the judge fails", async () => {

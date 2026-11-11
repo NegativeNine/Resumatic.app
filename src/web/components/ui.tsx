@@ -117,8 +117,8 @@ export function EmptyState({ title, children }: { title?: string; children: Reac
   );
 }
 
-/** v1 tone names that the design system calls something else. */
-const MARK_TONE: Readonly<Record<string, string>> = { queued: "reading" };
+/** Tone names that the design system calls something else. A sensitive fact is set aside, as a dropped line is. */
+const MARK_TONE: Readonly<Record<string, string>> = { queued: "reading", sensitive: "dropped" };
 
 /** A status mark (StatusMark): the state of a fact, role, source, resume or line, in words. */
 export function Badge({ tone, title, children }: { tone: string; title?: string; children: ReactNode }) {

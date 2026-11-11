@@ -24,6 +24,10 @@ export type DistillParams = { vaultId: string; sourceId: string };
  * Work kept in shadow gets one short try. It is never worth holding an upload for. `limit` counts
  * the tries after the first, so it is 0: a stage that runs out of time is not run again, which
  * would repeat every model call it had made. Leaving `retries` out would allow five more.
+ *
+ * Running out of time stops the wait, not the work: the engine does not cancel a step's body.
+ * Whatever that try still stores is taken by the vault only while this run is reading the upload
+ * (`requireReading`), so nothing arrives after "finish".
  */
 const SHADOW_STEP = { retries: { limit: 0, delay: "5 seconds" }, timeout: "3 minutes" } as const;
 
@@ -213,7 +217,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
             }),
           );
         } catch {
-          // The step ran out of time. Nothing was kept.
+          // The step ran out of time. The upload goes on without it.
         }
       // Two lines that say the same thing in different words are only ever offered to the owner.
       // Where this is switched on, the judge is asked about the likeliest pairs and its answers
@@ -245,7 +249,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
             }),
           );
         } catch {
-          // The step ran out of time. Nothing was kept.
+          // The step ran out of time. The upload goes on without it.
         }
       // How lines divide is measured before anyone is shown a division. Where this is switched
       // on, whatever passes every check is kept in shadow. A failure here costs nothing: every
@@ -277,7 +281,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
             }),
           );
         } catch {
-          // The step ran out of time. Nothing was kept, and the lines stay whole.
+          // The step ran out of time. The upload goes on without it.
         }
       // Which taxonomy concepts a line shows is measured before anyone is shown a tag. Where this
       // is switched on and a taxonomy is bound, every label found word for word in a fact or a job

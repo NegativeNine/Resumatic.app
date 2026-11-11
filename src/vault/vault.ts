@@ -39,10 +39,13 @@ import type {
   RoleKind,
   RolePatch,
   RoleView,
+  SensitiveRequest,
   SourceState,
   SourceView,
 } from "../shared/api";
-import { DATE_PATTERN, MAX_JOB_NAME_CHARS, MAX_LINE_CHARS, MAX_UPLOAD_BYTES, isWebUrl, normalizePosting } from "../shared/api";
+import { DATE_PATTERN, MAX_JOB_NAME_CHARS, MAX_LINE_CHARS, MAX_SENSITIVE_IDS, MAX_UPLOAD_BYTES, isWebUrl, normalizePosting } from "../shared/api";
+import type { Preferences, PreferenceValues } from "../shared/preferences";
+import { PreferencesStore } from "./preferences";
 import { AppError, errorCode } from "../shared/errors";
 import { isMissingWorkflowInstance } from "../shared/workflow-errors";
 import { directoryForUser } from "../shared/stubs";
@@ -78,17 +81,20 @@ import { canShareDocument, SHAREABLE_DOCUMENT_KINDS, type DocumentVersion } from
 import { CoachClientStore, type CoachClientEntry } from "./coach-clients";
 import type { CoachAccount } from "./shares";
 import type { ShareableDocument } from "../shared/sharing";
+import { ShareCommentStore } from "./share-comments";
+import type { CommentThread, NewShareComment, OwnerCommentThread, ShareComment } from "../shared/sharing";
 import { mergeRefinementEvidence } from "./refinement-evidence";
 import { validateTailorCheckpoint, validateTailorPublication } from "./tailor-publication";
 import { finalLegacyEvidence, legacyReceipt, legacyReview } from "./legacy-remediation";
 import { RunStore } from "./runs";
 import { RecordStore } from "./record";
 import { IDENTICAL_ROLE_METHOD, IDENTICAL_WORDING_METHOD, MAX_OFFER_PAIRS, OFFERS_PER_FACT, OFFER_MIN_COSINE, identicalMatches, type JudgedOffer, type OfferPair } from "../pipeline/match";
-import { roleKey, sameWording } from "../shared/record";
+import { roleKey, sameWording, wording } from "../shared/record";
 import { stampProblem } from "../shared/record";
 import { MAX_TAGS_PER_SAVE, MAX_TAG_FACTS, MAX_TAG_ROLES, TAG_JUDGE_METHOD, TAG_RULE_METHOD, skillAsWritten, tagStamp, type HeldTag, type ProposedTag, type TagMade, type TagSubjects } from "../pipeline/tag";
 import type { NewPart, RecordExport } from "../shared/record";
 import { ShareStore } from "./shares";
+import { sensitiveUse, setSensitive, usableQuote, withheldFacts } from "./sensitive";
 import { billingConfig } from "../shared/billing";
 import { stripeClient, type Entitlement } from "../worker/billing";
 import { CheckoutCoordinator } from "./checkout";
@@ -239,10 +245,14 @@ export interface VaultExport extends RecordExport {
   shares: import("../shared/sharing").ShareGrant[];
   /** Copies other people shared with this account as their coach: whose, and until when. */
   coachClients: Omit<CoachClientEntry, "ownerVault">[];
+  /** What a coach wrote on copies this account shared, and its owner's replies, as stored. */
+  shareComments: Record<string, string | number | null>[];
   connectedApps: Omit<McpGrant, "oauthGrantId">[];
   billing: Entitlement | null;
   exportedAt: string;
   profile: Profile;
+  /** Job preferences as stored. Revision 0, with nothing said, until the first save. */
+  preferences: Preferences;
   /** `file` is the download path of the original upload. */
   sources: {
     id: string;
@@ -674,6 +684,7 @@ export class Vault extends DurableObject<Env> {
       profile: this.readProfile(),
       quota: this.quota(),
       clients: this.coachClients.count(),
+      newFromCoach: this.shareComments.unseen(),
       capabilities: {
         ocr: !!this.env.MODEL_TRANSCRIBE,
         connectedApps: this.env.MCP_ENABLED === "true",
@@ -711,6 +722,28 @@ export class Vault extends DurableObject<Env> {
     // updateProfile executes its write before returning its promise. There is
     // no await between the revision check and the write in this object.
     return this.updateProfile(who, patch);
+  }
+
+  // ---------------------------------------------------------------- job preferences
+  // Read and saved by their owner, and exported with the vault. Nothing that makes a resume, a
+  // document, a copy or a connected app's answer reads them: test/unit/preferences-reach.test.ts
+  // holds the store to the two calls below and the export.
+
+  private get preferences(): PreferencesStore {
+    return new PreferencesStore(this.sql);
+  }
+
+  async getPreferences(who: Who): Promise<Preferences> {
+    this.requireOwner(who);
+    return this.preferences.read();
+  }
+
+  /** Replaces all four values, or refuses a stale editor as updateProfileChecked does. */
+  async updatePreferences(who: Who, values: PreferenceValues, expectedRevision: number): Promise<Preferences> {
+    this.requireOwner(who);
+    // The store reads the revision and writes in one synchronous turn: nothing is awaited
+    // between the owner check above and the write.
+    return this.preferences.save(values, expectedRevision);
   }
 
   // ---------------------------------------------------------------- sources (user)
@@ -1280,6 +1313,16 @@ export class Vault extends DurableObject<Env> {
     if (runId) this.runs.claim(runId);
     const now = Date.now();
     this.ctx.storage.transactionSync(() => {
+      // The same words carry the mark together, so words already marked sensitive arrive marked.
+      // Read before the delete below: when an upload is read again, the only marked copy of a
+      // line can be one of the proposals this reading is about to replace.
+      const markedWords = new Set<string>();
+      for (const id of withheldFacts(this.sql).ids) {
+        const marked = this.sql.exec<{ text: string }>(`SELECT text FROM facts WHERE id = ?`, id).toArray()[0];
+        const words = marked ? wording(marked.text) : "";
+        if (words) markedWords.add(words);
+      }
+      const arrivingMarked: string[] = [];
       this.sql.exec(
         `DELETE FROM facts WHERE source_id = ? AND state = 'proposed' AND origin = 'extracted'`,
         sourceId,
@@ -1346,10 +1389,11 @@ export class Vault extends DurableObject<Env> {
         roleIds.set(r.key, id);
       }
       for (const f of x.facts) {
+        const id = crypto.randomUUID();
         this.sql.exec(
           `INSERT INTO facts (id, role_id, kind, text, level, evidence_id, source_id, origin, state, updated_at, confidence, review_reasons)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'extracted', 'proposed', ?, ?, ?)`,
-          crypto.randomUUID(),
+          id,
           f.roleKey ? (roleIds.get(f.roleKey) ?? null) : null,
           f.kind,
           f.text,
@@ -1360,7 +1404,9 @@ export class Vault extends DurableObject<Env> {
           f.confidence ?? null,
           JSON.stringify(f.reviewReasons ?? []),
         );
+        if (markedWords.has(wording(f.text))) arrivingMarked.push(id);
       }
+      setSensitive(this.sql, arrivingMarked, true);
       this.extractionFeedbackStore.proposals(sourceId);
       if (extractor)
         this.sql.exec(
@@ -1455,12 +1501,15 @@ export class Vault extends DurableObject<Env> {
   /** The lines a reading proposed that could divide into more than one claim. A skill is one item. */
   async splitCandidates(sourceId: string, runId?: string): Promise<{ id: string; text: string }[]> {
     this.requireReading(sourceId, runId);
+    // A line marked sensitive is not asked about, so it is never put to the splitter or the judge.
+    const withheld = withheldFacts(this.sql).ids;
     return this.sql
       .exec<{ id: string; text: string }>(
         `SELECT id, text FROM facts WHERE source_id = ? AND origin = 'extracted' AND kind <> 'skill' ORDER BY rowid LIMIT 300`,
         sourceId,
       )
-      .toArray();
+      .toArray()
+      .filter((line) => !withheld.has(line.id));
   }
 
   /**
@@ -1565,11 +1614,14 @@ export class Vault extends DurableObject<Env> {
           roleKey({ kind: role.kind, org: role.org, title: role.title, startDate: role.start_date, endDate: role.end_date, unknownEndStartDate: role.unknown_end_start_date }) ?? `only ${role.id}`,
         ]),
     );
+    // A line marked sensitive is on neither side of a pair, so it is never put to the judge.
+    const withheld = withheldFacts(this.sql).ids;
     const rows = this.sql
       .exec<{ id: string; role_id: string; kind: string; text: string; source_id: string | null; vector: ArrayBuffer }>(
         `SELECT id, role_id, kind, text, source_id, vector FROM facts WHERE kind <> 'skill' AND role_id IS NOT NULL AND vector IS NOT NULL ORDER BY rowid`,
       )
-      .toArray();
+      .toArray()
+      .filter((row) => !withheld.has(row.id));
     const linked = new Set(
       this.sql
         .exec<{ from_id: string; to_id: string }>(`SELECT from_id, to_id FROM record_links WHERE kind = 'fact'`)
@@ -1930,9 +1982,14 @@ export class Vault extends DurableObject<Env> {
     return this.readFacts(state);
   }
 
+  /**
+   * The owner's own view of their facts, and their export: every fact, a marked one saying so.
+   * It feeds nothing generated, copied or shown to anyone else. That is `usableFacts()`.
+   */
   private readFacts(state?: ReviewState): FactView[] {
     const where = state ? `WHERE f.state = ?` : ``;
     const params = state ? [state] : [];
+    const marked = withheldFacts(this.sql).ids;
     return this.sql
       .exec<FactRow>(
         `SELECT f.id, f.role_id, f.kind, f.text, f.level, f.level_revision, f.origin, f.state, f.source_id, f.revision, f.confidence, f.review_reasons, e.quote, e.start, e.end, s.origin AS evidence_origin, i.document_id AS interview_document_id, i.question_id AS interview_question_id, i.question AS interview_question, i.quote AS interview_quote
@@ -1941,7 +1998,7 @@ export class Vault extends DurableObject<Env> {
         ...params,
       )
       .toArray()
-      .map(factView);
+      .map((row) => (marked.has(row.id) ? { ...factView(row), sensitive: true } : factView(row)));
   }
 
   /** Confirms or rejects roles and facts by ID. Confirming a fact confirms its role; rejecting a role rejects its proposed facts. */
@@ -2009,6 +2066,43 @@ export class Vault extends DurableObject<Env> {
           id,
         );
       }
+    });
+    this.vectorCache = null;
+  }
+
+  /**
+   * Marks facts sensitive, or unmarks them, with every fact that has the same words, whatever its
+   * review state: each upload brings its own copy of a line, and a copy left unmarked would put
+   * the words back in use unseen. Only the owner does this. The mark changes nothing a line may
+   * claim, so no revision moves and no model is called; it is read where facts are chosen and
+   * where finished work is sent out.
+   */
+  async markSensitive(who: Who, r: SensitiveRequest): Promise<void> {
+    this.requireOwner(who);
+    const ids = r?.ids;
+    const expectedRevisions = r?.expectedRevisions ?? {};
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > MAX_SENSITIVE_IDS || typeof r.sensitive !== "boolean" ||
+        ids.some((id) => typeof id !== "string" || !id) || new Set(ids).size !== ids.length ||
+        typeof expectedRevisions !== "object" || Array.isArray(expectedRevisions))
+      throw new AppError("invalid", `choose 1 to ${MAX_SENSITIVE_IDS} facts`);
+    this.ctx.storage.transactionSync(() => {
+      const words = new Set<string>();
+      for (const id of ids) {
+        const fact = this.sql.exec<{ text: string }>(`SELECT text FROM facts WHERE id = ?`, id).toArray()[0];
+        if (!fact) throw new AppError("not_found", "no such fact");
+        const own = wording(fact.text);
+        if (own) words.add(own);
+      }
+      for (const [id, expected] of Object.entries(expectedRevisions)) {
+        const current = this.sql.exec<{ revision: number }>(`SELECT revision FROM facts WHERE id = ?`, id).toArray()[0];
+        if (!current || current.revision !== expected)
+          throw new AppError("conflict", "Your facts changed. Refresh the page, then try again.");
+      }
+      // The facts named, and every other fact that says the same words.
+      const targets = new Set(ids);
+      for (const fact of this.sql.exec<{ id: string; text: string }>(`SELECT id, text FROM facts`).toArray())
+        if (words.has(wording(fact.text))) targets.add(fact.id);
+      setSensitive(this.sql, targets, r.sensitive);
     });
     this.vectorCache = null;
   }
@@ -2541,6 +2635,9 @@ export class Vault extends DurableObject<Env> {
       try { assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence, saved.roleEvidence); }
       catch { needsGroundingReview = true; }
     }
+    // Its owner still reads a version that uses a fact marked since, and is told which lines and
+    // skills keep it from being downloaded or shared. That is not a version needing review.
+    const sensitive = saved ? sensitiveUse(saved.render.body, saved.facts, saved.evidence, withheldFacts(this.sql)) : null;
     return {
       id: row.id,
       applicationId: row.application_id,
@@ -2558,6 +2655,7 @@ export class Vault extends DurableObject<Env> {
       ...(saved ? { profile: saved.render.profile } : {}),
       provenance: saved?.provenance,
       ...(needsGroundingReview ? { needsGroundingReview: true } : {}),
+      ...(sensitive && (sensitive.lineIds.length > 0 || sensitive.skills.length > 0) ? { sensitiveUse: sensitive } : {}),
       ...(saved?.provenance === "legacy" ? { legacyReview: legacyReview(saved, this.usableFacts(), this.confirmedRoles()) } : {}),
     };
   }
@@ -2844,7 +2942,7 @@ export class Vault extends DurableObject<Env> {
         provenance: "snapshot",
         legacyFinalizedFrom: expectedVersion,
       };
-      assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence, saved.roleEvidence);
+      assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence, saved.roleEvidence, withheldFacts(this.sql));
       this.snapshots.save(resumeId, version, saved);
       this.sql.exec(`UPDATE resumes SET version=?,body=?,report=? WHERE id=?`, version,
         JSON.stringify(saved.render.body), JSON.stringify(saved.report), resumeId);
@@ -2897,7 +2995,9 @@ export class Vault extends DurableObject<Env> {
     if (row.state !== "ready" || !row.body)
       throw new AppError("conflict", "This resume isn't ready yet. Wait for tailoring to finish, then try again.");
     const saved = this.resumeVersion(row, version);
-    assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence, saved.roleEvidence);
+    // PDF, Word, the print preview and a connected app's read all come through here. A version
+    // that uses a fact marked sensitive is refused before any cached file is looked for.
+    assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence, saved.roleEvidence, withheldFacts(this.sql));
     return saved.render;
   }
 
@@ -2919,6 +3019,8 @@ export class Vault extends DurableObject<Env> {
       run.state !== "succeeded"
     )
       throw new AppError("conflict", "this run no longer accepts work");
+    // A finished run only repeats what it already published. One still at work stops here.
+    if (run?.state !== "succeeded") this.requireNothingWithheld(id);
     const input = this.snapshots.metadata(id);
     if (!input)
       throw new AppError(
@@ -3203,7 +3305,18 @@ export class Vault extends DurableObject<Env> {
       authorizeOwner: (who) => this.requireOwner(who),
       requireOpen: () => this.requireOpen(),
       currentEpoch: () => this.meta("security_epoch") ?? "legacy",
+      // Asked for before a copy is read, so a vault that has closed or gone says so as it always
+      // has, and is never asked about facts it no longer holds.
+      withheld: () => {
+        this.requireOpen();
+        return withheldFacts(this.sql);
+      },
     });
+  }
+
+  /** Comments on shared copies. Nothing else reads their table: not tailoring, a check, a copy or a connected app. */
+  private get shareComments(): ShareCommentStore {
+    return new ShareCommentStore(this.sql, this.shares, (who) => this.requireOwner(who));
   }
 
   async createShare(
@@ -3285,6 +3398,7 @@ export class Vault extends DurableObject<Env> {
    */
   async listShareableDocuments(who: Who): Promise<ShareableDocument[]> {
     this.requireOwner(who);
+    const withheld = withheldFacts(this.sql);
     return this.sql
       .exec<{ id: string; kind: string; application_id: string; version: number; created_at: number; data: string | null }>(
         `SELECT d.id, d.kind, d.application_id, d.version, d.created_at, v.data FROM documents d
@@ -3292,14 +3406,20 @@ export class Vault extends DurableObject<Env> {
          WHERE d.state = 'ready' AND d.kind IN ('letter', 'prep') ORDER BY d.created_at DESC, d.id LIMIT 100`,
       )
       .toArray()
-      .map((row) => ({
-        id: row.id,
-        kind: row.kind as ShareableDocument["kind"],
-        applicationId: row.application_id,
-        version: row.version,
-        createdAt: row.created_at,
-        shareable: canShareDocument(row.id, row.version, row.kind, row.data ? (JSON.parse(row.data) as DocumentVersion) : null),
-      }));
+      .map((row) => {
+        const data = row.data ? (JSON.parse(row.data) as DocumentVersion) : null;
+        const shareable = canShareDocument(row.id, row.version, row.kind, data, withheld);
+        return {
+          id: row.id,
+          kind: row.kind as ShareableDocument["kind"],
+          applicationId: row.application_id,
+          version: row.version,
+          createdAt: row.created_at,
+          shareable,
+          // Said only when the mark is the one thing in the way, so the owner knows a new one will do.
+          ...(!shareable && canShareDocument(row.id, row.version, row.kind, data) ? { usesSensitive: true } : {}),
+        };
+      });
   }
 
   async listShares(who: Who) {
@@ -3333,6 +3453,41 @@ export class Vault extends DurableObject<Env> {
 
   async coachShareStatus(grantId: string, coach: CoachAccount) {
     return this.shares.coachStatus(grantId, coach);
+  }
+
+  // Comments on a copy, kept here in its owner's vault. A coach's three calls arrive as the ones
+  // above do, with the account the Worker verified, and the grant decides each time. Every call
+  // makes its check and its read or write in one transaction with nothing awaited, so a copy that
+  // ends takes no comment that was allowed a moment before.
+
+  async coachComments(grantId: string, coach: CoachAccount): Promise<CommentThread[]> {
+    return this.ctx.storage.transactionSync(() => this.shareComments.listForCoach(grantId, coach));
+  }
+
+  async commentAsCoach(grantId: string, coach: CoachAccount, input: NewShareComment, requestKey: string): Promise<ShareComment> {
+    return this.ctx.storage.transactionSync(() => this.shareComments.addAsCoach(grantId, coach, input, requestKey));
+  }
+
+  async removeCommentAsCoach(grantId: string, coach: CoachAccount, id: string): Promise<void> {
+    this.ctx.storage.transactionSync(() => this.shareComments.removeAsCoach(grantId, coach, id));
+  }
+
+  // The owner's side of the same threads.
+
+  async listShareComments(who: Who): Promise<OwnerCommentThread[]> {
+    return this.ctx.storage.transactionSync(() => this.shareComments.listForOwner(who));
+  }
+
+  async replyToShareComment(who: Who, commentId: string, body: string, requestKey: string): Promise<ShareComment> {
+    return this.ctx.storage.transactionSync(() => this.shareComments.replyAsOwner(who, commentId, body, requestKey));
+  }
+
+  async removeShareComment(who: Who, id: string): Promise<void> {
+    this.ctx.storage.transactionSync(() => this.shareComments.removeAsOwner(who, id));
+  }
+
+  async markShareCommentsSeen(who: Who): Promise<void> {
+    this.ctx.storage.transactionSync(() => this.shareComments.markSeen(who));
   }
 
   // The rest are the coach's own list, in the coach's own vault.
@@ -3434,9 +3589,26 @@ export class Vault extends DurableObject<Env> {
     options: NewDocument,
     requestKey: string,
   ): Promise<{ documentId: string; runId: string }> {
-    const digest = base64url(
+    const digest = await this.documentDigest(applicationId, options);
+    const begun = this.beginDocument(who, applicationId, options, requestKey, digest);
+    if (!begun.replay) await this.dispatchRun(this.runs.get(begun.id)!);
+    return { documentId: begun.id, runId: begun.id };
+  }
+
+  /** What a request for a document is known by when the same request arrives again. */
+  private async documentDigest(applicationId: string, options: NewDocument): Promise<string> {
+    return base64url(
       await sha256(JSON.stringify([applicationId, options])),
     );
+  }
+
+  /**
+   * Checks a request for a document and begins its run. It awaits nothing: every refusal and the
+   * run's own rows happen in one turn, so no caller can pass between a check and the write, and a
+   * caller may hold a transaction of its own around it. `replay` is true when this request had
+   * already begun a run, which is then not dispatched again.
+   */
+  private beginDocument(who: Who, applicationId: string, options: NewDocument, requestKey: string, digest: string): { id: string; replay: boolean } {
     this.requireOwner(who);
     if (options.manualText !== undefined &&
         (options.kind !== "refine" || options.expectedVersion === undefined ||
@@ -3463,7 +3635,7 @@ export class Vault extends DurableObject<Env> {
           "conflict",
           "request key already used with other input",
         );
-      return { documentId: existing.id, runId: existing.id };
+      return { id: existing.id, replay: true };
     }
     if (
       this.runs
@@ -3497,6 +3669,17 @@ export class Vault extends DurableObject<Env> {
         throw new AppError("invalid", "choose confirmed facts to verify this historical line");
       if (options.manualText === undefined)
         assertGroundedResume(base.render, base.facts, base.provenance, base.evidence, base.roleEvidence);
+      // A fact marked sensitive is evidence for nothing, so it can't be chosen to check a line. A
+      // checked version that already uses one is refined no further, by an instruction or by a line
+      // edit: the new version would carry those lines on. Its owner removes them first.
+      const withheld = withheldFacts(this.sql);
+      if (options.manualFactIds?.some((factId) => withheld.ids.has(factId)))
+        throw new AppError("invalid", "Choose facts that aren't marked sensitive.");
+      if (base.provenance === "snapshot") {
+        const used = sensitiveUse(base.render.body, base.facts, base.evidence, withheld);
+        if (used.lineIds.length > 0 || used.skills.length > 0)
+          throw new AppError("conflict", "This version uses a fact you marked sensitive. Remove those lines or tailor a new version, then try again.");
+      }
     }
     const id = crypto.randomUUID();
     this.quota();
@@ -3546,8 +3729,7 @@ export class Vault extends DurableObject<Env> {
         );
       },
     );
-    await this.dispatchRun(this.runs.get(id)!);
-    return { documentId: id, runId: id };
+    return { id, replay: false };
   }
 
   async documentInput(runId: string): Promise<
@@ -3561,6 +3743,8 @@ export class Vault extends DurableObject<Env> {
     const run = this.workflowRun(runId, "document", runId);
     if (!["starting", "running", "succeeded"].includes(run.state))
       throw new AppError("conflict", "this run no longer accepts work");
+    // A finished run only repeats what it already published. One still at work stops here.
+    if (run.state !== "succeeded") this.requireNothingWithheld(runId);
     const row = this.sql
       .exec<{
         options: string;
@@ -4071,6 +4255,7 @@ export class Vault extends DurableObject<Env> {
         .toArray(),
       shares: this.shares.export(who),
       coachClients: this.coachClients.export(),
+      shareComments: this.shareComments.export(who),
       connectedApps: this.mcpGrants
         .list(who)
         .map(({ oauthGrantId: _remote, ...grant }) => grant),
@@ -4079,6 +4264,7 @@ export class Vault extends DurableObject<Env> {
         : null,
       exportedAt: new Date().toISOString(),
       profile: this.readProfile(),
+      preferences: this.preferences.read(),
       sources: this.sql
         .exec<SourceRow>(`SELECT * FROM sources ORDER BY created_at`)
         .toArray()
@@ -4915,6 +5101,8 @@ export class Vault extends DurableObject<Env> {
     dailyCapMicros: number,
   ): Promise<void> {
     this.requireOpen();
+    // A run that captured a fact marked sensitive since sends nothing more to a model.
+    this.requireNothingWithheld(runId);
     this.runs.reserveAttempt(
       {
         id: attempt.attemptId,
@@ -5774,8 +5962,15 @@ export class Vault extends DurableObject<Env> {
       throw new AppError("invalid", "That role was rejected. Choose another role for this fact.");
   }
 
-  /** Confirmed facts whose role is confirmed, or that belong to no role. */
+  /**
+   * Confirmed facts whose role is confirmed, or that belong to no role, without any marked
+   * sensitive. This is the only source of facts for anything generated, copied or shown to anyone
+   * but the owner: a marked fact is never captured, so it reaches no search, writer, judge or
+   * printed skill. A fact read from the same line as a marked one is kept, with its own words as
+   * its only evidence, because that line is evidence for nothing while the mark stands.
+   */
   private usableFacts(): FactRecord[] {
+    const withheld = withheldFacts(this.sql);
     return this.sql
       .exec<FactRow>(
         `SELECT f.id, f.role_id, f.kind, f.text, f.level, f.level_revision, f.origin, f.state, f.source_id, f.revision, e.quote, e.start, e.end
@@ -5783,7 +5978,14 @@ export class Vault extends DurableObject<Env> {
          WHERE f.state = 'confirmed' AND (f.role_id IS NULL OR r.state = 'confirmed')`,
       )
       .toArray()
-      .map(factRecord);
+      .filter((row) => !withheld.ids.has(row.id))
+      .map((row) => ({ ...factRecord(row), quote: usableQuote(row, withheld) }));
+  }
+
+  /** A run that captured a fact marked sensitive since, or the line one was read from, goes no further. */
+  private requireNothingWithheld(runId: string): void {
+    if (this.snapshots.holdsWithheld(runId))
+      throw new AppError("conflict", "Your facts changed while this draft was being made. Create it again.");
   }
 
   private confirmedRoles(): RoleRecord[] {

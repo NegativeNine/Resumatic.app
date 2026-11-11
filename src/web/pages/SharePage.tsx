@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { ApiError } from "../api";
-import { ShareFrame, ShareSnapshotContent } from "../components/ShareSnapshotContent";
-import { Loading, Message } from "../components/ui";
+import { CoachComments } from "../components/ShareComments";
+import { ShareFrame, ShareSnapshotContent, sameTarget } from "../components/ShareSnapshotContent";
+import { Badge, Loading, Message } from "../components/ui";
 import { describeError } from "../errors";
+import { formatDate } from "../format";
 import "../components/share.css";
 import type { ApiErrorBody } from "../../shared/api";
-import type { SharedView } from "../../shared/sharing";
+import type { SharedView, ShareTarget } from "../../shared/sharing";
 
 // Capture once before React effects/router/telemetry, then remove the bearer from browser history.
 let initialToken: string | null = null;
@@ -70,6 +72,14 @@ export function SharePage() {
   const [view, setView] = useState<SharedView | null>(null);
   const [failed, setFailed] = useState<"unavailable" | "temporary" | null>(null);
   const [attempt, setAttempt] = useState(0);
+  /** The line or fact the coach has chosen to comment on. One at a time. */
+  const [selected, setSelected] = useState<ShareTarget | null>(null);
+  /** The copy turned out not to be in the reader's client list after all, as when another tab took it off. */
+  const [unlisted, setUnlisted] = useState(false);
+  // Each reading of the copy starts over: once the copy is added again, it can be commented on again.
+  useEffect(() => {
+    setUnlisted(false);
+  }, [view]);
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -126,10 +136,35 @@ export function SharePage() {
         <Loading>Opening the shared copy…</Loading>
       </ShareFrame>
     );
+  // A copy that has left the reader's own list is read as not added: the page offers to add it.
+  const reviewer = unlisted && view.reviewer === "joined" ? "you" : view.reviewer;
+  // Comments are for the coach the copy names, once it is in their list, on a line or a fact.
+  // Letters and preparation have neither, so a copy of those alone has nothing to comment on.
+  const commentable = view.snapshot.facts.length > 0 || view.snapshot.resumes.length > 0;
+  const commenting = reviewer === "joined" && commentable;
   return (
     <ShareSnapshotContent
       view={view}
-      notice={view.reviewer && <CoachNotice view={view} onChanged={() => setAttempt((value) => value + 1)} />}
+      notice={reviewer && <CoachNotice view={view} reviewer={reviewer} commentable={commentable} onChanged={() => setAttempt((value) => value + 1)} />}
+      comments={
+        commenting
+          ? {
+              selected,
+              // Choosing the chosen one again lets go of it.
+              onSelect: (target) => setSelected((current) => (sameTarget(current, target) ? null : target)),
+              aside: (
+                <CoachComments
+                  view={view}
+                  selected={selected}
+                  onUnlisted={() => {
+                    setSelected(null);
+                    setUnlisted(true);
+                  }}
+                />
+              ),
+            }
+          : undefined
+      }
     />
   );
 }
@@ -144,9 +179,21 @@ async function conflictSentence(response: Response): Promise<string | null> {
 
 /**
  * What a copy that names a coach says to whoever is reading it. Only the account that signs in
- * with the named address can keep the copy in its client list. Everyone else just reads.
+ * with the named address can keep the copy in its client list, and comment on it once it is there.
+ * Everyone else just reads. `reviewer` is how this reader stands, and `commentable` whether the
+ * copy holds a line or a fact to comment on.
  */
-function CoachNotice({ view, onChanged }: { view: SharedView; onChanged: () => void }) {
+function CoachNotice({
+  view,
+  reviewer,
+  commentable,
+  onChanged,
+}: {
+  view: SharedView;
+  reviewer: NonNullable<SharedView["reviewer"]>;
+  commentable: boolean;
+  onChanged: () => void;
+}) {
   const [state, setState] = useState<"idle" | "adding" | "failed" | "refused">("idle");
   // Why the copy was refused, when the server said so in a sentence the reader can act on.
   const [reason, setReason] = useState<string | null>(null);
@@ -174,11 +221,12 @@ function CoachNotice({ view, onChanged }: { view: SharedView; onChanged: () => v
       setState("failed");
     }
   }
-  switch (view.reviewer) {
+  switch (reviewer) {
     case "joined":
       return (
-        <Message tone="success">
-          This copy is in your client list.{" "}
+        <Message tone="info">
+          <Badge tone="ready">Fixed copy</Badge> Shared with you until {formatDate(view.expiresAt)}.
+          {commentable ? " You can comment." : ""} Only {view.snapshot.owner?.name ?? "its owner"} can change it.{" "}
           <a className="rs-link" href="/#/clients">
             Open your clients
           </a>
@@ -188,8 +236,9 @@ function CoachNotice({ view, onChanged }: { view: SharedView; onChanged: () => v
       return (
         <Message tone="info" live={false}>
           <p>
-            {owner} named you as their coach. Add this copy to your client list to open it later without the link.
-            They’ll see that you added it, and the name on your account.
+            {owner} named you as their coach. Add this copy to your client list to{" "}
+            {commentable ? "comment on it and to open it later" : "open it later"} without the link. They’ll see that
+            you added it, and the name on your account.
           </p>
           <p>
             <button type="button" className="rs-btn rs-btn--primary rs-btn--sm" disabled={state === "adding"} onClick={() => void add()}>

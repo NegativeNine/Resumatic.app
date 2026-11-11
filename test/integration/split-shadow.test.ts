@@ -147,6 +147,34 @@ describe("reading an upload with shadow divisions switched on", () => {
     expect(exported.factSplits).toMatchObject([{ factId: led.id, shadow: true, state: "proposed" }]);
   });
 
+  it("asks nothing about a line marked sensitive, so it is never put to the splitter or the judge", async () => {
+    // An earlier reading, with divisions off, and its line about the migration marked.
+    settings.SPLIT_SHADOW_ENABLED = AS_CONFIGURED;
+    setModels(() => fakeModels());
+    const user = await signIn();
+    const led = (await read(user)).find((fact) => fact.text === LED)!;
+    expect((await user.send("POST", "/api/facts/sensitive", { ids: [led.id], sensitive: true })).status).toBe(204);
+
+    // The same lines in a second file, read with divisions on. Its copy of the line arrives marked.
+    settings.SPLIT_SHADOW_ENABLED = "true";
+    const { seen, models } = splitting(divideLed);
+    setModels(() => models);
+    const response = await user.upload("jane-doe-2024.pdf", `${RESUME}\nReferences on request.\n`);
+    expect(response.status, await response.clone().text()).toBe(201);
+    const { sourceId } = (await response.json()) as { sourceId: string };
+    expect(await waitForSource(user, sourceId)).toMatchObject({ state: "ready", error: null });
+    const arrived = (await user.json<{ facts: FactView[] }>("/api/facts")).facts.filter((fact) => fact.sourceId === sourceId);
+    expect(arrived.filter((fact) => fact.sensitive).map((fact) => fact.text)).toEqual([LED]);
+
+    // The other three lines were asked about. The marked one was not, and it would have been divided.
+    expect(seen.asked).toHaveLength(1);
+    expect(seen.asked[0]!.map((line) => line.text).sort()).toEqual(
+      ["Built a Go service that processes 2 million events per day", "Implemented React dashboards for the sales team", "Mentored 2 junior engineers"].sort(),
+    );
+    expect(seen.options.calls?.judge).toBeUndefined();
+    expect((await held(user, arrived.find((fact) => fact.text === LED)!.id)).all.factSplits).toEqual([]);
+  });
+
   it("keeps nothing when the judge does not find that the line states a part as it reads alone", async () => {
     const { models } = splitting(divideLed, { judgeRejects: ["cutting deploy time by 60%"] });
     setModels(() => models);

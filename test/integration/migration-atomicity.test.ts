@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { DIRECTORY_MIGRATIONS, migrateDirectory } from "../../src/directory/schema";
 import { MIGRATIONS, migrate, SCHEMA_VERSION } from "../../src/vault/schema";
 import { removeIncarnationMigration } from "../support/undo-vault-incarnation";
+import { removePreferencesMigration } from "../support/undo-vault-incarnation";
 import { undoInviteGlobalOrphansMigration, undoInviteQuarantineMigration, undoInviteCoordinatorMigration, undoInviteCoordinatorTargetMigration, undoInviteInventoryMigrations, undoInviteRevocationMigration, undoInviteTargetSealMigration, undoShardInviteBindingMigration, undoShardClaimRevocationMigration } from "../support/undo-invite-inventory";
 
 /** Interrupt a migration after its first DDL statement has executed. */
@@ -706,6 +707,29 @@ describe("atomic schema migrations", () => {
       migrate(sql, tx);
       expect(sql.exec<{value: string}>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(SCHEMA_VERSION));
       expect(sql.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='application_create_requests'`).toArray()).toHaveLength(1);
+    });
+  });
+
+  it("rolls back the preferences table and version together, then retries", async () => {
+    const stub = env.VAULT.get(env.VAULT.newUniqueId());
+    await stub.init("migration-owner");
+    await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec(`UPDATE profile SET name='preserved' WHERE id=1`);
+      removePreferencesMigration(sql);
+      const previous = priorVersion("CREATE TABLE preferences");
+      sql.exec(`UPDATE meta SET value=? WHERE key='schema_version'`, String(previous));
+      const tx = <T>(fn: () => T): T => state.storage.transactionSync(fn);
+      expect(() => migrate(failAtVersion(sql, previous + 1), tx)).toThrow(/synthetic version-write interruption/);
+      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(previous));
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='preferences'`).toArray()).toHaveLength(0);
+      expect(sql.exec<{ name: string }>(`SELECT name FROM profile WHERE id=1`).one().name).toBe("preserved");
+      migrate(sql, tx);
+      expect(sql.exec<{ value: string }>(`SELECT value FROM meta WHERE key='schema_version'`).one().value).toBe(String(SCHEMA_VERSION));
+      expect(sql.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='preferences'`).toArray()).toHaveLength(1);
+      // The table arrives empty: a vault from before it has said nothing.
+      expect(sql.exec(`SELECT COUNT(*) AS n FROM preferences`).one()).toEqual({ n: 0 });
+      expect(sql.exec<{ name: string }>(`SELECT name FROM profile WHERE id=1`).one().name).toBe("preserved");
     });
   });
 });

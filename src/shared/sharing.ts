@@ -1,4 +1,5 @@
 import type { FactKind, Level, Profile, RoleKind } from "./api";
+import { presentResumeBullet } from "./resume-presentation";
 
 export interface SharedRole {
   id: string;
@@ -54,6 +55,8 @@ export interface ShareableDocument {
   createdAt: number;
   /** False for one written before its evidence was kept: it has to be written again to be shared. */
   shareable: boolean;
+  /** True when a fact its owner has marked sensitive is the only reason it can't be shared. */
+  usesSensitive?: boolean;
 }
 /** The job a shared resume or document was made for, as the owner had it named when the copy was made. */
 export interface SharedJob {
@@ -141,9 +144,61 @@ export interface CoachClient {
   ownerName: string | null;
   addedAt: number;
   expiresAt: number;
-  /** False once the link has expired or been revoked, or the owner's account is gone. */
+  /** False once the link has expired or been revoked, or the owner's account is gone, and while the copy can't be opened. The counts are then zero. */
   active: boolean;
   factCount: number;
   resumeCount: number;
   documentCount: number;
+}
+
+// Comments on a shared copy. The coach a copy names writes them, on a line or a fact of the copy,
+// and its owner answers. They are another person's words: text to show, kept in the owner's vault,
+// and never evidence for anything a resume says.
+
+/** The longest comment or reply, counted after it is cleaned. The form counts against it as the Vault does. */
+export const MAX_COMMENT_CHARS = 1000;
+
+/**
+ * What a comment is about: one whole line of a resume in the copy, or one whole fact. A copy can
+ * hold two versions of one resume, so a line is named with its resume's version.
+ */
+export type ShareTarget =
+  | { kind: "line"; resumeId: string; version: number; lineId: string }
+  | { kind: "fact"; factId: string };
+export interface NewShareComment { target: ShareTarget; body: string }
+export interface ShareComment {
+  id: string; author: "coach" | "owner"; body: string; createdAt: number;
+  /** Only in the owner's view of a coach's comment. */
+  name?: string | null; seen?: boolean;
+}
+/** Everything said about one line or fact of one copy, oldest first. `quote` is the target's words as the copy showed them. */
+export interface CommentThread { target: ShareTarget; quote: string; comments: ShareComment[] }
+export interface OwnerCommentThread extends CommentThread {
+  grantId: string; coachEmail: string; open: boolean;
+  /** A line's job as its owner names it now. Absent for a fact. */
+  job?: SharedJob | null;
+}
+
+/**
+ * The words of a line or a fact as a copy shows them, or null when the copy holds no such thing.
+ * Only a resume's summary and the lines under its roles can be named, and a fact by its ID: skills,
+ * headings and documents have no IDs in a copy. A line under a role is read as the page prints it,
+ * without a list marker it was imported with. `target` is checked here because it arrives from a
+ * request.
+ */
+export function targetText(snapshot: ShareSnapshot, target: ShareTarget): string | null {
+  const given: unknown = target;
+  if (typeof given !== "object" || given === null) return null;
+  const { kind, resumeId, version, lineId, factId } = given as Record<string, unknown>;
+  if (kind === "fact")
+    return typeof factId === "string" ? (snapshot.facts.find((fact) => fact.id === factId)?.text ?? null) : null;
+  if (kind !== "line" || typeof lineId !== "string") return null;
+  const resume = snapshot.resumes.find((held) => held.id === resumeId && held.version === version);
+  if (!resume) return null;
+  if (resume.summary?.id === lineId) return resume.summary.text;
+  for (const section of resume.sections) {
+    const line = section.lines.find((held) => held.id === lineId);
+    if (line) return presentResumeBullet(line.text);
+  }
+  return null;
 }

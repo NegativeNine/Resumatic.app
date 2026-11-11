@@ -274,7 +274,8 @@ export function CoachSharingTools() {
                   {active && grant.available === false && (
                     <Message tone="info">
                       This link is currently unavailable. If it includes a resume, review that version before
-                      creating a new link. You can still revoke this one.
+                      creating a new link. If it holds a fact you’ve marked sensitive, it stays closed while the
+                      fact is marked. You can still revoke this one.
                     </Message>
                   )}
                 </div>
@@ -361,10 +362,13 @@ function ShareSelection({
         .filter((role) => role.state === "confirmed")
         .map((role) => role.id),
     );
+    // A fact marked sensitive can't go into a copy, so it isn't offered. The form says when one was left out.
+    const offered = facts.facts.filter((fact) => !fact.sensitive);
     return {
-      facts: facts.facts.filter(
+      facts: offered.filter(
         (fact) => fact.roleId === null || confirmedRoles.has(fact.roleId),
       ),
+      withheld: offered.length < facts.facts.length,
       resumes: applications.applications
         .flatMap((application) =>
           application.resumes
@@ -466,6 +470,7 @@ function ShareSelection({
             <legend>
               Confirmed facts ({factIds.size} selected, up to 100)
             </legend>
+            {choices.data.withheld && <p className="rs-meta">Facts you’ve marked sensitive aren’t listed.</p>}
             {choices.data.facts.length === 0 ? (
               <p className="rs-meta">You have no confirmed facts to share yet.</p>
             ) : (
@@ -557,8 +562,11 @@ function ShareSelection({
                         <span className="meta">
                           {", "}
                           {formatDateTime(document.createdAt)}
-                          {/* Its sentences can't be checked again, so it can't go into a copy. */}
-                          {!document.shareable && ". Written before documents could be shared. Write a new one to share it."}
+                          {/* It can't go into a copy: it uses a marked fact, or its sentences can't be checked again. */}
+                          {!document.shareable &&
+                            (document.usesSensitive
+                              ? ". Uses a fact you’ve marked sensitive. Create a new one to share it."
+                              : ". Written before documents could be shared. Write a new one to share it.")}
                         </span>
                       </span>
                     </label>
@@ -588,7 +596,7 @@ function ShareSelection({
             id={`${id}-coach`}
             label="Your coach’s sign-in address"
             optional
-            hint="If your coach has a Resumatic account, this lets them keep the copy in their client list and open it without the link. Anyone with the link can still read it."
+            hint="If your coach has a Resumatic account, this lets them keep the copy in their client list, open it without the link and comment on it. Anyone with the link can still read it. Only your coach can comment."
             error={badCoach ? "Enter a full email address, or leave this empty." : undefined}
           >
             <input

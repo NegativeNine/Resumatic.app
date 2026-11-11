@@ -6,6 +6,9 @@ import { AppError } from "./errors";
  */
 export const TRANSFER_TABLES = [
   "profile",
+  // Job preferences: one row, moved as it is, revision included. A new vault has no row until
+  // its owner first saves, so the table is empty where an import needs it to be.
+  "preferences",
   "sources",
   "source_revisions",
   "evidence",
@@ -36,6 +39,10 @@ export const TRANSFER_TABLES = [
   // a copy is kept, and the copy's owner's vault still decides every open from the account and
   // the address, which a replacement leaves as they were.
   "coach_clients",
+  // What a coach wrote on a shared copy, and the owner's replies. They are the owner's to keep, so
+  // they move. Grants don't, so every thread arrives closed: it can be read and deleted, and
+  // nobody can add to it. A row holds no vault ID, storage key or run state.
+  "share_comments",
 ] as const;
 export type TransferTable = (typeof TRANSFER_TABLES)[number];
 export type TransferValue = string | number | null | { binary: string };

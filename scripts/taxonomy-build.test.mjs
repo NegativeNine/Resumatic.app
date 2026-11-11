@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile, cp } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile, cp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -609,6 +609,54 @@ test("the build removes nothing but an earlier build, and never the files it rea
     await assert.rejects(build({ ...from, esco: join(dir, "empty", "esco"), out: join(dir, "empty") }), /holds the files being read/);
     assert.ok((await readdir(join(dir, "empty", "esco"))).includes("skills_en.csv"));
     assert.ok((await readdir(join(dir, "empty"))).includes("manifest.json"));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("the build finds the files it reads in the output folder by whatever path either is named", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "taxonomy-paths-"));
+  try {
+    // A working folder that holds an earlier build and, beside it, the downloads the next build reads.
+    const work = join(dir, "real", "work");
+    const versions = { escoVersion: "1.2.1", onetVersion: "31.0" };
+    const read = (folder) => ({ esco: join(folder, "esco"), onet: join(folder, "onet"), crosswalk: join(folder, "crosswalk.csv"), ...versions });
+    await build({ ...read(FIXTURES), out: work });
+    for (const name of ["esco", "onet", "crosswalk.csv"]) await cp(join(FIXTURES, name), join(work, name), { recursive: true });
+    // The folder above it is reached through a link as well, as a temporary folder is on macOS.
+    await symlink(join(dir, "real"), join(dir, "link"));
+    const linked = join(dir, "link", "work");
+    // And there are links: to the working folder, to a folder read in it, and in it to a folder read elsewhere.
+    await symlink(work, join(dir, "work-by-link"));
+    await symlink(join(work, "esco"), join(dir, "esco-by-link"));
+    await symlink(join(FIXTURES, "onet"), join(work, "onet-elsewhere"));
+    const everything = async () => (await readdir(work, { recursive: true })).sort();
+    const before = await everything();
+    assert.ok(before.includes(join("esco", "skills_en.csv")) && before.includes("crosswalk.csv") && before.includes("manifest.json") && before.includes("onet-elsewhere"));
+
+    // One path for the files read and another for --out, either way round.
+    await assert.rejects(build({ ...read(work), out: linked }), /holds the files being read/);
+    await assert.rejects(build({ ...read(linked), out: work }), /holds the files being read/);
+    // From the command line, in the working folder entered through the link. A program is told the
+    // folder it is in by that folder's own path, so "esco" and the --out given are two paths again.
+    const script = fileURLToPath(new URL("./taxonomy/build.mjs", import.meta.url));
+    const here = spawnSync(process.execPath, [script, "--esco", "esco", "--onet", "onet", "--crosswalk", "crosswalk.csv", "--out", linked, "--esco-version", "1.2.1", "--onet-version", "31.0"], { encoding: "utf8", cwd: linked });
+    assert.equal(here.status, 1);
+    assert.match(here.stderr, /taxonomy build failed: .* holds the files being read/);
+    // One folder read through a link kept elsewhere, and --out a link to the working folder.
+    await assert.rejects(build({ ...read(FIXTURES), esco: join(dir, "esco-by-link"), out: work }), /holds the files being read/);
+    await assert.rejects(build({ ...read(work), out: join(dir, "work-by-link") }), /holds the files being read/);
+    // A link in the output folder to files kept elsewhere: the files would stay, and the way to them would go.
+    await assert.rejects(build({ ...read(FIXTURES), onet: join(work, "onet-elsewhere"), out: work }), /holds the files being read/);
+    // Every refusal left everything where it was.
+    assert.deepEqual(await everything(), before);
+
+    // A folder of its own is written through a link, and an earlier build in it replaced, as by its own path.
+    const out = join(dir, "link", "built");
+    const first = await build({ ...read(linked), out });
+    await writeFile(join(dir, "real", "built", "left-over.txt"), "from an earlier build");
+    const again = await build({ ...read(work), out });
+    assert.equal(again.contentHash, first.contentHash);
+    assert.deepEqual((await readdir(join(dir, "real", "built"))).sort(), ["concepts.ndjson", "d1", "labels.ndjson", "manifest.json", "relations.ndjson"]);
+    assert.deepEqual(await everything(), before);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
