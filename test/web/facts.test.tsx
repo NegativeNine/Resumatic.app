@@ -436,6 +436,75 @@ describe("pasting text", () => {
     expect(pasteCalls(api)[2]!.key).not.toBe(first!.key);
   });
 
+  it("takes Retry adding text away once the text or title is changed, so the change is what gets added", async () => {
+    const api = await openPaste();
+    api.fail("POST", /^\/api\/sources\/paste$/, 503, "unavailable", "Resumatic is busy right now.");
+    await pasteInto(textBox(), "Wrote the on-call runbok.");
+    await userEvent.click(within(pastePanel()).getByRole("button", { name: "Add text" }));
+    await within(pastePanel()).findByRole("button", { name: "Retry adding text" });
+    fireEvent.change(textBox(), { target: { value: "Wrote the on-call runbook." } });
+    expect(within(pastePanel()).queryByRole("button", { name: "Retry adding text" })).toBeNull();
+    expect(textBox()).toHaveValue("Wrote the on-call runbook.");
+    await userEvent.click(within(pastePanel()).getByRole("button", { name: "Add text" }));
+    await within(pastePanel()).findByText(/^Added your text\./);
+    const [first, second] = pasteCalls(api);
+    expect(second!.body).toEqual({ text: "Wrote the on-call runbook.", title: null });
+    expect(second!.key).not.toBe(first!.key);
+
+    // A changed title takes it away too.
+    api.fail("POST", /^\/api\/sources\/paste$/, 503, "unavailable", "Resumatic is busy right now.");
+    await pasteInto(textBox(), "Ran the hiring loop.");
+    await userEvent.click(within(pastePanel()).getByRole("button", { name: "Add text" }));
+    await within(pastePanel()).findByRole("button", { name: "Retry adding text" });
+    await pasteInto(titleBox(), "Hiring");
+    expect(within(pastePanel()).queryByRole("button", { name: "Retry adding text" })).toBeNull();
+  });
+
+  it("says the text was added when it was the first source, and keeps Paste text chosen in the rail", async () => {
+    const state = emptyVault();
+    installFakeApi(state);
+    renderWithSession(<SourcesPage />, state.me);
+    await screen.findByRole("heading", { name: "What happens next" });
+    await userEvent.click(within(screen.getByRole("group", { name: "Add a source" })).getByRole("button", { name: "Paste text" }));
+    await pasteInto(textBox(), "Led the Q3 launch of the carrier rates service.");
+    await userEvent.click(within(pastePanel()).getByRole("button", { name: "Add text" }));
+    const rail = await screen.findByRole("complementary", { name: "Your sources" });
+    expect(
+      await within(rail).findByText("Added your text. Resumatic is reading it now, and its roles and facts will appear for you to review."),
+    ).toHaveAttribute("role", "status");
+    expect(within(rail).getByRole("button", { name: "Paste text" })).toHaveAttribute("aria-pressed", "true");
+    expect(textBox()).toHaveValue("");
+  });
+
+  it("says a file was uploaded when it was the first source", async () => {
+    const state = emptyVault();
+    installFakeApi(state);
+    renderWithSession(<SourcesPage />, state.me);
+    await screen.findByRole("heading", { name: "What happens next" });
+    const input = document.querySelector<HTMLInputElement>(".app-drop--first-run input[type=file]")!;
+    await userEvent.upload(input, new File(["%PDF-1.4"], "cv.pdf", { type: "application/pdf" }));
+    const rail = await screen.findByRole("complementary", { name: "Your sources" });
+    expect(
+      await within(rail).findByText("Uploaded cv.pdf. Resumatic is reading it now, and its roles and facts will appear for you to review."),
+    ).toHaveAttribute("role", "status");
+    expect(within(rail).getByRole("button", { name: "Upload a file" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("keeps what was being pasted when an upload makes the first source", async () => {
+    const state = emptyVault();
+    installFakeApi(state);
+    renderWithSession(<SourcesPage />, state.me);
+    await screen.findByRole("heading", { name: "What happens next" });
+    const input = document.querySelector<HTMLInputElement>(".app-drop--first-run input[type=file]")!;
+    await userEvent.click(within(screen.getByRole("group", { name: "Add a source" })).getByRole("button", { name: "Paste text" }));
+    await pasteInto(titleBox(), "Q3 review");
+    await pasteInto(textBox(), "Led the Q3 launch.");
+    await userEvent.upload(input, new File(["%PDF-1.4"], "cv.pdf", { type: "application/pdf" }));
+    await screen.findByRole("complementary", { name: "Your sources" });
+    expect(textBox()).toHaveValue("Led the Q3 launch.");
+    expect(titleBox()).toHaveValue("Q3 review");
+  });
+
   it("shows This text wasn’t added after an expired paste, without a retry", async () => {
     const api = await openPaste();
     api.fail("POST", /^\/api\/sources\/paste$/, 503, "unavailable", "Resumatic is busy right now.");

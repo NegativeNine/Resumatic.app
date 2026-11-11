@@ -1,4 +1,5 @@
-import { AddSource } from "../components/AddSource";
+import { useState } from "react";
+import { ADD_SOURCE_START, AddSource, type AddSourceState } from "../components/AddSource";
 import { Review } from "../components/Review";
 import { SourceList } from "../components/SourceList";
 import { ErrorNote, Loading, PageHeader, Tick } from "../components/ui";
@@ -11,6 +12,9 @@ const isFirstRun = (vault: Vault) => vault.sources.length === 0 && vault.roles.l
 export function SourcesPage() {
   const vault = useResource(loadVault, isReading);
   const firstRun = vault.data ? isFirstRun(vault.data) : false;
+  // Kept here, not in AddSource: adding the first source swaps the first-run section for the rail,
+  // and the rail's AddSource must open where the first one left off.
+  const [adding, setAdding] = useState<AddSourceState>(ADD_SOURCE_START);
 
   return (
     <>
@@ -27,7 +31,7 @@ export function SourcesPage() {
             <h2 id="upload-heading" className="rs-visually-hidden">
               Add a source
             </h2>
-            <AddSource onAdded={vault.reload} size="first-run" />
+            <AddSource onAdded={vault.reload} size="first-run" state={adding} onState={setAdding} />
           </section>
           <Review vault={vault.data} reload={vault.reload} />
           <WhatHappensNext />
@@ -39,7 +43,7 @@ export function SourcesPage() {
             <h2 id="sources-heading" className="rs-h3">
               Your sources
             </h2>
-            <AddSource onAdded={vault.reload} />
+            <AddSource onAdded={vault.reload} state={adding} onState={setAdding} />
             <SourceList vault={vault.data} reload={vault.reload} />
           </aside>
           <div className="facts-main">

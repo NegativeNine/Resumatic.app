@@ -11,23 +11,43 @@ import { useAction, type Reload } from "../hooks";
 import { isTransientReadError } from "../polling";
 import { ActionError, CharCount, Field, Loading } from "./ui";
 
+/** What is in the two fields, kept by the page (see `AddSourceState`). */
+export interface PasteDraft {
+  text: string;
+  title: string;
+}
+
+const ADDED = "Added your text. Resumatic is reading it now, and its roles and facts will appear for you to review.";
+
 /**
  * Text pasted as a source: a brag document, a review, a write-up. It is counted as it will be
  * stored, and goes the way an upload goes, with one key for each press of Add text.
  */
-export function PasteText({ onAdded, size = "rail" }: { onAdded: Reload; size?: "rail" | "first-run" }) {
+export function PasteText({
+  onAdded,
+  size = "rail",
+  draft,
+  onDraft,
+  notice,
+  onNotice,
+}: {
+  onAdded: Reload;
+  size?: "rail" | "first-run";
+  draft: PasteDraft;
+  onDraft: (draft: Partial<PasteDraft>) => void;
+  notice: string | null;
+  onNotice: (sentence: string | null) => void;
+}) {
   const id = useId();
   const { run, pending, error, setError } = useAction();
-  const [text, setText] = useState("");
-  const [title, setTitle] = useState("");
-  const [added, setAdded] = useState(false);
+  const { text, title } = draft;
   const [retry, setRetry] = useState<{ body: PasteSourceRequest; key: string } | null>(null);
   const length = normalizePastedText(text).length;
   const tooLong = length > MAX_PASTE_CHARS;
 
   async function add(body: PasteSourceRequest, key: string) {
     setRetry(null);
-    setAdded(false);
+    onNotice(null);
     // Retry adding text resends with the same key, for when it isn't clear whether the text
     // arrived. A refusal, such as a second copy or an expired paste, would only be refused again.
     let retryable = true;
@@ -44,9 +64,8 @@ export function PasteText({ onAdded, size = "rail" }: { onAdded: Reload; size?: 
       { too_large: "This text is too long. Pasted text can be up to 60,000 characters." },
     );
     if (ok) {
-      setText("");
-      setTitle("");
-      setAdded(true);
+      onDraft({ text: "", title: "" });
+      onNotice(ADDED);
     } else if (retryable) setRetry({ body, key });
   }
 
@@ -54,7 +73,7 @@ export function PasteText({ onAdded, size = "rail" }: { onAdded: Reload; size?: 
     // Enter in the title submits too; the held button alone doesn't stop that.
     if (pending || tooLong) return;
     setRetry(null);
-    setAdded(false);
+    onNotice(null);
     if (!normalizePastedText(text)) {
       setError("Paste some text first.");
       return;
@@ -64,6 +83,14 @@ export function PasteText({ onAdded, size = "rail" }: { onAdded: Reload; size?: 
       return;
     }
     void add({ text, title: title || null }, crypto.randomUUID());
+  }
+
+  // Retry adding text resends what failed. Once either field changes, that is no longer what is on
+  // screen, so the offer goes and the next Add text sends the change under a new key.
+  function edit(change: Partial<PasteDraft>) {
+    onDraft(change);
+    setRetry(null);
+    onNotice(null);
   }
 
   return (
@@ -84,10 +111,7 @@ export function PasteText({ onAdded, size = "rail" }: { onAdded: Reload; size?: 
           maxLength={MAX_PASTE_TITLE_CHARS}
           value={title}
           readOnly={pending}
-          onChange={(e) => {
-            setTitle(e.target.value);
-            setAdded(false);
-          }}
+          onChange={(e) => edit({ title: e.target.value })}
           aria-describedby={`${id}-title-hint`}
         />
       </Field>
@@ -101,10 +125,7 @@ export function PasteText({ onAdded, size = "rail" }: { onAdded: Reload; size?: 
           rows={size === "first-run" ? 12 : 8}
           value={text}
           readOnly={pending}
-          onChange={(e) => {
-            setText(e.target.value);
-            setAdded(false);
-          }}
+          onChange={(e) => edit({ text: e.target.value })}
           aria-describedby={`${id}-text-hint ${id}-count`}
           aria-invalid={tooLong}
         />
@@ -116,9 +137,9 @@ export function PasteText({ onAdded, size = "rail" }: { onAdded: Reload; size?: 
         </button>
       </div>
       {pending && <Loading>Adding your text…</Loading>}
-      {added && (
+      {notice && (
         <p className="success" role="status">
-          Added your text. Resumatic is reading it now, and its roles and facts will appear for you to review.
+          {notice}
         </p>
       )}
       <ActionError message={error} />
