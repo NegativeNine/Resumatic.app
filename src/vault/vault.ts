@@ -3177,9 +3177,18 @@ export class Vault extends DurableObject<Env> {
 
   // The rest are the coach's own list, in the coach's own vault.
 
+  /** Refuses a copy the list has no room for. Asked before the copy's owner's vault is told of a take-up. */
+  async requireCoachClientRoom(who: Who, grantId: string): Promise<void> {
+    this.requireOwner(who);
+    this.coachClients.requireRoom(grantId);
+  }
+
   async addCoachClient(who: Who, client: Omit<CoachClientEntry, "addedAt">): Promise<void> {
     this.requireOwner(who);
     this.coachClients.add(client);
+    // An entry is cleared by the alarm, so holding one sets it.
+    const next = this.coachClients.nextAlarm();
+    if (next !== null) await this.scheduleRunAlarm(next);
   }
 
   async listCoachClients(who: Who): Promise<CoachClientEntry[]> {
@@ -4299,6 +4308,10 @@ export class Vault extends DurableObject<Env> {
     )
       throw new AppError("conflict", "replacement is not ready");
     this.setMeta("state", "open");
+    // A client list that came with the content has entries to clear in their time, and a
+    // replacement starts with no alarm of its own.
+    const next = this.coachClients.nextAlarm();
+    if (next !== null) await this.scheduleRunAlarm(next);
   }
 
   // ---------------------------------------------------------------- helpers
@@ -5298,7 +5311,10 @@ export class Vault extends DurableObject<Env> {
       if (!canContinue()) return;
     }
     this.shares.purgeExpired();
-    this.coachClients.purge();
+    // The client list moves with its vault, row for row. A vault fenced for maintenance keeps
+    // the list as a move counted it, and clearing waits until the fence is lifted.
+    const fenced = isMaintenanceFenced(this.vaultId, this.env.RESTORE_FENCE_IDS);
+    if (!fenced) this.coachClients.purge();
     this.mcpGrants.purgeExpired();
     this.sql.exec(
       `DELETE FROM refine_cache WHERE created_at <= ?`,
@@ -5435,9 +5451,14 @@ export class Vault extends DurableObject<Env> {
         `SELECT MIN(expires_at) AS at FROM share_grants`,
       )
       .one().at;
+    const clientDue = this.coachClients.nextAlarm();
     const candidates = [
       this.runs.listPending().length ? Date.now() + 60_000 : null,
       expiry,
+      // A vault has one alarm. Whatever this one fired for, the client list's next entry is still
+      // to be cleared at its own time. Under the fence an entry already due is looked at again in
+      // a minute, not at once.
+      clientDue !== null && fenced ? Math.max(clientDue, Date.now() + 60_000) : clientDue,
       // An unresolved source write blocks expiry cleanup. Do not turn its
       // immediate retry into a one-second alarm loop; the retry already
       // installed at the top of this alarm remains scheduled.

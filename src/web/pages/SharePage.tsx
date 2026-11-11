@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
+import { ApiError } from "../api";
 import { ShareFrame, ShareSnapshotContent } from "../components/ShareSnapshotContent";
 import { Loading, Message } from "../components/ui";
+import { describeError } from "../errors";
 import "../components/share.css";
+import type { ApiErrorBody } from "../../shared/api";
 import type { SharedView } from "../../shared/sharing";
 
 // Capture once before React effects/router/telemetry, then remove the bearer from browser history.
@@ -131,15 +134,31 @@ export function SharePage() {
   );
 }
 
+/** The server's own sentence for a conflict, such as a client list that is full, or null if the reply carries none. */
+async function conflictSentence(response: Response): Promise<string | null> {
+  const body = (await response.json().catch(() => null)) as Partial<ApiErrorBody> | null;
+  return body?.error === "conflict" && typeof body.message === "string" && body.message
+    ? describeError(new ApiError(response.status, body.error, body.message))
+    : null;
+}
+
 /**
  * What a copy that names a coach says to whoever is reading it. Only the account that signs in
  * with the named address can keep the copy in its client list. Everyone else just reads.
  */
 function CoachNotice({ view, onChanged }: { view: SharedView; onChanged: () => void }) {
   const [state, setState] = useState<"idle" | "adding" | "failed" | "refused">("idle");
+  // Why the copy was refused, when the server said so in a sentence the reader can act on.
+  const [reason, setReason] = useState<string | null>(null);
+  // Each reading of the copy starts over, so one that still isn't in the list offers the add again.
+  useEffect(() => {
+    setState("idle");
+    setReason(null);
+  }, [view]);
   const owner = view.snapshot.owner?.name ?? "The owner of this copy";
   async function add() {
     setState("adding");
+    setReason(null);
     try {
       const response = await fetch("/api/coach/clients", {
         method: "POST",
@@ -148,6 +167,7 @@ function CoachNotice({ view, onChanged }: { view: SharedView; onChanged: () => v
         body: JSON.stringify({ grantId: view.grantId }),
       });
       if (response.status === 204) return onChanged();
+      if (response.status === 409) setReason(await conflictSentence(response));
       // Refused for good, or for now: the reader can't fix the first by trying again.
       setState(response.status === 401 || response.status === 403 || response.status === 409 || response.status === 410 ? "refused" : "failed");
     } catch {
@@ -177,7 +197,7 @@ function CoachNotice({ view, onChanged }: { view: SharedView; onChanged: () => v
             </button>
           </p>
           {state === "failed" && <p role="alert">That didn’t go through. Check your connection, then try again.</p>}
-          {state === "refused" && <p role="alert">This copy couldn’t be added. Reload the page and try again.</p>}
+          {state === "refused" && <p role="alert">{reason ?? "This copy couldn’t be added. Reload the page and try again."}</p>}
         </Message>
       );
     case "other":

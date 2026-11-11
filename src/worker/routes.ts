@@ -51,7 +51,7 @@ import {
   type RoleKind,
 } from "../shared/api";
 import { AppError, errorCode, errorDetail, httpStatus } from "../shared/errors";
-import { MAX_SHARE_LABEL_CHARS, type CoachClient } from "../shared/sharing";
+import { MAX_SHARE_LABEL_CHARS, type CoachClient, type SharedView } from "../shared/sharing";
 import { hintFor, type CfLocation } from "../shared/location";
 import { docxKey, pdfKey, sourceKey } from "../shared/r2";
 import { directoryForSignIn, settleRoutedPlacement } from "../directory/routing";
@@ -1330,13 +1330,17 @@ function coachAccount(c: C): { userId: string; email: string } {
 // Takes up a copy the reader has open. The link's own session says which copy, and the reader's
 // account has to be the one the owner named.
 api.post("/coach/clients", JSON_LIMIT, async (c) => {
-  const { grantId } = await jsonBody(c, z.object({ grantId: z.string().max(100) }));
+  // Only a copy's ID names a cookie. Anything else is refused here, not by the cookie's own 410.
+  const { grantId } = await jsonBody(c, z.object({ grantId: z.uuid() }));
   const claims = await readShareToken(c.env.SESSION_KEY, getCookie(c, shareCookieName(grantId)), "coach-session");
   if (!claims || claims.grantId.toLowerCase() !== grantId.toLowerCase()) throw copyEnded();
   const account = coachAccount(c);
   if (claims.vid === c.get("session").vid) throw new AppError("conflict", "this is your own copy");
   // Reading their own account both proves the session is current and gives the name they go by.
   const me = await myVault(c).me(c.get("who"));
+  // A list with no room refuses here, before the copy's owner's vault records a take-up, so its
+  // owner is never shown one that didn't happen.
+  await myVault(c).requireCoachClientRoom(c.get("who"), claims.grantId);
   const joined = await unlessEnded(
     vault(c.env, claims.vid).joinShareAsCoach(
       { grantId: claims.grantId, epoch: claims.epoch },
@@ -1377,6 +1381,9 @@ api.post("/coach/clients/:grantId/open", async (c) => {
   // Shaped as the link's own claims are, because the session it makes is the one the link makes.
   const claims = { kind: "coach-link" as const, vid: entry.ownerVault, grantId: entry.grantId, epoch: opened.epoch, exp: opened.expiresAt };
   const now = Date.now();
+  // The owner's vault found the copy live by its own clock, a moment ago. If its last moment has
+  // passed since, that is the copy ending, and the session below would say it as a 410.
+  if (opened.expiresAt <= now) throw copyEnded();
   c.header("set-cookie", await createShareSession(c.env.SESSION_KEY, claims, now, shareCookieName(entry.grantId)), { append: true });
   c.header("set-cookie", await createShareSession(c.env.SESSION_KEY, claims, now), { append: true });
   return c.json({ grantId: entry.grantId });
@@ -1436,12 +1443,25 @@ app.get("/share/snapshot", async (c) => {
   // What the copy says about its named coach depends on who is reading. Its owner is told nothing,
   // and so is everyone when it names no coach.
   const { reviewer, ...copy } = view;
-  const standing =
+  let standing: SharedView["reviewer"] | null =
     reviewer === "none" || own?.vid === claims.vid
       ? null
       : reviewer === "named"
         ? own ? "sign-in-again" : "sign-in"
         : reviewer;
+  // "joined" is the owner's vault saying this account took the copy up. Whether the copy is in the
+  // account's client list is for the account's own vault to say. A copy taken off that list, or one
+  // that never reached it, is read as not added: the page then offers to add it.
+  if (standing === "joined" && own) {
+    try {
+      const listed = await vault(c.env, own.vid).coachClient({ userId: own.uid, gen: own.gen, epoch: own.epoch }, claims.grantId);
+      if (!listed) standing = "you";
+    } catch {
+      // Their vault can't be asked: a session since signed out, or a vault that is away. The owner's
+      // vault's word stands, as it did before this was asked, and the list it points to is where a
+      // session that has ended is told so. Offering an add that same session can't make helps nobody.
+    }
+  }
   return c.json(standing ? { ...copy, reviewer: standing } : copy);
 });
 api.get("/billing", async (c) =>

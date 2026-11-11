@@ -1,6 +1,9 @@
 import { AppError } from "./errors";
 
-/** Content and its retry receipts. Credentials, grants, jobs and financial ledgers are excluded. */
+/**
+ * Content and its retry receipts, and the account's own list of the copies shared with it as a
+ * coach. Credentials, grants, jobs and financial ledgers are excluded.
+ */
 export const TRANSFER_TABLES = [
   "profile",
   "sources",
@@ -29,6 +32,10 @@ export const TRANSFER_TABLES = [
   "fact_parts",
   "record_tags",
   "record_links",
+  // A coach's client list. It is not a grant and opens nothing by itself: a row says only where
+  // a copy is kept, and the copy's owner's vault still decides every open from the account and
+  // the address, which a replacement leaves as they were.
+  "coach_clients",
 ] as const;
 export type TransferTable = (typeof TRANSFER_TABLES)[number];
 export type TransferValue = string | number | null | { binary: string };

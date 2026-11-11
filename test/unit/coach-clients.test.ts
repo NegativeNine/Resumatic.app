@@ -93,6 +93,22 @@ describe("a coach's client list", () => {
     } finally { db.close(); }
   });
 
+  it("says whether a copy fits before anything is added, by the rule adding goes by", () => {
+    const { clients, db, rows } = store();
+    try {
+      clients.requireRoom(grantId(0), now);
+      for (let n = 0; n < MAX_COACH_CLIENTS; n++)
+        clients.add({ grantId: grantId(n), ownerVault: vaultId("a"), ownerName: null, expiresAt: now + DAY }, now);
+      // Full: a new copy is refused, one already on the list is not, and asking changes nothing.
+      expect(() => clients.requireRoom(grantId(MAX_COACH_CLIENTS), now)).toThrow("your client list is full; remove a copy that has ended, then add this one");
+      clients.requireRoom(grantId(0), now);
+      expect(rows()).toBe(MAX_COACH_CLIENTS);
+      // Entries past their time leave room, cleared away or not.
+      clients.requireRoom(grantId(MAX_COACH_CLIENTS), now + DAY + COACH_CLIENT_KEPT_MS);
+      expect(rows()).toBe(MAX_COACH_CLIENTS);
+    } finally { db.close(); }
+  });
+
   it("drops an entry a fixed time after its copy's last day, whether or not it has been cleared away", () => {
     const { clients, db, rows } = store();
     try {
@@ -114,6 +130,25 @@ describe("a coach's client list", () => {
       expect(rows()).toBe(1);
       clients.purge(lapsed);
       expect(rows()).toBe(0);
+    } finally { db.close(); }
+  });
+
+  it("says when its next entry is due to be cleared, which is the moment clearing takes it", () => {
+    const { clients, db, rows } = store();
+    try {
+      expect(clients.nextAlarm()).toBeNull();
+      clients.add({ grantId: grantId(1), ownerVault: vaultId("a"), ownerName: null, expiresAt: now + 3 * DAY }, now);
+      clients.add({ grantId: grantId(2), ownerVault: vaultId("b"), ownerName: null, expiresAt: now + DAY }, now);
+      const first = now + DAY + COACH_CLIENT_KEPT_MS;
+      expect(clients.nextAlarm()).toBe(first);
+      // An alarm at that moment finds the entry due, so it never has to come back for it.
+      clients.purge(first - 1);
+      expect(rows()).toBe(2);
+      clients.purge(first);
+      expect(rows()).toBe(1);
+      expect(clients.nextAlarm()).toBe(now + 3 * DAY + COACH_CLIENT_KEPT_MS);
+      clients.remove(grantId(1));
+      expect(clients.nextAlarm()).toBeNull();
     } finally { db.close(); }
   });
 

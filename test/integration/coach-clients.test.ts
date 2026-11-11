@@ -1,11 +1,13 @@
-import { runInDurableObject } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setModels } from "../../src/ai/models";
 import type { Me } from "../../src/shared/api";
-import type { CoachClient, ShareGrant, SharedView } from "../../src/shared/sharing";
+import { COACH_CLIENT_KEPT_MS, type CoachClient, type ShareGrant, type SharedView } from "../../src/shared/sharing";
+import { MAX_COACH_CLIENTS } from "../../src/vault/coach-clients";
 import { MIGRATIONS, migrate, SCHEMA_VERSION } from "../../src/vault/schema";
-import { vault } from "../../src/shared/stubs";
+import { Vault } from "../../src/vault/vault";
+import { directory, vault } from "../../src/shared/stubs";
 import { fromBase64url } from "../../src/worker/crypto";
 import { createSession } from "../../src/worker/session";
 import { removeCoachMigration } from "../support/undo-vault-incarnation";
@@ -15,6 +17,7 @@ beforeEach(() => setModels(() => fakeModels()));
 afterEach(() => setModels(null));
 
 const FACT = "Cut deploy time from forty minutes to six";
+const DAY = 24 * 60 * 60 * 1000;
 
 function sessionOf(user: User) {
   const payload = user.cookie.slice("__Host-session=".length).split(".")[0]!;
@@ -57,6 +60,38 @@ const takeUp = (grantId: string, cookie: string) =>
 const clients = async (user: User) => user.json<{ clients: CoachClient[]; needsSignIn: boolean }>("/api/coach/clients");
 const grants = async (user: User) => (await user.json<{ grants: ShareGrant[] }>("/api/shares")).grants;
 
+type VaultStub = ReturnType<typeof vault>;
+const alarmOf = (stub: VaultStub) => runInDurableObject(stub, (_instance, state) => state.storage.getAlarm());
+/** The copies a vault's client list holds in storage, seen or not. */
+const held = (stub: VaultStub) =>
+  runInDurableObject(stub, (_instance, state) =>
+    state.storage.sql.exec<{ grant_id: string }>(`SELECT grant_id FROM coach_clients ORDER BY expires_at`).toArray().map((row) => row.grant_id),
+  );
+/** Moves an entry to the moment it is due to be cleared, as thirty days passing after its copy's last day would. */
+const lapse = (stub: VaultStub, grantId: string) =>
+  runInDurableObject(stub, (_instance, state) => {
+    state.storage.sql.exec(`UPDATE coach_clients SET expires_at = ? WHERE grant_id = ?`, Date.now() - COACH_CLIENT_KEPT_MS, grantId);
+  });
+
+const fenced: (() => Promise<unknown>)[] = [];
+afterEach(async () => {
+  for (const lift of fenced.splice(0).reverse()) await lift();
+});
+/** Sets the deployment's maintenance fence, as this one object reads it, to these vaults until the test ends. */
+async function fence(target: VaultStub | ReturnType<typeof directory>, ids: string[]): Promise<void> {
+  const prior = await runInDurableObject(target, (instance) => {
+    const local = (instance as unknown as { env: Env }).env;
+    const before = local.RESTORE_FENCE_IDS;
+    local.RESTORE_FENCE_IDS = ids.join(",");
+    return before;
+  });
+  fenced.push(() =>
+    runInDurableObject(target, (instance) => {
+      (instance as unknown as { env: Env }).env.RESTORE_FENCE_IDS = prior;
+    }),
+  );
+}
+
 describe("a copy that names its coach", () => {
   it("is taken up only by the account that signs in with that address, and opens from their list without the link", async () => {
     const { user: sam, factId } = await owner();
@@ -87,6 +122,9 @@ describe("a copy that names its coach", () => {
     const noLink = await takeUp(shared.grant.id, dana.cookie);
     expect(noLink.status).toBe(409);
     expect(await noLink.json()).toMatchObject({ error: "conflict", message: expect.stringContaining("this copy has ended") });
+    // Something that isn't a copy's ID is a bad request, and never that 410 either.
+    for (const grantId of ["not-a-copy", "", `${shared.grant.id}0`])
+      expect((await takeUp(grantId, jar(link, dana.cookie))).status, grantId).toBe(422);
     const before = Date.now();
     expect((await takeUp(shared.grant.id, jar(link, dana.cookie))).status).toBe(204);
     expect((await read(shared.grant.id, jar(link, dana.cookie))).view!.reviewer).toBe("joined");
@@ -185,6 +223,136 @@ describe("a copy that names its coach", () => {
     expect((await dana.send("DELETE", `/api/coach/clients/${shared.grant.id}`)).status).toBe(204);
   });
 
+  it("offers a live copy again after its coach takes it off their list", async () => {
+    const { user: sam, factId } = await owner();
+    const address = uniqueEmail();
+    const shared = await share(sam, { factIds: [factId], coachEmail: address });
+    const link = await open(shared);
+    const dana = await signIn(address);
+    expect((await dana.send("PUT", "/api/profile", { name: "Dana Okafor" })).status).toBe(200);
+    expect((await takeUp(shared.grant.id, jar(link, dana.cookie))).status).toBe(204);
+    const taken = (await grants(sam))[0]!.coach!;
+    expect(taken).toEqual({ email: address, name: "Dana Okafor", joinedAt: expect.any(Number) });
+
+    // Off her list while the copy is still live.
+    expect((await dana.send("DELETE", `/api/coach/clients/${shared.grant.id}`)).status).toBe(204);
+    expect(await clients(dana)).toEqual({ clients: [], needsSignIn: false });
+    expect((await dana.json<Me>("/api/me")).clients).toBe(0);
+    expect((await dana.send("POST", `/api/coach/clients/${shared.grant.id}/open`)).status).toBe(404);
+    // The link still reads. The copy isn't in her list, so it offers to be added and doesn't say it is there.
+    expect((await read(shared.grant.id, jar(link, dana.cookie))).view!.reviewer).toBe("you");
+    // What the owner's vault recorded of the take-up is the owner's, and stays until the link ends.
+    expect((await grants(sam))[0]!.coach).toEqual(taken);
+
+    expect((await takeUp(shared.grant.id, jar(link, dana.cookie))).status).toBe(204);
+    expect((await read(shared.grant.id, jar(link, dana.cookie))).view!.reviewer).toBe("joined");
+    expect((await clients(dana)).clients).toMatchObject([{ grantId: shared.grant.id, ownerName: "Sam Rivera", active: true }]);
+    expect((await dana.send("POST", `/api/coach/clients/${shared.grant.id}/open`)).status).toBe(200);
+    expect((await grants(sam))[0]!.coach).toEqual(taken);
+
+    // A session signed out since can't ask its own vault what its list holds, and couldn't add the
+    // copy either. It is told what the owner's vault says, and the list that points to is where it
+    // is asked to sign in again.
+    expect((await dana.send("POST", "/api/account/sign-out-everywhere")).status).toBe(204);
+    expect((await dana.send("GET", "/api/coach/clients")).status).toBe(401);
+    expect((await takeUp(shared.grant.id, jar(link, dana.cookie))).status).toBe(401);
+    expect((await read(shared.grant.id, jar(link, dana.cookie))).view!.reviewer).toBe("joined");
+  });
+
+  it("refuses a copy when the coach's list is full, and tells its owner of no take-up", async () => {
+    const { user: sam, factId } = await owner();
+    const address = uniqueEmail();
+    const shared = await share(sam, { factIds: [factId], coachEmail: address });
+    const link = await open(shared);
+    const dana = await signIn(address);
+    // A list with no room left: as many copies from elsewhere as it holds.
+    const elsewhere = sessionOf(sam).vid;
+    const others = Array.from({ length: MAX_COACH_CLIENTS }, () => crypto.randomUUID());
+    await runInDurableObject(vaultOf(dana), (_instance, state) => {
+      for (const id of others)
+        state.storage.sql.exec(
+          `INSERT INTO coach_clients (grant_id, owner_vault, owner_name, added_at, expires_at) VALUES (?, ?, NULL, ?, ?)`,
+          id, elsewhere, Date.now(), Date.now() + DAY,
+        );
+    });
+    expect((await dana.json<Me>("/api/me")).clients).toBe(MAX_COACH_CLIENTS);
+
+    const full = await takeUp(shared.grant.id, jar(link, dana.cookie));
+    expect(full.status).toBe(409);
+    expect(await full.json()).toEqual({ error: "conflict", message: "your client list is full; remove a copy that has ended, then add this one" });
+    // Nothing was added and nothing says it was: not the copy to its reader, and not the owner's list.
+    expect((await read(shared.grant.id, jar(link, dana.cookie))).view!.reviewer).toBe("you");
+    expect((await grants(sam))[0]!.coach).toEqual({ email: address, name: null, joinedAt: null });
+
+    // With room made, the same link adds it.
+    expect((await dana.send("DELETE", `/api/coach/clients/${others[0]}`)).status).toBe(204);
+    expect((await takeUp(shared.grant.id, jar(link, dana.cookie))).status).toBe(204);
+    expect((await read(shared.grant.id, jar(link, dana.cookie))).view!.reviewer).toBe("joined");
+    expect((await grants(sam))[0]!.coach).toMatchObject({ email: address, joinedAt: expect.any(Number) });
+    // A full list still takes a copy it already holds, which only refreshes it.
+    expect((await dana.json<Me>("/api/me")).clients).toBe(MAX_COACH_CLIENTS);
+    expect((await takeUp(shared.grant.id, jar(link, dana.cookie))).status).toBe(204);
+  });
+
+  it("offers the copy again when a take-up reached its owner's vault but not the coach's list", async () => {
+    const { user: sam, factId } = await owner();
+    const address = uniqueEmail();
+    const shared = await share(sam, { factIds: [factId], coachEmail: address });
+    const link = await open(shared);
+    const dana = await signIn(address);
+    // The second half of a take-up fails: the owner's vault has recorded it, and the coach's list never gets the copy.
+    const lost = vi.spyOn(Vault.prototype, "addCoachClient").mockRejectedValueOnce(new Error("unavailable: storage is busy"));
+    try {
+      expect((await takeUp(shared.grant.id, jar(link, dana.cookie))).status).toBe(503);
+      expect(lost).toHaveBeenCalledOnce();
+    } finally {
+      lost.mockRestore();
+    }
+    const taken = (await grants(sam))[0]!.coach!;
+    expect(taken.joinedAt).toEqual(expect.any(Number));
+    expect(await clients(dana)).toEqual({ clients: [], needsSignIn: false });
+    // The copy doesn't tell her it is in a list it never reached, so she can add it.
+    expect((await read(shared.grant.id, jar(link, dana.cookie))).view!.reviewer).toBe("you");
+    expect((await takeUp(shared.grant.id, jar(link, dana.cookie))).status).toBe(204);
+    expect((await read(shared.grant.id, jar(link, dana.cookie))).view!.reviewer).toBe("joined");
+    expect((await clients(dana)).clients).toMatchObject([{ grantId: shared.grant.id, active: true }]);
+    // The owner's record keeps the time of the first try.
+    expect((await grants(sam))[0]!.coach).toEqual(taken);
+  });
+
+  it("says the copy has ended, not the coach's account, when its last moment passes while it is being opened", async () => {
+    const { user: sam, factId } = await owner();
+    const address = uniqueEmail();
+    // A minute left, so the clock below has only a minute to move.
+    const shared = await share(sam, { factIds: [factId], coachEmail: address, expiresAt: Date.now() + 60_000 });
+    const dana = await signIn(address);
+    expect((await takeUp(shared.grant.id, jar(await open(shared), dana.cookie))).status).toBe(204);
+
+    // The owner's vault finds the copy still live, and its last moment passes before the answer is back.
+    const real = Date.now.bind(Date);
+    let ahead = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => real() + ahead);
+    const openShareForCoach = Vault.prototype.openShareForCoach;
+    const opening = vi.spyOn(Vault.prototype, "openShareForCoach").mockImplementation(async function (this: Vault, grantId, coach) {
+      const opened = await openShareForCoach.call(this, grantId, coach);
+      ahead = opened.expiresAt - real();
+      return opened;
+    });
+    try {
+      const late = await dana.send("POST", `/api/coach/clients/${shared.grant.id}/open`);
+      expect(opening).toHaveBeenCalledOnce();
+      expect(late.status).toBe(409);
+      expect(await late.json()).toMatchObject({ error: "conflict", message: expect.stringContaining("this copy has ended") });
+      expect(late.headers.getSetCookie()).toEqual([]);
+    } finally {
+      opening.mockRestore();
+      clock.mockRestore();
+    }
+    // A 410 here would have been read as the coach's own account being gone.
+    expect((await dana.send("GET", "/api/me")).status).toBe(200);
+    expect((await clients(dana)).clients).toMatchObject([{ grantId: shared.grant.id, active: true }]);
+  });
+
   it("names nobody unless its owner says so, and takes only an address", async () => {
     const { user: sam, factId } = await owner();
     const plain = await share(sam, { factIds: [factId] });
@@ -198,6 +366,131 @@ describe("a copy that names its coach", () => {
     // An empty address names nobody.
     expect((await share(sam, { factIds: [factId], coachEmail: "   " })).grant.coach).toBeNull();
     expect(await grants(sam)).toHaveLength(2);
+  });
+});
+
+describe("an entry in a coach's list", () => {
+  it("is cleared from storage thirty days after its copy's last day, in an account that does nothing else", async () => {
+    const { user: sam, factId } = await owner();
+    const address = uniqueEmail();
+    const sooner = await share(sam, { factIds: [factId], coachEmail: address, expiresAt: Date.now() + 2 * DAY });
+    const later = await share(sam, { factIds: [factId], coachEmail: address, expiresAt: Date.now() + 5 * DAY });
+    // An account used only to coach: no uploads, facts or links of its own, so nothing has woken its vault.
+    const dana = await signIn(address);
+    expect(await alarmOf(vaultOf(dana))).toBeNull();
+
+    expect((await takeUp(sooner.grant.id, jar(await open(sooner), dana.cookie))).status).toBe(204);
+    expect(await alarmOf(vaultOf(dana))).toBe(sooner.grant.expiresAt + COACH_CLIENT_KEPT_MS);
+    // A copy that ends later leaves the alarm on the one that ends sooner.
+    expect((await takeUp(later.grant.id, jar(await open(later), dana.cookie))).status).toBe(204);
+    expect(await alarmOf(vaultOf(dana))).toBe(sooner.grant.expiresAt + COACH_CLIENT_KEPT_MS);
+
+    // Thirty days after its last day the entry is unseen at once, and the alarm takes it out of storage.
+    await lapse(vaultOf(dana), sooner.grant.id);
+    expect((await clients(dana)).clients.map((client) => client.grantId)).toEqual([later.grant.id]);
+    expect(await held(vaultOf(dana))).toEqual([sooner.grant.id, later.grant.id]);
+    expect(await runDurableObjectAlarm(vaultOf(dana))).toBe(true);
+    expect(await held(vaultOf(dana))).toEqual([later.grant.id]);
+    // The alarm is set again for the entry that is left, and that one goes in its turn.
+    expect(await alarmOf(vaultOf(dana))).toBe(later.grant.expiresAt + COACH_CLIENT_KEPT_MS);
+    await lapse(vaultOf(dana), later.grant.id);
+    expect(await runDurableObjectAlarm(vaultOf(dana))).toBe(true);
+    expect(await held(vaultOf(dana))).toEqual([]);
+    expect(await alarmOf(vaultOf(dana))).toBeNull();
+  });
+
+  it("is still due to be cleared after the vault's alarm has fired for something else", async () => {
+    const { user: sam, factId } = await owner();
+    // This coach has a fact and a link of her own. Saving the fact set an alarm, which is run out of the way.
+    const { user: dana, factId: hers } = await owner("Dana Okafor");
+    await runDurableObjectAlarm(vaultOf(dana));
+    expect(await alarmOf(vaultOf(dana))).toBeNull();
+    const shared = await share(sam, { factIds: [factId], coachEmail: dana.email });
+    expect((await takeUp(shared.grant.id, jar(await open(shared), dana.cookie))).status).toBe(204);
+    const due = shared.grant.expiresAt + COACH_CLIENT_KEPT_MS;
+    expect(await alarmOf(vaultOf(dana))).toBe(due);
+
+    // Her own link ends long before the entry is due, so the vault's one alarm is set for the link.
+    const own = await share(dana, { factIds: [hers], expiresAt: Date.now() + 60_000 });
+    expect(await alarmOf(vaultOf(dana))).toBe(own.grant.expiresAt);
+    await runInDurableObject(vaultOf(dana), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE share_grants SET expires_at = ? WHERE id = ?`, Date.now() - 1, own.grant.id);
+    });
+    expect(await runDurableObjectAlarm(vaultOf(dana))).toBe(true);
+    expect(await grants(dana)).toEqual([]);
+    // That alarm is spent. The entry's own time has to be set again, or nothing would ever clear it.
+    expect(await alarmOf(vaultOf(dana))).toBe(due);
+    expect(await held(vaultOf(dana))).toEqual([shared.grant.id]);
+  });
+
+  it("stays as a move counted it while its vault is fenced, and is cleared once the fence is lifted", async () => {
+    const { user: sam, factId } = await owner();
+    const address = uniqueEmail();
+    const shared = await share(sam, { factIds: [factId], coachEmail: address });
+    const dana = await signIn(address);
+    const hers = vaultOf(dana);
+    expect((await takeUp(shared.grant.id, jar(await open(shared), dana.cookie))).status).toBe(204);
+    await lapse(hers, shared.grant.id);
+
+    // A vault being moved has its rows counted, then sent. An alarm in between must not take one away.
+    await fence(hers, [sessionOf(dana).vid]);
+    const before = Date.now();
+    expect(await runDurableObjectAlarm(hers)).toBe(true);
+    expect(await held(hers)).toEqual([shared.grant.id]);
+    // It looks again in a minute: not never, and not every second.
+    expect(await alarmOf(hers)).toBeGreaterThanOrEqual(before + 60_000);
+    expect(await alarmOf(hers)).toBeLessThanOrEqual(Date.now() + 60_000);
+
+    await fence(hers, []);
+    expect(await runDurableObjectAlarm(hers)).toBe(true);
+    expect(await held(hers)).toEqual([]);
+    expect(await alarmOf(hers)).toBeNull();
+  });
+});
+
+describe("a coach's vault moved to a replacement", () => {
+  it("takes the client list with it, and the copies open as they did", async () => {
+    const { user: sam, factId } = await owner();
+    const address = uniqueEmail();
+    const shared = await share(sam, { factIds: [factId], coachEmail: address });
+    const dana = await signIn(address);
+    expect((await takeUp(shared.grant.id, jar(await open(shared), dana.cookie))).status).toBe(204);
+    const before = await clients(dana);
+    expect(before.clients).toMatchObject([{ grantId: shared.grant.id, ownerName: "Sam Rivera", active: true }]);
+
+    // The fenced replacement an operator runs with scripts/move-vault.mjs, step for step.
+    const old = sessionOf(dana);
+    const operation = crypto.randomUUID();
+    const { targetVaultId } = await directory(env).prepareReplacement(old.vid, operation);
+    const source = vault(env, old.vid);
+    const target = vault(env, targetVaultId);
+    for (const object of [source, target, directory(env)]) await fence(object, [old.vid, targetVaultId]);
+    const manifest = await source.transferManifest(operation);
+    expect(manifest.tables.find((table) => table.name === "coach_clients")).toEqual({ name: "coach_clients", count: 1 });
+    await target.importManifest(manifest);
+    for (const table of manifest.tables) {
+      const page = await source.transferPage(operation, table.name);
+      expect(page.done).toBe(true);
+      await target.importPage(page);
+    }
+    expect(await target.finishImport(operation, old.vid)).toMatchObject({ state: "ready", completedTables: manifest.tables.length });
+    await directory(env).cutover(old.vid, targetVaultId, operation);
+    // The replacement wakes by itself to clear the entry when its time comes.
+    expect(await alarmOf(target)).toBe(shared.grant.expiresAt + COACH_CLIENT_KEPT_MS);
+    // Checked, the replacement is let out of its fence. The old vault stays in.
+    await fence(target, [old.vid]);
+
+    const moved = await signIn(address);
+    expect(sessionOf(moved)).toMatchObject({ uid: old.uid, vid: targetVaultId });
+    expect((await moved.json<Me>("/api/me")).clients).toBe(1);
+    // The same entry, added when it was, and the owner's vault still knows the account.
+    expect(await clients(moved)).toEqual(before);
+    const opened = await moved.send("POST", `/api/coach/clients/${shared.grant.id}/open`);
+    expect(opened.status).toBe(200);
+    const copy = await read(shared.grant.id, jar(cookieFrom(opened, `__Host-share-${shared.grant.id}`), moved.cookie));
+    expect(copy.view).toMatchObject({ reviewer: "joined", snapshot: { owner: { name: "Sam Rivera" } } });
+    // Where the copy is kept still never leaves the server.
+    expect(JSON.stringify(await moved.json("/api/export"))).not.toContain(sessionOf(sam).vid);
   });
 });
 
