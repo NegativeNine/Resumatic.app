@@ -878,13 +878,15 @@ describe("who can suggest, and what ends it", () => {
       await replacement.importPage(page);
     }
     expect(await replacement.finishImport(operation, old.vid)).toMatchObject({ state: "ready" });
+    // Read before cutover: cutover retires the old vault and the Directory's alarm erases it at once.
+    const sourceRows = await stored(source);
     await directory(env).cutover(old.vid, targetVaultId, operation);
     await fence(replacement, [old.vid]);
     await setting(replacement, "TAILOR_MONTHLY_LIMIT", "10");
 
     const moved = await signIn(sam.email);
     expect(sessionOf(moved).vid).toBe(targetVaultId);
-    expect(await stored(replacement)).toEqual(await stored(source));
+    expect(await stored(replacement)).toEqual(sourceRows);
     // The applied one is still applied, without the version its request named; the other waits.
     expect(await asOwner(moved, applied.id)).toEqual({ state: "applied" });
     expect(await asOwner(moved, waiting.id)).toEqual({ state: "waiting" });

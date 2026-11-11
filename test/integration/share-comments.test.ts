@@ -739,6 +739,8 @@ describe("comments and a vault's own storage", () => {
       await replacement.importPage(page);
     }
     expect(await replacement.finishImport(operation, old.vid)).toMatchObject({ state: "ready", completedTables: manifest.tables.length });
+    // Read before cutover: cutover retires the old vault and the Directory's alarm erases it at once.
+    const sourceRows = await stored(source);
     await directory(env).cutover(old.vid, targetVaultId, operation);
     // Checked, the replacement is let out of its fence. The old vault stays in.
     await fence(replacement, [old.vid]);
@@ -746,7 +748,7 @@ describe("comments and a vault's own storage", () => {
     const moved = await signIn(sam.email);
     expect(sessionOf(moved)).toMatchObject({ uid: old.uid, vid: targetVaultId });
     // Every row arrived as it was, and the count of what is new came with them.
-    expect(await stored(replacement)).toEqual(await stored(source));
+    expect(await stored(replacement)).toEqual(sourceRows);
     expect(await newFromCoach(moved)).toBe(1);
     // Grants don't move, so the thread is closed: read and deleted, never added to.
     expect((await moved.json<{ grants: ShareGrant[] }>("/api/shares")).grants).toEqual([]);
