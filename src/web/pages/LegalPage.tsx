@@ -78,6 +78,10 @@ function Privacy() {
             Comments a coach writes on a copy you shared and wording they suggest, and your replies, with the line or
             fact each is about and the coach’s name and sign-in address.
           </li>
+          <li>
+            If you turn on email notices: which ones are on, when each was last sent, and a one-way code made from the
+            address you sign in with, so a notice goes only to that address.
+          </li>
           <li>The apps you connect, what you allowed each one to do and when its access ends.</li>
           <li>How many resumes and documents you have made in the current period, for your plan’s limit.</li>
           <li>
@@ -148,8 +152,10 @@ function Privacy() {
           <li>
             The coach you name can comment on a line or a fact in the copy once they have added it to their client
             list. Nobody else with the link can read or write comments. You answer and delete them under Account,
-            where they stay after the copy ends until you delete them. We don’t send email: a count of new comments
-            shows the next time you open Resumatic.
+            where they stay after the copy ends until you delete them. We send email only if you turn on email notices
+            under Account. A notice says only that there’s something new to see, with a link to Resumatic: it holds no
+            career details, comment, suggested wording or coach’s name, and it’s sent through Cloudflare’s email service
+            to the address you sign in with. A count of new comments shows the next time you open Resumatic.
           </li>
           <li>
             A coach you name can suggest new wording for a line. Nothing changes unless you accept it, and then it is

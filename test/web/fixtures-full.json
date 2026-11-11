@@ -378,6 +378,13 @@
       ]
     }
   },
+  "emailNotices": {
+    "comment": true,
+    "suggestion": false,
+    "reminder": true,
+    "status": "ok",
+    "address": "sam.rivera@example.com"
+  },
   "billing": {
     "enabled": true,
     "plans": [

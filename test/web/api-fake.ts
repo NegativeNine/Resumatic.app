@@ -3,6 +3,7 @@ import type { DocumentView } from "../../src/shared/documents";
 import type { PostingRead } from "../../src/shared/postings";
 import { normalizePosting, type FactPatch, type NewFact, type NewRole, type Profile, type ReviewRequest, type RolePatch, type SensitiveRequest } from "../../src/shared/api";
 import { PREFERENCES_CHANGED, PREFERENCES_REFUSED, cleanPreferences, type Preferences, type PreferencesUpdate } from "../../src/shared/preferences";
+import { EMAIL_OFF, NOTICE_KINDS, type EmailNotices, type NoticeKind } from "../../src/shared/email-notices";
 import { wording } from "../../src/shared/record";
 import { targetText, type NewShareComment, type NewSuggestion, type ShareComment } from "../../src/shared/sharing";
 import { sharedView, type Fixtures } from "./fixtures";
@@ -301,6 +302,23 @@ export class FakeApi {
         return ok(this.state.preferences);
       },
     ],
+    // Email notices, as the server answers: 503 where the deployment sends none, an address only
+    // from the session, and a kind turned on only by a session that has one.
+    ["GET", /^\/api\/email-notices$/, () => (this.state.me.capabilities?.emailNotices ? ok(this.notices()) : EMAIL_UNAVAILABLE)],
+    [
+      "PUT",
+      /^\/api\/email-notices\/([^/]+)$/,
+      (call, [kind]) => {
+        if (!this.state.me.capabilities?.emailNotices) return EMAIL_UNAVAILABLE;
+        const on = (call.body as { on?: unknown } | undefined)?.on;
+        if (!(NOTICE_KINDS as readonly string[]).includes(kind!) || typeof on !== "boolean")
+          return { status: 422, body: { error: "invalid", message: "choose a notice to turn on or off" } };
+        const current = this.notices();
+        if (on && !current.address) return conflict("sign out and in again to turn on email notices");
+        this.state.emailNotices = { ...current, [kind as NoticeKind]: on };
+        return ok(this.state.emailNotices);
+      },
+    ],
     ["POST", /^\/api\/account\/sign-out-everywhere$/, () => ({ status: 204 })],
     ["POST", /^\/auth\/logout$/, () => ({ status: 204 })],
     ["DELETE", /^\/auth\/account$/, () => ({ status: 202, body: { deleting: true } })],
@@ -559,6 +577,11 @@ export class FakeApi {
     ],
   ];
 
+  /** The email notice settings as saved, or every kind off, to the session's address. */
+  private notices(): EmailNotices {
+    return this.state.emailNotices ?? { comment: false, suggestion: false, reminder: false, status: "ok", address: this.state.me.signInEmail ?? null };
+  }
+
   /** Keeps SourceView.proposed in step with the facts, as the vault’s query does. */
   private recountSources(): void {
     for (const source of this.state.sources) {
@@ -579,6 +602,7 @@ const ok = (body: unknown): Reply => ({ status: 200, body });
 const NOTHING_SAID: Preferences = { revision: 0, place: null, jobTypes: [], availableFrom: null, payFloor: null, updatedAt: null };
 const notFound = (message: string): Reply => ({ status: 404, body: { error: "not_found", message } });
 const conflict = (message: string): Reply => ({ status: 409, body: { error: "conflict", message } });
+const EMAIL_UNAVAILABLE: Reply = { status: 503, body: { error: "unavailable", message: EMAIL_OFF } };
 
 function respond({ status, body }: Reply): Response {
   if (body === undefined || status === 204) return new Response(null, { status });

@@ -1,5 +1,6 @@
 import type { ApplicationView, FactView, Me, ResumeView, RoleView, SourceView } from "../../src/shared/api";
 import type { DocumentView } from "../../src/shared/documents";
+import type { EmailNotices } from "../../src/shared/email-notices";
 import type { Preferences } from "../../src/shared/preferences";
 import type { McpGrant } from "../../src/shared/mcp";
 import type { CoachClient, CommentThread, OwnerCommentThread, ShareGrant, SharedView } from "../../src/shared/sharing";
@@ -12,6 +13,8 @@ export interface Fixtures {
   me: Me;
   /** The person's job preferences as saved. Absent until they first save: nothing said, at revision 0. */
   preferences?: Preferences;
+  /** Which email notices are on, and the address they go to. Absent: every kind off, to the session's address. */
+  emailNotices?: EmailNotices;
   sources: SourceView[];
   roles: RoleView[];
   facts: FactView[];
@@ -42,9 +45,9 @@ export function emptyVault(): Fixtures {
 
 /** Sam’s vault with every optional screen filled in: documents in each state, share links, apps, plans. */
 export function fullVault(): Fixtures {
-  const { shared: _shared, ...extras } = structuredClone(full) as unknown as Required<Pick<Fixtures, "documents" | "shares" | "mcpGrants" | "billing">> & { shared: SharedView };
+  const { shared: _shared, ...extras } = structuredClone(full) as unknown as Required<Pick<Fixtures, "documents" | "shares" | "mcpGrants" | "billing" | "emailNotices">> & { shared: SharedView };
   const state = { ...fixtures(), ...extras };
-  state.me.capabilities = { ocr: false, ...state.me.capabilities, connectedApps: true };
+  state.me.capabilities = { ocr: false, ...state.me.capabilities, connectedApps: true, emailNotices: true };
   return state;
 }
 

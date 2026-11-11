@@ -21,6 +21,7 @@ import type {
 } from "../shared/api";
 import type { DocumentView, NewDocument } from "../shared/documents";
 import type { PreferenceValues, Preferences } from "../shared/preferences";
+import type { EmailNotices, NoticeKind } from "../shared/email-notices";
 import type { PostingRead } from "../shared/postings";
 import type { CoachClient, ShareableDocument, ShareGrant } from "../shared/sharing";
 import type { CommentThread, NewShareComment, NewSuggestion, OwnerCommentThread, ShareComment } from "../shared/sharing";
@@ -171,6 +172,11 @@ export const api = {
   /** Replaces all four values, if `expectedRevision` is still the saved revision. */
   updatePreferences: (values: PreferenceValues, expectedRevision: number) =>
     request<Preferences>("PUT", "/api/preferences", { ...values, expectedRevision }),
+  /** Which email notices are on, and the address they go to. Loaded by their own card on Account. */
+  emailNotices: () => request<EmailNotices>("GET", "/api/email-notices"),
+  /** Turns one kind on or off. Setting it as it already is changes nothing, so a retry is safe. */
+  setEmailNotice: (kind: NoticeKind, on: boolean) =>
+    request<EmailNotices>("PUT", `/api/email-notices/${kind}`, { on }),
   signOutEverywhere: () =>
     request<void>("POST", "/api/account/sign-out-everywhere"),
 
