@@ -12,9 +12,11 @@ export function cleanExtractedText(value: string, markers: RegExp = LIST_MARKERS
     .replace(markers, "")
     // Only paired Markdown delimiters at word boundaries are formatting.
     // In particular, keep identifiers such as __init__ and C++ intact.
-    .replace(/(?<![\p{L}\p{N}_*])\*\*([^*\n]+?)\*\*(?![\p{L}\p{N}_*])/gu, "$1")
-    .replace(/(?<![\p{L}\p{N}_*])\*([^*\n]+?)\*(?![\p{L}\p{N}_*])/gu, "$1")
-    .replace(/(?<![\p{L}\p{N}`])`([^`\n]+?)`(?![\p{L}\p{N}`])/gu, "$1")
+    // As in Markdown, an opening mark is followed by a non-space and a closing mark preceded by
+    // one, so the marks in "2 * 3 * 4" or "a ` b ` c" are what the line says and stay.
+    .replace(/(?<![\p{L}\p{N}_*])\*\*(?!\s)([^*\n]+?)(?<!\s)\*\*(?![\p{L}\p{N}_*])/gu, "$1")
+    .replace(/(?<![\p{L}\p{N}_*])\*(?!\s)([^*\n]+?)(?<!\s)\*(?![\p{L}\p{N}_*])/gu, "$1")
+    .replace(/(?<![\p{L}\p{N}`])`(?!\s)([^`\n]+?)(?<!\s)`(?![\p{L}\p{N}`])/gu, "$1")
     .replace(/\s+/gu, " ")
     .trim();
 }

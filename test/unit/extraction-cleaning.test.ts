@@ -25,6 +25,29 @@ describe("extraction presentation cleanup", () => {
       .toBe("Reduced temperature by -20°C; C# / A**B**C");
   });
 
+  it.each([
+    "Covered 2 * 3 * 4 sites",
+    "Sized the grid at 4 * 6 * 8 nodes",
+    "Proved a * b * c commutes",
+    "Rated ** 5 ** by customers",
+    "Ran ` make ` and ` make test ` in CI",
+    "Cut costs by 10 * 2 * 3%",
+  ])("leaves a mark set off by spaces alone: %s", (line) => {
+    expect(cleanExtractedText(line)).toBe(line);
+  });
+
+  it.each([
+    ["Wrote **bold** copy", "Wrote bold copy"],
+    ["Wrote *italic* copy", "Wrote italic copy"],
+    ["Ran `make test` nightly", "Ran make test nightly"],
+    ["Shipped it (*twice*), then **again**.", "Shipped it (twice), then again."],
+    ["**Led** the *core* team; `CI` too", "Led the core team; CI too"],
+    ["Wrote **two words** and *three short words*", "Wrote two words and three short words"],
+    ["Covered 2 * 3 sites and *one* more", "Covered 2 * 3 sites and one more"],
+  ])("still removes emphasis and code marks: %s", (line, cleaned) => {
+    expect(cleanExtractedText(line)).toBe(cleaned);
+  });
+
   it("cleans role labels without changing their original quote", () => {
     const source = "**Acme Corp** — **Senior Engineer**";
     const raw: RawExtraction = {
