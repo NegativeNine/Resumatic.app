@@ -76,6 +76,24 @@ Enable it in staging first by adding the variable to `env.staging.vars`. Before 
 
 Before the production guard is lifted, all of these must hold: the precision of each method's tags, measured on lines given with consent; the privacy notice naming the tags as data held and the lookup in the taxonomy's database; the ESCO and O\*NET credits on the legal pages ([taxonomy.md](taxonomy.md), "Credits"); what D1 keeps of the values bound to a query, established for the taxonomy's database; and the stage's D1 statements at its caps (about 400 for the words of an upload, 120 for the rule and eight occupation profiles) run against a deployed Worker.
 
+### Email notices
+
+Only from the integrated build whose vault migration order is final; this feature's branch is never deployed to a shared environment on its own.
+
+`EMAIL_ENABLED=true` lets an owner turn on email notices under Account: a notice that a coach has commented or suggested wording, and a weekly reminder while facts wait for review. Each holds fixed words and a link to `APP_ORIGIN`, and goes from the owner's own Vault alarm to the sign-in address the Directory holds for them. It is absent from every environment, so nothing is offered and nothing is sent. The app offers notices only when all four hold: `EMAIL_ENABLED` is exactly `"true"`, the `EMAIL` send_email binding is present, `EMAIL_FROM` is a well-formed address, and `APP_ORIGIN` is an https origin. `scripts/validate-config.mjs` refuses the switch in production configuration (`EMAIL_ROLLOUT_UNVERIFIED`), and anywhere it is on asks for the other three (`vars.EMAIL_FROM`, `EMAIL_BINDING`, `APP_ORIGIN_HTTPS_ORIGIN`).
+
+To try it in staging:
+
+1. Email Sending (beta) needs Workers Paid to send to arbitrary recipients.
+2. In the dashboard, Email Service → Email Sending, onboard a sender subdomain such as `notices.example.com`, add every DNS record it lists, and wait for "verified".
+3. In the staging overlay, add `"send_email": [{ "name": "EMAIL" }]`, `EMAIL_FROM` (an address on that domain), `APP_ORIGIN` (the staging https origin) and `EMAIL_ENABLED: "true"`.
+4. Run `node scripts/validate-config.mjs --environment staging` and expect no `EMAIL_*` entry.
+5. Deploy. Sign in through test login with an inbox you control and turn notices on. Have a second test account comment, and expect one email about 15 minutes later. Check the `email_notice` metric rows.
+6. Setting `EMAIL_ENABLED` to `"false"` drops everything queued at the next alarm.
+7. Production is refused (`EMAIL_ROLLOUT_UNVERIFIED`) until the DPA names Cloudflare Email Service and EU-region sending is confirmed.
+
+Each notice writes one `email_notice` data point: the kind, a code from a fixed list and the outcome (`ok`, `retry`, `failed` or `paused`), with the attempt number. A failure also logs `email notice failed` with the code and kind. Neither holds an address or the provider's words.
+
 ## Billing configuration
 
 Billing stays disabled unless `BILLING_ENABLED=true` and all required values are valid. Provide `APP_ORIGIN`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, an explicit `STRIPE_API_VERSION`, and `BILLING_PLANS_JSON`:

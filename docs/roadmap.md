@@ -23,6 +23,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Fit preview through connected apps | Merged in #35. No migration | Deployed before connected apps are switched on anywhere; then MCP in staging and a real client |
 | Hardening fixes | Merged in #35 | Denial and intention checks read any apostrophe; "upto" is a bound; cleaning keeps a star or backtick set off by spaces; an expired connected-app grant is cleared on time; direction overrides are stripped from postings. The shadow stamps these change are raised to /3 |
 | Tagging facts and roles with taxonomy concepts | Merged in #35 | Off by default, refused in production configuration, and inert without a wholly loaded taxonomy. No vault migration. The eval against the real judge has not been run and nothing has been measured; vector candidates, parts, postings, screens and any use of tags are not built |
+| Email notices | #NN open, based on #35 | Vault migration 2 of 2 this round, after saved answers'; at integration it moves after `SAVED_ANSWER_MIGRATIONS` and `removeNotificationMigration` becomes last in the chain. Not deployed to any shared environment until that order is final. Off by default; the DPA and EU-region sending are owed |
 
 The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments, suggested wording (two columns on the comments' table).
 
