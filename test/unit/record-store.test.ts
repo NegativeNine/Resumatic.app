@@ -614,6 +614,27 @@ describe("merging what says the same thing", () => {
     expect(record.root("fact", "f3")).toBe("f3");
   });
 
+  it("counts an offer the owner's own choice replaced as one the owner turned down", () => {
+    const { record, fact } = vault();
+    fact("f2", LINE, { source: "upload-2" });
+    fact("f3", LINE, { source: "upload-2" });
+    // A model offers f3 as the same fact as f2. The owner merges f3 into f1 instead.
+    const offered = record.proposeLink({ kind: "fact", from: "f3", to: "f2", relation: "same", stamp: model });
+    expect(record.proposeLink({ kind: "fact", from: "f3", to: "f1", relation: "same", stamp: owner }).state).toBe("confirmed");
+    expect(record.links("fact", "f2")).toMatchObject([{ id: offered.linkId, state: "rejected", decidedBy: "owner" }]);
+    // The owner never said f2 and f3 differ, only chose another fact to stand for f3. The record
+    // has that offer down as turned down all the same, so no rule joins the two without asking:
+    // merging f2 into f1 would put f2 and f3 in one group.
+    expect(refusal(() => record.proposeLink({ kind: "fact", from: "f2", to: "f1", relation: "same", stamp: rule, confirm: true }))).toBe("conflict");
+    expect(record.proposeLink({ kind: "fact", from: "f2", to: "f3", relation: "same", stamp: model })).toEqual({ linkId: offered.linkId, state: "rejected" });
+    expect(record.root("fact", "f2")).toBe("f2");
+    // It can still be offered, and the owner accepting the offer joins all three.
+    const again = record.proposeLink({ kind: "fact", from: "f2", to: "f1", relation: "same", stamp: model });
+    expect(again.state).toBe("proposed");
+    record.decideLink(again.linkId, "confirmed");
+    expect(record.evidenceOf("f1").map((quote) => quote.factId).sort()).toEqual(["f1", "f2", "f3"]);
+  });
+
   it("lets a rule confirm identical wording that was first only offered", () => {
     const { record, fact } = vault();
     fact("f2", LINE, { source: "upload-2" });
