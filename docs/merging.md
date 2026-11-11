@@ -39,6 +39,8 @@ Lines that differ in wording are never merged by a rule. With `OFFER_SHADOW_ENAB
 
 **Which pairs are asked about.** For each line the upload proposed, other than skills: the lines of the same kind, in the same role, from another upload or typed by the owner, that are nearest to it in meaning. At most two for each line, none below a set nearness, and at most sixty pairs for an upload. A pair with the same words is left to the rule above, and a pair that was linked or offered before is not asked about again. Roles count as the same role only when they are alike in every field that names a role.
 
+A line marked sensitive is on neither side of a pair, so it is never put to the judge.
+
 **What is asked.** First, of the pair, and without a model: are the two lines qualified by the same words? Each is read against the closed list that keeps a line from being divided ([splitting.md](splitting.md), starting rule 1): shared credit and hedges, denials, alternatives, attempts and intentions. If one line has such a word and the other does not, or the two have different ones, nothing is offered and no model is asked. "Pursuing the PMP certification" is not "Completed the PMP certification", "Never handled customer escalations" is not "Handled customer escalations", and "Helped lead the migration" is not "Led the migration". The list is wide on purpose, so some pairs a person would offer are not.
 
 Then each direction separately: does this line say everything that one says?

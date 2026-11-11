@@ -16,6 +16,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Dividing a line into its claims | #31 open, based on #30 | Off by default, and kept in shadow where switched on. The eval against the real models needs credentials and has not been run; nothing has been measured |
 | Finding what an upload says again | #32 open, based on #31 | Off by default; notes identical roles and facts in shadow with no model, and merges nothing. Offers of different wordings, which need the judge, are not built |
 | Two wordings of one thing | #33 open, based on #32 | Off by default; asks the judge about likely pairs and keeps each answer as an offer in shadow. The eval against the real judge needs credentials and has not been run |
+| Sensitive facts | Built on branch `now/08-sensitive-facts`; its pull request is not open yet | A mark on a fact and its words. Adds a vault migration, deployed only in the integrated order after coach accounts: preferences, sensitive facts, comments, suggested wording. Marking a role, and finding sensitive facts for the person, are not built |
 
 An open PR or a local check is not a claim of production release acceptance. The [release status](seeker-release-status.md) records the broader acceptance work.
 
@@ -24,7 +25,7 @@ An open PR or a local check is not a claim of production release acceptance. The
 - Comments on a shared copy.
 - Suggested wording on a shared copy.
 - Fit preview through connected apps.
-- Sensitive facts: mark a fact so it is never written into a resume, shared, or shown to an app.
+- Sensitive facts: mark a fact so it is never written into a resume, shared, or shown to an app. Built on branch `now/08-sensitive-facts`, awaiting review; its pull request is not open yet.
 - Preferences: place, job types, availability and a pay floor, kept in the vault.
 
 The last two were on the roadmap as Now from the start and do not depend on tagging. They were left off the first version of this list by mistake.
