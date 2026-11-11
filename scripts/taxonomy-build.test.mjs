@@ -399,6 +399,39 @@ test("a label shared by several concepts links none of them", async () => {
   assert.equal(hiddenOnly.edges.some((edge) => edge.rel === "same-label" && edge.src === "onet:tool:kubernetes"), false);
 });
 
+test("a software name the builder shortened links nothing, and stands in no other tool's way", async () => {
+  const esco = readEsco(await escoFiles());
+  const files = await onetFiles();
+  const crosswalk = readCrosswalk(await crosswalkText());
+  // O*NET lists "Migration software" and "Kubernetes software". Without its last word the first is
+  // "Migration", which is also ESCO's word for the movement of people, and the second is the name
+  // of another tool.
+  const row = (name) => `99-1001.00,Example Software Developers,${name},5.A.1.02,Container orchestration software,N,N`;
+  const onet = readOnet({ ...files, "software_skills.csv": `${files["software_skills.csv"].trimEnd()}\n${row("Migration software")}\n${row("Kubernetes software")}\n` });
+  const migration = { id: S(60), kind: "knowledge", scheme: "esco", code: null, label: "migration", description: "The movement of people from one place to another.", meta: {} };
+  const bundle = await combine({
+    esco: { ...esco, concepts: [...esco.concepts, migration], labels: [...esco.labels, { conceptId: S(60), kind: "knowledge", type: "preferred", text: "migration" }] },
+    onet, crosswalk, versions: FIXTURE_VERSIONS,
+  });
+  // The shortened names are still labels, so the tools are found in text under them.
+  const shortened = bundle.labels.filter((label) => label.kind === "tool" && label.type === "derived").map((label) => `${label.conceptId} as ${label.norm}`);
+  assert.deepEqual(shortened, ["onet:tool:amazon-web-services-aws-software as amazon web services aws", "onet:tool:kubernetes-software as kubernetes", "onet:tool:migration-software as migration"]);
+  // Neither is linked on such a name, and "Kubernetes" is still the one tool O*NET gives that name to.
+  assert.deepEqual(bundle.edges.filter((edge) => edge.rel === "same-label").map((edge) => [edge.src, edge.dst]), [
+    ["onet:tool:go", S(6)],
+    ["onet:tool:kubernetes", S(4)],
+    ["onet:tool:python", S(3)],
+  ]);
+  assert.equal(bundle.problems.same_label_ambiguous, undefined);
+  // A name O*NET itself gives a tool links it as before, whatever else the builder made of it.
+  const named = readOnet({ ...files, "software_skills.csv": `${files["software_skills.csv"].trimEnd()}\n${row("Migration software")}\n${row("migration")}\n` });
+  const own = await combine({
+    esco: { ...esco, concepts: [...esco.concepts, migration], labels: [...esco.labels, { conceptId: S(60), kind: "knowledge", type: "preferred", text: "migration" }] },
+    onet: named, crosswalk, versions: FIXTURE_VERSIONS,
+  });
+  assert.deepEqual(own.edges.filter((edge) => edge.rel === "same-label" && edge.dst === S(60)).map((edge) => edge.src), ["onet:tool:migration"]);
+});
+
 test("the SQL loads into SQLite as written, one statement to a line, and holds every record", async () => {
   const bundle = await fixtureBundle();
   const all = [...statements(bundle)];

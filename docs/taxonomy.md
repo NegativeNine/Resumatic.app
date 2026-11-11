@@ -8,7 +8,7 @@ Resumatic describes work in the terms of two public classifications, held as one
 
 This document says what is in the taxonomy, how it is built and loaded, how the app reads it, and what must be credited. The redesign of the reading and tailoring pipelines that uses it is set out in [taxonomy-pipelines-design.md](taxonomy-pipelines-design.md).
 
-**Status: the builder and the lookup exist and are tested on small synthetic files, and one build from the real downloads was made and checked on 10 November 2026 (see "What has and has not been checked"). No deployment binds a taxonomy, and no pipeline reads one.**
+**Status: the builder and the lookup exist and are tested on small synthetic files, and one build from the real downloads was made and checked on 10 November 2026 (see "What has and has not been checked"). The builder has changed since, so that build is made again before any is loaded. No deployment binds a taxonomy, and no pipeline reads one.**
 
 ## What each source is used for
 
@@ -64,7 +64,7 @@ The builder rewords nothing. It adds four things, each marked so it cannot pass 
 1. **Derived labels.** An ESCO label without its bracketed qualifier ("Python (computer programming)" also as "Python"), and an O\*NET software example without the final word "software". One-letter results are not made.
 2. **IDs for software.** O\*NET's software examples have no IDs, so each gets one from its name. Examples whose names compare equal are one tool.
 3. **`performs`.** Counted from O\*NET's Tasks to DWAs file.
-4. **`same-label`.** Only when the label belongs to exactly one concept on each side, and never on a hidden term.
+4. **`same-label`.** Only when the label belongs to exactly one concept on each side. On the O\*NET side the label must be a name O\*NET itself gives the software: a name the builder shortened (item 1) is never joined on, because what is left of "Migration software" is ESCO's "migration", the movement of people. On the ESCO side a hidden term is never joined on; a label without its bracketed qualifier is.
 
 Nothing else is inferred. No skill is mapped to an activity. No occupation is matched to another except by the official crosswalk. Rows the builder cannot use (an unrecognised URI, a relation to a concept that isn't in the release) are set aside and counted in the manifest, by kind.
 
@@ -101,6 +101,7 @@ The **Taxonomy build** workflow (`.github/workflows/taxonomy.yml`) does the down
 - **Crosswalk layout:** its columns are found by name (an O\*NET code, an ESCO URI, a type of match), after the official project's metadata preamble.
 - **Real O\*NET and crosswalk readers checked on 10 November 2026.** O\*NET 31.0 produced 31,201 concepts, 72,687 labels and 104,656 relations, with no reader issues. Its six input row counts matched the published figures: 1,016 occupations, 54,269 job titles, 18,838 task statements, 24,087 task-to-activity rows, 2,087 detailed work activities and 31,821 software rows. The official crosswalk produced 4,253 mappings with no reader issues after fixing preamble handling.
 - **Full real-data build checked on 10 November 2026.** The [manifest](taxonomy-build-2026-11-10.json) records version `esco-1.2.1+onet-31.0+c036f953`, 49,438 concepts, 207,939 labels and 265,406 relations. ESCO's unique counts match 13,939 skills/knowledge concepts and 3,039 occupations; its input contains 25 repeated concept rows. That build did not compare those rows with their first occurrences; the builder now counts the ones that differ, so the next build will say whether any label was left behind. Three of 4,253 crosswalk mappings name occupations absent from the current releases and are set aside, leaving 4,250 mappings. One self-relation and five ambiguous same-label joins are also set aside. All 17 generated SQL files loaded into SQLite, with matching row counts, no orphan references and a successful integrity check. Remote D1 loading, vector indexing and pipeline quality remain pending.
+- **That build is not the one to load.** The builder has changed since it was made, and the same downloads now give other relations and so another version. It no longer joins an O\*NET software example to an ESCO concept on a name it shortened itself: 64 of that build's 165 `same-label` relations rested on nothing else, among them "Migration software" joined to ESCO's "migration" of people. The concepts, the labels and every other relation are as they were.
 
 ## Loading it
 
