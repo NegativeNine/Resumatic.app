@@ -185,6 +185,10 @@ describe("a database that does not hold a whole taxonomy", () => {
       await db().prepare(`INSERT OR REPLACE INTO taxonomy_meta (key, value) VALUES ('records', ?)`).bind(records).run();
       await notLoaded();
     }
+    // The counts are all that was missing: with them, the same rows are read as the taxonomy.
+    const counts = { concepts: TAXONOMY_FIXTURE.concepts.length, labels: TAXONOMY_FIXTURE.labels.length, relations: TAXONOMY_FIXTURE.edges.length };
+    await db().prepare(`INSERT OR REPLACE INTO taxonomy_meta (key, value) VALUES ('records', ?)`).bind(JSON.stringify(counts)).run();
+    expect(await new D1Store(db()).info()).toEqual(TAXONOMY_FIXTURE.info);
   });
 
   it("is read as not loaded when nothing at all has been loaded into it", async () => {

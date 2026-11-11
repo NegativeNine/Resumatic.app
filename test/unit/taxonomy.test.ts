@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MemoryStore, Taxonomy, MAX_MENTION_TEXT_CHARS, normalizeLabel, taxonomyFor, words, type Concept, type Edge, type Label, type Mention, type TaxonomyStore } from "../../src/taxonomy";
+import { D1Store, MemoryStore, Taxonomy, MAX_MENTION_TEXT_CHARS, normalizeLabel, taxonomyFor, words, type Concept, type Edge, type Label, type Mention, type TaxonomyStore } from "../../src/taxonomy";
 import { TAXONOMY_FIXTURE } from "../support/taxonomy-fixture";
 
 const S = (n: number) => `esco:skill:00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -23,6 +23,24 @@ describe("the combined taxonomy", () => {
     await expect(new Taxonomy(empty).info()).rejects.toThrow("unavailable: the taxonomy is not loaded");
     // Without the binding there is no taxonomy, and nothing that depends on one runs.
     expect(taxonomyFor({})).toBeNull();
+  });
+
+  it("takes a database with no tables for nothing loaded, and no other failed read", async () => {
+    const failing = (message: string) =>
+      new D1Store({
+        prepare: () => ({
+          all: async () => {
+            throw new Error(message);
+          },
+        }),
+      } as unknown as D1Database);
+    // What D1 says of a database that nothing has been loaded into.
+    const unloaded = failing("D1_ERROR: no such table: taxonomy_meta: SQLITE_ERROR");
+    expect(await unloaded.info()).toBeNull();
+    await expect(new Taxonomy(unloaded).info()).rejects.toThrow("unavailable: the taxonomy is not loaded");
+    // A read that failed for another reason says nothing about what is loaded. It is D1's failure to report.
+    for (const message of ["D1_ERROR: Network connection lost.", "D1_ERROR: no such table: concepts: SQLITE_ERROR", "D1_ERROR: D1 DB is overloaded. Too many requests queued."])
+      await expect(failing(message).info(), message).rejects.toThrow(message);
   });
 
   it("gives concepts by ID and leaves out what isn't one", async () => {
