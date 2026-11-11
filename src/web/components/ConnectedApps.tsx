@@ -8,7 +8,7 @@ import "./workspace.css";
 export function permissions(scopes: readonly string[]): string {
   const jobs = scopes.includes("vault:jobs");
   const generate = scopes.includes("vault:generate");
-  if (jobs && generate) return "Can read your facts and saved jobs, add jobs and create documents.";
+  if (jobs && generate) return "Can read your facts and saved jobs, add jobs, check your fit and create documents.";
   if (jobs) return "Can read your facts and saved jobs, and add jobs.";
   if (generate) return "Can read your facts and create documents.";
   return "Can read your facts.";

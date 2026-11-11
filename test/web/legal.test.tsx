@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { MCP_GRANT_TTL_MS } from "../../src/shared/mcp";
+import { MAX_APP_FIT_STARTS_PER_DAY, MCP_GRANT_TTL_MS } from "../../src/shared/mcp";
 import { SESSION_TTL_MS } from "../../src/shared/session";
 import { COACH_CLIENT_KEPT_MS, SHARE_READ_INTERVAL_MS, SHARE_SESSION_TTL_MS, SHARE_TTL_MS } from "../../src/shared/sharing";
 import { LegalPage } from "../../src/web/pages/LegalPage";
@@ -102,6 +102,18 @@ describe("the privacy notice", () => {
     expect(section("Sharing a copy")).toContain("An entry leaves your list when you remove it, or thirty days after the copy’s last day.");
     expect(MCP_GRANT_TTL_MS).toBe(30 * DAY);
     expect(section("Connecting an app")).toContain("Its access lasts an hour, or up to thirty days if you allow it to continue");
+    expect(MAX_APP_FIT_STARTS_PER_DAY).toBe(20);
+    expect(section("Connecting an app")).toContain("Connected apps together can start at most 20 fit checks a day.");
+  });
+
+  it("says what a fit check gives a connected app, and that it uses none of the plan's limit", () => {
+    render(<LegalPage doc="privacy" />);
+    const items = [...screen.getByRole("heading", { level: 2, name: "Connecting an app" }).closest("section")!.querySelectorAll("li")].map((item) => item.textContent!.replace(/\s+/g, " ").trim());
+    expect(items.at(-1)).toBe("create documents, which count toward your plan’s limit, and check your fit for the saved jobs it can see, which doesn’t.");
+    // Said before what an app never receives, so the one sentence about what it is given comes first.
+    expect(section("Connecting an app")).toContain(
+      "A fit check gives the app each requirement read from a job’s posting and the confirmed facts matched to it. Connected apps together can start at most 20 fit checks a day. A connected app never receives your uploaded files",
+    );
   });
 
   it("names the job preferences that are kept, and says that nothing reads them", () => {

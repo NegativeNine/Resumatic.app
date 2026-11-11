@@ -173,9 +173,11 @@ function Privacy() {
         <ul>
           <li>read your confirmed facts and finished resumes;</li>
           <li>see your saved jobs and add new ones;</li>
-          <li>create documents, which count toward your plan’s limit.</li>
+          <li>create documents, which count toward your plan’s limit, and check your fit for the saved jobs it can see, which doesn’t.</li>
         </ul>
         <p>
+          A fit check gives the app each requirement read from a job’s posting and the confirmed facts matched to it.
+          Connected apps together can start at most 20 fit checks a day.
           A connected app never receives your uploaded files, the words a fact came from, or your notes on a job. It
           never receives a fact you have marked sensitive, or a resume that uses one. It never receives a coach’s
           comments either. Its
