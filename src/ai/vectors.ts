@@ -3,6 +3,8 @@ import { modelAttempt, type ModelObservers } from "./usage";
 import { rerankScores } from "./rerank";
 import { usableEmbedding } from "../shared/embedding";
 import { docxText } from "../pipeline/docx";
+import { relevanceScores } from "./relevance";
+import { embeddingInput } from "./embedding-input";
 
 const EMBED_MODEL = "@cf/baai/bge-m3";
 const RERANK_MODEL = "@cf/baai/bge-reranker-base";
@@ -20,7 +22,7 @@ export async function embedTexts(
   env: Env,
   texts: string[],
   observers: ModelObservers = {},
-  opts: { model?: string } = {},
+  opts: { model?: string; purpose?: "query" | "document" } = {},
 ): Promise<number[][]> {
   const model = opts.model ?? env.EMBEDDING_MODEL ?? EMBED_MODEL;
   const run = env.AI.run.bind(env.AI) as (
@@ -31,16 +33,17 @@ export async function embedTexts(
   const out: number[][] = [];
   for (let i = 0; i < texts.length; i += EMBED_BATCH) {
     const batch = texts.slice(i, i + EMBED_BATCH);
+    const input = embeddingInput(model, batch, opts.purpose);
     const res = await modelAttempt(
       {
         route: "embed",
         model,
-        inputChars: JSON.stringify(batch).length,
+        inputChars: JSON.stringify(input).length,
         maxOutputTokens: 0,
       },
       observers,
       () =>
-        run(model, { text: batch }, gateway(env)).catch(() => {
+        run(model, input, gateway(env)).catch(() => {
           throw new Error("embedding_request_failed");
         }),
       (response) => response.usage,
@@ -67,6 +70,9 @@ export async function rerankTexts(
   observers: ModelObservers = {},
 ): Promise<number[]> {
   if (texts.length === 0) return [];
+  const model = env.RERANK_MODEL ?? RERANK_MODEL;
+  if (model === "@cf/cloudflare/clef") return relevanceScores(env, query, texts, observers);
+  if (model !== RERANK_MODEL) throw new AppError("unavailable", "model provider HTTP error");
   // The generated input type leaves out `query`, which the model requires.
   const inputs: Ai_Cf_Baai_Bge_Reranker_Base_Input & { query: string } = {
     query,

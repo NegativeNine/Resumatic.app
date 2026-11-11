@@ -144,6 +144,7 @@ export function runModels(
     embed: async (texts, opts) =>
       base.embed(texts, {
         model: opts?.model ?? (await v.embeddingModel(runId)),
+        purpose: opts?.purpose,
       }),
   };
 }

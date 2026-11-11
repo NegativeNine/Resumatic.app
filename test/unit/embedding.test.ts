@@ -1,8 +1,32 @@
 import { describe, expect, it } from "vitest";
 import { embedTexts } from "../../src/ai/vectors";
 import { packVector, toUnit, topMatches } from "../../src/vault/search";
+import { vi } from "vitest";
+import { runModels } from "../../src/workflows/models";
 
 describe("embedding model selection", () => {
+  it("uses task-aware Qwen document and query inputs without applying query instructions to facts", async () => {
+    const run = vi.fn(async () => ({ data: [[1, 0]] }));
+    const env = { EMBEDDING_MODEL: "@cf/qwen/qwen3-embedding-0.6b", AI: { run }, AI_GATEWAY_ID: "test" } as unknown as Env;
+    await embedTexts(env, ["career evidence"]);
+    await embedTexts(env, ["job requirement"], {}, { purpose: "query" });
+    expect(run.mock.calls[0]).toEqual([env.EMBEDDING_MODEL, { documents: ["career evidence"] }, expect.anything()]);
+    expect(run.mock.calls[1]).toEqual([env.EMBEDDING_MODEL, { queries: ["job requirement"], instruction: "Given a job requirement, retrieve career facts that provide supporting experience." }, expect.anything()]);
+  });
+
+  it("preserves the active or snapshot model and forwards query purpose through the Workflow adapter", async () => {
+    const run = vi.fn(async () => ({ data: [[1, 0]], usage: { input_tokens: 2 } }));
+    let active = "@cf/baai/bge-m3";
+    const env = { EMBEDDING_MODEL: "@cf/qwen/qwen3-embedding-0.6b", DAILY_SPEND_CAP_USD: "1", AI: { run },
+      VAULT: { idFromString: () => "id", get: () => ({ embeddingModel: async () => active, reserveModelAttempt: async () => {}, settleModelAttempt: async () => {} }) },
+    } as unknown as Env;
+    const m = runModels(env, "id", "run", "search");
+    await m.embed(["job requirement"], { purpose: "query" });
+    expect(run.mock.calls[0]).toEqual(["@cf/baai/bge-m3", { text: ["job requirement"] }, expect.anything()]);
+    active = "@cf/qwen/qwen3-embedding-0.6b";
+    await m.embed(["job requirement"], { purpose: "query" });
+    expect(run.mock.calls[1]).toEqual([active, expect.objectContaining({ queries: ["job requirement"] }), expect.anything()]);
+  });
   it("uses the per-call snapshot model before the current deployment default and meters that identity", async () => {
     const requested: string[] = [];
     const metered: string[] = [];
