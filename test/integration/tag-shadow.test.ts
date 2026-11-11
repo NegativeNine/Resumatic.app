@@ -321,7 +321,7 @@ describe("reading with shadow tagging switched on", () => {
       const result = await reported(instance!);
       expect(result).toEqual(WHOLE);
       const leaves = (value: unknown): unknown[] => (value !== null && typeof value === "object" ? Object.values(value).flatMap(leaves) : [value]);
-      expect(leaves(result).map((leaf) => typeof leaf)).toEqual(Array(15).fill("number"));
+      expect(leaves(result).map((leaf) => typeof leaf)).toEqual(Array(16).fill("number"));
     } finally {
       await reading.dispose();
     }
@@ -485,6 +485,55 @@ describe("reading with shadow tagging switched on", () => {
     }
   });
 
+  it("asks no more about a line marked sensitive while the judge was being asked about roles, and keeps no tag for it", async () => {
+    const reading = await introspectWorkflow(env.DISTILL);
+    try {
+      let user!: User;
+      const { asked, models } = judging({}, async (callNumber) => {
+        if (callNumber !== 0) return;
+        // The stage has read the line, and the judge has not yet been asked about it. Its owner marks it.
+        const led = (await user.json<{ facts: FactView[] }>("/api/facts")).facts.find((fact) => fact.text === LED)!;
+        const marked = await user.send("POST", "/api/facts/sensitive", { ids: [led.id], sensitive: true });
+        expect(marked.status, await marked.clone().text()).toBe(204);
+      });
+      setModels(() => models);
+      user = await signIn();
+      await read(user);
+      // The call about facts went out without the marked line's two questions, and its words were in no call after the mark.
+      expect(said(asked)).toEqual([ABOUT_ROLES, ABOUT_FACTS.filter(([, words]) => words !== LED)]);
+      expect(JSON.stringify(asked.slice(1))).not.toContain("40 services");
+      expect((await shown(user)).facts.filter((fact) => fact.sensitive).map((fact) => fact.text)).toEqual([LED]);
+      expect(await tagged(user)).toEqual(sorted(ALL_TAGS.filter(([words]) => words !== LED)));
+      const [instance] = await reading.get();
+      expect(await reported(instance!)).toEqual({ ...WHOLE, asked: 10, yes: 10, stored: 12, withheld: 2 });
+    } finally {
+      await reading.dispose();
+    }
+  });
+
+  it("keeps no tag for a line marked sensitive while the judge was being asked about it", async () => {
+    const reading = await introspectWorkflow(env.DISTILL);
+    try {
+      let user!: User;
+      const { asked, models } = judging({}, async (callNumber) => {
+        if (callNumber !== 1) return;
+        // The call about facts is open, holding the line. Its owner marks it before the answers are stored.
+        const led = (await user.json<{ facts: FactView[] }>("/api/facts")).facts.find((fact) => fact.text === LED)!;
+        expect((await user.send("POST", "/api/facts/sensitive", { ids: [led.id], sensitive: true })).status).toBe(204);
+      });
+      setModels(() => models);
+      user = await signIn();
+      await read(user);
+      // The line was in the call already sent, and the judge said yes. Nothing of it is kept.
+      expect(said(asked)).toEqual([ABOUT_ROLES, ABOUT_FACTS]);
+      expect(await tagged(user)).toEqual(sorted(ALL_TAGS.filter(([words]) => words !== LED)));
+      const [instance] = await reading.get();
+      expect(await reported(instance!)).toEqual({ ...WHOLE, stored: 12 });
+    } finally {
+      await reading.dispose();
+    }
+  });
+
   it("counts as refused the tags of a row that already holds as many as it can, and keeps the others", async () => {
     const reading = await introspectWorkflow(env.DISTILL);
     try {
@@ -534,7 +583,7 @@ describe("reading with shadow tagging switched on", () => {
   it("finishes the upload when the vault cannot answer the stage, as a vault on older code cannot", async () => {
     const reading = await introspectWorkflow(env.DISTILL);
     try {
-      // A vault that has not yet taken this code has neither of the stage's methods, and the first call to it fails.
+      // A vault that has not yet taken this code has none of the stage's methods, and the first call to it fails.
       const missing = vi.spyOn(Vault.prototype, "tagCandidates").mockRejectedValue(new TypeError('The RPC receiver does not implement the method "tagCandidates".'));
       const { asked, models } = judging();
       setModels(() => models);
@@ -674,7 +723,7 @@ describe("where a person's shadow tags go", () => {
   });
 });
 
-// ---------------------------------------------------------------- the vault's two methods
+// ---------------------------------------------------------------- the vault's three methods
 
 describe("what a reading may ask of a vault", () => {
   const made: TagMade = { model: "test/judge", taxonomyVersion: VERSION };
@@ -707,10 +756,11 @@ describe("what a reading may ask of a vault", () => {
     });
     const inside = <T>(work: (record: RecordStore, sql: SqlStorage) => T): Promise<T> =>
       runInDurableObject(stub, (_instance, state) => work(new RecordStore(state.storage.sql, (fn) => state.storage.transactionSync(fn)), state.storage.sql));
-    // The two methods are called on the vault itself, as the reading named. `refusal` gives the
+    // The three methods are called on the vault itself, as the reading named. `refusal` gives the
     // sentence a call was refused with, so a test holds a denial to its exact words.
     const candidates = (source = sourceId, run: string | undefined = runId) => runInDurableObject(stub, (instance) => instance.tagCandidates(source, run));
     const keep = (tags: ProposedTag[], by: TagMade = made, source = sourceId, run: string | undefined = runId) => runInDurableObject(stub, (instance) => instance.saveShadowTags(source, run, by, tags));
+    const withheld = (factIds: string[], source = sourceId, run: string | undefined = runId) => runInDurableObject(stub, (instance) => instance.tagWithheld(source, run, factIds));
     const refusal = (work: (instance: Vault) => Promise<unknown>): Promise<string> =>
       runInDurableObject(stub, async (instance) => {
         try {
@@ -720,7 +770,7 @@ describe("what a reading may ask of a vault", () => {
         }
         return "answered";
       });
-    return { sourceId, runId, inside, candidates, keep, refusal };
+    return { sourceId, runId, inside, candidates, keep, withheld, refusal };
   }
   const tag = (subject: ProposedTag["subject"], words: string, conceptId: string, conceptKind: ProposedTag["conceptKind"], label: string, method: ProposedTag["method"] = TAG_JUDGE_METHOD): ProposedTag => ({ subject, words, conceptId, conceptKind, label, method });
   const LIST = "Skills: Go, SQL, Kubernetes";
@@ -811,6 +861,27 @@ describe("what a reading may ask of a vault", () => {
     });
   });
 
+  describe("to ask again", () => {
+    it("says which of the facts it names have been marked sensitive since, and writes nothing", async () => {
+      const { inside, withheld } = await open(usual);
+      expect(await withheld(["fact-sql", "fact-kubernetes", "fact-line"])).toEqual([]);
+      // Marking a skill marks every fact with the same words, another upload's too.
+      await inside((_record, sql) => sql.exec(`UPDATE facts SET sensitive = 1 WHERE text = 'Kubernetes'`));
+      const before = await inside((_record, sql) => sql.exec<{ n: number }>(`SELECT (SELECT COUNT(*) FROM record_tags) + (SELECT COUNT(*) FROM facts WHERE sensitive = 1) AS n`).one().n);
+      expect(await withheld(["fact-sql", "fact-kubernetes", "fact-line"])).toEqual(["fact-kubernetes"]);
+      // It answers only about the facts named, and a name that is no fact is not marked.
+      expect(await withheld(["fact-line", "no-such-fact"])).toEqual([]);
+      expect(await withheld([])).toEqual([]);
+      expect(await inside((_record, sql) => sql.exec<{ n: number }>(`SELECT (SELECT COUNT(*) FROM record_tags) + (SELECT COUNT(*) FROM facts WHERE sensitive = 1) AS n`).one().n)).toBe(before);
+    });
+
+    it("refuses a question that is not about one upload's facts", async () => {
+      const { sourceId, runId, refusal } = await open(usual);
+      for (const factIds of [Array.from({ length: MAX_TAG_FACTS + 1 }, (_, n) => `fact-${n}`), ["fact-sql", 7], "fact-sql", null])
+        expect(await refusal((instance) => instance.tagWithheld(sourceId, runId, factIds as string[])), JSON.stringify(factIds)).toBe("invalid: a reading asks about at most one upload's facts at once");
+    });
+  });
+
   describe("to keep", () => {
     it("stores each tag in shadow with its decider's stamp, and stores none of them twice", async () => {
       const { inside, keep } = await open(usual);
@@ -846,6 +917,17 @@ describe("what a reading may ask of a vault", () => {
       await inside((_record, sql) => sql.exec(`UPDATE roles SET kind = 'project' WHERE id = 'job'`));
       expect(await keep([JOB_TAG])).toEqual({ stored: 0, refused: 0 });
       expect(await inside((record) => record.export().conceptTags)).toEqual([]);
+    });
+
+    it("leaves out a tag for a fact marked sensitive since it was read", async () => {
+      const { inside, keep } = await open(usual);
+      await inside((_record, sql) => sql.exec(`UPDATE facts SET sensitive = 1 WHERE id IN ('fact-sql', 'fact-kubernetes')`));
+      // Neither stored nor refused: the judge's yes and the rule's alike. The job's tag is kept.
+      expect(await keep([SQL_TAG, KUBERNETES_TAG, JOB_TAG])).toEqual({ stored: 1, refused: 0 });
+      expect((await inside((record) => record.export().conceptTags)).map((found) => found.subject.id)).toEqual(["job"]);
+      // Once the mark is lifted, the same tags are kept.
+      await inside((_record, sql) => sql.exec(`UPDATE facts SET sensitive = 0`));
+      expect(await keep([SQL_TAG, KUBERNETES_TAG, JOB_TAG])).toEqual({ stored: 2, refused: 0 });
     });
 
     it("leaves out the rule's tag for anything but a skill that is still an item of its line as written", async () => {
@@ -932,27 +1014,28 @@ describe("what a reading may ask of a vault", () => {
 
   it("answers only the run that is reading this upload, while it is still at work", async () => {
     const { sourceId, runId, inside, candidates, keep, refusal } = await open(usual);
-    /** What each of the two methods says to a call made in this run's name, or another's. */
+    /** What each of the three methods says to a call made in this run's name, or another's. */
     const both = async (source: string, run: string | undefined) => [
       await refusal((instance) => instance.tagCandidates(source, run)),
       await refusal((instance) => instance.saveShadowTags(source, run, made, [SQL_TAG])),
+      await refusal((instance) => instance.tagWithheld(source, run, ["fact-sql"])),
     ];
     // No run named, a run that is not this upload's, an upload that is not this run's, and no such upload.
-    expect(await both(sourceId, undefined)).toEqual(Array(2).fill("invalid: workflow identity is required"));
-    expect(await both(sourceId, crypto.randomUUID())).toEqual(Array(2).fill("conflict: this attempt was superseded"));
-    expect(await both(OTHER, runId)).toEqual(Array(2).fill("conflict: this attempt was superseded"));
-    expect(await both(crypto.randomUUID(), runId)).toEqual(Array(2).fill("not_found: no such source"));
+    expect(await both(sourceId, undefined)).toEqual(Array(3).fill("invalid: workflow identity is required"));
+    expect(await both(sourceId, crypto.randomUUID())).toEqual(Array(3).fill("conflict: this attempt was superseded"));
+    expect(await both(OTHER, runId)).toEqual(Array(3).fill("conflict: this attempt was superseded"));
+    expect(await both(crypto.randomUUID(), runId)).toEqual(Array(3).fill("not_found: no such source"));
     expect(await inside((record) => record.export().conceptTags)).toEqual([]);
     // The run itself is answered.
     expect((await candidates()).facts).toHaveLength(3);
     expect(await keep([SQL_TAG])).toEqual({ stored: 1, refused: 0 });
     // A newer reading has taken the upload over.
     await inside((_record, sql) => sql.exec(`UPDATE sources SET run_id = ? WHERE id = ?`, crypto.randomUUID(), sourceId));
-    expect(await both(sourceId, runId)).toEqual(Array(2).fill("conflict: this attempt was superseded"));
+    expect(await both(sourceId, runId)).toEqual(Array(3).fill("conflict: this attempt was superseded"));
     await inside((_record, sql) => sql.exec(`UPDATE sources SET run_id = ? WHERE id = ?`, runId, sourceId));
     // The reading was stopped.
     await inside((_record, sql) => sql.exec(`UPDATE runs SET state = 'cancel_requested' WHERE id = ?`, runId));
-    expect(await both(sourceId, runId)).toEqual(Array(2).fill("conflict: this run no longer accepts work"));
+    expect(await both(sourceId, runId)).toEqual(Array(3).fill("conflict: this run no longer accepts work"));
     expect(await inside((record) => record.export().conceptTags)).toHaveLength(1);
   });
 
@@ -963,9 +1046,10 @@ describe("what a reading may ask of a vault", () => {
     // The first reading of an upload is the run named after it. It has finished.
     const refused = await runInDurableObject(vaultOf(user), async (instance) => {
       const said: string[] = [];
-      for (const ask of [() => instance.tagCandidates(sourceId, sourceId), () => instance.saveShadowTags(sourceId, sourceId, made, [])]) await ask().then(() => said.push("answered"), (error: Error) => said.push(error.message));
+      for (const ask of [() => instance.tagCandidates(sourceId, sourceId), () => instance.saveShadowTags(sourceId, sourceId, made, []), () => instance.tagWithheld(sourceId, sourceId, [])])
+        await ask().then(() => said.push("answered"), (error: Error) => said.push(error.message));
       return said;
     });
-    expect(refused).toEqual(Array(2).fill("conflict: this run no longer accepts work"));
+    expect(refused).toEqual(Array(3).fill("conflict: this run no longer accepts work"));
   });
 });

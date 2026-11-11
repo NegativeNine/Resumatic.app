@@ -300,8 +300,15 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
                 const made = { model: modelFor(this.env, "judge"), taxonomyVersion: (await taxonomy.info()).version };
                 const subjects = await v.tagCandidates(sourceId, event.instanceId);
                 // Counts only: no line, title or label is kept in the Workflow's own state.
-                return await tagUpload(runModels(this.env, vaultId, event.instanceId, "tag", "distill"), taxonomy, subjects, made, (tags) =>
-                  v.saveShadowTags(sourceId, event.instanceId, made, tags),
+                // The vault is asked before every call about facts which of them have been marked
+                // sensitive since, so a line marked while the stage runs is put to the judge no more.
+                return await tagUpload(
+                  runModels(this.env, vaultId, event.instanceId, "tag", "distill"),
+                  taxonomy,
+                  subjects,
+                  made,
+                  (tags) => v.saveShadowTags(sourceId, event.instanceId, made, tags),
+                  (factIds) => v.tagWithheld(sourceId, event.instanceId, factIds),
                 );
               } catch (error) {
                 return { ...emptyTagReport(), failed: errorCode(error) ?? "error" };

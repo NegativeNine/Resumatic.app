@@ -21,7 +21,9 @@ import { LABEL_TYPES, normalizeLabel, words, type Concept, type ConceptKind, typ
 //      asked about it;
 //   5. no tag means unknown. It is never a finding that the person lacks the experience.
 // Nothing here stores anything. Every read of the taxonomy is made before anything is asked, and
-// the caller is handed the tags as they are decided, to keep in shadow (docs/tagging.md).
+// the caller is handed the tags as they are decided, to keep in shadow (docs/tagging.md). The
+// vault is asked again before every call about facts which of them their owner has marked
+// sensitive since they were read, and a marked line is put to the judge no more.
 //
 // Whatever is over a cap is left untagged, and counted in the report:
 //
@@ -126,6 +128,8 @@ export interface TagReport {
   /** Tags the caller kept, and tags it refused. */
   stored: number;
   refused: number;
+  /** Candidates of facts their owner marked sensitive after the run read them, which were then not asked about. */
+  withheld: number;
   /**
    * What a cap left untagged, which means unknown. Rows: `subjects` beyond the first roles and
    * facts, and `words` beyond the words looked through. Candidates: `per_role` and `per_fact`
@@ -137,7 +141,7 @@ export interface TagReport {
 }
 
 export function emptyTagReport(): TagReport {
-  return { roles: 0, facts: 0, candidates: 0, known: 0, carried: 0, byRule: 0, asked: 0, yes: 0, stored: 0, refused: 0, left: { subjects: 0, words: 0, per_role: 0, per_fact: 0, per_upload: 0 } };
+  return { roles: 0, facts: 0, candidates: 0, known: 0, carried: 0, byRule: 0, asked: 0, yes: 0, stored: 0, refused: 0, withheld: 0, left: { subjects: 0, words: 0, per_role: 0, per_fact: 0, per_upload: 0 } };
 }
 
 /** The stamp of a tag made by this method in this run. Every one is in shadow, proposed, and unscored. */
@@ -291,6 +295,11 @@ interface Question {
  * the run, whether a read, a call, a refused reservation or `keep` itself, and what was kept
  * before it stays kept: a tag stands alone, so nothing is gained by discarding answers already
  * paid for. It never rejects. The report says what was done and, if the run ended early, why.
+ *
+ * `marked` is asked before every call about facts which of the facts it names are marked
+ * sensitive now, and answers with those IDs. Their questions are left out of the call, and a call
+ * left with nothing is not made: a line its owner marks while the run is at work is put to the
+ * judge no more. A failure to answer ends the run, as a failed call does.
  */
 export async function tagUpload(
   models: Models,
@@ -298,10 +307,11 @@ export async function tagUpload(
   subjects: TagSubjects,
   made: TagMade,
   keep: (tags: ProposedTag[]) => Promise<{ stored: number; refused: number }>,
+  marked: (factIds: string[]) => Promise<string[]>,
 ): Promise<TagReport> {
   const report = emptyTagReport();
   try {
-    await tag(models, taxonomy, subjects, made, keep, report);
+    await tag(models, taxonomy, subjects, made, keep, marked, report);
   } catch (error) {
     // A code and nothing else: an error's own words can hold a line, a title or a provider's text.
     report.failed = errorCode(error) ?? "error";
@@ -315,6 +325,7 @@ async function tag(
   subjects: TagSubjects,
   made: TagMade,
   keep: (tags: ProposedTag[]) => Promise<{ stored: number; refused: number }>,
+  marked: (factIds: string[]) => Promise<string[]>,
   report: TagReport,
 ): Promise<void> {
   const firstRoles = subjects.roles.slice(0, MAX_TAG_ROLES);
@@ -425,10 +436,30 @@ async function tag(
       },
     };
   };
+  /**
+   * The questions of one call, less the rows of facts marked sensitive since they were read. The
+   * mark is read again for every call, so a line marked while an earlier call was open is in no
+   * call after it. A job's title cannot be marked, and a call about jobs alone asks nothing here.
+   */
+  const unmarked = async (questions: Question[]): Promise<Question[]> => {
+    const ids = [...new Set(questions.flatMap((question) => question.rows.flatMap((row) => ("title" in row ? [] : [row.id]))))];
+    if (ids.length === 0) return questions;
+    const answer: unknown = await marked(ids);
+    // Nothing is taken as unmarked on an answer that is not one: the run ends here, as a failed call ends it.
+    if (!Array.isArray(answer) || answer.some((id) => typeof id !== "string")) throw new Error("no answer about which facts are marked");
+    const now = new Set<unknown>(answer);
+    return questions.flatMap((question) => {
+      const rows = question.rows.filter((row) => "title" in row || !now.has(row.id));
+      report.withheld += question.rows.length - rows.length;
+      return rows.length ? [{ ...question, rows }] : [];
+    });
+  };
   /** Puts questions to the judge a call at a time, and keeps each call's tags before the next is sent. */
   const ask = async (questions: Question[], answered: (question: Question) => void = () => {}): Promise<void> => {
     for (let at = 0; at < questions.length; at += QUESTIONS_PER_CALL) {
-      const batch = questions.slice(at, at + QUESTIONS_PER_CALL).map((question) => ({ question, item: tagQuestion(`T${++asked}`, question.subject, question.candidate) }));
+      const still = await unmarked(questions.slice(at, at + QUESTIONS_PER_CALL));
+      if (still.length === 0) continue;
+      const batch = still.map((question) => ({ question, item: tagQuestion(`T${++asked}`, question.subject, question.candidate) }));
       const items = batch.map(({ item }) => item);
       report.asked += items.length;
       const out = models.judge ? await models.judge(items) : await models.complete("judge", judgePrompt(items), JudgeOut);

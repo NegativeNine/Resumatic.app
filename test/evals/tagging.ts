@@ -63,10 +63,18 @@ export async function runTagging(models: Models, examples: readonly TagExample[]
   const made = { model: judgeModel, taxonomyVersion: TAXONOMY_FIXTURE.info.version };
   const tagging = async (asked: Models) => {
     const tags: ProposedTag[] = [];
-    const report = await tagUpload(asked, taxonomy, asSubjects(examples), made, async (proposed) => {
-      tags.push(...proposed);
-      return { stored: proposed.length, refused: 0 };
-    });
+    const report = await tagUpload(
+      asked,
+      taxonomy,
+      asSubjects(examples),
+      made,
+      async (proposed) => {
+        tags.push(...proposed);
+        return { stored: proposed.length, refused: 0 };
+      },
+      // The examples are made up, and no owner marks any of them.
+      async () => [],
+    );
     return { report, tags };
   };
   const candidates = await tagging(agreeing);

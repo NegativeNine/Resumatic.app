@@ -132,13 +132,23 @@ const holding = (conceptId: string, own: boolean, method: TagMethod = TAG_JUDGE_
   ...more,
 });
 
-async function run(subjects: TagSubjects, script: Script = {}, taxonomy: TagReads = fixture(), models?: Models) {
+/** The vault's answer to which facts are marked sensitive now: none, unless a test says otherwise. */
+const NONE_MARKED = async (): Promise<string[]> => [];
+
+async function run(subjects: TagSubjects, script: Script = {}, taxonomy: TagReads = fixture(), models?: Models, marked: (factIds: string[]) => Promise<string[]> = NONE_MARKED) {
   const stand = judge(script);
   const kept: ProposedTag[][] = [];
-  const report = await tagUpload(models ?? stand.models, taxonomy, subjects, MADE, async (tags) => {
-    kept.push(tags);
-    return { stored: tags.length, refused: 0 };
-  });
+  const report = await tagUpload(
+    models ?? stand.models,
+    taxonomy,
+    subjects,
+    MADE,
+    async (tags) => {
+      kept.push(tags);
+      return { stored: tags.length, refused: 0 };
+    },
+    marked,
+  );
   return { report, asked: stand.asked, prompts: stand.prompts, kept, tags: kept.flat() };
 }
 
@@ -741,10 +751,17 @@ describe("a run", () => {
     const { taxonomy, reads } = reading({ events });
     const stand = judge();
     const models: Models = { ...stand.models, complete: (...args) => (events.push("ask"), stand.models.complete(...args)) };
-    const report = await tagUpload(models, taxonomy, subjects(), MADE, async (tags) => {
-      events.push(`keep ${tags.length}`);
-      return { stored: tags.length, refused: 0 };
-    });
+    const report = await tagUpload(
+      models,
+      taxonomy,
+      subjects(),
+      MADE,
+      async (tags) => {
+        events.push(`keep ${tags.length}`);
+        return { stored: tags.length, refused: 0 };
+      },
+      NONE_MARKED,
+    );
     expect(reads.map(([name]) => name)).toEqual(["mentions", "mentions", "mentions", "lookup", "get", "profile"]);
     // The rule's tag is kept before the first question, and each call's answers before the next.
     expect(events).toEqual(["read", "read", "read", "read", "read", "read", "keep 1", "ask", "keep 1", "ask", "keep 2"]);
@@ -819,11 +836,18 @@ describe("a run", () => {
       const stand = judge();
       let keeps = 0;
       const kept: ProposedTag[][] = [];
-      const report = await tagUpload(stand.models, fixture(), subjects(), MADE, async (tags) => {
-        if (++keeps === failAt) throw new AppError("conflict", "this attempt was superseded");
-        kept.push(tags);
-        return { stored: tags.length, refused: 0 };
-      });
+      const report = await tagUpload(
+        stand.models,
+        fixture(),
+        subjects(),
+        MADE,
+        async (tags) => {
+          if (++keeps === failAt) throw new AppError("conflict", "this attempt was superseded");
+          kept.push(tags);
+          return { stored: tags.length, refused: 0 };
+        },
+        NONE_MARKED,
+      );
       expect(report.failed, String(failAt)).toBe("conflict");
       // The first keep comes before any question; the second after the one call about the job.
       expect(stand.asked, String(failAt)).toHaveLength(failAt - 1);
@@ -831,12 +855,88 @@ describe("a run", () => {
     }
   });
 
+  describe("beside a line its owner marks sensitive while it is at work", () => {
+    // Twelve lines with two candidates each: twenty questions go in the first call, four in the next.
+    const twelve = () => upload([], Array.from({ length: 12 }, (_, n) => fact(`line-${n}`, `Ran Kubernetes clusters, number ${n}`)));
+    /** The vault's mark as a set a test changes, and every list of facts the stage asked about. */
+    const marking = () => {
+      const marks = new Set<string>();
+      const checked: string[][] = [];
+      const marked = async (ids: string[]) => {
+        checked.push([...ids]);
+        return ids.filter((id) => marks.has(id));
+      };
+      return { marks, checked, marked };
+    };
+
+    it("reads the mark again before every call about facts, and asks no more about a line marked since", async () => {
+      const { marks, checked, marked } = marking();
+      // While the first call is open, its owner marks a line it holds and a line the next call would hold.
+      const { report, asked, kept } = await run(twelve(), { reply: (answers, call) => (call === 0 && marks.add("line-0").add("line-10"), { verdicts: answers }) }, fixture(), undefined, marked);
+      expect(asked.map((call) => call.length)).toEqual([20, 2]);
+      expect(asked[1]!.map((item) => [item.alias, item.facts[0]!.text])).toEqual([
+        ["T21", "Ran Kubernetes clusters, number 11"],
+        ["T22", "Ran Kubernetes clusters, number 11"],
+      ]);
+      expect(JSON.stringify(asked.slice(1))).not.toContain("number 10");
+      // Checked before each call, about the facts that call was to ask about and nothing else.
+      expect(checked).toEqual([Array.from({ length: 10 }, (_, n) => `line-${n}`), ["line-10", "line-11"]]);
+      // The line marked while the call about it was open was already asked about. Its answers are
+      // handed on: the vault reads the mark again as it stores them, and leaves them out.
+      expect(kept.flat().filter((tag) => tag.subject.id === "line-10")).toEqual([]);
+      expect(report).toEqual({ ...emptyTagReport(), facts: 12, candidates: 24, asked: 22, yes: 22, stored: 22, withheld: 2 });
+    });
+
+    it("sends no call that would hold nothing but marked lines, and asks about a line's other rows", async () => {
+      const { marks, checked, marked } = marking();
+      // Two rows say the same words. The mark is on one of them, as far as the stage is told.
+      const subjects = upload([role("job", "Programmer")], [fact("line", "Ran Kubernetes clusters"), fact("again", "Ran Kubernetes clusters"), fact("other", "Ran Kubernetes clusters, number 1")]);
+      marks.add("line").add("other");
+      const { report, asked, tags } = await run(subjects, {}, fixture(), undefined, marked);
+      // The call about the job is made without asking the vault: a job's title cannot be marked.
+      expect(checked).toEqual([["line", "again", "other"]]);
+      expect(asked.map((call) => call.length)).toEqual([1, 2]);
+      expect(asked[1]!.map((item) => item.facts[0]!.text)).toEqual(Array(2).fill("Ran Kubernetes clusters"));
+      expect([...new Set(tags.filter((tag) => tag.subject.kind === "fact").map((tag) => tag.subject.id))]).toEqual(["again"]);
+      expect(report).toMatchObject({ asked: 3, withheld: 4 });
+      // Every line marked: the one call about facts is never made.
+      marks.add("again");
+      const none = await run(subjects, {}, fixture(), undefined, marked);
+      expect(none.asked).toHaveLength(1);
+      expect(none.report).toMatchObject({ asked: 1, yes: 1, stored: 1, withheld: 6 });
+      expect(none.report.failed).toBeUndefined();
+    });
+
+    it("ends when the mark cannot be read, and asks nothing more", async () => {
+      const refused = async (): Promise<string[]> => {
+        throw new AppError("conflict", "this attempt was superseded");
+      };
+      const { report, asked, kept } = await run(subjects(), {}, fixture(), undefined, refused);
+      expect(asked).toHaveLength(1);
+      expect(kept.map(brief)).toEqual([[RULE], [JOB]]);
+      expect(report).toMatchObject({ asked: 1, stored: 2, failed: "conflict" });
+      // An answer that is not a list of facts is no answer: nothing is taken as unmarked.
+      for (const answer of [undefined, {}, "line", [7]]) {
+        const odd = await run(subjects(), {}, fixture(), undefined, async () => answer as unknown as string[]);
+        expect(odd.asked, JSON.stringify(answer)).toHaveLength(1);
+        expect(odd.report.failed, JSON.stringify(answer)).toBe("error");
+      }
+    });
+  });
+
   it("adds up what the caller kept and what it refused, and never keeps an empty list", async () => {
     const lists: number[] = [];
-    const report = await tagUpload(judge({ verdict: says("unsupported", "Worked in the occupation") }).models, fixture(), subjects(), MADE, async (tags) => {
-      lists.push(tags.length);
-      return { stored: tags.length - 1, refused: 1 };
-    });
+    const report = await tagUpload(
+      judge({ verdict: says("unsupported", "Worked in the occupation") }).models,
+      fixture(),
+      subjects(),
+      MADE,
+      async (tags) => {
+        lists.push(tags.length);
+        return { stored: tags.length - 1, refused: 1 };
+      },
+      NONE_MARKED,
+    );
     // The rule's tag, nothing for the job the judge declined, then the line's two.
     expect(lists).toEqual([1, 2]);
     expect(report).toMatchObject({ yes: 2, stored: 1, refused: 2 });
@@ -844,10 +944,10 @@ describe("a run", () => {
   });
 
   it("never rejects, whatever it is given", async () => {
-    const report = await tagUpload(judge().models, fixture(), null as unknown as TagSubjects, MADE, async () => ({ stored: 0, refused: 0 }));
+    const report = await tagUpload(judge().models, fixture(), null as unknown as TagSubjects, MADE, async () => ({ stored: 0, refused: 0 }), NONE_MARKED);
     expect(report).toEqual({ ...emptyTagReport(), failed: "error" });
     // Nothing to tag is not a failure.
-    expect(await tagUpload(judge().models, reading({ failing: "mentions" }).taxonomy, upload([], []), MADE, async () => ({ stored: 0, refused: 0 }))).toEqual(emptyTagReport());
+    expect(await tagUpload(judge().models, reading({ failing: "mentions" }).taxonomy, upload([], []), MADE, async () => ({ stored: 0, refused: 0 }), NONE_MARKED)).toEqual(emptyTagReport());
   });
 
   it("stamps a tag with what decided it", () => {

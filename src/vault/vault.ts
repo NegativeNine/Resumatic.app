@@ -1763,11 +1763,25 @@ export class Vault extends DurableObject<Env> {
   }
 
   /**
+   * Which of these facts their owner has marked sensitive since the reading read them. The stage
+   * asks before every call to the judge about facts, and leaves the marked ones out of it, so a
+   * line marked while it is at work is put to the judge no more. It awaits nothing and writes nothing.
+   */
+  async tagWithheld(sourceId: string, runId: string | undefined, factIds: string[]): Promise<string[]> {
+    this.requireReading(sourceId, runId);
+    if (!Array.isArray(factIds) || factIds.length > MAX_TAG_FACTS || factIds.some((id) => typeof id !== "string"))
+      throw new AppError("invalid", "a reading asks about at most one upload's facts at once");
+    const withheld = withheldFacts(this.sql).ids;
+    return factIds.filter((id) => withheld.has(id));
+  }
+
+  /**
    * Keeps tags a reading decided for this upload's facts and job roles, in shadow: stored to be
    * measured, shown to nobody and read by nothing else. A tag is about particular words, so one
    * decided about words its row no longer has is left out, and so is the rule's tag for a skill
-   * that is no longer one item of its line as written. A tag the same decider stored before is
-   * left exactly as it is. What the record itself refuses is counted, and the rest are kept.
+   * that is no longer one item of its line as written. So is a tag for a fact its owner has marked
+   * sensitive since it was read. A tag the same decider stored before is left exactly as it is.
+   * What the record itself refuses is counted, and the rest are kept.
    */
   async saveShadowTags(sourceId: string, runId: string | undefined, made: TagMade, tags: ProposedTag[]): Promise<{ stored: number; refused: number }> {
     this.requireReading(sourceId, runId);
@@ -1780,11 +1794,13 @@ export class Vault extends DurableObject<Env> {
     }
     const unstamped = made && typeof made === "object" ? stampProblem(tagStamp(TAG_JUDGE_METHOD, made)) : "a judgement says what made it";
     if (unstamped) throw new AppError("invalid", unstamped);
+    // A line marked sensitive is not tagged, even where the mark landed while the judge was being asked about it.
+    const withheld = withheldFacts(this.sql).ids;
     let stored = 0;
     let refused = 0;
     for (const tag of tags) {
       // The judge was asked, and the taxonomy read, before this was called. Nothing is awaited
-      // from here to the tag being stored, so no edit can fall between these checks and the write.
+      // from here to the tag being stored, so no edit or mark can fall between these checks and the write.
       if (tag.subject.kind === "fact") {
         const fact = this.sql
           .exec<{ kind: string; text: string; quote: string | null }>(
@@ -1794,7 +1810,7 @@ export class Vault extends DurableObject<Env> {
           )
           .toArray()[0];
         if (!fact) throw new AppError("conflict", "fact is not part of this source");
-        if (fact.text !== tag.words) continue;
+        if (fact.text !== tag.words || withheld.has(tag.subject.id)) continue;
         if (tag.method === TAG_RULE_METHOD && !(fact.kind === "skill" && skillAsWritten(fact.quote, fact.text))) continue;
       } else {
         const role = this.sql.exec<{ kind: string; title: string | null }>(`SELECT kind, title FROM roles WHERE id = ? AND source_id = ?`, tag.subject.id, sourceId).toArray()[0];
