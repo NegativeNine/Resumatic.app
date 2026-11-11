@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { moveVault } from "./move-vault.mjs";
+import { moveVault, TABLES } from "./move-vault.mjs";
 
 const sourceVaultId = "a".repeat(64);
 const targetVaultId = "b".repeat(64);
@@ -138,4 +139,15 @@ test("failure output does not echo response bodies or credentials", async () => 
     }),
     { message: "MOVE_HTTP_503_RERUN_SAME_OPERATION" },
   );
+});
+
+test("accepts every table the app transfers, and no other", async () => {
+  // The app's list is TypeScript, so it is read as text: the names between the brackets.
+  const source = await readFile(new URL("../src/shared/operations.ts", import.meta.url), "utf8");
+  const start = source.indexOf("export const TRANSFER_TABLES = [");
+  const end = source.indexOf("] as const;", start);
+  assert.ok(start >= 0 && end > start, "TRANSFER_TABLES was not found");
+  const transferred = [...source.slice(start, end).matchAll(/^\s*"([a-z_]+)",\s*$/gm)].map((match) => match[1]);
+  assert.ok(transferred.length >= 18);
+  assert.deepEqual([...TABLES], transferred);
 });
