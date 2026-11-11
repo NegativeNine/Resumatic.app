@@ -86,6 +86,22 @@ test("the posting reader cannot be enabled in production configuration, and can 
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test("the card preview cannot be enabled in production configuration, and can in staging", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "card-preview-config-"));
+  try {
+    const path = join(dir, "wrangler.jsonc");
+    const report = async (environment, vars, staging = {}) => {
+      await writeFile(path, JSON.stringify({ name: "example", vars, env: { staging: { vars: staging } } }));
+      return (await validate({ environment, purpose: "deploy", configPath: path, env: {} })).missing;
+    };
+    assert.ok((await report("production", { CARD_PREVIEW_ENABLED: "true" })).includes("CARD_PREVIEW_ROLLOUT_UNVERIFIED"));
+    for (const off of [{}, { CARD_PREVIEW_ENABLED: "false" }, { CARD_PREVIEW_ENABLED: "" }])
+      assert.ok(!(await report("production", off)).includes("CARD_PREVIEW_ROLLOUT_UNVERIFIED"), JSON.stringify(off));
+    // Staging may switch it on, where a taxonomy is bound; whether to is the owner's decision.
+    assert.ok(!(await report("staging", {}, { CARD_PREVIEW_ENABLED: "true" })).includes("CARD_PREVIEW_ROLLOUT_UNVERIFIED"));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test("experimental cache-write fencing cannot be enabled in production configuration", async () => {
   const dir = await mkdtemp(join(tmpdir(), "cache-fence-config-"));
   try {

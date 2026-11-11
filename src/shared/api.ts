@@ -121,6 +121,8 @@ export interface Me {
     roleDateUnknownEnd?: boolean;
     /** A posting can be read from its link. */
     postingReader?: boolean;
+    /** The owner's own card can be previewed. */
+    cardPreview?: boolean;
   };
   userId: string;
   profile: Profile;
