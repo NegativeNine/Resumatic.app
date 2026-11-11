@@ -68,11 +68,25 @@ export class D1Store implements TaxonomyStore {
   constructor(private readonly db: D1Database) {}
 
   async info(): Promise<TaxonomyInfo | null> {
-    const { results } = await this.db.prepare(`SELECT key, value FROM taxonomy_meta`).all<{ key: string; value: string }>();
-    const meta = new Map(results.map((row) => [row.key, row.value]));
+    let rows: { key: string; value: string }[];
+    try {
+      rows = (await this.db.prepare(`SELECT key, value FROM taxonomy_meta`).all<{ key: string; value: string }>()).results;
+    } catch (error) {
+      // A database that nothing has been loaded into has no tables. That is nothing loaded, and
+      // the only failure read as that: any other is D1's to report.
+      if (error instanceof Error && error.message.includes("no such table: taxonomy_meta")) return null;
+      throw error;
+    }
+    const meta = new Map(rows.map((row) => [row.key, row.value]));
     const version = meta.get("version");
     const contentHash = meta.get("contentHash");
-    if (meta.get("format") !== "1" || !version || !contentHash) return null;
+    // How many records there are is written by the statement that ends a load, which writes
+    // nothing unless the tables hold every one of them (scripts/taxonomy/sql.mjs). A database
+    // without the counts is part of a taxonomy, or was loaded from SQL made before the builder
+    // wrote them, and cannot be told from a part.
+    const records = object<Record<string, unknown>>(meta.get("records") ?? null);
+    const whole = records !== null && ["concepts", "labels", "relations"].every((table) => Number.isSafeInteger(records[table]));
+    if (meta.get("format") !== "1" || !version || !contentHash || !whole) return null;
     let sources: TaxonomyInfo["sources"] = [];
     try {
       const parsed: unknown = JSON.parse(meta.get("sources") ?? "[]");

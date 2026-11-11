@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { D1Store, MemoryStore, Taxonomy, taxonomyFor, type Concept, type ConceptKind, type Edge, type Relation, type TaxonomyStore } from "../../src/taxonomy";
 import { TAXONOMY_FIXTURE, TAXONOMY_FIXTURE_SQL } from "../support/taxonomy-fixture";
 
@@ -127,5 +127,71 @@ describe("the taxonomy in D1", () => {
     await db().prepare(`DELETE FROM taxonomy_meta WHERE key = 'version'`).run();
     expect(await new D1Store(db()).info()).toBeNull();
     await expect(taxonomyFor(env)!.info()).rejects.toThrow("unavailable: the taxonomy is not loaded");
+  });
+});
+
+describe("a database that does not hold a whole taxonomy", () => {
+  // The statement that ends a load. It says what the taxonomy is, and is the only one that does.
+  const closing = TAXONOMY_FIXTURE_SQL.at(-1)!;
+  const before = TAXONOMY_FIXTURE_SQL.slice(0, -1);
+  /** Empties the database, then runs these statements of a load in order. */
+  const load = async (statements: readonly string[]) => {
+    for (const table of ["taxonomy_meta", "concepts", "labels", "relations"]) await db().prepare(`DROP TABLE IF EXISTS ${table}`).run();
+    for (const statement of statements) await db().prepare(statement).run();
+  };
+  const notLoaded = async () => {
+    expect(await new D1Store(db()).info()).toBeNull();
+    await expect(taxonomyFor(env)!.info()).rejects.toThrow("unavailable: the taxonomy is not loaded");
+  };
+  afterEach(() => load(TAXONOMY_FIXTURE_SQL));
+
+  it("is read as not loaded until the last statement of the load has run", async () => {
+    expect(closing).toMatch(/^INSERT INTO taxonomy_meta /);
+    expect(before.some((statement) => statement.includes("taxonomy_meta") && !statement.startsWith("CREATE TABLE"))).toBe(false);
+    // Every record is in, and the load stopped before its last statement.
+    await load(before);
+    expect((await db().prepare(`SELECT COUNT(*) AS n FROM relations`).first<{ n: number }>())!.n).toBe(TAXONOMY_FIXTURE.edges.length);
+    await notLoaded();
+    await db().prepare(closing).run();
+    expect(await new D1Store(db()).info()).toEqual(TAXONOMY_FIXTURE.info);
+  });
+
+  it("cannot be given a version while any record is missing", async () => {
+    // A whole table's rows left out, as when one file of a load fails and the rest are run anyway.
+    for (const table of ["concepts", "labels", "relations"]) {
+      const skipped = before.filter((statement) => !statement.startsWith(`INSERT INTO ${table} `));
+      expect(skipped.length, table).toBeLessThan(before.length);
+      await load(skipped);
+      await expect(db().prepare(closing).run(), table).rejects.toThrow(/NOT NULL constraint failed: taxonomy_meta\.value/);
+      await notLoaded();
+    }
+    // One row short is not whole either.
+    await load(before);
+    const edge = TAXONOMY_FIXTURE.edges[0]!;
+    await db().prepare(`DELETE FROM relations WHERE src = ? AND rel = ? AND dst = ?`).bind(edge.src, edge.rel, edge.dst).run();
+    await expect(db().prepare(closing).run()).rejects.toThrow(/NOT NULL constraint failed: taxonomy_meta\.value/);
+    await notLoaded();
+    expect((await db().prepare(`SELECT COUNT(*) AS n FROM taxonomy_meta`).first<{ n: number }>())!.n).toBe(0);
+  });
+
+  it("is read as not loaded when it names a version and not how many records it holds", async () => {
+    // What a load ended with before the builder counted: the rows of an earlier build's first file.
+    const { format, version, contentHash, sources } = TAXONOMY_FIXTURE.info;
+    const earlier = db().prepare(`INSERT INTO taxonomy_meta (key, value) VALUES ('format', ?), ('version', ?), ('contentHash', ?), ('sources', ?)`).bind(String(format), version, contentHash, JSON.stringify(sources));
+    await load(before);
+    await earlier.run();
+    await notLoaded();
+    for (const records of ["", "49438", "[]", "{}", '{"concepts":43,"labels":80}', '{"concepts":"43","labels":"80","relations":"58"}', "not json"]) {
+      await db().prepare(`INSERT OR REPLACE INTO taxonomy_meta (key, value) VALUES ('records', ?)`).bind(records).run();
+      await notLoaded();
+    }
+  });
+
+  it("is read as not loaded when nothing at all has been loaded into it", async () => {
+    await load([]);
+    await notLoaded();
+    // Only the tables, as after the first statements of the first file.
+    await load(TAXONOMY_FIXTURE_SQL.filter((statement) => statement.startsWith("CREATE ")));
+    await notLoaded();
   });
 });

@@ -101,7 +101,7 @@ The **Taxonomy build** workflow (`.github/workflows/taxonomy.yml`) does the down
 - **Crosswalk layout:** its columns are found by name (an O\*NET code, an ESCO URI, a type of match), after the official project's metadata preamble.
 - **Real O\*NET and crosswalk readers checked on 10 November 2026.** O\*NET 31.0 produced 31,201 concepts, 72,687 labels and 104,656 relations, with no reader issues. Its six input row counts matched the published figures: 1,016 occupations, 54,269 job titles, 18,838 task statements, 24,087 task-to-activity rows, 2,087 detailed work activities and 31,821 software rows. The official crosswalk produced 4,253 mappings with no reader issues after fixing preamble handling.
 - **Full real-data build checked on 10 November 2026.** The [manifest](taxonomy-build-2026-11-10.json) records version `esco-1.2.1+onet-31.0+c036f953`, 49,438 concepts, 207,939 labels and 265,406 relations. ESCO's unique counts match 13,939 skills/knowledge concepts and 3,039 occupations; its input contains 25 repeated concept rows. That build did not compare those rows with their first occurrences; the builder now counts the ones that differ, so the next build will say whether any label was left behind. Three of 4,253 crosswalk mappings name occupations absent from the current releases and are set aside, leaving 4,250 mappings. One self-relation and five ambiguous same-label joins are also set aside. All 17 generated SQL files loaded into SQLite, with matching row counts, no orphan references and a successful integrity check. Remote D1 loading, vector indexing and pipeline quality remain pending.
-- **That build is not the one to load.** The builder has changed since it was made, and the same downloads now give other relations and so another version. It no longer joins an O\*NET software example to an ESCO concept on a name it shortened itself: 64 of that build's 165 `same-label` relations rested on nothing else, among them "Migration software" joined to ESCO's "migration" of people. The concepts, the labels and every other relation are as they were.
+- **That build is not the one to load.** The builder has changed since it was made, in two ways. It no longer joins an O\*NET software example to an ESCO concept on a name it shortened itself: 64 of that build's 165 `same-label` relations rested on nothing else, among them "Migration software" joined to ESCO's "migration" of people. The same downloads therefore give other relations and so another version; the concepts, the labels and every other relation are as they were. And its SQL now says what the taxonomy is in its last statement, with the count of records, where that build's SQL said it in the first file before any record was in. The app reads a database loaded from that build's SQL as not loaded (see "Loading it").
 
 ## Loading it
 
@@ -109,8 +109,17 @@ A taxonomy is loaded once into a D1 database of its own and never changed. A new
 
 ```sh
 npx wrangler d1 create resumatic-taxonomy-<version>
-for f in <folder>/d1/*.sql; do npx wrangler d1 execute resumatic-taxonomy-<version> --remote --file "$f"; done
+for f in <folder>/d1/*.sql; do npx wrangler d1 execute resumatic-taxonomy-<version> --remote --file "$f" || break; done
+npx wrangler d1 execute resumatic-taxonomy-<version> --remote --command "SELECT key, value FROM taxonomy_meta"
 ```
+
+Every file is run, in order, and the loop stops at the first one that fails. The last statement of the last file says what the taxonomy is: its format, version, content hash and sources, and how many concepts, labels and relations it has (`records`). It writes those rows together or not at all, and only when the three tables hold exactly as many rows as the builder wrote. So a database names a version only if every record is in it:
+
+- The last command above prints the version that is in `manifest.json`, and how many records the database was found to hold. If it prints no rows, the load is not complete.
+- A load that left a file out ends with the last file failing: `NOT NULL constraint failed: taxonomy_meta.value`.
+- The app reads a database without those rows as not loaded, and `info()` fails with "the taxonomy is not loaded". That holds for a database with nothing in it, for one loaded part of the way, and for one loaded from SQL made before the builder wrote the counts.
+
+A load that failed is started again in a new database, and the old one is deleted rather than repaired. The check is a count of rows, made once as the load ends. It does not compare contents, and nothing recounts afterwards: a taxonomy's database is not written to again.
 
 Then bind it as `TAXONOMY` in the environment that should read it. The binding is optional: where it is absent, `taxonomyFor(env)` is null and the app behaves as it did before. Nothing in this repository binds it yet.
 
@@ -154,8 +163,8 @@ The notices are not in the app yet because the app shows no taxonomy data yet. T
 
 ## Tests
 
-- `scripts/taxonomy-build.test.mjs`: the CSV reader, both source readers, the crosswalk reader, joining, the SQL (loaded into SQLite as written), the build command, and that the same files always give the same bytes.
+- `scripts/taxonomy-build.test.mjs`: the CSV reader, both source readers, the crosswalk reader, joining, the SQL (loaded into SQLite as written, whole and with each file left out in turn), the build command, and that the same files always give the same bytes.
 - `test/unit/taxonomy.test.ts`: the four reads over records in memory.
-- `test/integration/taxonomy-d1.test.ts`: the same records loaded into D1 answer every read identically.
+- `test/integration/taxonomy-d1.test.ts`: the same records loaded into D1 answer every read identically, and a database that does not hold all of them is read as not loaded.
 
 The test files under `test/fixtures/taxonomy` are synthetic and say so. `test/support/taxonomy-fixture.ts` is generated from them by `node scripts/taxonomy/fixture.mjs`, and a test fails if it is out of date.

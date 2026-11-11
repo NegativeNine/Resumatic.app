@@ -440,10 +440,12 @@ test("the SQL loads into SQLite as written, one statement to a line, and holds e
     assert.equal(/[\r\n]/.test(statement), false);
     assert.ok(statement.endsWith(";"));
   }
-  // Statements stay under the size asked for, apart from a single row that is larger by itself.
+  // Statements stay under the size asked for, apart from a single row that is larger by itself, and
+  // the last, which says what the taxonomy is in one statement so that it is written whole or not at all.
   const small = [...statements(bundle, { maxBytes: 600 })];
   assert.ok(small.length > all.length);
-  for (const statement of small) assert.ok(Buffer.byteLength(statement) <= 600 || !statement.includes("), ("), statement.slice(0, 80));
+  for (const statement of small.slice(0, -1)) assert.ok(Buffer.byteLength(statement) <= 600 || !statement.includes("), ("), statement.slice(0, 80));
+  assert.equal(small.at(-1), all.at(-1));
   const files = sqlFiles(bundle, { maxBytes: 600, maxFileBytes: 4000 });
   assert.ok(files.length > 3);
   for (const file of files) assert.ok(Buffer.byteLength(file) <= 4000 && file.endsWith(";\n"));
@@ -458,6 +460,7 @@ test("the SQL loads into SQLite as written, one statement to a line, and holds e
     assert.equal(count("relations"), bundle.edges.length);
     assert.deepEqual(Object.fromEntries(db.prepare(`SELECT key, value FROM taxonomy_meta`).all().map((row) => [row.key, row.value])), {
       format: "1", version: bundle.info.version, contentHash: bundle.info.contentHash, sources: JSON.stringify(bundle.info.sources),
+      records: JSON.stringify({ concepts: bundle.concepts.length, labels: bundle.labels.length, relations: bundle.edges.length }),
     });
     // Apostrophes and quotes come back as they went in.
     assert.equal(db.prepare(`SELECT description FROM concepts WHERE id = ?`).get(S(4)).description, "Tools that deploy, scale and run containers. It's a synthetic row, with a comma.");
@@ -475,6 +478,44 @@ test("the SQL loads into SQLite as written, one statement to a line, and holds e
 
   const withBreak = { ...bundle, concepts: [{ ...bundle.concepts[0], label: "two\nlines" }] };
   assert.throws(() => [...statements(withBreak)], /line break/);
+});
+
+test("a database names its taxonomy only once every record is in it", async () => {
+  const bundle = await fixtureBundle();
+  const records = { concepts: bundle.concepts.length, labels: bundle.labels.length, relations: bundle.edges.length };
+  // What the taxonomy says about itself is the last statement of a load, and no other.
+  for (const all of [[...statements(bundle)], [...statements(bundle, { maxBytes: 600 })]]) {
+    assert.deepEqual(all.flatMap((statement, at) => (statement.startsWith("INSERT INTO taxonomy_meta ") ? [at] : [])), [all.length - 1]);
+    assert.equal(all.filter((statement) => statement.includes(bundle.info.version)).length, 1);
+  }
+  const files = sqlFiles(bundle, { maxBytes: 600, maxFileBytes: 4000 });
+  assert.ok(files.length > 4);
+  /** Runs these files in order, as a load does, and gives what the database then says of itself. */
+  const load = (list, check) => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      for (const file of list) check(file, () => db.exec(file));
+      return Object.fromEntries(db.prepare(`SELECT key, value FROM taxonomy_meta`).all().map((row) => [row.key, row.value]));
+    } finally { db.close(); }
+  };
+  const runs = (_file, run) => run();
+  // Every file, in order: the taxonomy, and how many records the database was found to hold.
+  assert.deepEqual(load(files, runs), {
+    format: "1", version: bundle.info.version, contentHash: bundle.info.contentHash, sources: JSON.stringify(bundle.info.sources), records: JSON.stringify(records),
+  });
+  // A load that stopped, however far it got: nothing names a version.
+  for (let ran = 1; ran < files.length; ran++) assert.deepEqual(load(files.slice(0, ran), runs), {}, `after ${ran} of ${files.length} files`);
+  // A load that left one file out and ran the rest: the last file fails, and nothing names a version.
+  const last = files.at(-1);
+  for (let left = 1; left < files.length - 1; left++) {
+    const said = load(files.filter((_, at) => at !== left), (file, run) => {
+      if (file === last) assert.throws(run, /NOT NULL constraint failed: taxonomy_meta\.value/, `without file ${left + 1}`);
+      else run();
+    });
+    assert.deepEqual(said, {}, `without file ${left + 1} of ${files.length}`);
+  }
+  // A file run twice is refused by the tables themselves, as it was.
+  assert.throws(() => load([...files.slice(0, 3), files[2]], runs), /UNIQUE constraint failed/);
 });
 
 test("the build writes records, SQL and a manifest that says what went in and what to credit", async () => {
