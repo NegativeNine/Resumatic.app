@@ -12,15 +12,17 @@ import { MAX_PART_RANGES, MAX_SPLIT_PARTS, lineRuns, partText, partsProblem, typ
 //   1. a line with a hedge, a negation, an alternative or an intention in it is never divided;
 //   2. the parts must be whole words of the line and fit together (src/shared/record.ts);
 //   3. no word that carries meaning may be left out of every claim;
-//   4. a claim made of separate pieces may not reach across a figure to join them;
-//   5. each claim must pass the checks a resume line passes against its facts: numbers, names,
-//      scope, and denied or planned actions;
-//   6. the judge must find that the line states each claim as it reads alone, and that the
-//      claims together say everything the line says.
+//   4. a part made of separate pieces may not reach across a figure to join them;
+//   5. each part, a mention included, must pass the checks a resume line passes against its
+//      facts: numbers, names, scope, and denied or planned actions;
+//   6. a result must come after the claim it is named as the outcome of;
+//   7. the judge must find that the line states each claim as it reads alone, that it states each
+//      result with the claim it is the outcome of, and that the claims together say everything
+//      the line says.
 // Nothing here stores anything. A caller keeps the divisions that pass, in shadow.
 
 /** The check that made a division, stamped on it. Raise the number when a rule or the prompt changes. */
-export const SPLIT_METHOD = "split/1";
+export const SPLIT_METHOD = "split/2";
 
 /** Why a line stays whole. Counted, never stored with the line. */
 export const SPLIT_REFUSALS = [
@@ -34,12 +36,16 @@ export const SPLIT_REFUSALS = [
   "malformed",
   /** A word that carries meaning was in no claim. */
   "word_lost",
-  /** A claim made of separate pieces skipped a figure between them. */
+  /** A part made of separate pieces skipped a figure between them. */
   "figure_skipped",
-  /** A claim failed a deterministic check against its line. */
+  /** A part failed a deterministic check against its line. */
   "claim_check",
+  /** A result did not come after the claim it names, so the two can't be read together as the line reads. */
+  "result_before_claim",
   /** The judge did not find that the line states a claim as it reads alone. */
   "reads_differently",
+  /** The judge did not find that the line states a result with the claim it is named as the outcome of. */
+  "not_its_outcome",
   /** The judge did not find that the claims together say everything the line says. */
   "says_less",
 ] as const;
@@ -83,20 +89,33 @@ const QUALIFYING_WORDS = new Set([
   "sin", "nunca", "ohne", "nicht", "niemals", "sans", "jamais",
 ]);
 const QUALIFYING_PHRASES =
-  /(?<![\p{L}\p{N}])(?:part of|member of|one of|some of|up to|rather than|instead of|other than|failed to|and\/or|plans? to|aim(?:s|ed|ing)? to|in progress|ning[u\u00FA]n(?:a|o|as|os)?|kein(?:e|en|er|es|em)?|aucun(?:e|s|es)?)(?![\p{L}\p{N}])/iu;
+  /(?<![\p{L}\p{N}])(?:part of|member of|one of|some of|up to|rather than|instead of|other than|failed to|and\/or|plans? to|aim(?:s|ed|ing)? to|in progress|ning[u\u00FA]n(?:a|o|as|os)?|kein(?:e|en|er|es|em)?|aucun(?:e|s|es)?)(?![\p{L}\p{N}])/giu;
+
+// Whatever was typed or read where an apostrophe belongs: a quotation mark of either hand, an
+// accent standing alone, a prime, or a modifier letter that only looks like one. "Didn`t" and
+// "didn\u2018t" deny exactly what "didn't" denies.
+const APOSTROPHES = /['\u2032\u2035\uFF07\p{Pi}\p{Pf}\p{Sk}\p{Lm}]/gu;
+
+/**
+ * Every hedge, negation, alternative or intention in a line: the phrases in the order they come,
+ * then the words in theirs. Two lines qualified in the same way give the same list.
+ */
+export function qualifiers(line: string): string[] {
+  // The list is read against the words alone, whichever apostrophe and whatever spacing they came with.
+  const text = line.replace(APOSTROPHES, "'").replace(/\s+/gu, " ");
+  const found = [...text.matchAll(QUALIFYING_PHRASES)].map((phrase) => phrase[0].toLowerCase());
+  for (const match of text.matchAll(/[\p{L}\p{N}]+(?:'[\p{L}]+)?/gu)) {
+    const word = match[0];
+    const lower = word.toLowerCase();
+    // "May 2021" is a month. Only the verb is a possibility.
+    if (lower.endsWith("n't") || word === "may" || QUALIFYING_WORDS.has(lower)) found.push(lower);
+  }
+  return found;
+}
 
 /** The hedge, negation, alternative or intention that keeps a line whole, or null when it has none. */
 export function qualifier(line: string): string | null {
-  const phrase = QUALIFYING_PHRASES.exec(line);
-  if (phrase) return phrase[0].toLowerCase();
-  for (const match of line.matchAll(/[\p{L}\p{N}]+(?:['\u2019][\p{L}]+)?/gu)) {
-    const word = match[0];
-    const lower = word.toLowerCase().replace("\u2019", "'");
-    if (lower.endsWith("n't")) return lower;
-    // "May 2021" is a month. Only the verb is a possibility.
-    if (word === "may" || QUALIFYING_WORDS.has(lower)) return lower;
-  }
-  return null;
+  return qualifiers(line)[0] ?? null;
 }
 
 // ---------------------------------------------------------------- the proposal
@@ -137,7 +156,7 @@ export function splitPrompt(lines: SplitLine[]): ChatMessage[] {
 
 Each line comes with its words numbered from 0. For each line return its parts:
 - "clause": one thing the person did, with its verb and everything that verb acts on. When two verbs share words ("Designed and built the API"), give each verb its own clause and put the shared words in both.
-- "result": an outcome the line states for a clause ("cutting deploy time from 40 minutes to 6"). Set "of" to the position, in your list of parts for that line, of the clause it is the outcome of. "of" is null for every other kind.
+- "result": an outcome the line states for a clause ("cutting deploy time from 40 minutes to 6"). Set "of" to the position, in your list of parts for that line, of the clause it is the outcome of. Positions count from 0, as word numbers do: the first part you list is 0. A result comes after the clause it is the outcome of. "of" is null for every other kind.
 - "mention": a tool, product, organisation, or figure with its unit, inside a clause or result.
 "words" is one or more ranges of word numbers, {"from", "to"}, both inclusive, in the order they appear.
 
@@ -196,13 +215,16 @@ export function toParts(line: string, proposal: SplitProposal): NewPart[] | null
 const JOINING = new Set(["and", "&", "plus", "then", "also", "both", "while", "by", "thereby", "thus"]);
 
 const claimsOf = (parts: NewPart[]) => parts.filter((part) => part.kind !== "mention");
+/** The part a result is named as the outcome of. Only for parts that passed `partsProblem`. */
+const named = (parts: NewPart[], result: NewPart) => parts[result.resultOf!]!;
 
 /**
  * Why these parts can't stand for the line, as far as can be told without a model, or null when
  * they can. The parts are the line's own words, so the claim check is not looking for new words.
- * It finds a claim that says more by saying less: a figure without the word that scales or
+ * It finds a part that says more by saying less: a figure without the word that scales or
  * hedges it, a verb whose "helped" was left behind, or an action the line denies. It cannot find
- * every claim that pairs a verb with the wrong object. That is the judge's question.
+ * every claim that pairs a verb with the wrong object, or every result named as the outcome of
+ * the wrong one of the claims before it. Those are the judge's questions.
  */
 export function partsRefusal(line: string, parts: NewPart[]): SplitRefusal | null {
   if (partsProblem(line, parts)) return "malformed";
@@ -214,22 +236,35 @@ export function partsRefusal(line: string, parts: NewPart[]): SplitRefusal | nul
     const kept = claims.some((claim) => claim.ranges.some(([start, end]) => start <= run.coreStart && run.coreEnd <= end));
     if (!kept) return "word_lost";
   }
-  // A claim may join pieces of the line ("Designed ... the API"), but not across a figure. Reaching
-  // past one either leaves behind a number that belongs to the claim's verb or borrows another
-  // claim's: "Led a team of 5 and shipped 3 products" must never yield "Led 3 products".
-  for (const claim of claims)
-    for (let i = 1; i < claim.ranges.length; i++)
-      if (numbersIn(line.slice(claim.ranges[i - 1]![1], claim.ranges[i]![0])).length) return "figure_skipped";
-  for (const claim of claims) if (!checkClaim(partText(line, claim.ranges), [{ text: line }]).ok) return "claim_check";
+  // A part may join pieces of the line ("Designed ... the API"), but not across a figure. Reaching
+  // past one either leaves behind a number that belongs to the part's verb or borrows another's:
+  // "Led a team of 5 and shipped 3 products" must never yield "Led 3 products". A mention is held
+  // to this and to the claim check as a claim is: it is stored with the division, and "2" is not
+  // a mention of "2 million".
+  for (const part of parts)
+    for (let i = 1; i < part.ranges.length; i++)
+      if (numbersIn(line.slice(part.ranges[i - 1]![1], part.ranges[i]![0])).length) return "figure_skipped";
+  for (const part of parts) if (!checkClaim(partText(line, part.ranges), [{ text: line }]).ok) return "claim_check";
+  // Which claim a result is the outcome of is put to the judge by reading the two together, the
+  // claim and then the result. That reads as the line does only when the result comes after the
+  // claim, so a result named as the outcome of anything later keeps the line whole.
+  for (const part of parts) if (part.kind === "result" && named(parts, part).ranges.at(-1)![1] > part.ranges[0]![0]) return "result_before_claim";
   return null;
 }
 
-/** The judge's two questions for one line, as lines to check against facts. */
+/** The judge's three questions for one line, as lines to check against facts. */
 function judgeItems(line: SplitLine, parts: NewPart[]): JudgeItem[] {
   const claims = claimsOf(parts).map((claim) => partText(line.text, claim.ranges));
   return [
     // Does the line state each claim, with nothing added and nothing changed, when it is read alone?
     ...claims.map((text, index) => ({ alias: `${line.id}.${index}`, text, facts: [{ text: line.text, quote: null }] })),
+    // Does the line state each result as the outcome of the claim it names? The two are read
+    // together, the claim and then its result, so naming another claim asks another question.
+    ...parts.flatMap((part, index) =>
+      part.kind === "result"
+        ? [{ alias: `${line.id}.r${index}`, text: partText(line.text, [...named(parts, part).ranges, ...part.ranges]), facts: [{ text: line.text, quote: null }] }]
+        : [],
+    ),
     // Do the claims together say everything the line says?
     { alias: `${line.id}.all`, text: line.text, facts: claims.map((text) => ({ text, quote: null })) },
   ];
@@ -239,9 +274,12 @@ async function judged(models: Models, items: JudgeItem[]): Promise<Map<string, b
   const verdicts = new Map<string, boolean>();
   for (let at = 0; at < items.length; at += JUDGE_ITEMS_PER_CALL) {
     const batch = items.slice(at, at + JUDGE_ITEMS_PER_CALL);
+    const asked = new Set(batch.map((item) => item.alias));
     const out = models.judge ? await models.judge(batch) : await models.complete("judge", judgePrompt(batch), JudgeOut);
     for (const verdict of out.verdicts) {
       const id = verdict.id.trim();
+      // An answer counts only for a question this call asked, so one call never answers for another.
+      if (!asked.has(id)) continue;
       // Two answers for one question are no answer, whatever either says.
       verdicts.set(id, !verdicts.has(id) && verdict.verdict === "supported");
     }
@@ -300,7 +338,9 @@ export async function splitLines(models: Models, lines: SplitLine[]): Promise<Sp
     checked.forEach(({ line, parts }, index) => {
       const alias = `L${index + 1}`;
       const alone = claimsOf(parts).every((_, claim) => verdicts.get(`${alias}.${claim}`) === true);
+      const outcomes = parts.every((part, at) => part.kind !== "result" || verdicts.get(`${alias}.r${at}`) === true);
       if (!alone) whole(line.id, "reads_differently");
+      else if (!outcomes) whole(line.id, "not_its_outcome");
       else if (verdicts.get(`${alias}.all`) !== true) whole(line.id, "says_less");
     });
   }

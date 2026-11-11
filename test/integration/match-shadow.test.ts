@@ -1,4 +1,4 @@
-import { runInDurableObject } from "cloudflare:test";
+import { introspectWorkflow, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setModels } from "../../src/ai/models";
@@ -80,7 +80,7 @@ describe("reading with shadow matching switched on", () => {
     expect(links.filter((link) => link.kind === "role")).toHaveLength(3);
     expect(links.filter((link) => link.kind === "fact")).toHaveLength(8);
     for (const link of links) {
-      expect(link).toMatchObject({ relation: "same", state: "proposed", shadow: true, holds: false, proposedBy: "rule", model: null, decidedBy: null, method: link.kind === "role" ? "identical-role/1" : "identical-wording/1" });
+      expect(link).toMatchObject({ relation: "same", state: "proposed", shadow: true, holds: false, proposedBy: "rule", model: null, decidedBy: null, method: link.kind === "role" ? "identical-role/2" : "identical-wording/2" });
       // The later copy points at the earlier one.
       expect([sourceOf.get(link.from), sourceOf.get(link.to)], link.id).toEqual([second, first]);
     }
@@ -137,6 +137,23 @@ describe("reading with shadow matching switched on", () => {
     expect(merged.roots).toEqual(facts.map(() => earliest));
     expect(merged.quotes).toHaveLength(3);
     expect(new Set(merged.quotes.map((quote) => quote.sourceId)).size).toBe(3);
+  });
+
+  it("gets one try: when the stage runs out of time it is not run again, and the upload finishes", async () => {
+    const reading = await introspectWorkflow(env.DISTILL);
+    try {
+      // The stage's first try runs out of time before it does anything. A second try would note the copies.
+      await reading.modifyAll(async (step) => {
+        await step.forceStepTimeout({ name: "match" }, 1);
+      });
+      const user = await signIn();
+      await read(user);
+      await read(user, "\nVolunteer: Code Club mentor, 2019");
+      expect((await shown(user)).facts).toHaveLength(16);
+      expect((await inVault(user, (record) => record.export())).recordLinks).toEqual([]);
+    } finally {
+      await reading.dispose();
+    }
   });
 
   it("finishes the upload with every fact when matching fails", async () => {

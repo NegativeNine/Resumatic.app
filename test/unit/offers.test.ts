@@ -7,19 +7,22 @@ import { MATCH_PAIRS } from "../fixtures/match-pairs";
 const pair = (later: string, earlier: string, n = 1): OfferPair => ({ later: { id: `later-${n}`, text: later }, earlier: { id: `earlier-${n}`, text: earlier } });
 
 type Verdict = "supported" | "unsupported" | "overstated" | "missing" | "twice";
-/** A judge that answers by the line it is asked about. Unlisted lines are supported. */
-function models(verdicts: Record<string, Verdict> = {}, typed = false) {
+type Answer = { id: string; verdict: "supported" | "unsupported" | "overstated"; reason: string };
+/**
+ * A judge that answers by the line it is asked about. Unlisted lines are supported. `reply`
+ * rewrites a whole reply; `call` counts the judge's calls from 0.
+ */
+function models(verdicts: Record<string, Verdict> = {}, typed = false, reply?: (answers: Answer[], call: number) => Answer[]) {
   const asked: JudgeItem[][] = [];
   const judge = (items: JudgeItem[]) => {
     asked.push(items);
-    return {
-      verdicts: items.flatMap((item) => {
-        const verdict = verdicts[item.text] ?? "supported";
-        if (verdict === "missing") return [];
-        const one = { id: item.alias, verdict: verdict === "twice" ? ("supported" as const) : verdict, reason: "" };
-        return verdict === "twice" ? [one, one] : [one];
-      }),
-    };
+    const answers = items.flatMap((item): Answer[] => {
+      const verdict = verdicts[item.text] ?? "supported";
+      if (verdict === "missing") return [];
+      const one = { id: item.alias, verdict: verdict === "twice" ? ("supported" as const) : verdict, reason: "" };
+      return verdict === "twice" ? [one, one] : [one];
+    });
+    return { verdicts: reply ? reply(answers, asked.length - 1) : answers };
   };
   const made: Models = {
     async complete(route, messages, schema) {
@@ -84,6 +87,44 @@ describe("what to offer about two lines", () => {
     expect(asked.flat().map((item) => item.text)).toEqual(["Led a team of engineers"]);
   });
 
+  it("offers nothing, and asks nothing, about a hedge, a denial, an attempt or an intention that only one line has", async () => {
+    // This judge says yes to everything, and no list of verbs knows "handle", "complete",
+    // "negotiate" or "pursue". The closed list of qualifying words settles each pair first.
+    const cases: [stated: string, qualified: string][] = [
+      ["Handled customer escalations", "Never handled customer escalations"],
+      ["Completed the PMP certification", "Did not complete the PMP certification"],
+      ["Negotiated vendor contracts", "Didn't negotiate vendor contracts"],
+      ["Negotiated vendor contracts", "Didn\u00B4t negotiate vendor contracts"],
+      ["Completed the PMP certification", "Pursuing the PMP certification"],
+      ["AWS Solutions Architect certification", "AWS Solutions Architect certification (in progress)"],
+      ["Migrated the billing system", "Tried to migrate the billing system"],
+      ["Built a new billing system", "Planned to build a new billing system"],
+      ["Led the migration to Kubernetes", "Helped lead the migration to Kubernetes"],
+      ["Built services in Python", "Built services in Python or Go"],
+      // Each line is qualified, but not by the same words.
+      ["Never managed the vendor budget", "Did not manage the vendor budget"],
+      ["Helped migrate the billing system", "Tried to migrate the billing system"],
+      // Every qualifying word counts, not only the first a line has.
+      ["Helped design the API and handled escalations", "Helped design the API and never handled escalations"],
+    ];
+    for (const [stated, qualified] of cases)
+      for (const [later, earlier] of [[stated, qualified], [qualified, stated]] as const) {
+        const { models: fake, asked } = models();
+        expect(await offers(fake, [pair(later, earlier)]), `${later} / ${earlier}`).toEqual([]);
+        expect(asked, `${later} / ${earlier}`).toEqual([]);
+      }
+  });
+
+  it("still asks about two lines qualified by the same words", async () => {
+    const { models: fake, asked } = models();
+    expect(await offers(fake, [pair("Helped design the billing API used by 3 product teams", "Helped design the billing API that 3 product teams use")])).toEqual([{ relation: "same", from: "later-1", to: "earlier-1" }]);
+    expect(asked.flat()).toHaveLength(2);
+    // Where the same words qualify both, a denial of a known action is still settled without asking.
+    const denied = models();
+    expect(await offers(denied.models, [pair("Did not manage the budget but led the roadmap", "Managed the budget but did not lead the roadmap")])).toEqual([]);
+    expect(denied.asked).toEqual([]);
+  });
+
   it("asks the typed-decision judge where there is one", async () => {
     const { models: fake, asked } = models({ [LONG]: "unsupported" }, true);
     expect(await offers(fake, [pair(LONG, SHORT)])).toEqual([{ relation: "fuller", from: "later-1", to: "earlier-1" }]);
@@ -99,6 +140,30 @@ describe("what to offer about two lines", () => {
     expect(found.every((offer) => offer.from.startsWith("later-") && offer.to.startsWith("earlier-"))).toBe(true);
   });
 
+  it("takes an answer only from the call that asked the question", async () => {
+    // Eleven pairs are 22 questions, asked in calls of 20 and 2. Both questions about the last
+    // pair are in the second call.
+    const pairs = Array.from({ length: 11 }, (_, index) => pair(`Trained ${index + 2} new starters every month`, `Trained ${index + 2} new starters`, index));
+    const yes = (id: string): Answer => ({ id, verdict: "supported", reason: "" });
+    const relations = async (reply: (answers: Answer[], call: number) => Answer[], typed: boolean) => {
+      const { models: fake, asked } = models({}, typed, reply);
+      const found = await offers(fake, pairs);
+      expect(asked.map((batch) => batch.map((item) => item.alias))).toEqual([expect.not.arrayContaining(["11.e", "11.l"]), ["11.e", "11.l"]]);
+      return pairs.map((one) => found.find((offer) => [one.later.id, one.earlier.id].includes(offer.from))?.relation ?? "nothing");
+    };
+    for (const typed of [false, true]) {
+      // The first reply volunteers that the earlier line says everything, and the call that asked gets no answer.
+      expect(await relations((answers, call) => (call === 0 ? [...answers, yes("11.l")] : answers.filter((answer) => answer.id !== "11.l")), typed), String(typed)).toEqual([...Array(10).fill("same"), "fuller"]);
+      // The other way round: no answer from the call that asked, and one volunteered by the next.
+      expect(await relations((answers, call) => (call === 0 ? answers.filter((answer) => answer.id !== "3.e") : [...answers, yes("3.e")]), typed), String(typed)).toEqual(["same", "same", "fuller", ...Array(8).fill("same")]);
+      // An answer nobody asked for decides nothing by itself, and takes nothing from the answer that was asked for.
+      expect(await relations((answers, call) => (call === 0 ? [...answers, { ...yes("11.e"), verdict: "unsupported" }, yes("12.e")] : answers), typed), String(typed)).toEqual(Array(11).fill("same"));
+      // Nor does a volunteered answer stand in for a direction a check settled without asking.
+      const { models: fake } = models({}, typed, (answers) => [...answers, yes("1.l")]);
+      expect(await offers(fake, [pair("Led a team of 5 engineers", "Led a team of engineers")]), String(typed)).toEqual([{ relation: "fuller", from: "later-1", to: "earlier-1" }]);
+    }
+  });
+
   it("lets a judge failure through, for the caller to keep nothing", async () => {
     const failing: Models = { ...models().models, complete: async () => Promise.reject(new Error("unavailable: model provider network failure")) };
     await expect(offers(failing, [pair(LONG, SHORT)])).rejects.toThrow("unavailable");
@@ -109,9 +174,14 @@ describe("what to offer about two lines", () => {
 describe("labelled pairs", () => {
   const never = MATCH_PAIRS.filter((example) => example.expect === "different");
 
-  it.each(never.filter((example) => example.stoppedBy === "check"))("$later / $earlier: never the same, because of $why, whatever a judge says", async (example) => {
-    const found = await offers(models().models, [pair(example.later, example.earlier)]);
-    expect(found.filter((offer) => offer.relation === "same")).toEqual([]);
+  it.each(never.filter((example) => example.stoppedBy === "check"))("$later / $earlier: never offered, because of $why, whatever a judge says", async (example) => {
+    // This judge says yes to everything, so nothing can have been put to it: a check that needs
+    // no model settled both directions.
+    for (const [later, earlier] of [[example.later, example.earlier], [example.earlier, example.later]] as const) {
+      const { models: fake, asked } = models();
+      expect(await offers(fake, [pair(later, earlier)])).toEqual([]);
+      expect(asked).toEqual([]);
+    }
   });
 
   it.each(never.filter((example) => example.stoppedBy === "judge"))("$later / $earlier: only the judge can tell that $why", async (example) => {

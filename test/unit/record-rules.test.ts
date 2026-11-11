@@ -278,15 +278,44 @@ describe("identical wording", () => {
       "Led a team of 5 engineers.",
       "  Led a team  of 5 engineers ",
       "- Led a team of 5 engineers",
+      "+ Led a team of 5 engineers",
+      "\u2013 Led a team of 5 engineers",
+      "# Led a team of 5 engineers",
       "\u2022 Led a team of 5 engineers.",
+      "\u2022 - Led a team of 5 engineers",
       "**Led** a team of 5 engineers",
+      "- **Led** a team of 5 engineers",
     ])
       expect(sameWording(line, other), other).toBe(true);
     expect(sameWording("Won \u201CEngineer of the Year\u201D", 'Won "Engineer of the Year"')).toBe(true);
     expect(sameWording("Ran the team\u2019s roadmap", "Ran the team's roadmap")).toBe(true);
     // The same letters written as one character or as a letter and a mark.
     expect(sameWording("Caf\u00E9 manager", "Cafe\u0301 manager")).toBe(true);
-    expect(wording("1. Built the API.")).toBe("Built the API");
+    expect(wording("\u2022 Built the API.")).toBe("Built the API");
+  });
+
+  it("keeps a number or a sign a line starts with, which a list marker never is here", () => {
+    // What was read from an upload has already lost its list numbers. A number that is still
+    // there was typed, and "1. Staatsexamen" and "2. Staatsexamen" are two credentials.
+    const different: [a: string, b: string][] = [
+      ["1. Staatsexamen", "2. Staatsexamen"],
+      ["1) Platz beim Hackathon", "3) Platz beim Hackathon"],
+      ["2019. Graduated", "2020. Graduated"],
+      ["5. Semester Informatik", "7. Semester Informatik"],
+      ["1. Built the API", "Built the API"],
+      // A dash or a plus before a figure is its sign.
+      ["+ 5% churn", "- 5% churn"],
+      ["- 5% churn", "5% churn"],
+      ["\u2013 5% churn", "5% churn"],
+      ["+ $5M ARR", "- $5M ARR"],
+      ["+ 30% revenue", "30% revenue"],
+      // And a hash before one is "number".
+      ["# 1 in regional sales", "1 in regional sales"],
+    ];
+    for (const [a, b] of different) expect(sameWording(a, b), `${a} / ${b}`).toBe(false);
+    expect(wording("1. Built the API.")).toBe("1. Built the API");
+    expect(wording("- 5% churn")).toBe("- 5% churn");
+    expect(wording("- 1. Built the API")).toBe("- 1. Built the API");
   });
 
   it("treats every other difference as a different line", () => {
@@ -329,6 +358,7 @@ describe("identical roles", () => {
       { ...role, org: "Acme Ltd" },
       { ...role, org: "ACME" },
       { ...role, title: "Engineer" },
+      { ...role, title: "1. Senior Engineer" },
       { ...role, title: null },
       { ...role, startDate: "2019-04" },
       { ...role, startDate: "2019" },
@@ -338,6 +368,9 @@ describe("identical roles", () => {
       { ...role, endDate: null },
     ])
       expect(sameRole(role, other), JSON.stringify(other)).toBe(false);
+    // The first and the second chair of a board are two roles.
+    expect(sameRole({ ...role, title: "1. Vorsitzender" }, { ...role, title: "2. Vorsitzender" })).toBe(false);
+    expect(sameRole({ ...role, org: "1. FC Example" }, { ...role, org: "2. FC Example" })).toBe(false);
     // Two roles with no title, or no known start, are offered to the owner rather than merged.
     expect(sameRole({ ...role, title: null }, { ...role, title: null })).toBe(false);
     expect(sameRole({ ...role, startDate: null, endDate: null }, { ...role, startDate: null, endDate: null })).toBe(false);

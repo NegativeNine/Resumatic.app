@@ -18,7 +18,7 @@ None of these changes a fact, a role or a quote. Each is a row beside them, and 
 
 ## What every judgement carries
 
-- **What made it:** a rule in the code, a model, or the owner; the model's name if one did; the rule or check and its version (`identical-wording/1`); the taxonomy build it was made against; and how sure the check was, where it says.
+- **What made it:** a rule in the code, a model, or the owner; the model's name if one did; the rule or check and its version (`identical-wording/2`); the taxonomy build it was made against; and how sure the check was, where it says.
 - **What was decided:** it starts as *proposed*. Only the owner confirms or rejects it, with the one exception under "Merging without asking" below. A model never decides.
 - **Whether it is in shadow.** A shadow judgement is stored to be measured and shown to nobody. The owner cannot decide it, it merges nothing, and nothing but measurement reads it. A judgement that shows and one in shadow can exist side by side.
 
@@ -48,7 +48,7 @@ A part is a list of positions in its fact's text and a kind. No wording is store
 
 The record also refuses parts that are out of order, overlap inside one part, repeat, or don't fit together: a division needs at least one clause, a result must lead to a clause, and a mention must sit inside a claim.
 
-**What the record does not check.** Whether a part means what the line means cannot be told from positions. Whether a line with "helped" or "not" in it may be divided at all, whether anything was left out, and whether each part reads the same alone are checked where a division is proposed (step 4), and a division that passes here can still be refused there.
+**What the record does not check.** Whether a part means what the line means cannot be told from positions. Whether a line with "helped" or "not" in it may be divided at all, whether anything was left out, whether each part reads the same alone, and whether a result is the outcome of the claim it names are checked where a division is proposed (step 4), and a division that passes here can still be refused there.
 
 **One division at a time.** A new proposal replaces one nobody has decided. It never replaces a division the owner accepted, and one the owner turned down is not stored again. The owner dividing a line themselves replaces whatever stood. A skill is one item and has no parts.
 
@@ -75,16 +75,17 @@ The record checks that the ID is in the taxonomy's own form. It cannot check tha
 
 - **Facts merge only inside one role.** Two facts can be linked where it shows only if they sit in the same role, in roles that were merged, or in no role. If the owner later separates the roles, the merges between their facts stop holding, and they hold again if the roles are rejoined. No row changes either time; each link says whether it holds.
 - **One at a time.** A fact or role is merged into one other at most, and never in a circle. Two items are joined one way at a time. The owner's own choice replaces an offer nobody had decided; nothing else replaces anything.
+- **What the owner separated stays separate.** Once the owner turns down a merge of two facts or two roles, no rule or model proposes that merge again, whichever of the two it would have stand for both. A rule also merges nothing without asking that would put the two back in one group: not one of them into a fact the other stands in, and not a fact that stands for one of them into the other. Merges between facts whose roles are apart for now are counted, because they hold again when the roles are rejoined. Only the owner joins the two again. A finding kept in shadow is not affected: it stands for nothing.
 - A fact or role holds at most 128 links.
 
 ### Merging without asking
 
 One judgement can be confirmed by a rule instead of the owner, and the record checks the grounds itself before it stores it:
 
-- **Two facts** of the same kind, in one role, whose wording is identical once presentation is removed: list markers, paired Markdown marks, runs of spaces, the shape of quotation marks, and one full stop at the very end. Case, numbers, dates, and every other mark must match. Outside any role this applies to skills and credentials only: an accomplishment that was read without a job has no role that was found to be the same one, so it is offered instead.
+- **Two facts** of the same kind, in one role, whose wording is identical once presentation is removed: bullets, paired Markdown marks, runs of spaces, the shape of quotation marks, and one full stop at the very end. Case, numbers, dates, and every other mark must match. That includes a number or a sign a line starts with: "1. Staatsexamen" and "2. Staatsexamen" are two credentials, and "- 5% churn" is not "+ 5% churn". A dash, a plus or a heading mark is a bullet only when a word follows it, and a leading number never is one, because what was read from an upload lost its list numbers when it was read. Outside any role this applies to skills and credentials only: an accomplishment that was read without a job has no role that was found to be the same one, so it is offered instead.
 - **Two roles** alike in every field that names a role: the same kind, organisation and title, the same known start, and the same end or none in both. A missing title, an unknown date, or a date written more exactly in one than the other is not enough.
 
-Anything else a rule or a model finds is stored as an offer. The owner can separate a merge made this way, and the rule will not make it again.
+Anything else a rule or a model finds is stored as an offer. The owner can separate a merge made this way, and no rule will make it again: not as it was, not the other way round, and not by way of a third fact or role.
 
 ## When words change
 

@@ -1,4 +1,4 @@
-import { runInDurableObject } from "cloudflare:test";
+import { introspectWorkflow, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it } from "vitest";
 import { setModels, type Models } from "../../src/ai/models";
@@ -39,12 +39,12 @@ async function read(user: User, filename: string, content: string): Promise<void
 }
 
 /** Reads the first resume, then the second with these models, and gives back what the record holds. */
-async function twice(second: FakeModelOptions, wrap: (models: Models) => Models = (models) => models) {
+async function twice(second: FakeModelOptions, wrap: (models: Models, user: User) => Models = (models) => models) {
   const user = await signIn();
   setModels(() => fakeModels());
   await read(user, "jane-doe.pdf", RESUME);
   const options: FakeModelOptions = { calls: {}, extraction: EXTRACTION_2, ...second };
-  setModels(() => wrap(fakeModels(options)));
+  setModels(() => wrap(fakeModels(options), user));
   await read(user, "jane-doe-2024.pdf", RESUME_2);
   const facts = (await user.json<{ facts: FactView[] }>("/api/facts")).facts;
   const links = await runInDurableObject(vaultOf(user), (_instance, state) => {
@@ -85,7 +85,7 @@ describe("reading with shadow offers switched on", () => {
       holds: false,
       proposedBy: "model",
       model: env.MODEL_JUDGE,
-      method: "entailment/1",
+      method: "entailment/2",
       decidedBy: null,
     });
     expect(links.shown).toEqual([]);
@@ -112,9 +112,53 @@ describe("reading with shadow offers switched on", () => {
     settings.MATCH_SHADOW_ENABLED = "true";
     const { links, long, short } = await twice({ judgeRejects: ["every quarter"] });
     // Three roles and seven lines are word for word the same. The eighth line is the offer.
-    expect(links.all.filter((link) => link.proposedBy === "rule").map((link) => link.method).sort()).toEqual([...Array(3).fill("identical-role/1"), ...Array(7).fill("identical-wording/1")].sort());
-    expect(links.all.filter((link) => link.proposedBy === "model")).toMatchObject([{ relation: "fuller", from: long.id, to: short.id, method: "entailment/1" }]);
+    expect(links.all.filter((link) => link.proposedBy === "rule").map((link) => link.method).sort()).toEqual([...Array(3).fill("identical-role/2"), ...Array(7).fill("identical-wording/2")].sort());
+    expect(links.all.filter((link) => link.proposedBy === "model")).toMatchObject([{ relation: "fuller", from: long.id, to: short.id, method: "entailment/2" }]);
     expect(links.all.every((link) => link.shadow && !link.holds)).toBe(true);
+  });
+
+  it.each([
+    ["earlier", SHORT, "Mentored 12 junior engineers"],
+    ["later", LONG, "Mentored 12 junior engineers every quarter"],
+  ])("keeps no offer about a pair whose %s line was reworded while the judge was being asked", async (_which, before, after) => {
+    settings.OFFER_SHADOW_ENABLED = "true";
+    let reworded = false;
+    // This judge says yes to both questions, about the lines as they stood when it was asked.
+    const { facts, links, calls } = await twice({}, (models, user) => ({
+      ...models,
+      async complete(route, messages, schema, options) {
+        if (route === "judge" && !reworded) {
+          reworded = true;
+          // Before it answers, the owner corrects one of the two lines: it was twelve engineers.
+          const listed = (await user.json<{ facts: FactView[] }>("/api/facts")).facts;
+          const edited = await user.send("PATCH", `/api/facts/${listed.find((fact) => fact.text === before)!.id}`, { text: after });
+          expect(edited.status, await edited.clone().text()).toBe(204);
+        }
+        return models.complete(route, messages, schema, options);
+      },
+    }));
+    expect(calls.judge).toBe(1);
+    expect(facts).toHaveLength(16);
+    expect(facts.filter((fact) => fact.text === after)).toHaveLength(1);
+    // The answer was about words one of the lines no longer has, so nothing is kept of it.
+    expect(links.all).toEqual([]);
+  });
+
+  it("gets one try: when the stage runs out of time the judge is not asked again, and the upload finishes", async () => {
+    settings.OFFER_SHADOW_ENABLED = "true";
+    const reading = await introspectWorkflow(env.DISTILL);
+    try {
+      // The stage's first try runs out of time before it does anything. A second try would ask the judge.
+      await reading.modifyAll(async (step) => {
+        await step.forceStepTimeout({ name: "offer" }, 1);
+      });
+      const { facts, links, calls } = await twice({});
+      expect(facts).toHaveLength(16);
+      expect(calls.judge).toBeUndefined();
+      expect(links.all).toEqual([]);
+    } finally {
+      await reading.dispose();
+    }
   });
 
   it("finishes the upload with every fact when the judge fails", async () => {

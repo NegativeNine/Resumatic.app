@@ -1,4 +1,4 @@
-import { runInDurableObject } from "cloudflare:test";
+import { introspectWorkflow, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setModels, type Models } from "../../src/ai/models";
@@ -130,7 +130,7 @@ describe("reading an upload with shadow divisions switched on", () => {
       shadow: true,
       proposedBy: "model",
       model: `${env.MODEL_EXTRACT}+${env.MODEL_JUDGE}`,
-      method: "split/1",
+      method: "split/2",
       decidedBy: null,
     });
     expect(record.shadow!.parts.map((part) => [part.kind, part.text])).toEqual([
@@ -153,6 +153,18 @@ describe("reading an upload with shadow divisions switched on", () => {
     const user = await signIn();
     const facts = await read(user);
     expect(facts).toHaveLength(8);
+    expect((await held(user, facts.find((fact) => fact.text === LED)!.id)).all.factSplits).toEqual([]);
+  });
+
+  it("keeps nothing when the judge does not find that the line states a result with the claim it is named as the outcome of", async () => {
+    // Read together, the claim and its result have no comma between them. So this judge accepts
+    // each part alone and the line against its parts, and refuses only the two read as one.
+    const { seen, models } = splitting(divideLed, { judgeRejects: ["Kubernetes cutting deploy time by 60%"] });
+    setModels(() => models);
+    const user = await signIn();
+    const facts = await read(user);
+    expect(facts).toHaveLength(8);
+    expect(seen.options.calls?.judge).toBe(1);
     expect((await held(user, facts.find((fact) => fact.text === LED)!.id)).all.factSplits).toEqual([]);
   });
 
@@ -180,6 +192,27 @@ describe("reading an upload with shadow divisions switched on", () => {
     expect(seen.asked).toHaveLength(1);
     expect(facts).toHaveLength(8);
     expect((await held(user, facts[0]!.id)).all.factSplits).toEqual([]);
+  });
+
+  it("gets one try: when the stage runs out of time nothing is asked again, and the upload finishes", async () => {
+    const reading = await introspectWorkflow(env.DISTILL);
+    try {
+      // The stage's first try runs out of time before it does anything. A second try would ask
+      // the model and keep a division, and the upload would be marked ready that much later.
+      await reading.modifyAll(async (step) => {
+        await step.forceStepTimeout({ name: "split" }, 1);
+      });
+      const { seen, models } = splitting(divideLed);
+      setModels(() => models);
+      const user = await signIn();
+      const facts = await read(user);
+      expect(facts).toHaveLength(8);
+      expect(seen.asked).toEqual([]);
+      expect(seen.options.calls?.judge).toBeUndefined();
+      expect((await held(user, facts.find((fact) => fact.text === LED)!.id)).all.factSplits).toEqual([]);
+    } finally {
+      await reading.dispose();
+    }
   });
 
   it("finishes the upload with every fact when the answer is not an answer", async () => {

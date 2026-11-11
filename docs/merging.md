@@ -11,7 +11,7 @@ It is step 6 of the [pipeline design](taxonomy-pipelines-design.md), in shadow. 
 Nothing here is decided by likeness, and no model is asked.
 
 - **Two roles** match when every field that names a role is the same: kind, organisation, title, a known start, and the same end or none in both. A role with no title, no known start, or an end that isn't known matches nothing, however alike two such roles look.
-- **Two facts** match when they are of the same kind, sit in roles that match, and have the same wording once presentation is removed. Outside any role, only skills and credentials match: an accomplishment read without a job has no role that was found to be the same one.
+- **Two facts** match when they are of the same kind, sit in roles that match, and have the same wording once presentation is removed. A bullet is presentation. A number or a sign a line starts with is not: "1. Staatsexamen" and "2. Staatsexamen" are two credentials. Outside any role, only skills and credentials match: an accomplishment read without a job has no role that was found to be the same one.
 
 These are exactly the two findings the record will confirm without the owner ([record.md](record.md), "Merging without asking"), and both use one definition of each (`roleKey` and `wording` in `src/shared/record.ts`). A test puts every finding the matcher makes in a real vault to the record's own check, and all are accepted.
 
@@ -26,10 +26,10 @@ Rows are read oldest first, and each later copy points at the **earliest** row t
 With `MATCH_SHADOW_ENABLED=true`, reading an upload gains one stage after its facts are embedded:
 
 - It looks across the whole record, not only the new upload, so copies that were already there are found too.
-- Each finding is stored as a shadow link from the copy to the earliest row, stamped `identical-role/1` or `identical-wording/1`. What was found before is not stored again.
+- Each finding is stored as a shadow link from the copy to the earliest row, stamped `identical-role/2` or `identical-wording/2`. What was found before is not stored again.
 - **Nothing is merged.** A shadow link stands for nothing: every fact still stands for itself with its own one quote, the lists show every row, and tailoring hides repeats as it already does.
 - It makes no model call, so it costs nothing and adds almost no time.
-- **It cannot fail an upload.** A failure leaves the upload exactly as it is read today.
+- **It cannot fail an upload.** A failure leaves the upload exactly as it is read today. It gets one try of at most three minutes and is not run again.
 
 A person's export includes these links, marked as in shadow.
 
@@ -39,22 +39,28 @@ Lines that differ in wording are never merged by a rule. With `OFFER_SHADOW_ENAB
 
 **Which pairs are asked about.** For each line the upload proposed, other than skills: the lines of the same kind, in the same role, from another upload or typed by the owner, that are nearest to it in meaning. At most two for each line, none below a set nearness, and at most sixty pairs for an upload. A pair with the same words is left to the rule above, and a pair that was linked or offered before is not asked about again. Roles count as the same role only when they are alike in every field that names a role.
 
-**What is asked.** Each direction separately: does this line say everything that one says?
+**What is asked.** First, of the pair, and without a model: are the two lines qualified by the same words? Each is read against the closed list that keeps a line from being divided ([splitting.md](splitting.md), starting rule 1): shared credit and hedges, denials, alternatives, attempts and intentions. If one line has such a word and the other does not, or the two have different ones, nothing is offered and no model is asked. "Pursuing the PMP certification" is not "Completed the PMP certification", "Never handled customer escalations" is not "Handled customer escalations", and "Helped lead the migration" is not "Led the migration". The list is wide on purpose, so some pairs a person would offer are not.
 
-1. The checks a resume line passes against its facts, which need no model. A different figure, a different name, a hedge on one side, a denial, or an outcome going the other way settles that direction as no, whatever a judge would say.
-2. The judge, in the form it already answers. Anything but one plain "supported" is a no.
+Then each direction separately: does this line say everything that one says?
+
+1. The checks a resume line passes against its facts, which need no model. A different figure, a different name, a denial or a plan of an action those checks know, or an outcome going the other way settles that direction as no, whatever a judge would say.
+2. The judge, in the form it already answers. Anything but one plain "supported" is a no, and an answer counts only in the call that asked its question.
 
 | Each says everything the other says | Only one does | Neither does |
 | --- | --- | --- |
 | Offered as the same fact. The earlier one would stand for both | The one that says more is offered as a fuller version of the other. Both stay | Nothing |
 
-**What only the judge can stop.** "Wrote the on-call runbooks" and "Reviewed the on-call runbooks" have no figure, name or hedge to tell them apart. No check stops them being offered as the same; only the judge does. The labelled pairs mark which wrong offers are stopped without a model and which are not (`test/fixtures/match-pairs.ts`), and the eval puts each to the real judge (`test/evals/match.eval.ts`). It has not been run.
+**What only the judge can stop.** "Wrote the on-call runbooks" and "Reviewed the on-call runbooks" have no figure, name or hedge to tell them apart. No check stops them being offered as the same; only the judge does. The same holds for two lines qualified by the same words about different things. "Handled escalations but did not answer tickets" and "Did not handle escalations but answered tickets" each deny what the other says in the same words, and the claim checks read a denial only beside the verbs they know. The labelled pairs mark which wrong offers are stopped without a model and which are not (`test/fixtures/match-pairs.ts`), and the eval puts each to the real judge (`test/evals/match.eval.ts`). It has not been run.
 
 An offer is only ever an offer. Nothing here confirms one, and in shadow nobody is shown one.
+
+**An answer is about particular words.** The judge is asked while the upload is still being read, and either line can be reworded in the meantime. Each answer goes back to the vault with the two lines as the judge was asked about them, and an offer is kept only if both facts still say exactly that. Rewording a fact afterwards removes its offers, as it removes every judgement about its words ([record.md](record.md), "When words change").
+
+Like the matcher, this step cannot fail an upload and gets one try of at most three minutes. If it runs out of time it is not run again, so the judge is never asked the same questions twice, and nothing is kept.
 
 ## What is not built
 
 - **Offering roles that are nearly the same**, such as the same job with a different title, which is also what a promotion looks like.
 - **Merges that show.** The record already confirms identical copies without the owner when it is asked to. What is missing is the review screens (step 7): a merged fact has to be shown as one fact with each of its quotes, and the owner has to be able to separate it, before any merge takes effect.
-- **The eval against the real judge**, which needs model credentials and has not been run.
+- **The eval against the real judge**, which needs model credentials and has not been run. It asks the judge the way the Worker does for the configuration it reads: in staging that is one typed decision for each question, held to the Worker's threshold.
 - **Measurement.** How often two facts offered as the same are not has to be measured on real records before any offer is shown, and before anything but identical wording merges without asking.

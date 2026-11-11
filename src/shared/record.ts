@@ -21,7 +21,7 @@ export interface Stamp {
   proposedBy: Proposer;
   /** The model that made it. Null unless a model did. */
   model: string | null;
-  /** The rule or check that produced it, with its version: "identical-wording/1". */
+  /** The rule or check that produced it, with its version: "identical-wording/2". */
   method: string;
   /** The taxonomy build it was made against. Every tag has one. */
   taxonomyVersion: string | null;
@@ -397,13 +397,21 @@ export interface RecordExport {
 
 // ---------------------------------------------------------------- identical wording, identical roles
 
+// The only list markers that are never part of what a line says: a bullet, and a dash, a plus
+// or a heading mark with a word after it. A number is not one, and neither is a dash, a plus or
+// a hash before a figure. Text read from an upload lost its list numbers when it was read, so a
+// number a line still starts with was typed there: "1. Staatsexamen" is not "2. Staatsexamen",
+// and "- 5% churn" is not "+ 5% churn".
+const BULLETS = /^(?:(?:[*•▪●‣◦]|[-+–](?=\s+[*`]*\p{L})|#{1,6}(?=\s+[*`]*\p{L}))\s+)+/u;
+
 /**
- * A line with only its presentation removed: list markers and paired Markdown marks, runs of
+ * A line with only its presentation removed: bullets and paired Markdown marks, runs of
  * spaces, the shape of quotation marks, and one full stop at the very end. Case, numbers, dates
- * and every other mark stay, because any of them can carry meaning.
+ * and every other mark stay, because any of them can carry meaning. That includes a number or a
+ * sign the line starts with.
  */
 export function wording(text: string): string {
-  return cleanExtractedText(text.normalize("NFC"))
+  return cleanExtractedText(text.normalize("NFC"), BULLETS)
     .replace(/[\u2018\u2019\u02BC]/g, "'")
     .replace(/[\u201C\u201D]/g, '"')
     .replace(/(?<=[\p{L}\p{N})\]"'%])\.$/u, "");

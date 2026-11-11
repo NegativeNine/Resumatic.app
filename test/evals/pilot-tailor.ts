@@ -25,6 +25,8 @@ export async function runPilotTailoring(base: Models): Promise<void> {
   const calls = { embed: 0, rerank: 0, judge: 0 };
   const models: Models = {
     ...base,
+    // A typed-decision judge is asked through `judge`, and a chat judge through `complete`.
+    ...(base.judge ? { async judge(items: Parameters<NonNullable<Models["judge"]>>[0]) { calls.judge++; return base.judge!(items); } } : {}),
     async embed(texts, options) { calls.embed++; return base.embed(texts, options); },
     async rerank(query, texts) { calls.rerank++; return base.rerank(query, texts); },
     async complete<T>(route: Route, messages: Parameters<Models["complete"]>[1], schema: Parameters<Models["complete"]>[2], options?: Parameters<Models["complete"]>[3]): Promise<T> {

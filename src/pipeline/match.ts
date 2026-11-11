@@ -2,6 +2,7 @@ import type { Models } from "../ai/models";
 import { JudgeOut, judgePrompt, type JudgeItem } from "../ai/prompts";
 import { checkClaim } from "../grounding/claims";
 import { roleKey, wording, type RoleIdentity } from "../shared/record";
+import { qualifiers } from "./split";
 
 // Finding what an upload says again (step 6 of docs/taxonomy-pipelines-design.md, first part).
 //
@@ -16,8 +17,8 @@ import { roleKey, wording, type RoleIdentity } from "../shared/record";
 // offered to the owner, and `offers` below is what works out which to offer.
 
 /** The rules that made a match, stamped on it. Raise the number when what counts as identical changes. */
-export const IDENTICAL_ROLE_METHOD = "identical-role/1";
-export const IDENTICAL_WORDING_METHOD = "identical-wording/1";
+export const IDENTICAL_ROLE_METHOD = "identical-role/2";
+export const IDENTICAL_WORDING_METHOD = "identical-wording/2";
 
 export interface MatchRole extends RoleIdentity {
   id: string;
@@ -76,7 +77,7 @@ export function identicalMatches(roles: readonly MatchRole[], facts: readonly Ma
 // ---------------------------------------------------------------- offers
 
 /** The check that made an offer, stamped on it. Raise the number when the questions or the pre-check change. */
-export const ENTAILMENT_METHOD = "entailment/1";
+export const ENTAILMENT_METHOD = "entailment/2";
 
 /** Two facts of one kind in one role whose wording differs. `later` was read after `earlier`. */
 export interface OfferPair {
@@ -94,6 +95,11 @@ export interface Offer {
   to: string;
 }
 
+/** An offer with each line as the judge was asked about it. It is kept only while both still say exactly that. */
+export interface JudgedOffer extends Offer {
+  lines: { from: string; to: string };
+}
+
 const JUDGE_ITEMS_PER_CALL = 20;
 
 /** How near in meaning two lines must be before the judge is asked about them, and how many are asked. */
@@ -102,16 +108,23 @@ export const OFFERS_PER_FACT = 2;
 export const MAX_OFFER_PAIRS = 60;
 
 /**
- * Works out, for each pair, whether one fact says everything the other says. Each direction is
- * asked on its own: first the checks a resume line passes against its facts, which need no model
- * and settle any pair whose figures or names differ, then the judge, in the form it already
- * answers. A direction holds only if both say so. Nothing is composed and no wording changes:
- * the answer is which of the two existing facts, if either, could stand for the other.
+ * Works out, for each pair, whether one fact says everything the other says. A pair is first held
+ * to the closed list of hedges, denials, alternatives and intentions that keeps a line from being
+ * divided (`qualifiers`): if the two lines are not qualified by the same words, neither says
+ * everything the other says and nothing is asked. Each direction is then asked on its own: first
+ * the checks a resume line passes against its facts, which need no model and settle any pair
+ * whose figures or names differ, then the judge, in the form it already answers. A direction
+ * holds only if both say so. Nothing is composed and no wording changes: the answer is which of
+ * the two existing facts, if either, could stand for the other.
  */
 export async function offers(models: Models, pairs: readonly OfferPair[]): Promise<Offer[]> {
   // "x.e": does the later fact say everything the earlier one says? "x.l": the other way round.
   const items: JudgeItem[] = [];
   pairs.forEach((pair, index) => {
+    // "Pursuing the certification" is not "Completed the certification", and "Never handled" is
+    // not "Handled". The claim checks below read a denial or a plan only beside the verbs they
+    // know, so the list settles this for every verb, and for both directions at once.
+    if (qualifiers(pair.later.text).join("\n") !== qualifiers(pair.earlier.text).join("\n")) return;
     if (checkClaim(pair.earlier.text, [{ text: pair.later.text }]).ok)
       items.push({ alias: `${index + 1}.e`, text: pair.earlier.text, facts: [{ text: pair.later.text, quote: null }] });
     if (checkClaim(pair.later.text, [{ text: pair.earlier.text }]).ok)
@@ -120,18 +133,21 @@ export async function offers(models: Models, pairs: readonly OfferPair[]): Promi
   const holds = new Map<string, boolean>();
   for (let at = 0; at < items.length; at += JUDGE_ITEMS_PER_CALL) {
     const batch = items.slice(at, at + JUDGE_ITEMS_PER_CALL);
+    const asked = new Set(batch.map((item) => item.alias));
     const out = models.judge ? await models.judge(batch) : await models.complete("judge", judgePrompt(batch), JudgeOut);
     for (const verdict of out.verdicts) {
       const id = verdict.id.trim();
+      // An answer counts only for a question this call asked, so one call never answers for
+      // another, and nothing answers a question the checks above left unasked.
+      if (!asked.has(id)) continue;
       // Two answers for one question are no answer, whatever either says.
       holds.set(id, !holds.has(id) && verdict.verdict === "supported");
     }
   }
-  const asked = new Set(items.map((item) => item.alias));
   const found: Offer[] = [];
   pairs.forEach((pair, index) => {
-    const laterSaysAll = asked.has(`${index + 1}.e`) && holds.get(`${index + 1}.e`) === true;
-    const earlierSaysAll = asked.has(`${index + 1}.l`) && holds.get(`${index + 1}.l`) === true;
+    const laterSaysAll = holds.get(`${index + 1}.e`) === true;
+    const earlierSaysAll = holds.get(`${index + 1}.l`) === true;
     if (laterSaysAll && earlierSaysAll) found.push({ relation: "same", from: pair.later.id, to: pair.earlier.id });
     else if (laterSaysAll) found.push({ relation: "fuller", from: pair.later.id, to: pair.earlier.id });
     else if (earlierSaysAll) found.push({ relation: "fuller", from: pair.earlier.id, to: pair.later.id });

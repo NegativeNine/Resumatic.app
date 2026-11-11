@@ -39,20 +39,22 @@ interface Script {
   verdicts?: Record<string, "supported" | "unsupported" | "overstated" | "missing" | "twice">;
   /** Answer through the typed-decision judge, as staging does. */
   typed?: boolean;
+  /** Rewrites a whole judge reply. `call` counts the judge's calls from 0. */
+  reply?: (verdicts: Verdict[], call: number) => Verdict[];
 }
+type Verdict = { id: string; verdict: "supported" | "unsupported" | "overstated"; reason: string };
 
 function models(script: Script = {}) {
   const calls = { extract: [] as { id: string; text: string; words: string }[][], judge: [] as JudgeItem[][], typed: 0 };
   const judge = (items: JudgeItem[]) => {
     calls.judge.push(items);
-    return {
-      verdicts: items.flatMap((item) => {
-        const verdict = script.verdicts?.[item.text] ?? "supported";
-        if (verdict === "missing") return [];
-        const one = { id: item.alias, verdict: verdict === "twice" ? ("supported" as const) : verdict, reason: "" };
-        return verdict === "twice" ? [one, one] : [one];
-      }),
-    };
+    const verdicts = items.flatMap((item): Verdict[] => {
+      const verdict = script.verdicts?.[item.text] ?? "supported";
+      if (verdict === "missing") return [];
+      const one = { id: item.alias, verdict: verdict === "twice" ? ("supported" as const) : verdict, reason: "" };
+      return verdict === "twice" ? [one, one] : [one];
+    });
+    return { verdicts: script.reply ? script.reply(verdicts, calls.judge.length - 1) : verdicts };
   };
   const made: Models = {
     async complete(route, messages: ChatMessage[], schema) {
@@ -92,12 +94,19 @@ describe("starting rule 1: a qualified line stays whole", () => {
     ["Did not manage the budget but ran the roadmap", "not"],
     ["Didn't own on-call but wrote every runbook", "didn't"],
     ["Didn\u2019t own on-call but wrote every runbook", "didn't"],
+    // Whatever was typed or read for the apostrophe: a quotation mark of either hand, an accent
+    // standing alone, a prime, or a letter that only looks like one.
+    ...["\u2018", "\u201B", "\u02BC", "\u02BB", "`", "\u00B4", "\u2032", "\uFF07"].map((mark): [string, string] => [`Didn${mark}t own on-call but wrote every runbook`, "didn't"]),
+    ["Ran the roadmap but COULDN\u00b4T hire for it in 2020", "couldn't"],
     ["Shipped the API without downtime and trained the team", "without"],
     ["Built services in Python or Go and deployed them weekly", "or"],
     ["Proposed a redesign of billing, cutting costs by 20%", "proposed"],
     ["Planning to migrate 40 services and retire the old cluster", "planning"],
     ["Reduced latency by up to 40% and doubled throughput", "up to"],
     ["Was part of the team that rebuilt search and shipped it", "part of"],
+    // A phrase is the same phrase across a line break, two spaces or a space that does not break.
+    ["Reduced latency by up\u00A0to 40% and tripled throughput", "up to"],
+    ["Was part  of the team that rebuilt billing\nand shipped it", "part of"],
     ["This may reduce costs and should speed up releases", "may"],
     ["Built the pipeline and will migrate the rest next year", "will"],
     ["Currently learning Rust and building a parser", "learning"],
@@ -128,6 +137,9 @@ describe("a proposal is word numbers, never words", () => {
     expect(numberedWords(API)).toBe("0:Designed 1:and 2:built 3:the 4:API, 5:cutting 6:deploy 7:time 8:from 9:40 10:minutes 11:to 12:6.");
     const [system, user] = splitPrompt([{ id: "1", text: API }]);
     expect(system!.content).toContain("you answer only with word numbers");
+    // It is told how "of" counts and where a result sits, so it can answer in the form the checks hold it to.
+    expect(system!.content).toContain("Positions count from 0");
+    expect(system!.content).toContain("A result comes after the clause it is the outcome of");
     expect(JSON.parse(user!.content)).toEqual({ lines: [{ id: "1", text: API, words: numberedWords(API) }] });
   });
 
@@ -215,6 +227,37 @@ describe("the checks that need no model", () => {
     const denied = "Did not manage the budget but ran the roadmap";
     expect(refusal(denied, ["clause", ["manage the budget"]], ["clause", ["Did not", "but ran the roadmap"]])).toBe("claim_check");
   });
+
+  it("hold a mention to the same checks: it is a part of the division too", () => {
+    const events = "Built a service handling 2 million events and cut its costs by 30%";
+    const claims: Parameters<typeof proposal>[1][] = [["clause", ["Built a service handling 2 million events"]], ["clause", ["cut its costs by 30%"]]];
+    expect(refusal(events, ...claims, ["mention", ["2 million events"]], ["mention", ["30%"]])).toBeNull();
+    // A figure is mentioned with the word that scales it, or not at all.
+    expect(refusal(events, ...claims, ["mention", ["2"]])).toBe("claim_check");
+    expect(refusal(events, ...claims, ["mention", ["Built", "2"]])).toBe("claim_check");
+    // And a mention made of pieces may not put one thing with another's figure.
+    const grew = "Grew revenue 40% and headcount 20%, then opened 3 offices";
+    const growth: Parameters<typeof proposal>[1][] = [["clause", ["Grew revenue 40% and headcount 20%"]], ["clause", ["opened 3 offices"]]];
+    expect(refusal(grew, ...growth, ["mention", ["revenue 40%"]], ["mention", ["headcount 20%"]])).toBeNull();
+    expect(refusal(grew, ...growth, ["mention", ["revenue", "20%"]])).toBe("figure_skipped");
+  });
+
+  it("refuse a result that does not come after the claim it names", () => {
+    const checkout = "Rebuilt the checkout, raising conversion by 12%, and led the design team";
+    const parts = (of: number): Parameters<typeof proposal>[1][] => [["clause", ["Rebuilt the checkout"]], ["result", ["raising conversion by 12%"], of], ["clause", ["led the design team"]]];
+    expect(refusal(checkout, ...parts(0))).toBeNull();
+    // Read with a claim that comes after it, a result does not read as the line does. This is
+    // also the claim a model names when it counts its parts from 1.
+    expect(refusal(checkout, ...parts(2))).toBe("result_before_claim");
+    // An outcome the line states before what led to it is left whole.
+    const signups = "Doubled sign-ups in 6 weeks by rebuilding the onboarding flow";
+    expect(refusal(signups, ["result", ["Doubled sign-ups in 6 weeks"], 1], ["clause", ["rebuilding the onboarding flow"]])).toBe("result_before_claim");
+    // The same holds for a result of a result, and for a result that begins inside its claim.
+    const chain = "Rebuilt the checkout, raising conversion by 12%, which added 2 enterprise customers";
+    expect(refusal(chain, ["clause", ["Rebuilt the checkout"]], ["result", ["raising conversion by 12%"], 0], ["result", ["which added 2 enterprise customers"], 1])).toBeNull();
+    expect(refusal(chain, ["clause", ["Rebuilt the checkout"]], ["result", ["raising conversion by 12%"], 2], ["result", ["which added 2 enterprise customers"], 0])).toBe("result_before_claim");
+    expect(refusal(API, ["clause", ["Designed and built the API, cutting deploy time"]], ["result", ["cutting deploy time from 40 minutes to 6"], 0])).toBe("result_before_claim");
+  });
 });
 
 describe("dividing lines", () => {
@@ -225,14 +268,34 @@ describe("dividing lines", () => {
     expect(texts(API, decision!.parts)).toEqual(["clause: Designed the API", "clause: built the API", "result: cutting deploy time from 40 minutes to 6", "mention: 40 minutes"]);
     // The model saw a short number for the line, never its ID.
     expect(calls.extract).toEqual([[{ id: "1", text: API, words: numberedWords(API) }]]);
-    // The judge was asked whether the line states each claim, and whether the claims say all of it.
+    // The judge was asked whether the line states each claim, whether it states the result with
+    // the claim it is the outcome of, and whether the claims say all of it.
     expect(calls.judge).toHaveLength(1);
     expect(calls.judge[0]!.map((item) => [item.text, item.facts.map((fact) => fact.text)])).toEqual([
       ["Designed the API", [API]],
       ["built the API", [API]],
       ["cutting deploy time from 40 minutes to 6", [API]],
+      ["built the API cutting deploy time from 40 minutes to 6", [API]],
       [API, ["Designed the API", "built the API", "cutting deploy time from 40 minutes to 6"]],
     ]);
+  });
+
+  it("leaves a line whole unless the judge finds that it states each result with the claim it is the outcome of", async () => {
+    const built = "built the API cutting deploy time from 40 minutes to 6";
+    for (const verdict of ["unsupported", "overstated", "missing", "twice"] as const)
+      expect(await one(API, { propose: { [API]: API_SPLIT }, verdicts: { [built]: verdict } }), verdict).toEqual({ id: "fact-1", parts: null, refusal: "not_its_outcome" });
+    // Which claim a result is the outcome of is part of the question: naming the other clause asks another one.
+    const other = proposal(API, ["clause", ["Designed", "the API"]], ["clause", ["built the API"]], ["result", ["cutting deploy time from 40 minutes to 6"], 0]);
+    const { models: fake, calls } = models({ propose: { [API]: other }, verdicts: { [built]: "unsupported" } });
+    expect((await splitLines(fake, [{ id: "fact-1", text: API }]))[0]!.refusal).toBeNull();
+    expect(calls.judge[0]!.map((item) => item.text)).toContain("Designed the API cutting deploy time from 40 minutes to 6");
+    expect(calls.judge[0]!.map((item) => item.text)).not.toContain(built);
+    // A result of a result is read with the result it names.
+    const chain = "Rebuilt the checkout, raising conversion by 12%, which added 2 enterprise customers";
+    const linked = proposal(chain, ["clause", ["Rebuilt the checkout"]], ["result", ["raising conversion by 12%"], 0], ["result", ["which added 2 enterprise customers"], 1]);
+    const asked = models({ propose: { [chain]: linked }, typed: true, verdicts: { "raising conversion by 12% which added 2 enterprise customers": "unsupported" } });
+    expect((await splitLines(asked.models, [{ id: "fact-1", text: chain }]))[0]).toEqual({ id: "fact-1", parts: null, refusal: "not_its_outcome" });
+    expect(asked.calls.judge[0]!.map((item) => item.text)).toContain("Rebuilt the checkout raising conversion by 12%");
   });
 
   it("leaves a line whole when the model finds one claim, or says nothing about it", async () => {
@@ -293,6 +356,26 @@ describe("dividing lines", () => {
     expect(calls.judge.map((batch) => batch.length)).toEqual([20, 20, 20, 9]);
   });
 
+  it("takes an answer only from the call that asked the question", async () => {
+    // Eight lines of two claims are 24 questions, asked in calls of 20 and 4. Whether the claims
+    // of the last line say everything it says is asked in the second call.
+    const lines = Array.from({ length: 8 }, (_, index) => ({ id: `fact-${index}`, text: `Led a team of ${index + 2} and shipped ${index + 3} products` }));
+    const propose = Object.fromEntries(lines.map((line) => [line.text, proposal(line.text, ["clause", [line.text.slice(0, line.text.indexOf(" and"))]], ["clause", [line.text.slice(line.text.indexOf("shipped"))]])]));
+    const yes = (id: string): Verdict => ({ id, verdict: "supported", reason: "" });
+    for (const typed of [false, true]) {
+      // The first reply volunteers an answer to it, and the call that asked it gets none.
+      const early = models({ propose, typed, reply: (verdicts, call) => (call === 0 ? [...verdicts, yes("L8.all")] : verdicts.filter((verdict) => verdict.id !== "L8.all")) });
+      expect((await splitLines(early.models, lines)).map((decision) => decision.refusal), String(typed)).toEqual([...Array(7).fill(null), "says_less"]);
+      expect(early.calls.judge.map((batch) => batch.map((item) => item.alias))).toEqual([expect.not.arrayContaining(["L8.all"]), ["L7.all", "L8.0", "L8.1", "L8.all"]]);
+      // The other way round: no answer from the call that asked, and one volunteered by the next.
+      const late = models({ propose, typed, reply: (verdicts, call) => (call === 0 ? verdicts.filter((verdict) => verdict.id !== "L3.all") : [...verdicts, yes("L3.all")]) });
+      expect((await splitLines(late.models, lines)).map((decision) => decision.refusal), String(typed)).toEqual([null, null, "says_less", null, null, null, null, null]);
+      // An answer nobody asked for decides nothing by itself, and takes nothing from the answer that was asked for.
+      const stray = models({ propose, typed, reply: (verdicts, call) => (call === 0 ? [...verdicts, { ...yes("L8.all"), verdict: "unsupported" }, yes("L9.all")] : verdicts) });
+      expect((await splitLines(stray.models, lines)).every((decision) => decision.refusal === null), String(typed)).toBe(true);
+    }
+  });
+
   it("lets a model failure through, for the caller to leave every line whole", async () => {
     const failing: Models = { ...models().models, complete: async () => Promise.reject(new Error("unavailable: model provider network failure")) };
     await expect(splitLines(failing, [{ id: "fact-1", text: TEAM }])).rejects.toThrow("unavailable");
@@ -330,6 +413,17 @@ describe("labelled lines", () => {
     const parts = toParts(trap.line, proposal(trap.line, ...trap.parts));
     expect(parts).not.toBeNull();
     expect(partsRefusal(trap.line, parts!)).toBeNull();
+  });
+
+  it("puts a result named as the outcome of the wrong earlier claim to the judge as exactly that reading", async () => {
+    const trap = traps.find((found) => found.says === "says the other thing done is what cut the time")!;
+    const wrong = "Trained 4 new hires cutting import time from 2 hours to 5 minutes";
+    // A judge that finds nothing wrong keeps the division: no check that needs no model stops it.
+    const lenient = models({ propose: { [trap.line]: proposal(trap.line, ...trap.parts) } });
+    expect((await splitLines(lenient.models, [{ id: "fact-1", text: trap.line }]))[0]!.refusal).toBeNull();
+    expect(lenient.calls.judge[0]!.map((item) => item.text)).toContain(wrong);
+    // A judge that reads the claim and its result together, and does not find that in the line, refuses it.
+    expect(await one(trap.line, { propose: { [trap.line]: proposal(trap.line, ...trap.parts) }, verdicts: { [wrong]: "unsupported" } })).toEqual({ id: "fact-1", parts: null, refusal: "not_its_outcome" });
   });
 
   it.each(SPLIT_LINES.filter((example) => example.expect === "qualified"))("$line stays whole whatever a model proposes", async (example) => {

@@ -1,8 +1,8 @@
 import { writeFileSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vitest";
 import type { Models } from "../../src/ai/models";
-import { numberedWords, splitLines, type SplitProposal } from "../../src/pipeline/split";
-import { lineRuns, partText } from "../../src/shared/record";
+import { numberedWords, splitLines, toParts, type SplitProposal } from "../../src/pipeline/split";
+import { lineRuns, partText, type NewPart } from "../../src/shared/record";
 import { SPLIT_LINES, type LabelledPart } from "../fixtures/split-lines";
 import { credentials, restModels, wranglerVars } from "./rest-models";
 
@@ -10,7 +10,8 @@ import { credentials, restModels, wranglerVars } from "./rest-models";
 //   1. Is a division that changes a line's meaning ever accepted? Each labelled trap is put to
 //      the real checks and the real judge as if a model had proposed it. None may pass.
 //   2. What does the real proposing model do with each labelled line? Reported for a person to
-//      read; a line that must stay whole and was divided fails.
+//      read, beside the labelled division and with the claim each result was given as the outcome
+//      of; a line that must stay whole and was divided fails.
 // The labelled lines are made up. Passing here does not set a threshold: that needs real resumes
 // given with consent. Writes split-eval-report.json.
 
@@ -37,6 +38,16 @@ function asProposal(line: string, parts: LabelledPart[]): SplitProposal {
       return { from, to };
     }),
   }));
+}
+
+/** A division as a person reads it: each part's words, and for a result the claim it is named as the outcome of. */
+function described(line: string, parts: NewPart[] | null): string[] | null {
+  return (
+    parts?.map((part) => {
+      const text = partText(line, part.ranges);
+      return part.kind === "result" ? `result of "${partText(line, parts[part.resultOf!]!.ranges)}": ${text}` : `${part.kind}: ${text}`;
+    }) ?? null
+  );
 }
 
 /** The real models, except that the question of how a line divides gets this answer. */
@@ -66,7 +77,8 @@ describe.skipIf(!creds)("dividing lines", () => {
       words: numberedWords(example.line),
       expected: example.expect,
       refusal: decision!.refusal,
-      parts: decision!.parts?.map((part) => `${part.kind}: ${partText(example.line, part.ranges)}`) ?? null,
+      parts: described(example.line, decision!.parts),
+      labelled: example.gold ? described(example.line, toParts(example.line, asProposal(example.line, example.gold))) : null,
     });
     // A line that must stay whole whatever a model says. "one_claim" is a reader's judgement, so
     // it is reported and not failed.

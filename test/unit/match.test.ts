@@ -30,6 +30,8 @@ describe("roles that are the same role", () => {
       { endDate: null },
     ])
       expect(pairs([role("r1"), role("r2", other)]), JSON.stringify(other)).toEqual([]);
+    // A number a title starts with is part of the title: the first chair is not the second.
+    expect(pairs([role("r1", { title: "1. Vorsitzender" }), role("r2", { title: "2. Vorsitzender" })])).toEqual([]);
   });
 
   it("do not match when the fields can't say which role either is", () => {
@@ -69,6 +71,9 @@ describe("facts that are the same fact", () => {
       `${LINE.slice(0, -1)} for 30 partner teams.`,
     ])
       expect(pairs([role("r1")], [fact("f1", LINE), fact("f2", other)]), other).toEqual([]);
+    // A number or a sign a line starts with is what it says: two state examinations are two credentials.
+    expect(pairs([], [fact("c1", "1. Staatsexamen", null, "credential"), fact("c2", "2. Staatsexamen", null, "credential")])).toEqual([]);
+    expect(pairs([role("r1")], [fact("f1", "1. Platz beim Hackathon 2019"), fact("f2", "3. Platz beim Hackathon 2019"), fact("f3", "+ 5% churn"), fact("f4", "- 5% churn")])).toEqual([]);
     expect(pairs([role("r1")], [fact("f1", LINE), fact("f2", LINE, "r1", "credential")])).toEqual([]);
     expect(pairs([role("r1")], [fact("f1", "  "), fact("f2", " ")])).toEqual([]);
   });

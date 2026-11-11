@@ -440,7 +440,9 @@ export class RecordStore {
    * confirms, with one exception the record checks for itself: a rule may confirm at once that
    * two facts of one kind in one role have the same wording, or that two roles are alike in every
    * field. Outside any role that holds for skills and credentials only. A rule or a model never
-   * reopens what the owner decided.
+   * reopens what the owner decided: a link the owner turned down is not stored again, a merge the
+   * owner separated is not proposed again with the other of the two standing for both, and a rule
+   * does not merge anything that would put the two back in one group.
    */
   proposeLink(input: NewLink): { linkId: string; state: JudgementState } {
     refuse(linkProblem(input));
@@ -472,9 +474,20 @@ export class RecordStore {
           shadow,
         )
         .toArray()[0];
+      if (existing && (existing.state === "confirmed" || (existing.state === "rejected" && !owner)))
+        return { linkId: existing.id, state: existing.state as JudgementState };
+      // A merge the owner separated is the owner's to make again. Nothing else proposes it the
+      // other way round, and a rule merges nothing that would put the two back in one group.
+      if (input.relation === "same" && !owner && !shadow) {
+        const turnedDown = this.separation(input.kind, [input.from], new Set([input.to]));
+        if (turnedDown) return { linkId: turnedDown.id, state: "rejected" };
+        if (
+          input.confirm &&
+          this.separation(input.kind, this.group(input.kind, input.from), this.group(input.kind, this.chain(input.kind, input.to).at(-1)!))
+        )
+          throw new AppError("conflict", "the owner separated two of the items this would merge");
+      }
       if (existing) {
-        if (existing.state === "confirmed" || (existing.state === "rejected" && !owner))
-          return { linkId: existing.id, state: existing.state as JudgementState };
         if (!confirming) {
           this.restamp("record_links", existing.id, input.stamp);
           return { linkId: existing.id, state: "proposed" };
@@ -761,6 +774,52 @@ export class RecordStore {
       if (!next || path.includes(next.to_id)) return path;
       path.push(next.to_id);
     }
+  }
+
+  /**
+   * An item and everything merged into it, directly or through another, by confirmed links
+   * alone. Unlike `merged`, it counts a merge between facts whose roles are separate just now,
+   * because that merge holds again when the roles are rejoined.
+   */
+  private group(kind: LinkKind, id: string): Set<string> {
+    const found = new Set([id]);
+    const queue = [id];
+    while (queue.length) {
+      const sources = this.sql
+        .exec<{ from_id: string }>(
+          `SELECT from_id FROM record_links WHERE kind = ? AND to_id = ? AND relation = 'same' AND state = 'confirmed' AND shadow = 0`,
+          kind,
+          queue.shift()!,
+        )
+        .toArray();
+      for (const { from_id: from } of sources) {
+        if (found.has(from)) continue;
+        found.add(from);
+        queue.push(from);
+      }
+    }
+    return found;
+  }
+
+  /**
+   * A merge the owner turned down between an item on one side and an item on the other, whichever
+   * way round it was proposed. Only the owner rejects a link, so a rejected one is their decision.
+   */
+  private separation(kind: LinkKind, left: Iterable<string>, right: ReadonlySet<string>): LinkRow | undefined {
+    for (const id of left) {
+      const found = this.sql
+        .exec<LinkRow>(
+          `SELECT * FROM record_links WHERE kind = ? AND relation = 'same' AND state = 'rejected' AND shadow = 0 AND (from_id = ? OR to_id = ?)
+           ORDER BY created_at, id`,
+          kind,
+          id,
+          id,
+        )
+        .toArray()
+        .find((row) => right.has(row.from_id === id ? row.to_id : row.from_id));
+      if (found) return found;
+    }
+    return undefined;
   }
 
   /**

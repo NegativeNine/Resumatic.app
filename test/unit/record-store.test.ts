@@ -391,6 +391,28 @@ describe("merging what says the same thing", () => {
     expect(refusal(() => record.proposeLink({ kind: "fact", from: "placed", to: "skill-1", relation: "same", stamp: rule, confirm: true }))).toBe("conflict");
   });
 
+  it("never merges unasked two lines or two roles that differ in the number or the sign they start with", () => {
+    const { record, fact, role } = vault();
+    // Two state examinations are two credentials, and a figure's sign is part of the figure.
+    for (const [kind, first, second] of [
+      ["credential", "1. Staatsexamen", "2. Staatsexamen"],
+      ["accomplishment", "+ 5% churn", "- 5% churn"],
+    ] as const) {
+      const within = kind === "credential" ? null : "r1";
+      fact(`${kind}-1`, first, { role: within, kind });
+      fact(`${kind}-2`, second, { role: within, kind, source: "upload-2" });
+      expect(refusal(() => record.proposeLink({ kind: "fact", from: `${kind}-2`, to: `${kind}-1`, relation: "same", stamp: rule, confirm: true })), first).toBe("invalid");
+      expect(record.root("fact", `${kind}-2`)).toBe(`${kind}-2`);
+      // The likeness can still be offered to the owner.
+      expect(record.proposeLink({ kind: "fact", from: `${kind}-2`, to: `${kind}-1`, relation: "same", stamp: rule }).state, first).toBe("proposed");
+    }
+    // The first chair of a board is not the second.
+    role("chair-1", { title: "1. Vorsitzender" });
+    role("chair-2", { title: "2. Vorsitzender" });
+    expect(refusal(() => record.proposeLink({ kind: "role", from: "chair-2", to: "chair-1", relation: "same", stamp: { ...rule, method: "identical-role/1" }, confirm: true }))).toBe("invalid");
+    expect(record.root("role", "chair-2")).toBe("chair-2");
+  });
+
   it("merges nothing: both rows and both quotes stay as they were", () => {
     const { record, db } = twice();
     const before = JSON.stringify(db.prepare(`SELECT * FROM facts ORDER BY id`).all().concat(db.prepare(`SELECT * FROM evidence ORDER BY id`).all(), db.prepare(`SELECT * FROM roles ORDER BY id`).all()));
@@ -487,6 +509,109 @@ describe("merging what says the same thing", () => {
     expect(record.proposeLink({ kind: "fact", from: "f2", to: "f1", relation: "same", stamp: rule, confirm: true })).toEqual({ linkId: merged.linkId, state: "rejected" });
     expect(record.root("fact", "f2")).toBe("f2");
     expect(record.links("fact", "f2")).toMatchObject([{ state: "rejected", proposedBy: "rule", decidedBy: "owner" }]);
+  });
+
+  it("does not let a rule or a model make the separated merge the other way round", () => {
+    const { record, fact, count } = vault();
+    fact("f2", LINE, { source: "upload-2" });
+    const merged = record.proposeLink({ kind: "fact", from: "f2", to: "f1", relation: "same", stamp: rule, confirm: true });
+    record.decideLink(merged.linkId, "rejected");
+    // The same two facts, with the other one standing for both: still the merge the owner undid.
+    expect(record.proposeLink({ kind: "fact", from: "f1", to: "f2", relation: "same", stamp: rule, confirm: true })).toEqual({ linkId: merged.linkId, state: "rejected" });
+    expect(record.root("fact", "f1")).toBe("f1");
+    expect(record.root("fact", "f2")).toBe("f2");
+    // Nor is it offered again, by a rule or by a model.
+    for (const stamp of [rule, model]) expect(record.proposeLink({ kind: "fact", from: "f1", to: "f2", relation: "same", stamp }), stamp.proposedBy).toEqual({ linkId: merged.linkId, state: "rejected" });
+    expect(count("record_links")).toBe(1);
+    // A finding kept in shadow is beside what shows, and stands for nothing.
+    expect(record.proposeLink({ kind: "fact", from: "f1", to: "f2", relation: "same", stamp: shadow(rule) }).state).toBe("proposed");
+    expect(record.root("fact", "f1")).toBe("f1");
+    // Only the owner joins them again, whichever way round.
+    expect(record.proposeLink({ kind: "fact", from: "f1", to: "f2", relation: "same", stamp: owner }).state).toBe("confirmed");
+    expect(record.root("fact", "f1")).toBe("f2");
+  });
+
+  it("does not let a rule rejoin two roles the owner separated, the other way round", () => {
+    const { record, role, fact } = vault();
+    role("r2");
+    fact("f2", LINE, { role: "r2", source: "upload-2" });
+    const identical = { ...rule, method: "identical-role/1" };
+    const roles = record.proposeLink({ kind: "role", from: "r2", to: "r1", relation: "same", stamp: identical, confirm: true });
+    record.proposeLink({ kind: "fact", from: "f2", to: "f1", relation: "same", stamp: rule, confirm: true });
+    // The owner says these were two different jobs, which separates their lines too.
+    record.decideLink(roles.linkId, "rejected");
+    expect(record.root("fact", "f2")).toBe("f2");
+    expect(record.proposeLink({ kind: "role", from: "r1", to: "r2", relation: "same", stamp: identical, confirm: true })).toEqual({ linkId: roles.linkId, state: "rejected" });
+    expect(record.proposeLink({ kind: "role", from: "r1", to: "r2", relation: "same", stamp: model })).toEqual({ linkId: roles.linkId, state: "rejected" });
+    expect(record.root("role", "r1")).toBe("r1");
+    expect(record.root("role", "r2")).toBe("r2");
+    expect(record.root("fact", "f2")).toBe("f2");
+    expect(record.evidenceOf("f1")).toHaveLength(1);
+    // The owner can still say they were one job after all.
+    record.decideLink(roles.linkId, "confirmed");
+    expect(record.root("fact", "f2")).toBe("f1");
+  });
+
+  it("does not let a rule rejoin what the owner separated by merging one of the two into what the other stands in", () => {
+    const { record, fact } = vault();
+    fact("f2", LINE, { source: "upload-2" });
+    fact("f3", LINE, { source: "upload-2" });
+    record.proposeLink({ kind: "fact", from: "f2", to: "f1", relation: "same", stamp: rule, confirm: true });
+    const third = record.proposeLink({ kind: "fact", from: "f3", to: "f1", relation: "same", stamp: rule, confirm: true });
+    // The owner takes f3 out of the fact that stands for all three.
+    record.decideLink(third.linkId, "rejected");
+    expect(record.evidenceOf("f1").map((quote) => quote.factId)).toEqual(["f1", "f2"]);
+    // Merging f3 into f2, which stands in f1, would put it back.
+    expect(refusal(() => record.proposeLink({ kind: "fact", from: "f3", to: "f2", relation: "same", stamp: rule, confirm: true }))).toBe("conflict");
+    expect(record.root("fact", "f3")).toBe("f3");
+    expect(record.evidenceOf("f1").map((quote) => quote.factId)).toEqual(["f1", "f2"]);
+    // So would an offer of that merge which a rule then confirmed.
+    const offered = record.proposeLink({ kind: "fact", from: "f3", to: "f2", relation: "same", stamp: model });
+    expect(offered.state).toBe("proposed");
+    expect(refusal(() => record.proposeLink({ kind: "fact", from: "f3", to: "f2", relation: "same", stamp: rule, confirm: true }))).toBe("conflict");
+    expect(record.root("fact", "f3")).toBe("f3");
+    // The owner accepting the offer is the owner joining them again.
+    record.decideLink(offered.linkId, "confirmed");
+    expect(record.root("fact", "f3")).toBe("f1");
+    expect(record.evidenceOf("f1").map((quote) => quote.factId)).toEqual(["f1", "f2", "f3"]);
+  });
+
+  it("does not let a rule rejoin what the owner separated by merging what stands for one of the two", () => {
+    const { record, fact } = vault();
+    for (const id of ["f2", "f3", "f4"]) fact(id, LINE, { source: "upload-2" });
+    // f2 stands in f1, and f4 in f3. The owner has said f4 is not f1.
+    record.proposeLink({ kind: "fact", from: "f2", to: "f1", relation: "same", stamp: rule, confirm: true });
+    const turnedDown = record.proposeLink({ kind: "fact", from: "f4", to: "f1", relation: "same", stamp: model });
+    record.decideLink(turnedDown.linkId, "rejected");
+    record.proposeLink({ kind: "fact", from: "f4", to: "f3", relation: "same", stamp: rule, confirm: true });
+    // Merging f3 into f1, or into f2 which stands in it, would bring f4 along.
+    for (const to of ["f1", "f2"]) expect(refusal(() => record.proposeLink({ kind: "fact", from: "f3", to, relation: "same", stamp: rule, confirm: true })), to).toBe("conflict");
+    // And merging f1 into f3 would bring f1 to f4.
+    expect(refusal(() => record.proposeLink({ kind: "fact", from: "f1", to: "f3", relation: "same", stamp: rule, confirm: true }))).toBe("conflict");
+    expect(record.root("fact", "f4")).toBe("f3");
+    expect(record.merged("fact", "f1")).toEqual(["f2"]);
+    // A fact the owner separated from nothing still merges.
+    fact("f5", LINE, { source: "upload-2" });
+    expect(record.proposeLink({ kind: "fact", from: "f5", to: "f2", relation: "same", stamp: rule, confirm: true }).state).toBe("confirmed");
+    expect(record.root("fact", "f5")).toBe("f1");
+  });
+
+  it("does not let a rule rejoin what the owner separated while the roles of a merge are apart", () => {
+    const { record, role, fact } = vault();
+    role("r2");
+    fact("f2", LINE, { role: "r2", source: "upload-2" });
+    fact("f3", LINE);
+    const roles = record.proposeLink({ kind: "role", from: "r2", to: "r1", relation: "same", stamp: { ...rule, method: "identical-role/1" }, confirm: true });
+    record.proposeLink({ kind: "fact", from: "f2", to: "f1", relation: "same", stamp: rule, confirm: true });
+    // The owner turns down f3 as the same fact as f2, and later says the two jobs were different.
+    record.decideLink(record.proposeLink({ kind: "fact", from: "f3", to: "f2", relation: "same", stamp: model }).linkId, "rejected");
+    record.decideLink(roles.linkId, "rejected");
+    expect(record.merged("fact", "f1")).toEqual([]);
+    // f2 is out of f1 only until the roles are rejoined, so merging f3 into f1 would join f3 and f2 then.
+    expect(refusal(() => record.proposeLink({ kind: "fact", from: "f3", to: "f1", relation: "same", stamp: rule, confirm: true }))).toBe("conflict");
+    record.decideLink(roles.linkId, "confirmed");
+    expect(record.merged("fact", "f1")).toEqual(["f2"]);
+    expect(record.root("fact", "f3")).toBe("f3");
   });
 
   it("lets a rule confirm identical wording that was first only offered", () => {
