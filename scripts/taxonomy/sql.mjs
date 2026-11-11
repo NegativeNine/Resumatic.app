@@ -1,6 +1,6 @@
-// The taxonomy as SQL for a D1 database: its tables, then its rows. Every statement is one line,
-// because D1 runs a file of statements a line at a time. A taxonomy is loaded once into a database
-// of its own and never changed; a new version is a new database.
+// The taxonomy as SQL for a D1 database: its tables, then its rows, then what it is. Every
+// statement is one line, because D1 runs a file of statements a line at a time. A taxonomy is
+// loaded once into a database of its own and never changed; a new version is a new database.
 
 /** The tables the Worker reads (src/taxonomy/d1.ts). */
 export const SCHEMA = [
@@ -43,20 +43,30 @@ function* inserts(table, columns, rows, maxBytes) {
   if (values.length) yield `${head}${values.join(", ")};`;
 }
 
-/** Every statement that loads a built taxonomy, in order: tables, what it is, then its records. */
+/**
+ * What the taxonomy says about itself, as the one statement that ends a load. It writes all of its
+ * rows or none. The row that says how many records there are is NULL, which the table refuses,
+ * unless the tables hold exactly as many concepts, labels and relations as the builder wrote. So a
+ * database that was loaded part of the way, or without one of its files, names no version, and
+ * the Worker reads it as not loaded (src/taxonomy/d1.ts). It is one statement whatever its length:
+ * split in two, a load could stop between the halves.
+ */
+function closing(bundle) {
+  const records = { concepts: bundle.concepts.length, labels: bundle.labels.length, relations: bundle.edges.length };
+  const whole = Object.entries(records).map(([table, count]) => `(SELECT COUNT(*) FROM ${table}) = ${literal(count)}`);
+  const rows = [
+    ["format", String(bundle.info.format)],
+    ["version", bundle.info.version],
+    ["contentHash", bundle.info.contentHash],
+    ["sources", JSON.stringify(bundle.info.sources)],
+  ].map((row) => `(${row.map(literal).join(", ")})`);
+  rows.push(`('records', CASE WHEN ${whole.join(" AND ")} THEN ${literal(JSON.stringify(records))} END)`);
+  return `INSERT INTO taxonomy_meta (key, value) VALUES ${rows.join(", ")};`;
+}
+
+/** Every statement that loads a built taxonomy, in order: tables, its records, then what it is. */
 export function* statements(bundle, { maxBytes = 60_000 } = {}) {
   for (const statement of SCHEMA) yield `${statement};`;
-  yield* inserts(
-    "taxonomy_meta",
-    ["key", "value"],
-    [
-      ["format", String(bundle.info.format)],
-      ["version", bundle.info.version],
-      ["contentHash", bundle.info.contentHash],
-      ["sources", JSON.stringify(bundle.info.sources)],
-    ],
-    maxBytes,
-  );
   yield* inserts(
     "concepts",
     ["id", "kind", "scheme", "code", "label", "description", "meta"],
@@ -75,6 +85,7 @@ export function* statements(bundle, { maxBytes = 60_000 } = {}) {
     bundle.edges.map((edge) => [edge.src, edge.rel, edge.dst, edge.meta ? JSON.stringify(edge.meta) : null]),
     maxBytes,
   );
+  yield closing(bundle);
 }
 
 /** The statements gathered into files of at most `maxFileBytes`, in the order they must be run. */

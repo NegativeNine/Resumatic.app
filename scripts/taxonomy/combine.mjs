@@ -112,11 +112,13 @@ export async function combine({ esco, onet, crosswalk, versions }) {
     throw new Error(`${unmatched} of ${crosswalkRows} crosswalk rows name an occupation that isn't in these releases. The files don't belong together, or a layout changed.`);
 
   // A tool and an ESCO concept are linked only when their labels compare equal and the label
-  // belongs to exactly one concept on each side. Hidden terms are left out: they are loose.
+  // belongs to exactly one concept on each side. Hidden terms are left out: they are loose. So is
+  // a tool's name without "software": O*NET never wrote it, and what is left is as often what the
+  // software is for as the software ("Migration software", and ESCO's "migration" of people).
   const escoByNorm = new Map();
   const toolByNorm = new Map();
   for (const label of labels) {
-    if (label.type === "hidden") continue;
+    if (label.type === "hidden" || (label.kind === "tool" && label.type === "derived")) continue;
     const side = label.kind === "tool" ? toolByNorm : label.kind === "skill" || label.kind === "knowledge" ? escoByNorm : null;
     if (side) side.set(label.norm, (side.get(label.norm) ?? new Set()).add(label.conceptId));
   }
@@ -185,7 +187,7 @@ export function attribution(versions) {
       "A label marked \"derived\" is made by the builder: an ESCO label without its bracketed qualifier, or an O*NET software example without the final word \"software\".",
       "O*NET software examples have no IDs in the database, so each is given one made from its name. Examples whose names compare equal are held as one tool.",
       "A \"performs\" relation says an occupation has tasks that carry out a detailed work activity, and counts them. It is computed from O*NET's Tasks to DWAs file.",
-      "A \"same-label\" relation links an O*NET software example to an ESCO concept when their labels compare equal and belong to one concept on each side. It is not part of either source.",
+      "A \"same-label\" relation links an O*NET software example to an ESCO concept when a name O*NET gives the example and a label of the concept, with or without its bracketed qualifier, compare equal and belong to one concept on each side. ESCO's hidden terms and software names without the final word \"software\" are not compared. It is not part of either source.",
       "O*NET occupations and ESCO occupations are related only by the official O*NET - ESCO crosswalk, with the match type it gives.",
     ],
   };

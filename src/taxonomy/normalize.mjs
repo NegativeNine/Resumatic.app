@@ -4,9 +4,19 @@
 // A word keeps what makes a tool's name its own ("c++", "c#", ".net", "node.js", "r&d") and drops
 // what is only typography: case, accents, and the punctuation around it. A hyphen or a slash
 // separates words, on both sides alike, so "T-SQL", "t sql" and "CI/CD" meet their labels.
+//
+// A word does not end at a combining mark or at a character nobody sees. Some text writes an
+// accented letter as the letter and then a mark (U+0065 U+0301 where other text has U+00E9), and
+// some carries soft hyphens or zero-width characters inside a word. Ended there, a word written
+// with its accents would stop at the first of them ("re", then "sume"), and a label would be found
+// in the first half of a word that isn't it.
 
-/** One word of a text: where it sits in the original, and the form it is compared in. */
-const WORD = /\.?[\p{L}\p{N}]+[+#]*(?:[.&'][\p{L}\p{N}]+[+#]*)*/gu;
+/**
+ * One word of a text: where it sits in the original, and the form it is compared in. After its
+ * first letter or digit a run also takes marks (M) and format characters (Cf: the soft hyphen, the
+ * zero-width space and joiners, direction marks), which fold() then drops.
+ */
+const WORD = /\.?[\p{L}\p{N}][\p{L}\p{N}\p{M}\p{Cf}]*[+#]*(?:[.&'][\p{L}\p{N}][\p{L}\p{N}\p{M}\p{Cf}]*[+#]*)*/gu;
 
 /** Curly apostrophes read as straight ones. The replacement keeps the length, so offsets hold. */
 const APOSTROPHES = /[\u2018\u2019\u02BC]/g;
@@ -14,7 +24,7 @@ const APOSTROPHES = /[\u2018\u2019\u02BC]/g;
 function fold(word) {
   return word
     .normalize("NFKD")
-    .replace(/\p{M}+/gu, "")
+    .replace(/[\p{M}\p{Cf}]+/gu, "")
     .toLowerCase();
 }
 

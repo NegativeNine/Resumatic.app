@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm, writeFile, cp } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile, cp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -59,6 +59,13 @@ test("labels and text are compared word for word, keeping what makes a tool's na
   assert.deepEqual(forms("T-SQL, CI/CD. PL/SQL."), ["t", "sql", "ci", "cd", "pl", "sql"]);
   assert.equal(normalizeLabel("  Front-end   development "), "front end development");
   assert.equal(normalizeLabel("R\u00e9sum\u00e9 writing"), "resume writing");
+  // An accent is the same accent as one character or as a letter and a combining mark, and a soft
+  // hyphen or a zero-width character inside a word is not the end of it. A label is stored whole either way.
+  assert.equal(normalizeLabel("R\u00e9sum\u00e9 writing".normalize("NFD")), "resume writing");
+  assert.deepEqual(forms("fa\u00e7ade cleaner, ma\u00eetre d'h\u00f4tel".normalize("NFD")), ["facade", "cleaner", "maitre", "d'hotel"]);
+  assert.equal(normalizeLabel("manage\u00adment of Java\u200bScript"), "management of javascript");
+  const marked = "the cafe\u0301 menu";
+  assert.deepEqual(words(marked).map((word) => marked.slice(word.start, word.end)), ["the", "cafe\u0301", "menu"]);
   assert.equal(normalizeLabel("the team\u2019s work"), "the team's work");
   assert.equal(normalizeLabel("Python (computer programming)"), "python computer programming");
   assert.equal(normalizeLabel("\u2026 \u2014 !"), "");
@@ -392,6 +399,39 @@ test("a label shared by several concepts links none of them", async () => {
   assert.equal(hiddenOnly.edges.some((edge) => edge.rel === "same-label" && edge.src === "onet:tool:kubernetes"), false);
 });
 
+test("a software name the builder shortened links nothing, and stands in no other tool's way", async () => {
+  const esco = readEsco(await escoFiles());
+  const files = await onetFiles();
+  const crosswalk = readCrosswalk(await crosswalkText());
+  // O*NET lists "Migration software" and "Kubernetes software". Without its last word the first is
+  // "Migration", which is also ESCO's word for the movement of people, and the second is the name
+  // of another tool.
+  const row = (name) => `99-1001.00,Example Software Developers,${name},5.A.1.02,Container orchestration software,N,N`;
+  const onet = readOnet({ ...files, "software_skills.csv": `${files["software_skills.csv"].trimEnd()}\n${row("Migration software")}\n${row("Kubernetes software")}\n` });
+  const migration = { id: S(60), kind: "knowledge", scheme: "esco", code: null, label: "migration", description: "The movement of people from one place to another.", meta: {} };
+  const bundle = await combine({
+    esco: { ...esco, concepts: [...esco.concepts, migration], labels: [...esco.labels, { conceptId: S(60), kind: "knowledge", type: "preferred", text: "migration" }] },
+    onet, crosswalk, versions: FIXTURE_VERSIONS,
+  });
+  // The shortened names are still labels, so the tools are found in text under them.
+  const shortened = bundle.labels.filter((label) => label.kind === "tool" && label.type === "derived").map((label) => `${label.conceptId} as ${label.norm}`);
+  assert.deepEqual(shortened, ["onet:tool:amazon-web-services-aws-software as amazon web services aws", "onet:tool:kubernetes-software as kubernetes", "onet:tool:migration-software as migration"]);
+  // Neither is linked on such a name, and "Kubernetes" is still the one tool O*NET gives that name to.
+  assert.deepEqual(bundle.edges.filter((edge) => edge.rel === "same-label").map((edge) => [edge.src, edge.dst]), [
+    ["onet:tool:go", S(6)],
+    ["onet:tool:kubernetes", S(4)],
+    ["onet:tool:python", S(3)],
+  ]);
+  assert.equal(bundle.problems.same_label_ambiguous, undefined);
+  // A name O*NET itself gives a tool links it as before, whatever else the builder made of it.
+  const named = readOnet({ ...files, "software_skills.csv": `${files["software_skills.csv"].trimEnd()}\n${row("Migration software")}\n${row("migration")}\n` });
+  const own = await combine({
+    esco: { ...esco, concepts: [...esco.concepts, migration], labels: [...esco.labels, { conceptId: S(60), kind: "knowledge", type: "preferred", text: "migration" }] },
+    onet: named, crosswalk, versions: FIXTURE_VERSIONS,
+  });
+  assert.deepEqual(own.edges.filter((edge) => edge.rel === "same-label" && edge.dst === S(60)).map((edge) => edge.src), ["onet:tool:migration"]);
+});
+
 test("the SQL loads into SQLite as written, one statement to a line, and holds every record", async () => {
   const bundle = await fixtureBundle();
   const all = [...statements(bundle)];
@@ -400,10 +440,12 @@ test("the SQL loads into SQLite as written, one statement to a line, and holds e
     assert.equal(/[\r\n]/.test(statement), false);
     assert.ok(statement.endsWith(";"));
   }
-  // Statements stay under the size asked for, apart from a single row that is larger by itself.
+  // Statements stay under the size asked for, apart from a single row that is larger by itself, and
+  // the last, which says what the taxonomy is in one statement so that it is written whole or not at all.
   const small = [...statements(bundle, { maxBytes: 600 })];
   assert.ok(small.length > all.length);
-  for (const statement of small) assert.ok(Buffer.byteLength(statement) <= 600 || !statement.includes("), ("), statement.slice(0, 80));
+  for (const statement of small.slice(0, -1)) assert.ok(Buffer.byteLength(statement) <= 600 || !statement.includes("), ("), statement.slice(0, 80));
+  assert.equal(small.at(-1), all.at(-1));
   const files = sqlFiles(bundle, { maxBytes: 600, maxFileBytes: 4000 });
   assert.ok(files.length > 3);
   for (const file of files) assert.ok(Buffer.byteLength(file) <= 4000 && file.endsWith(";\n"));
@@ -418,6 +460,7 @@ test("the SQL loads into SQLite as written, one statement to a line, and holds e
     assert.equal(count("relations"), bundle.edges.length);
     assert.deepEqual(Object.fromEntries(db.prepare(`SELECT key, value FROM taxonomy_meta`).all().map((row) => [row.key, row.value])), {
       format: "1", version: bundle.info.version, contentHash: bundle.info.contentHash, sources: JSON.stringify(bundle.info.sources),
+      records: JSON.stringify({ concepts: bundle.concepts.length, labels: bundle.labels.length, relations: bundle.edges.length }),
     });
     // Apostrophes and quotes come back as they went in.
     assert.equal(db.prepare(`SELECT description FROM concepts WHERE id = ?`).get(S(4)).description, "Tools that deploy, scale and run containers. It's a synthetic row, with a comma.");
@@ -428,12 +471,51 @@ test("the SQL loads into SQLite as written, one statement to a line, and holds e
     const plan = (sql, ...args) => db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...args).map((row) => row.detail).join(" | ");
     assert.match(plan(`SELECT * FROM labels WHERE norm IN (?, ?)`, "a", "b"), /SEARCH labels USING PRIMARY KEY/);
     assert.match(plan(`SELECT * FROM relations WHERE src = ? AND rel IN (?)`, "a", "b"), /SEARCH relations USING PRIMARY KEY/);
+    assert.match(plan(`SELECT * FROM relations WHERE src IN (?, ?) AND rel IN (?, ?)`, "a", "b", "c", "d"), /SEARCH relations USING PRIMARY KEY/);
     assert.match(plan(`SELECT * FROM relations WHERE dst = ? AND rel IN (?)`, "a", "b"), /relations_by_dst/);
     assert.match(plan(`SELECT * FROM concepts WHERE id IN (?, ?)`, "a", "b"), /SEARCH concepts USING PRIMARY KEY/);
   } finally { db.close(); }
 
   const withBreak = { ...bundle, concepts: [{ ...bundle.concepts[0], label: "two\nlines" }] };
   assert.throws(() => [...statements(withBreak)], /line break/);
+});
+
+test("a database names its taxonomy only once every record is in it", async () => {
+  const bundle = await fixtureBundle();
+  const records = { concepts: bundle.concepts.length, labels: bundle.labels.length, relations: bundle.edges.length };
+  // What the taxonomy says about itself is the last statement of a load, and no other.
+  for (const all of [[...statements(bundle)], [...statements(bundle, { maxBytes: 600 })]]) {
+    assert.deepEqual(all.flatMap((statement, at) => (statement.startsWith("INSERT INTO taxonomy_meta ") ? [at] : [])), [all.length - 1]);
+    assert.equal(all.filter((statement) => statement.includes(bundle.info.version)).length, 1);
+  }
+  const files = sqlFiles(bundle, { maxBytes: 600, maxFileBytes: 4000 });
+  assert.ok(files.length > 4);
+  /** Runs these files in order, as a load does, and gives what the database then says of itself. */
+  const load = (list, check) => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      for (const file of list) check(file, () => db.exec(file));
+      return Object.fromEntries(db.prepare(`SELECT key, value FROM taxonomy_meta`).all().map((row) => [row.key, row.value]));
+    } finally { db.close(); }
+  };
+  const runs = (_file, run) => run();
+  // Every file, in order: the taxonomy, and how many records the database was found to hold.
+  assert.deepEqual(load(files, runs), {
+    format: "1", version: bundle.info.version, contentHash: bundle.info.contentHash, sources: JSON.stringify(bundle.info.sources), records: JSON.stringify(records),
+  });
+  // A load that stopped, however far it got: nothing names a version.
+  for (let ran = 1; ran < files.length; ran++) assert.deepEqual(load(files.slice(0, ran), runs), {}, `after ${ran} of ${files.length} files`);
+  // A load that left one file out and ran the rest: the last file fails, and nothing names a version.
+  const last = files.at(-1);
+  for (let left = 1; left < files.length - 1; left++) {
+    const said = load(files.filter((_, at) => at !== left), (file, run) => {
+      if (file === last) assert.throws(run, /NOT NULL constraint failed: taxonomy_meta\.value/, `without file ${left + 1}`);
+      else run();
+    });
+    assert.deepEqual(said, {}, `without file ${left + 1} of ${files.length}`);
+  }
+  // A file run twice is refused by the tables themselves, as it was.
+  assert.throws(() => load([...files.slice(0, 3), files[2]], runs), /UNIQUE constraint failed/);
 });
 
 test("the build writes records, SQL and a manifest that says what went in and what to credit", async () => {
@@ -478,6 +560,55 @@ test("the build writes records, SQL and a manifest that says what went in and wh
     await writeFile(join(esco, "skills_en.csv"), Buffer.from([0xff, 0xfe, 0x00]));
     await assert.rejects(build({ esco, onet: join(FIXTURES, "onet"), crosswalk: join(FIXTURES, "crosswalk.csv"), out, escoVersion: "1.2.1", onetVersion: "31.0" }));
     await assert.rejects(build({ esco: dir, onet: join(FIXTURES, "onet"), crosswalk: join(FIXTURES, "crosswalk.csv"), out, escoVersion: "1.2.1", onetVersion: "31.0" }), /no CSV files in/);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("the build removes nothing but an earlier build, and never the files it reads", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "taxonomy-out-"));
+  try {
+    // The downloads kept together in one working folder, with something else beside them.
+    await cp(join(FIXTURES, "esco"), join(dir, "esco"), { recursive: true });
+    await cp(join(FIXTURES, "onet"), join(dir, "onet"), { recursive: true });
+    await cp(join(FIXTURES, "crosswalk.csv"), join(dir, "crosswalk.csv"));
+    await writeFile(join(dir, "notes.txt"), "where the files came from");
+    await mkdir(join(dir, "elsewhere"));
+    await writeFile(join(dir, "elsewhere", "thesis.txt"), "not a build");
+    const from = { esco: join(dir, "esco"), onet: join(dir, "onet"), crosswalk: join(dir, "crosswalk.csv"), escoVersion: "1.2.1", onetVersion: "31.0" };
+    const everything = async () => (await readdir(dir, { recursive: true })).sort();
+    const before = await everything();
+    assert.ok(before.includes(join("esco", "skills_en.csv")) && before.includes("crosswalk.csv") && before.includes(join("elsewhere", "thesis.txt")));
+
+    // --out naming the working folder itself, one of the folders read, or the crosswalk file.
+    for (const out of [dir, join(dir, "esco"), join(dir, "onet"), join(dir, "crosswalk.csv"), join(dir, "esco", "..")])
+      await assert.rejects(build({ ...from, out }), /holds the files being read/, out);
+    // A folder that holds something and no build, with or without some other program's manifest.json.
+    await assert.rejects(build({ ...from, out: join(dir, "elsewhere") }), /is not empty and does not hold an earlier build/);
+    await writeFile(join(dir, "elsewhere", "manifest.json"), JSON.stringify({ name: "another program's", version: "esco-1.2.1+onet-31.0+00000000" }));
+    await assert.rejects(build({ ...from, out: join(dir, "elsewhere") }), /is not empty and does not hold an earlier build/);
+    await rm(join(dir, "elsewhere", "manifest.json"));
+    // A file is not a folder to write into.
+    await assert.rejects(build({ ...from, out: join(dir, "notes.txt") }), /is not a folder/);
+    // The same from the command line, as "--out ." in the working folder.
+    const script = fileURLToPath(new URL("./taxonomy/build.mjs", import.meta.url));
+    const here = spawnSync(process.execPath, [script, "--esco", "esco", "--onet", "onet", "--crosswalk", "crosswalk.csv", "--out", ".", "--esco-version", "1.2.1", "--onet-version", "31.0"], { encoding: "utf8", cwd: dir });
+    assert.equal(here.status, 1);
+    assert.match(here.stderr, /taxonomy build failed: .* holds the files being read/);
+    // Every refusal left everything where it was.
+    assert.deepEqual(await everything(), before);
+    assert.equal(await readFile(join(dir, "elsewhere", "thesis.txt"), "utf8"), "not a build");
+
+    // A folder that isn't there yet, an empty one, and an earlier build are all written to.
+    await mkdir(join(dir, "empty"));
+    for (const out of [join(dir, "new", "deeper"), join(dir, "empty"), join(dir, "empty")]) {
+      const manifest = await build({ ...from, out });
+      assert.deepEqual((await readdir(out)).sort(), ["concepts.ndjson", "d1", "labels.ndjson", "manifest.json", "relations.ndjson"]);
+      assert.equal(JSON.parse(await readFile(join(out, "manifest.json"), "utf8")).contentHash, manifest.contentHash);
+    }
+    // An earlier build that the downloads were later put inside is still not removed.
+    await cp(join(dir, "esco"), join(dir, "empty", "esco"), { recursive: true });
+    await assert.rejects(build({ ...from, esco: join(dir, "empty", "esco"), out: join(dir, "empty") }), /holds the files being read/);
+    assert.ok((await readdir(join(dir, "empty", "esco"))).includes("skills_en.csv"));
+    assert.ok((await readdir(join(dir, "empty"))).includes("manifest.json"));
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

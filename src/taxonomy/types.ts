@@ -146,8 +146,11 @@ export interface Mention {
   /** Every concept a label with these words belongs to, strongest label type first. `matched` is that label as stored. */
   concepts: { id: string; kind: ConceptKind; type: LabelType; matched: string }[];
   /**
-   * True when the words alone are thin evidence: one short or everyday word that is also a
-   * label ("go", "r", "excel"). A weak mention is a candidate to check, never a tag by itself.
+   * True when the words alone are thin evidence: one word that is very short, that only a label
+   * the builder made carries, or that the text writes as none of its labels does ("go", "r",
+   * "excel" for Excel, "Did" for DID). A weak mention is a candidate to check, never a tag by
+   * itself. The flag goes by spelling alone: an everyday word written exactly as its label is,
+   * such as "Chef" at the start of a line, is not marked.
    */
   weak: boolean;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MemoryStore, Taxonomy, MAX_MENTION_TEXT_CHARS, taxonomyFor, type Mention, type TaxonomyStore } from "../../src/taxonomy";
+import { D1Store, MemoryStore, Taxonomy, MAX_MENTION_TEXT_CHARS, normalizeLabel, taxonomyFor, words, type Concept, type Edge, type Label, type Mention, type TaxonomyStore } from "../../src/taxonomy";
 import { TAXONOMY_FIXTURE } from "../support/taxonomy-fixture";
 
 const S = (n: number) => `esco:skill:00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -10,14 +10,37 @@ const BA = "onet:occ:99-1003.00";
 
 const taxonomy = () => new Taxonomy(new MemoryStore(TAXONOMY_FIXTURE));
 const brief = (mentions: Mention[]) => mentions.map((mention) => [mention.text, mention.concepts.map((concept) => concept.id), mention.weak]);
+/** The test taxonomy with more labels, each stored in the form the builder would store it in. */
+const withLabels = (...labels: Omit<Label, "norm">[]) =>
+  new Taxonomy(new MemoryStore({ ...TAXONOMY_FIXTURE, labels: [...TAXONOMY_FIXTURE.labels, ...labels.map((label) => ({ ...label, norm: normalizeLabel(label.text) }))] }));
+/** An accent written as its letter and then a combining mark, as some editors and PDF text layers write it. */
+const decomposed = (text: string) => text.normalize("NFD");
 
 describe("the combined taxonomy", () => {
   it("says which taxonomy it is, and that none is loaded when none is", async () => {
     expect(await taxonomy().info()).toEqual(TAXONOMY_FIXTURE.info);
-    const empty: TaxonomyStore = { info: async () => null, concepts: async () => [], labels: async () => [], from: async () => [], to: async () => [] };
+    const empty: TaxonomyStore = { info: async () => null, concepts: async () => [], labels: async () => [], from: async () => [], fromAny: async () => [], to: async () => [] };
     await expect(new Taxonomy(empty).info()).rejects.toThrow("unavailable: the taxonomy is not loaded");
     // Without the binding there is no taxonomy, and nothing that depends on one runs.
     expect(taxonomyFor({})).toBeNull();
+  });
+
+  it("takes a database with no tables for nothing loaded, and no other failed read", async () => {
+    const failing = (message: string) =>
+      new D1Store({
+        prepare: () => ({
+          all: async () => {
+            throw new Error(message);
+          },
+        }),
+      } as unknown as D1Database);
+    // What D1 says of a database that nothing has been loaded into.
+    const unloaded = failing("D1_ERROR: no such table: taxonomy_meta: SQLITE_ERROR");
+    expect(await unloaded.info()).toBeNull();
+    await expect(new Taxonomy(unloaded).info()).rejects.toThrow("unavailable: the taxonomy is not loaded");
+    // A read that failed for another reason says nothing about what is loaded. It is D1's failure to report.
+    for (const message of ["D1_ERROR: Network connection lost.", "D1_ERROR: no such table: concepts: SQLITE_ERROR", "D1_ERROR: D1 DB is overloaded. Too many requests queued."])
+      await expect(failing(message).info(), message).rejects.toThrow(message);
   });
 
   it("gives concepts by ID and leaves out what isn't one", async () => {
@@ -88,6 +111,51 @@ describe("labels found in a line of text", () => {
     for (const line of ["Pythonic code", "NoSQL stores", "gopher", "MySQL", "Excellent results"]) expect(await t.mentions(line), line).toEqual([]);
   });
 
+  it("read an accent the same however the text encodes it", async () => {
+    expect(decomposed("r\u00e9sum\u00e9")).toHaveLength(8);
+    expect(words(decomposed("Wrote a r\u00e9sum\u00e9 for the caf\u00e9")).map((word) => word.norm)).toEqual(["wrote", "a", "resume", "for", "the", "cafe"]);
+    expect(normalizeLabel(decomposed("ma\u00eetre d'h\u00f4tel"))).toBe("maitre d'hotel");
+    expect(normalizeLabel("ma\u00eetre d'h\u00f4tel")).toBe("maitre d'hotel");
+    // A label written with combining marks is stored in the form its composed twin is.
+    expect(normalizeLabel(decomposed("comprehend spoken Proven\u00e7al"))).toBe("comprehend spoken provencal");
+
+    const t = withLabels(
+      { conceptId: O(4), kind: "occupation", type: "alternative", text: "ma\u00eetre d'h\u00f4tel" },
+      { conceptId: O(5), kind: "occupation", type: "alternative", text: "SEN" },
+      { conceptId: S(9), kind: "skill", type: "alternative", text: "RE" },
+    );
+    for (const line of ["Ma\u00eetre d'h\u00f4tel at a 120-cover restaurant", decomposed("Ma\u00eetre d\u2019h\u00f4tel at a 120-cover restaurant")]) {
+      const found = await t.mentions(line);
+      expect(found.map((mention) => mention.concepts.map((concept) => concept.id)), line).toEqual([[O(4)]]);
+      // The mention is where the label is in the text as given, with every mark of its last letter.
+      expect(found[0]!.start).toBe(0);
+      expect(line.slice(found[0]!.start, found[0]!.end)).toBe(found[0]!.text);
+      expect(found[0]!.text.normalize("NFC")).toMatch(/^Ma\u00eetre d['\u2019]h\u00f4tel$/);
+    }
+    // The letters before an accent are not a word of their own: no "Sen" in the first line, no "Re" in the second.
+    for (const line of ["Se\u00f1or engineer", "R\u00e9sum\u00e9 screening"]) {
+      expect(await t.mentions(line), line).toEqual([]);
+      expect(await t.mentions(decomposed(line)), line).toEqual([]);
+    }
+    expect(brief(await t.mentions("SEN support"))).toEqual([["SEN", [O(5)], false]]);
+  });
+
+  it("read a word through the characters in it that are not seen", async () => {
+    const t = taxonomy();
+    // A soft hyphen, a zero-width space and a zero-width joiner: none is something a person reads.
+    expect(words("manage\u00adment, Py\u200bthon and Kuber\u200dnetes").map((word) => word.norm)).toEqual(["management", "python", "and", "kubernetes"]);
+    const line = "strong budget manage\u00adment in Py\u200bthon";
+    const found = await t.mentions(line);
+    expect(found.map((mention) => [mention.text, mention.norm, mention.concepts.map((concept) => concept.id)])).toEqual([
+      ["budget manage\u00adment", "budget management", [S(1)]],
+      ["Py\u200bthon", "python", ["onet:tool:python", S(3)]],
+    ]);
+    for (const mention of found) expect(line.slice(mention.start, mention.end)).toBe(mention.text);
+    // Such a character between two words still leaves two words, and one before a word starts nothing.
+    expect(words("\ufeffPython \u200bSQL").map((word) => word.norm)).toEqual(["python", "sql"]);
+    expect(normalizeLabel("\u200bpublic relations consultant")).toBe("public relations consultant");
+  });
+
   it("mark a short or everyday word as thin evidence", async () => {
     const t = taxonomy();
     // Two letters are always thin, however they are written.
@@ -102,6 +170,42 @@ describe("labels found in a line of text", () => {
       ["k8s", [S(4)], true],
     ]);
     expect(brief(await t.mentions("strong budget management"))).toEqual([["budget management", [S(1)], false]]);
+  });
+
+  it("do not take a capital for evidence unless a label a source wrote is written that way", async () => {
+    const t = withLabels(
+      // Two O*NET software examples, each also under the name the builder makes by dropping "software".
+      { conceptId: "onet:tool:testing-software", kind: "tool", type: "preferred", text: "Testing software" },
+      { conceptId: "onet:tool:testing-software", kind: "tool", type: "derived", text: "Testing" },
+      { conceptId: "onet:tool:sales-software", kind: "tool", type: "preferred", text: "Sales software" },
+      { conceptId: "onet:tool:sales-software", kind: "tool", type: "derived", text: "Sales" },
+      { conceptId: S(60), kind: "knowledge", type: "alternative", text: "DID" },
+      { conceptId: "onet:tool:act", kind: "tool", type: "preferred", text: "Act!" },
+      { conceptId: "onet:tool:ansible-software", kind: "tool", type: "derived", text: "Ansible" },
+      { conceptId: S(61), kind: "knowledge", type: "preferred", text: "Ansible" },
+      { conceptId: S(62), kind: "knowledge", type: "preferred", text: "Proven\u00e7al" },
+      { conceptId: S(63), kind: "skill", type: "preferred", text: "communication" },
+    );
+    // Every line starts with a capital. A first word that only a label the builder made carries is thin.
+    expect(brief(await t.mentions("Testing and debugging of embedded firmware"))).toEqual([["Testing", ["onet:tool:testing-software"], true]]);
+    expect(brief(await t.mentions("Sales grew 40% year over year"))).toEqual([["Sales", ["onet:tool:sales-software"], true]]);
+    // So is one that no label is written like: "Did" is not DID, and "Act" is not Act!.
+    expect(brief(await t.mentions("Did not use SAP"))).toEqual([["Did", [S(60)], true]]);
+    expect(brief(await t.mentions("Act as the primary contact for vendors"))).toEqual([["Act", ["onet:tool:act"], true]]);
+    expect(brief(await t.mentions("PYTHON, SQL"))).toEqual([
+      ["PYTHON", ["onet:tool:python", S(3)], true],
+      ["SQL", [S(8)], false],
+    ]);
+    // Written as a label a source wrote, a word is firm wherever it stands. A skills-list item is the whole text.
+    expect(brief(await t.mentions("Routed calls over DID trunks"))).toEqual([["DID", [S(60)], false]]);
+    expect(brief(await t.mentions("Python"))).toEqual([["Python", ["onet:tool:python", S(3)], false]]);
+    // A label the builder made beside one a source wrote: the source's label decides.
+    expect(brief(await t.mentions("Ansible"))).toEqual([["Ansible", [S(61), "onet:tool:ansible-software"], false]]);
+    expect(brief(await t.mentions("wrote ansible playbooks"))).toEqual([["ansible", [S(61), "onet:tool:ansible-software"], true]]);
+    // A label that is itself an everyday word is that word, capital or not.
+    expect(brief(await t.mentions("Communication with clients"))).toEqual([["Communication", [S(63)], false]]);
+    // How an accent is encoded is not a different spelling.
+    for (const line of ["Proven\u00e7al", decomposed("Proven\u00e7al")]) expect(brief(await t.mentions(line)), line).toEqual([[line, [S(62)], false]]);
   });
 
   it("refuse a text too long to be a line, and find nothing in nothing", async () => {
@@ -202,6 +306,55 @@ describe("an occupation seen through both sources", () => {
       [S(1), "essential", null],
       [S(7), "optional", null],
     ]);
+  });
+
+  it("reads every occupation the crosswalk relates it to, however many there are", async () => {
+    // Ten more ESCO occupations matched to one O*NET occupation just as its own counterpart is, each
+    // with a skill no other names. Matches of one type come in ID order, which says nothing of them.
+    const more = Array.from({ length: 10 }, (_, n) => ({ occupation: O(100 + n), skill: S(100 + n) }));
+    const store = new MemoryStore({
+      ...TAXONOMY_FIXTURE,
+      concepts: [
+        ...TAXONOMY_FIXTURE.concepts,
+        ...more.flatMap(({ occupation, skill }, n): Concept[] => [
+          { id: occupation, kind: "occupation", scheme: "esco", code: null, label: `budget specialist ${n}`, description: null, meta: {} },
+          { id: skill, kind: "skill", scheme: "esco", code: null, label: `budget skill ${n}`, description: null, meta: {} },
+        ]),
+      ],
+      edges: [
+        ...TAXONOMY_FIXTURE.edges,
+        ...more.flatMap(({ occupation, skill }): Edge[] => [
+          { src: BA, rel: "matches", dst: occupation, meta: { type: "broad" } },
+          { src: occupation, rel: "essential", dst: skill, meta: null },
+        ]),
+      ],
+    });
+    const reads: string[] = [];
+    const counted: TaxonomyStore = {
+      info: () => store.info(),
+      concepts: (ids) => store.concepts(ids),
+      labels: (norms, kinds) => store.labels(norms, kinds),
+      from: (src, rels) => (reads.push("from"), store.from(src, rels)),
+      fromAny: (srcs, rels) => (reads.push("fromAny"), store.fromAny(srcs, rels)),
+      to: (dst, rels) => (reads.push("to"), store.to(dst, rels)),
+    };
+    const profile = (await new Taxonomy(counted).profile(BA))!;
+    expect(profile.counterparts.map((counterpart) => [counterpart.concept.id, counterpart.match])).toEqual([
+      [O(3), "broad"],
+      ...more.map(({ occupation }) => [occupation, "broad"]),
+    ]);
+    // Each one's skill is in the profile, and says whose record it is from.
+    expect(profile.skills.map((item) => [item.concept.id, item.need, item.via])).toEqual([
+      ...more.map(({ occupation, skill }) => [skill, "essential", { occupation, match: "broad" }]),
+      [S(1), "essential", { occupation: O(3), match: "broad" }],
+      [S(7), "optional", { occupation: O(3), match: "broad" }],
+    ]);
+    // The crosswalk is read once and then each source's relations together: three reads of
+    // relations, not one for every occupation.
+    expect(reads).toEqual(["from", "fromAny", "fromAny"]);
+    reads.length = 0;
+    expect((await new Taxonomy(counted).profile(O(2)))!.counterparts).toHaveLength(1);
+    expect(reads).toEqual(["to", "fromAny", "fromAny"]);
   });
 
   it("is nothing for a concept that isn't an occupation, and ignores a match it can't read", async () => {

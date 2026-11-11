@@ -133,7 +133,7 @@ Each step is a pull request, off by default, with its own tests. Steps 3 onward 
 | # | Step | Depends on |
 | --- | --- | --- |
 | 1 | The taxonomy: builder, records, lookup | Done in this change |
-| 2 | First real build (made and checked on 10 November), loaded into staging; a vector index of the concepts | Access to the staging account |
+| 2 | First real build (made and checked on 10 November, and to be made again with the builder as it now is: [taxonomy.md](taxonomy.md)), loaded into staging; a vector index of the concepts | Access to the staging account |
 | 3 | The record: evidence per fact, parts, tags, links. No behaviour change | Built: [record.md](record.md) |
 | 4 | Splitting, in shadow, with labelled examples in the extraction evals | 3. Built: [splitting.md](splitting.md). Not yet run against the real models or measured on real lines |
 | 5 | Tagging facts, roles and postings, in shadow | 2, 3 |
