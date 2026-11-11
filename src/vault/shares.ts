@@ -558,16 +558,48 @@ export class ShareStore {
   }
 
   /**
+   * The copy as the account that took it up may have it now, with the address and name that
+   * account is known to this copy by. It is the one check for anything a coach reads or writes
+   * through their account: the open vault, the grant as `joined` reads it, then the delivery
+   * check a link passes. Whatever is wrong, it says the one thing a dead link says.
+   */
+  copyForCoach(grantId: string, coach: CoachAccount, now = Date.now()): { view: SharedView; coach: { email: string; name: string | null } } {
+    this.auth.requireOpen();
+    const row = this.joined(grantId, coach, now);
+    if (!row || !row.coach_email) throw new AppError("gone", "this share link is unavailable or expired");
+    // The copy has to be one that can be delivered, as when a link is exchanged.
+    const view = this.read({ grantId: row.id, epoch: row.epoch }, now);
+    return { view, coach: { email: row.coach_email, name: row.coach_name ?? null } };
+  }
+
+  /**
    * Lets the account that took a copy up open it again without the link. It is the same access
    * the link gives, to the one account the owner named, for as long as the link itself would work.
    */
   openForCoach(grantId: string, coach: CoachAccount, now = Date.now()): { epoch: string; expiresAt: number } {
-    this.auth.requireOpen();
-    const row = this.joined(grantId, coach, now);
-    if (!row) throw new AppError("gone", "this share link is unavailable or expired");
-    // The copy has to be one that can be delivered, as when a link is exchanged.
-    this.read({ grantId: row.id, epoch: row.epoch }, now);
-    return { epoch: row.epoch, expiresAt: row.expires_at };
+    const { view } = this.copyForCoach(grantId, coach, now);
+    // The grant's epoch is the current one, or the check above would have refused it.
+    return { epoch: this.auth.currentEpoch(), expiresAt: view.expiresAt };
+  }
+
+  /**
+   * How a copy stands for its owner: whether it can be delivered now, decided as `list` decides
+   * `available`, and which account holds it as its coach. Null once the grant itself has gone.
+   */
+  standing(who: Who, grantId: string, now = Date.now()): { open: boolean; coachUserId: string | null } | null {
+    this.auth.authorizeOwner(who);
+    const row = this.sql.exec<GrantRow>(`SELECT * FROM share_grants WHERE id = ?`, grantId).toArray()[0];
+    if (!row) return null;
+    let open = false;
+    if (row.revoked_at === null && row.expires_at > now) {
+      try {
+        this.read({ grantId: row.id, epoch: row.epoch }, now);
+        open = true;
+      } catch {
+        // Closed, and nothing about why leaves this method.
+      }
+    }
+    return { open, coachUserId: row.coach_user_id ?? null };
   }
 
   /**

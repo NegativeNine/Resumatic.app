@@ -596,7 +596,7 @@ function ShareSelection({
             id={`${id}-coach`}
             label="Your coach’s sign-in address"
             optional
-            hint="If your coach has a Resumatic account, this lets them keep the copy in their client list and open it without the link. Anyone with the link can still read it."
+            hint="If your coach has a Resumatic account, this lets them keep the copy in their client list, open it without the link and comment on it. Anyone with the link can still read it. Only your coach can comment."
             error={badCoach ? "Enter a full email address, or leave this empty." : undefined}
           >
             <input

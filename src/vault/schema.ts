@@ -6,6 +6,7 @@ import { MCP_MIGRATIONS } from "./mcp-grants";
 import { RUN_MIGRATIONS } from "./runs";
 import { COACH_CLIENT_MIGRATIONS } from "./coach-clients";
 import { SHARE_COACH_MIGRATIONS, SHARE_DETAIL_MIGRATIONS, SHARE_DOCUMENT_MIGRATIONS, SHARE_MIGRATIONS } from "./shares";
+import { SHARE_COMMENT_MIGRATIONS } from "./share-comments";
 import { EXPORT_CACHE_MIGRATIONS } from "./export-cache";
 import { RECORD_MIGRATIONS } from "./record";
 import { PREFERENCES_MIGRATIONS } from "./preferences";
@@ -252,6 +253,7 @@ export const MIGRATIONS: readonly string[][] = [
   [...SHARE_COACH_MIGRATIONS, ...COACH_CLIENT_MIGRATIONS],
   [...PREFERENCES_MIGRATIONS],
   [...SENSITIVE_MIGRATIONS],
+  [...SHARE_COMMENT_MIGRATIONS],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

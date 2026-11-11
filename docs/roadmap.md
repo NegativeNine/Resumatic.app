@@ -18,12 +18,13 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Two wordings of one thing | #33 open, based on #32 | Off by default; asks the judge about likely pairs and keeps each answer as an offer in shadow. The eval against the real judge needs credentials and has not been run |
 | Sensitive facts | #NN open | A mark on a fact and its words. Adds a vault migration, deployed only in the integrated order after coach accounts: preferences, sensitive facts, comments, suggested wording. Marking a role, and finding sensitive facts for the person, are not built |
 | Preferences | #NN open | Kept in the vault and read only by the owner's form and export. Work authorisation is not stored. Adds a vault migration, the first of the four that follow coach accounts (preferences, sensitive facts, comments, suggested wording); only that integrated order is deployed |
+| Comments on a shared copy | #NN open, based on #26 | Adds a vault migration: the third of the four the open features add after coach accounts (preferences, sensitive facts, comments, suggested wording). Only that integrated order is deployed. Suggested wording builds on its table |
 
 An open PR or a local check is not a claim of production release acceptance. The [release status](seeker-release-status.md) records the broader acceptance work.
 
 ## Now: still to build
 
-- Comments on a shared copy.
+- Comments on a shared copy. In review as #NN.
 - Suggested wording on a shared copy.
 - Fit preview through connected apps.
 - Sensitive facts: mark a fact so it is never written into a resume, shared, or shown to an app. In review as #NN.

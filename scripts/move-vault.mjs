@@ -31,6 +31,7 @@ export const TABLES = new Set([
   "record_tags",
   "record_links",
   "coach_clients",
+  "share_comments",
 ]);
 const vaultId = (value) =>
   typeof value === "string" && /^[a-f0-9]{64}$/i.test(value);

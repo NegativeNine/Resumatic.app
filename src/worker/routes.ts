@@ -53,6 +53,7 @@ import {
 } from "../shared/api";
 import { AppError, errorCode, errorDetail, httpStatus } from "../shared/errors";
 import { MAX_SHARE_LABEL_CHARS, type CoachClient, type SharedView } from "../shared/sharing";
+import type { CommentThread, OwnerCommentThread } from "../shared/sharing";
 import { hintFor, type CfLocation } from "../shared/location";
 import { PREFERENCES_REFUSED, cleanPreferences } from "../shared/preferences";
 import { docxKey, pdfKey, sourceKey } from "../shared/r2";
@@ -1356,6 +1357,27 @@ api.delete("/shares/:id", async (c) => {
   return c.body(null, 204);
 });
 
+// What a coach wrote on the copies this person shared, and their own replies. These four are the
+// owner's, in the owner's own vault. The length of a comment is the Vault's to refuse, in a
+// sentence of its own, so the limit here is only on what is read at all.
+const CommentBody = z.string().max(4000);
+api.get("/shares/comments", async (c) => {
+  const threads: OwnerCommentThread[] = await myVault(c).listShareComments(c.get("who"));
+  return c.json({ threads });
+});
+api.post("/shares/comments/seen", async (c) => {
+  await myVault(c).markShareCommentsSeen(c.get("who"));
+  return c.body(null, 204);
+});
+api.post("/shares/comments/:id/replies", JSON_LIMIT, async (c) => {
+  const { body } = await jsonBody(c, z.object({ body: CommentBody }));
+  return c.json(await myVault(c).replyToShareComment(c.get("who"), c.req.param("id"), body, requestKey(c)), 201);
+});
+api.delete("/shares/comments/:id", async (c) => {
+  await myVault(c).removeShareComment(c.get("who"), c.req.param("id"));
+  return c.body(null, 204);
+});
+
 // ------------------------------------------------------------------ coaches
 // A copy can name a coach by the address they sign in with. That account, and no other, can keep
 // the copy in its client list and open it again without the link. Naming a coach never widens who
@@ -1449,6 +1471,42 @@ api.post("/coach/clients/:grantId/open", async (c) => {
 // Takes a copy off the coach's own list. The owner's link is theirs to end.
 api.delete("/coach/clients/:grantId", async (c) => {
   await myVault(c).removeCoachClient(c.get("who"), c.req.param("grantId"));
+  return c.body(null, 204);
+});
+
+// A coach's comments on a client's copy. They are reached as the copy is opened from the list:
+// the caller's own vault says which copy and where it is kept, the session says who is asking, and
+// the copy's owner's vault checks that account in the transaction that reads or writes. Nothing
+// here is served to the link's own session, which a sign-out everywhere doesn't end.
+
+/** The copy as the caller's own list holds it, and the caller as its owner's vault is told of them. */
+async function coachCopy(c: C) {
+  const entry = await myVault(c).coachClient(c.get("who"), c.req.param("grantId") ?? "");
+  if (!entry) throw new AppError("not_found", "no such client");
+  return { entry, account: coachAccount(c) };
+}
+
+/** Shape only. Whether the copy holds the line or the fact is the owner's vault's to say. */
+const CommentTarget = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("line"), resumeId: z.string().min(1).max(100), version: z.number().int().positive(), lineId: z.string().min(1).max(100) }).strict(),
+  z.object({ kind: z.literal("fact"), factId: z.string().min(1).max(100) }).strict(),
+]);
+
+api.get("/coach/clients/:grantId/comments", async (c) => {
+  const { entry, account } = await coachCopy(c);
+  const threads: CommentThread[] = await unlessEnded(vault(c.env, entry.ownerVault).coachComments(entry.grantId, account));
+  return c.json({ threads });
+});
+api.post("/coach/clients/:grantId/comments", JSON_LIMIT, async (c) => {
+  const { entry, account } = await coachCopy(c);
+  const input = await jsonBody(c, z.object({ target: CommentTarget, body: CommentBody }));
+  const key = requestKey(c);
+  return c.json(await unlessEnded(vault(c.env, entry.ownerVault).commentAsCoach(entry.grantId, account, input, key)), 201);
+});
+// Answers 204 whether or not anything of the caller's matched, as taking a copy off the list does.
+api.delete("/coach/clients/:grantId/comments/:id", async (c) => {
+  const { entry, account } = await coachCopy(c);
+  await unlessEnded(vault(c.env, entry.ownerVault).removeCommentAsCoach(entry.grantId, account, c.req.param("id")));
   return c.body(null, 204);
 });
 app.post("/share/session", JSON_LIMIT, async (c) => {

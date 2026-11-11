@@ -26,7 +26,10 @@ export function Shell({
   children: ReactNode;
 }) {
   useLiveProgress();
-  const clients = useSession().me.clients ?? 0;
+  const { me } = useSession();
+  const clients = me.clients ?? 0;
+  // Comments a coach has written that the person hasn't seen, as counted when the app loaded.
+  const fromCoach = me.newFromCoach ?? 0;
   const main = useRef<HTMLElement>(null);
   const routeKey = route.page === "resume" ? `resume/${route.id}` : route.page;
   const shownKey = useRef(routeKey);
@@ -65,8 +68,19 @@ export function Shell({
             <ul className="rs-nav">
               {(clients > 0 || route.page === "clients" ? [NAV[0]!, NAV[1]!, CLIENTS, NAV[2]!] : NAV).map((item) => (
                 <li key={item.to}>
-                  <a href={item.to} aria-current={item.pages.includes(route.page) ? "page" : undefined}>
+                  {/* Account is where a coach's comments are read, so it carries the count of new ones. */}
+                  <a
+                    href={item.to}
+                    aria-current={item.pages.includes(route.page) ? "page" : undefined}
+                    aria-label={item.to === href.account && fromCoach > 0 ? `Account, ${fromCoach.toLocaleString()} new from your coach` : undefined}
+                  >
                     {item.label}
+                    {item.to === href.account && fromCoach > 0 && (
+                      <span className="rs-mark rs-mark--new app-nav-new">
+                        {fromCoach.toLocaleString()}
+                        <span className="app-nav-new__word"> new</span>
+                      </span>
+                    )}
                   </a>
                 </li>
               ))}

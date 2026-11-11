@@ -125,6 +125,8 @@ describe("opening a shared copy", () => {
       { status: 409 },
     ];
     const page = await visit(`/share?g=${GRANT}`, (seen) => {
+      // Once the copy is in the list, the page asks for what its coach has written on it.
+      if (seen.path.startsWith("/api/coach/clients/")) return { status: 200, body: { threads: [] } };
       if (seen.method === "GET") return { status: 200, body: { ...named(), reviewer: standing } };
       const refusal = refusals.shift();
       if (refusal) return refusal;
@@ -140,7 +142,9 @@ describe("opening a shared copy", () => {
     page.fireEvent.click(add);
     await vi.waitFor(() => expect(page.screen.getByRole("alert")).toHaveTextContent("This copy couldn’t be added. Reload the page and try again."));
     page.fireEvent.click(add);
-    expect(await page.screen.findByText(/^This copy is in your client list\./)).toBeInTheDocument();
+    expect(await page.screen.findByText(/^Shared with you until \d+ Nov 2026\. You can comment\. Only Sam Rivera can change it\.$/)).toBeInTheDocument();
+    expect(page.screen.getByRole("link", { name: "Open your clients" })).toHaveAttribute("href", "/#/clients");
+    expect(await page.screen.findByText("No comments yet.")).toBeInTheDocument();
     expect(page.screen.queryByRole("alert")).toBeNull();
     expect(page.screen.queryByRole("button", { name: "Add to my clients" })).toBeNull();
     expect(page.calls.filter((call) => call.method === "POST")).toEqual(

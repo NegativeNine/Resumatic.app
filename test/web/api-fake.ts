@@ -4,7 +4,8 @@ import type { PostingRead } from "../../src/shared/postings";
 import { normalizePosting, type FactPatch, type NewFact, type NewRole, type Profile, type ReviewRequest, type RolePatch, type SensitiveRequest } from "../../src/shared/api";
 import { PREFERENCES_CHANGED, PREFERENCES_REFUSED, cleanPreferences, type Preferences, type PreferencesUpdate } from "../../src/shared/preferences";
 import { wording } from "../../src/shared/record";
-import type { Fixtures } from "./fixtures";
+import { targetText, type NewShareComment, type ShareComment } from "../../src/shared/sharing";
+import { sharedView, type Fixtures } from "./fixtures";
 
 export interface Call {
   method: string;
@@ -95,6 +96,32 @@ export class FakeApi {
         return { status: 204 };
       },
     ],
+    // A coach's comments on the copy they are reading. The copy is the one sharedView() gives.
+    ["GET", /^\/api\/coach\/clients\/([^/]+)\/comments$/, () => ok({ threads: this.state.coachComments ?? [] })],
+    [
+      "POST",
+      /^\/api\/coach\/clients\/([^/]+)\/comments$/,
+      (call) => {
+        const { target, body } = call.body as NewShareComment;
+        const made: ShareComment = { id: this.id("comment"), author: "coach", body: body.trim(), createdAt: Date.now() };
+        const threads = (this.state.coachComments ??= []);
+        const thread = threads.find((held) => JSON.stringify(held.target) === JSON.stringify(target));
+        if (thread) thread.comments.push(made);
+        else threads.push({ target, quote: targetText(sharedView().snapshot, target) ?? "", comments: [made] });
+        return { status: 201, body: made };
+      },
+    ],
+    [
+      "DELETE",
+      /^\/api\/coach\/clients\/([^/]+)\/comments\/([^/]+)$/,
+      (_call, [, id]) => {
+        // As the vault does: only the coach's own, and a thread with nothing left in it is gone.
+        this.state.coachComments = (this.state.coachComments ?? [])
+          .map((thread) => ({ ...thread, comments: thread.comments.filter((comment) => comment.id !== id || comment.author !== "coach") }))
+          .filter((thread) => thread.comments.length > 0);
+        return { status: 204 };
+      },
+    ],
     [
       "GET",
       /^\/api\/documents$/,
@@ -121,6 +148,41 @@ export class FakeApi {
         };
         (this.state.shares ??= []).unshift(grant);
         return { status: 201, body: { grant, url: `https://resumatic.test/share#synthetic-${grant.id}` } };
+      },
+    ],
+    // What coaches wrote on the copies this account shared, and its replies.
+    ["GET", /^\/api\/shares\/comments$/, () => ok({ threads: this.state.shareComments ?? [] })],
+    [
+      "POST",
+      /^\/api\/shares\/comments\/seen$/,
+      () => {
+        for (const thread of this.state.shareComments ?? [])
+          for (const comment of thread.comments) if (comment.author === "coach") comment.seen = true;
+        this.state.me.newFromCoach = 0;
+        return { status: 204 };
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/shares\/comments\/([^/]+)\/replies$/,
+      (call, [id]) => {
+        const thread = (this.state.shareComments ?? []).find((held) => held.comments.some((comment) => comment.id === id && comment.author === "coach"));
+        if (!thread) return notFound("that comment has been deleted; reload to see the thread as it stands");
+        if (!thread.open)
+          return { status: 409, body: { error: "conflict", message: "this copy isn't open to your coach any more, so they can't read a reply; share a new copy to carry on" } };
+        const made: ShareComment = { id: this.id("reply"), author: "owner", body: (call.body as { body: string }).body.trim(), createdAt: Date.now() };
+        thread.comments.push(made);
+        return { status: 201, body: made };
+      },
+    ],
+    [
+      "DELETE",
+      /^\/api\/shares\/comments\/([^/]+)$/,
+      (_call, [id]) => {
+        this.state.shareComments = (this.state.shareComments ?? [])
+          .map((thread) => ({ ...thread, comments: thread.comments.filter((comment) => comment.id !== id) }))
+          .filter((thread) => thread.comments.length > 0);
+        return { status: 204 };
       },
     ],
     ["GET", /^\/api\/mcp\/grants$/, () => ok({ grants: this.state.mcpGrants ?? [] })],

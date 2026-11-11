@@ -23,6 +23,7 @@ import type { DocumentView, NewDocument } from "../shared/documents";
 import type { PreferenceValues, Preferences } from "../shared/preferences";
 import type { PostingRead } from "../shared/postings";
 import type { CoachClient, ShareableDocument, ShareGrant } from "../shared/sharing";
+import type { CommentThread, NewShareComment, OwnerCommentThread, ShareComment } from "../shared/sharing";
 
 export interface BillingView {
   enabled: boolean;
@@ -340,6 +341,14 @@ export const api = {
   openCoachClient: (grantId: string) =>
     request<{ grantId: string }>("POST", `/api/coach/clients/${encodeURIComponent(grantId)}/open`),
   removeCoachClient: (grantId: string) => request<void>("DELETE", `/api/coach/clients/${encodeURIComponent(grantId)}`),
+  /** What this account wrote on a client's copy, and the replies to it. */
+  coachComments: (grantId: string) =>
+    request<{ threads: CommentThread[] }>("GET", `/api/coach/clients/${encodeURIComponent(grantId)}/comments`),
+  /** A retry after an uncertain reply sends the same key, so it makes one comment. */
+  addCoachComment: (grantId: string, comment: NewShareComment) =>
+    generate<ShareComment>(`/api/coach/clients/${encodeURIComponent(grantId)}/comments`, comment, ["id"]),
+  removeCoachComment: (grantId: string, id: string) =>
+    request<void>("DELETE", `/api/coach/clients/${encodeURIComponent(grantId)}/comments/${encodeURIComponent(id)}`),
   /** Finished cover letters and interview preparation, and whether each can be shared. */
   shareableDocuments: () => request<{ documents: ShareableDocument[] }>("GET", "/api/documents"),
   createShare: (selection: {
@@ -363,6 +372,14 @@ export const api = {
     ),
   revokeShare: (id: string) =>
     request<void>("DELETE", `/api/shares/${encodeURIComponent(id)}`),
+  /** What a coach wrote on the copies this account shared, with its own replies. */
+  shareComments: () => request<{ threads: OwnerCommentThread[] }>("GET", "/api/shares/comments"),
+  markShareCommentsSeen: () => request<void>("POST", "/api/shares/comments/seen"),
+  /** A reply to a coach's comment, by that comment's ID. */
+  replyToShareComment: (id: string, body: string) =>
+    generate<ShareComment>(`/api/shares/comments/${encodeURIComponent(id)}/replies`, { body }, ["id"]),
+  removeShareComment: (id: string) =>
+    request<void>("DELETE", `/api/shares/comments/${encodeURIComponent(id)}`),
   exportUrl: "/api/export",
   exportArchiveUrl: "/api/export/archive",
 };
