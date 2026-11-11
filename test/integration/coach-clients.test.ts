@@ -1,9 +1,9 @@
-import { runInDurableObject } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setModels } from "../../src/ai/models";
 import type { Me } from "../../src/shared/api";
-import type { CoachClient, ShareGrant, SharedView } from "../../src/shared/sharing";
+import { COACH_CLIENT_KEPT_MS, type CoachClient, type ShareGrant, type SharedView } from "../../src/shared/sharing";
 import { MIGRATIONS, migrate, SCHEMA_VERSION } from "../../src/vault/schema";
 import { Vault } from "../../src/vault/vault";
 import { vault } from "../../src/shared/stubs";
@@ -232,6 +232,73 @@ describe("a copy that names its coach", () => {
     // An empty address names nobody.
     expect((await share(sam, { factIds: [factId], coachEmail: "   " })).grant.coach).toBeNull();
     expect(await grants(sam)).toHaveLength(2);
+  });
+});
+
+describe("an entry in a coach's list", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const alarmOf = (user: User) => runInDurableObject(vaultOf(user), (_instance, state) => state.storage.getAlarm());
+  const held = (user: User) =>
+    runInDurableObject(vaultOf(user), (_instance, state) =>
+      state.storage.sql.exec<{ grant_id: string }>(`SELECT grant_id FROM coach_clients ORDER BY expires_at`).toArray().map((row) => row.grant_id),
+    );
+  /** Moves an entry to the moment it is due to be cleared, as thirty days passing after its copy's last day would. */
+  const lapse = (user: User, grantId: string) =>
+    runInDurableObject(vaultOf(user), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE coach_clients SET expires_at = ? WHERE grant_id = ?`, Date.now() - COACH_CLIENT_KEPT_MS, grantId);
+    });
+
+  it("is cleared from storage thirty days after its copy's last day, in an account that does nothing else", async () => {
+    const { user: sam, factId } = await owner();
+    const address = uniqueEmail();
+    const sooner = await share(sam, { factIds: [factId], coachEmail: address, expiresAt: Date.now() + 2 * DAY });
+    const later = await share(sam, { factIds: [factId], coachEmail: address, expiresAt: Date.now() + 5 * DAY });
+    // An account used only to coach: no uploads, facts or links of its own, so nothing has woken its vault.
+    const dana = await signIn(address);
+    expect(await alarmOf(dana)).toBeNull();
+
+    expect((await takeUp(sooner.grant.id, jar(await open(sooner), dana.cookie))).status).toBe(204);
+    expect(await alarmOf(dana)).toBe(sooner.grant.expiresAt + COACH_CLIENT_KEPT_MS);
+    // A copy that ends later leaves the alarm on the one that ends sooner.
+    expect((await takeUp(later.grant.id, jar(await open(later), dana.cookie))).status).toBe(204);
+    expect(await alarmOf(dana)).toBe(sooner.grant.expiresAt + COACH_CLIENT_KEPT_MS);
+
+    // Thirty days after its last day the entry is unseen at once, and the alarm takes it out of storage.
+    await lapse(dana, sooner.grant.id);
+    expect((await clients(dana)).clients.map((client) => client.grantId)).toEqual([later.grant.id]);
+    expect(await held(dana)).toEqual([sooner.grant.id, later.grant.id]);
+    expect(await runDurableObjectAlarm(vaultOf(dana))).toBe(true);
+    expect(await held(dana)).toEqual([later.grant.id]);
+    // The alarm is set again for the entry that is left, and that one goes in its turn.
+    expect(await alarmOf(dana)).toBe(later.grant.expiresAt + COACH_CLIENT_KEPT_MS);
+    await lapse(dana, later.grant.id);
+    expect(await runDurableObjectAlarm(vaultOf(dana))).toBe(true);
+    expect(await held(dana)).toEqual([]);
+    expect(await alarmOf(dana)).toBeNull();
+  });
+
+  it("is still due to be cleared after the vault's alarm has fired for something else", async () => {
+    const { user: sam, factId } = await owner();
+    // This coach has a fact and a link of her own. Saving the fact set an alarm, which is run out of the way.
+    const { user: dana, factId: hers } = await owner("Dana Okafor");
+    await runDurableObjectAlarm(vaultOf(dana));
+    expect(await alarmOf(dana)).toBeNull();
+    const shared = await share(sam, { factIds: [factId], coachEmail: dana.email });
+    expect((await takeUp(shared.grant.id, jar(await open(shared), dana.cookie))).status).toBe(204);
+    const due = shared.grant.expiresAt + COACH_CLIENT_KEPT_MS;
+    expect(await alarmOf(dana)).toBe(due);
+
+    // Her own link ends long before the entry is due, so the vault's one alarm is set for the link.
+    const own = await share(dana, { factIds: [hers], expiresAt: Date.now() + 60_000 });
+    expect(await alarmOf(dana)).toBe(own.grant.expiresAt);
+    await runInDurableObject(vaultOf(dana), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE share_grants SET expires_at = ? WHERE id = ?`, Date.now() - 1, own.grant.id);
+    });
+    expect(await runDurableObjectAlarm(vaultOf(dana))).toBe(true);
+    expect(await grants(dana)).toEqual([]);
+    // That alarm is spent. The entry's own time has to be set again, or nothing would ever clear it.
+    expect(await alarmOf(dana)).toBe(due);
+    expect(await held(dana)).toEqual([shared.grant.id]);
   });
 });
 

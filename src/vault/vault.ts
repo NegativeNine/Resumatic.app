@@ -3180,6 +3180,9 @@ export class Vault extends DurableObject<Env> {
   async addCoachClient(who: Who, client: Omit<CoachClientEntry, "addedAt">): Promise<void> {
     this.requireOwner(who);
     this.coachClients.add(client);
+    // An entry is cleared by the alarm, so holding one sets it.
+    const next = this.coachClients.nextAlarm();
+    if (next !== null) await this.scheduleRunAlarm(next);
   }
 
   async listCoachClients(who: Who): Promise<CoachClientEntry[]> {
@@ -5438,6 +5441,9 @@ export class Vault extends DurableObject<Env> {
     const candidates = [
       this.runs.listPending().length ? Date.now() + 60_000 : null,
       expiry,
+      // A vault has one alarm. Whatever this one fired for, the client list's next entry is still
+      // to be cleared at its own time.
+      this.coachClients.nextAlarm(),
       // An unresolved source write blocks expiry cleanup. Do not turn its
       // immediate retry into a one-second alarm loop; the retry already
       // installed at the top of this alarm remains scheduled.

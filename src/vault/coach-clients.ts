@@ -88,6 +88,14 @@ export class CoachClientStore {
     this.sql.exec(`DELETE FROM coach_clients WHERE expires_at <= ?`, now - COACH_CLIENT_KEPT_MS);
   }
 
+  /**
+   * When the next entry is due to be cleared, or null when none is held. The Vault sets its alarm
+   * by this: a vault used only to coach has nothing else that would ever wake it.
+   */
+  nextAlarm(): number | null {
+    return this.sql.exec<{ at: number | null }>(`SELECT MIN(expires_at) + ? AS at FROM coach_clients`, COACH_CLIENT_KEPT_MS).one().at;
+  }
+
   /** The list as the account's export gives it. Where each copy is kept stays on the server. */
   export(now = Date.now()): Omit<CoachClientEntry, "ownerVault">[] {
     return this.list(now).map(({ ownerVault: _kept, ...rest }) => rest);

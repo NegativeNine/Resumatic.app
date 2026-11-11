@@ -117,6 +117,25 @@ describe("a coach's client list", () => {
     } finally { db.close(); }
   });
 
+  it("says when its next entry is due to be cleared, which is the moment clearing takes it", () => {
+    const { clients, db, rows } = store();
+    try {
+      expect(clients.nextAlarm()).toBeNull();
+      clients.add({ grantId: grantId(1), ownerVault: vaultId("a"), ownerName: null, expiresAt: now + 3 * DAY }, now);
+      clients.add({ grantId: grantId(2), ownerVault: vaultId("b"), ownerName: null, expiresAt: now + DAY }, now);
+      const first = now + DAY + COACH_CLIENT_KEPT_MS;
+      expect(clients.nextAlarm()).toBe(first);
+      // An alarm at that moment finds the entry due, so it never has to come back for it.
+      clients.purge(first - 1);
+      expect(rows()).toBe(2);
+      clients.purge(first);
+      expect(rows()).toBe(1);
+      expect(clients.nextAlarm()).toBe(now + 3 * DAY + COACH_CLIENT_KEPT_MS);
+      clients.remove(grantId(1));
+      expect(clients.nextAlarm()).toBeNull();
+    } finally { db.close(); }
+  });
+
   it("doesn't count lapsed entries against the limit, and clears them when a copy is added", () => {
     const { clients, db, rows } = store();
     try {
