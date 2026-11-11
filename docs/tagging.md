@@ -92,7 +92,7 @@ So the safety of a tag from a line rests on the judge. The labelled examples mar
 With `TAG_SHADOW_ENABLED=true` and a taxonomy bound as `TAXONOMY`, reading an upload gains one stage, after the stages that note copies, offers and divisions and before the upload is marked ready. Without both, reading is exactly as it is today: nothing is looked up and no model is asked.
 
 - It first asks the taxonomy which version it is. A database with nothing in it, one loaded part of the way, or one that cannot be reached ends the stage there.
-- It tags this upload's rows only: its first 20 jobs and first 120 facts, as the reading proposed them.
+- It tags this upload's rows only: its first 20 jobs and first 120 facts, as the reading proposed them. A fact its owner has marked sensitive is left out before the cap, so its words go neither to the taxonomy's database nor to the judge. Words already marked arrive marked, so a second upload of a marked line is left out too.
 - **Every read of the taxonomy comes before anything is asked or stored.** A taxonomy that cannot be read ends the stage with nothing asked and nothing kept.
 - **Tags are stored as they are decided:** the rule's tags, then each judge call's answers, roles before facts. A failed call, a refused reservation or running out of time ends the stage, and what was stored stays. A tag stands alone, unlike a division or an offer, so nothing is gained by discarding answers already paid for.
 - A tag is stored in shadow on its fact or job, proposed, with its method, its model and the taxonomy version. It is stored only if the row still says exactly the words that were decided about, and rewording a fact or retitling a job afterwards removes its tags ([record.md](record.md), "When words change").
@@ -130,11 +130,11 @@ These numbers come from arithmetic, not from measurement.
 - **Tags on parts of a line.** A part gets none yet ([splitting.md](splitting.md)).
 - **Tags on postings** and their requirements.
 - **Any screen, and the owner's review.** Nothing shows a tag, and nobody can confirm or reject one.
-- **Any use of tags:** matching and coverage by concept, years per skill, the private card. A reading tags every fact it proposed, whatever is decided about the fact later. Nothing reads the tags, so nothing has to be held back yet: the first use of them for anyone but their owner has to say which facts' tags it may read.
+- **Any use of tags:** matching and coverage by concept, years per skill, the private card. A reading tags every fact it proposed that is not marked sensitive, whatever is decided about the fact later, and a fact marked after it was tagged keeps its tags. Nothing reads the tags, so nothing has to be held back yet: the first use of them for anyone but their owner has to leave out the tags of every fact `usableFacts()` leaves out.
 
 ## What has and has not been measured
 
-- **Tested with stand-in models and a made-up taxonomy:** candidates, the rule, the questions and their answers, the caps and what was decided before, on labelled examples that include wrong tags only the judge can stop (`test/unit/tag.test.ts`); the stage off, on, without a taxonomy, retried, failing and out of time, and where its tags go (`test/integration/tag-shadow.test.ts`).
+- **Tested with stand-in models and a made-up taxonomy:** candidates, the rule, the questions and their answers, the caps and what was decided before, on labelled examples that include wrong tags only the judge can stop (`test/unit/tag.test.ts`); the stage off, on, without a taxonomy, beside a line marked sensitive, retried, failing and out of time, and where its tags go (`test/integration/tag-shadow.test.ts`).
 - **Not run:** the eval against the real judge (`npm run evals`, `test/evals/tag.eval.ts`). It needs model credentials. It asks the judge the way the Worker does for the configuration it reads, fails if a candidate labelled wrong is tagged, refuses a run that found no candidate or in which a method proposed no tag where the labels expect some, and reports precision for each method.
 - **Not measured:** the precision of each method's tags. That needs lines given with consent and the real taxonomy: the labelled examples and the taxonomy they are read against are made up, and cannot set a threshold. Nor has the stage's cost in D1 statements been run against a deployed Worker.
 

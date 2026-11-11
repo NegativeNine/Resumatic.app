@@ -1679,8 +1679,9 @@ export class Vault extends DurableObject<Env> {
    * What a reading may tag: this upload's first job roles and extracted facts, how many of each
    * it has in all, and the shadow tags each row already holds or another row with the same words
    * holds. A skill is marked as written when its text is, character for character, one item of
-   * the line it was read from; the line itself is not given out. The rows are read as they stand
-   * while the upload is read. Nothing is awaited and nothing is written.
+   * the line it was read from; the line itself is not given out. A fact marked sensitive is not
+   * given out at all. The rows are read as they stand while the upload is read. Nothing is
+   * awaited and nothing is written.
    */
   async tagCandidates(sourceId: string, runId?: string): Promise<TagSubjects> {
     this.requireReading(sourceId, runId);
@@ -1691,17 +1692,21 @@ export class Vault extends DurableObject<Env> {
         MAX_TAG_ROLES,
       )
       .toArray();
-    const facts = this.sql
+    // A line marked sensitive is not tagged, so its words are never looked up in the taxonomy or
+    // put to the judge. It is left out before the cap, so it takes no other line's place.
+    const withheld = withheldFacts(this.sql).ids;
+    const usable = this.sql
       .exec<{ id: string; role_id: string | null; kind: string; text: string; quote: string | null }>(
         `SELECT f.id, f.role_id, f.kind, f.text, e.quote FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id
-         WHERE f.source_id = ? AND f.origin = 'extracted' ORDER BY f.rowid LIMIT ?`,
+         WHERE f.source_id = ? AND f.origin = 'extracted' ORDER BY f.rowid`,
         sourceId,
-        MAX_TAG_FACTS,
       )
-      .toArray();
+      .toArray()
+      .filter((fact) => !withheld.has(fact.id));
+    const facts = usable.slice(0, MAX_TAG_FACTS);
     const total = {
       roles: this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM roles WHERE source_id = ? AND kind = 'job' AND title IS NOT NULL AND title <> ''`, sourceId).one().n,
-      facts: this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM facts f WHERE f.source_id = ? AND f.origin = 'extracted'`, sourceId).one().n,
+      facts: usable.length,
     };
     // A tag is a judgement about particular words. One held by any row that says the same words,
     // in this upload or an earlier one, is that judgement already made.

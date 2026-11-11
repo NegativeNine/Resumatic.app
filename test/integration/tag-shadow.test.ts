@@ -346,6 +346,33 @@ describe("reading with shadow tagging switched on", () => {
     expect((await tagged(other)).filter(([words]) => words === "Skill: SQL")).toEqual([]);
   });
 
+  it("never looks up or asks about a line marked sensitive", async () => {
+    // An earlier reading, with tagging off, and its line about the migration marked.
+    settings.TAG_SHADOW_ENABLED = AS_CONFIGURED.tag;
+    setModels(() => judging().models);
+    const user = await signIn();
+    await read(user);
+    const led = (await shown(user)).facts.find((fact) => fact.text === LED)!;
+    expect((await user.send("POST", "/api/facts/sensitive", { ids: [led.id], sensitive: true })).status).toBe(204);
+
+    // The same lines in a second file, read with tagging on. Its copy of the line arrives marked.
+    settings.TAG_SHADOW_ENABLED = "true";
+    const mentions = vi.spyOn(Taxonomy.prototype, "mentions");
+    const lookups = vi.spyOn(Taxonomy.prototype, "lookup");
+    const { asked, models } = judging();
+    setModels(() => models);
+    const second = await read(user, "jane-doe-2024.pdf", `${resume(SKILLS)}\nReferences on request.\n`);
+    const arrived = (await shown(user)).facts.filter((fact) => fact.sourceId === second);
+    expect(arrived.filter((fact) => fact.sensitive).map((fact) => fact.text)).toEqual([LED]);
+
+    // Every other line and title was looked up and asked about. The marked line's words went to neither the taxonomy nor the judge.
+    expect(mentions.mock.calls.map(([text]) => text)).toHaveLength(10);
+    expect(JSON.stringify([...mentions.mock.calls, ...lookups.mock.calls])).not.toContain("40 services");
+    expect(said(asked)).toEqual([ABOUT_ROLES, ABOUT_FACTS.filter(([, words]) => words !== LED)]);
+    expect(JSON.stringify(asked)).not.toContain("40 services");
+    expect(await tagged(user, second)).toEqual(sorted(ALL_TAGS.filter(([words]) => words !== LED)));
+  });
+
   it("asks again only about what was declined when a reading is retried, and changes no row", async () => {
     const reading = await introspectWorkflow(env.DISTILL);
     let introspected = true;
@@ -718,6 +745,9 @@ describe("what a reading may ask of a vault", () => {
         addRole(sql, source, "blank", "");
         // Not this reading's proposals: a line its owner typed or changed, and another upload's rows.
         addFact(sql, source, "typed", "accomplishment", "Typed by the owner", null, "user");
+        // Nor a line its owner marked sensitive, which takes no other line's place under the cap.
+        addFact(sql, source, "marked", "accomplishment", "A line marked sensitive", "A line marked sensitive");
+        sql.exec(`UPDATE facts SET sensitive = 1 WHERE id = 'marked'`);
         addRole(sql, OTHER, "other-job", "Engineer 0");
         addFact(sql, OTHER, "other-fact", "accomplishment", "Line 0", "Line 0");
         for (let n = 0; n < MAX_TAG_ROLES + 3; n++) addRole(sql, source, `job-${n}`, `Engineer ${n}`);
