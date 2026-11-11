@@ -4,7 +4,7 @@ import type { PostingRead } from "../../src/shared/postings";
 import { normalizePosting, type FactPatch, type NewFact, type NewRole, type Profile, type ReviewRequest, type RolePatch, type SensitiveRequest } from "../../src/shared/api";
 import { PREFERENCES_CHANGED, PREFERENCES_REFUSED, cleanPreferences, type Preferences, type PreferencesUpdate } from "../../src/shared/preferences";
 import { wording } from "../../src/shared/record";
-import { targetText, type NewShareComment, type ShareComment } from "../../src/shared/sharing";
+import { targetText, type NewShareComment, type NewSuggestion, type ShareComment } from "../../src/shared/sharing";
 import { sharedView, type Fixtures } from "./fixtures";
 
 export interface Call {
@@ -76,6 +76,11 @@ export class FakeApi {
     return respond({ status: 404, body: { error: "not_found", message: "no such route" } });
   };
 
+  /** Where a suggestion on the owner's side stands, by its ID: the object itself, for a route to change. */
+  private suggestion(id: string) {
+    return (this.state.shareComments ?? []).flatMap((thread) => thread.comments).find((comment) => comment.id === id)?.suggestion;
+  }
+
   private id(prefix: string): string {
     this.seq += 1;
     return `${prefix}-new-${this.seq}`;
@@ -106,6 +111,22 @@ export class FakeApi {
         const made: ShareComment = { id: this.id("comment"), author: "coach", body: body.trim(), createdAt: Date.now() };
         const threads = (this.state.coachComments ??= []);
         const thread = threads.find((held) => JSON.stringify(held.target) === JSON.stringify(target));
+        if (thread) thread.comments.push(made);
+        else threads.push({ target, quote: targetText(sharedView().snapshot, target) ?? "", comments: [made] });
+        return { status: 201, body: made };
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/coach\/clients\/([^/]+)\/suggestions$/,
+      (call) => {
+        // As the vault does: one waiting on a line for this account, and nothing changed until the owner accepts.
+        const { target, text } = call.body as NewSuggestion;
+        const threads = (this.state.coachComments ??= []);
+        const thread = threads.find((held) => JSON.stringify(held.target) === JSON.stringify(target));
+        if (thread?.comments.some((comment) => comment.suggestion?.state === "waiting"))
+          return { status: 409, body: { error: "conflict", message: "You already have a suggestion waiting on this line. Delete it to suggest another." } };
+        const made: ShareComment = { id: this.id("suggestion"), author: "coach", body: text.trim(), createdAt: Date.now(), suggestion: { state: "waiting" } };
         if (thread) thread.comments.push(made);
         else threads.push({ target, quote: targetText(sharedView().snapshot, target) ?? "", comments: [made] });
         return { status: 201, body: made };
@@ -177,10 +198,42 @@ export class FakeApi {
         return { status: 201, body: made };
       },
     ],
+    // A coach's suggested wording, which the owner accepts as a check of their own or declines.
+    [
+      "POST",
+      /^\/api\/shares\/suggestions\/([^/]+)\/accept$/,
+      (_call, [id]) => {
+        const suggestion = this.suggestion(id!);
+        if (!suggestion) return notFound("That suggestion has been deleted. Reload to see the thread as it stands.");
+        const started = { status: 202, body: { documentId: `document-for-${id}`, runId: `document-for-${id}` } };
+        if (["checking", "applied", "not_applied"].includes(suggestion.state)) return started;
+        if (suggestion.state === "declined") return conflict("You've already answered this suggestion.");
+        if (suggestion.state === "stale") return conflict("This line has changed since the copy was made, so this suggestion can't be applied.");
+        const { used, limit } = this.state.me.quota;
+        if (used >= limit) return { status: 429, body: { error: "quota", message: "no outputs are left" } };
+        suggestion.state = "checking";
+        delete suggestion.lastCheck;
+        return started;
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/shares\/suggestions\/([^/]+)\/decline$/,
+      (_call, [id]) => {
+        const suggestion = this.suggestion(id!);
+        if (!suggestion) return notFound("That suggestion has been deleted. Reload to see the thread as it stands.");
+        if (suggestion.state === "checking") return conflict("This suggestion is being checked. Wait for the check to finish, then try again.");
+        if (suggestion.state === "applied" || suggestion.state === "not_applied") return conflict("You've already answered this suggestion.");
+        suggestion.state = "declined";
+        delete suggestion.lastCheck;
+        return { status: 204 };
+      },
+    ],
     [
       "DELETE",
       /^\/api\/shares\/comments\/([^/]+)$/,
       (_call, [id]) => {
+        if (this.suggestion(id!)?.state === "checking") return conflict("This suggestion is being checked. Wait for the check to finish, then try again.");
         this.state.shareComments = (this.state.shareComments ?? [])
           .map((thread) => ({ ...thread, comments: thread.comments.filter((comment) => comment.id !== id) }))
           .filter((thread) => thread.comments.length > 0);
@@ -525,6 +578,7 @@ const ok = (body: unknown): Reply => ({ status: 200, body });
 /** Job preferences before the first save. */
 const NOTHING_SAID: Preferences = { revision: 0, place: null, jobTypes: [], availableFrom: null, payFloor: null, updatedAt: null };
 const notFound = (message: string): Reply => ({ status: 404, body: { error: "not_found", message } });
+const conflict = (message: string): Reply => ({ status: 409, body: { error: "conflict", message } });
 
 function respond({ status, body }: Reply): Response {
   if (body === undefined || status === 204) return new Response(null, { status });

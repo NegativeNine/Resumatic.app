@@ -23,7 +23,7 @@ import type { DocumentView, NewDocument } from "../shared/documents";
 import type { PreferenceValues, Preferences } from "../shared/preferences";
 import type { PostingRead } from "../shared/postings";
 import type { CoachClient, ShareableDocument, ShareGrant } from "../shared/sharing";
-import type { CommentThread, NewShareComment, OwnerCommentThread, ShareComment } from "../shared/sharing";
+import type { CommentThread, NewShareComment, NewSuggestion, OwnerCommentThread, ShareComment } from "../shared/sharing";
 
 export interface BillingView {
   enabled: boolean;
@@ -349,6 +349,9 @@ export const api = {
     generate<ShareComment>(`/api/coach/clients/${encodeURIComponent(grantId)}/comments`, comment, ["id"]),
   removeCoachComment: (grantId: string, id: string) =>
     request<void>("DELETE", `/api/coach/clients/${encodeURIComponent(grantId)}/comments/${encodeURIComponent(id)}`),
+  /** Suggested wording for one line of a client's copy. A retry after an uncertain reply makes one suggestion. Deleted as a comment is. */
+  suggestOnShare: (grantId: string, input: NewSuggestion) =>
+    generate<ShareComment>(`/api/coach/clients/${encodeURIComponent(grantId)}/suggestions`, input, ["id"]),
   /** Finished cover letters and interview preparation, and whether each can be shared. */
   shareableDocuments: () => request<{ documents: ShareableDocument[] }>("GET", "/api/documents"),
   createShare: (selection: {
@@ -381,6 +384,11 @@ export const api = {
     generate<ShareComment>(`/api/shares/comments/${encodeURIComponent(id)}/replies`, { body }, ["id"]),
   removeShareComment: (id: string) =>
     request<void>("DELETE", `/api/shares/comments/${encodeURIComponent(id)}`),
+  /** Starts the owner's own check of a coach's suggested wording. Accepting again finds the same check. */
+  acceptSuggestion: (id: string) =>
+    generate<{ documentId: string; runId: string }>(`/api/shares/suggestions/${encodeURIComponent(id)}/accept`, undefined, ["documentId", "runId"]),
+  declineSuggestion: (id: string) =>
+    request<void>("POST", `/api/shares/suggestions/${encodeURIComponent(id)}/decline`),
   exportUrl: "/api/export",
   exportArchiveUrl: "/api/export/archive",
 };

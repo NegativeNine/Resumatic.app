@@ -15,6 +15,7 @@ import { useAction, useResource } from "../hooks";
 import { href } from "../router";
 import { ACCOUNT_DELETED_NOTE, useSession } from "../session";
 import { sameTarget } from "./ShareSnapshotContent";
+import { CoachSuggestion, OwnerSuggestion, SuggestWording } from "./SuggestedWording";
 import { ActionError, Badge, CharCount, ErrorNote, Field, Loading, Success } from "./ui";
 
 // Comments on a shared copy: the coach's side, beside the copy they are reading, and the owner's
@@ -25,7 +26,8 @@ import { ActionError, Badge, CharCount, ErrorNote, Field, Loading, Success } fro
  * One thread: what it is about, then each comment under who wrote it and when, oldest first.
  * `byline` names a comment's writer as this reader should see them. A comment the reader may
  * delete has Delete, which asks before it does anything. `children` sit under the comments: where
- * the thread came from, and the form to add to it.
+ * the thread came from, and the form to add to it. A coach's suggested wording is shown as the
+ * card `suggestion` gives for it, in place of the comment's words.
  */
 export function ThreadCard({
   quote,
@@ -33,6 +35,7 @@ export function ThreadCard({
   byline,
   canDelete,
   onDelete,
+  suggestion,
   children,
 }: {
   quote: string;
@@ -41,6 +44,8 @@ export function ThreadCard({
   canDelete: (comment: ShareComment) => boolean;
   /** Deletes the comment and settles once the thread shows it gone. A failure is the caller's to show. */
   onDelete: (comment: ShareComment) => Promise<unknown>;
+  /** The card for a row that is a suggestion. */
+  suggestion?: (comment: ShareComment) => ReactNode;
   children?: ReactNode;
 }) {
   const id = useId();
@@ -76,12 +81,12 @@ export function ThreadCard({
                   </>
                 )}
               </p>
-              <p className="app-thread__body">{comment.body}</p>
+              {comment.suggestion && suggestion ? suggestion(comment) : <p className="app-thread__body">{comment.body}</p>}
               {canDelete(comment) && (
                 <p className="app-thread__actions">
                   {asking && (
                     <button type="button" className="rs-btn rs-btn--danger rs-btn--sm" disabled={deleting} onClick={() => void remove(comment)}>
-                      {deleting ? "Deleting…" : "Delete comment"}
+                      {deleting ? "Deleting…" : comment.suggestion ? "Delete suggestion" : "Delete comment"}
                     </button>
                   )}
                   {/* One button for Delete and for Keep, so the keyboard stays where it was and a second press keeps.
@@ -152,6 +157,9 @@ export function CoachComments({
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Suggest mode replaces the comment form for the chosen line, until it is sent or cancelled.
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggested, setSuggested] = useState(false);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -183,6 +191,12 @@ export function CoachComments({
       ended.current(describeError(e, { unauthenticated: "Sign in to Resumatic again, then reload this page.", gone: ACCOUNT_DELETED_NOTE }));
     else otherwise(status === 422 || status === 429 ? describeError(e) : null);
   }, []);
+
+  // Choosing something else on the copy closes a suggestion that was being written.
+  const chosen = selected ? targetKey(selected) : null;
+  useEffect(() => {
+    setSuggesting(false);
+  }, [chosen]);
 
   const load = useCallback(async () => {
     try {
@@ -248,6 +262,10 @@ export function CoachComments({
 
   const kind = selected?.kind ?? null;
   const reader = owner ?? "The owner of this copy";
+  const line = selected?.kind === "line" ? selected : null;
+  const lineText = line ? targetText(view.snapshot, line) : null;
+  // One suggestion of this account's waits on a line at a time, as the owner's vault holds it.
+  const waiting = !!line && threads.some((thread) => sameTarget(thread.target, line) && thread.comments.some((comment) => comment.suggestion?.state === "waiting"));
   return (
     <>
       {threads.length === 0 ? (
@@ -262,11 +280,37 @@ export function CoachComments({
                 byline={(comment) => (comment.author === "coach" ? "You" : (owner ?? "The owner"))}
                 canDelete={(comment) => comment.author === "coach"}
                 onDelete={remove}
+                suggestion={(comment) => <CoachSuggestion comment={comment} quote={thread.quote} ownerName={owner} />}
               />
             </li>
           ))}
         </ul>
       )}
+      {suggesting && line && lineText !== null ? (
+        <SuggestWording
+          // A new line starts a new suggestion, from that line's own words.
+          key={targetKey(line)}
+          grantId={grantId}
+          target={line}
+          line={lineText}
+          ownerName={owner}
+          waiting={waiting}
+          onSent={(made) => {
+            if (!mounted.current) return;
+            setThreads((current) => {
+              const known = current ?? [];
+              if (known.some((thread) => thread.comments.some((comment) => comment.id === made.id))) return known;
+              return known.some((thread) => sameTarget(thread.target, line))
+                ? known.map((thread) => (sameTarget(thread.target, line) ? { ...thread, comments: [...thread.comments, made] } : thread))
+                : [...known, { target: line, quote: lineText, comments: [made] }];
+            });
+            setSuggesting(false);
+            setSuggested(true);
+          }}
+          onCancel={() => setSuggesting(false)}
+          onRefused={refused}
+        />
+      ) : (
       <form
         className="app-comment-form"
         onSubmit={(event) => {
@@ -293,6 +337,7 @@ export function CoachComments({
             onChange={(event) => {
               setText(event.target.value);
               setSent(false);
+              setSuggested(false);
             }}
             aria-describedby={`${id}-text-hint ${id}-count`}
           />
@@ -302,10 +347,26 @@ export function CoachComments({
           <button type="submit" className="rs-btn rs-btn--primary" disabled={!kind || sending || !trimmed || trimmed.length > MAX_COMMENT_CHARS}>
             {sending ? "Sending…" : "Comment"}
           </button>
+          {/* Wording can be suggested for a line, not for a fact. */}
+          <button
+            type="button"
+            className="rs-btn"
+            disabled={!line || lineText === null || sending}
+            onClick={() => {
+              setSent(false);
+              setSuggested(false);
+              setError(null);
+              setSuggesting(true);
+            }}
+          >
+            Suggest wording
+          </button>
           {sent && <Success>Comment added.</Success>}
+          {suggested && <Success>Suggestion sent.</Success>}
         </div>
         <ActionError message={error} />
       </form>
+      )}
     </>
   );
 }
@@ -317,16 +378,31 @@ export function CoachComments({
  */
 export function OwnerComments() {
   const { refreshMe } = useSession();
-  const list = useResource(async () => {
-    try {
-      return (await api.shareComments()).threads;
-    } catch (error) {
-      // A server from before comments has no such list, and so none to show.
-      if (error instanceof ApiError && error.status === 404) return [];
-      throw error;
-    }
-  });
+  const list = useResource(
+    async () => {
+      try {
+        return (await api.shareComments()).threads;
+      } catch (error) {
+        // A server from before comments has no such list, and so none to show.
+        if (error instanceof ApiError && error.status === 404) return [];
+        throw error;
+      }
+    },
+    // A suggestion being checked is read again until its check is over.
+    (threads) => checkingIds(threads).size > 0,
+  );
   const id = useId();
+  const [starting, setStarting] = useState(false);
+
+  // A check that has ended, or whose card has gone, has settled the outputs it reserved.
+  const checking = useRef(new Set<string>());
+  useEffect(() => {
+    if (!list.data) return;
+    const now = checkingIds(list.data);
+    const ended = [...checking.current].some((comment) => !now.has(comment));
+    checking.current = now;
+    if (ended) void refreshMe();
+  }, [list.data, refreshMe]);
 
   // Told once for each comment. The marks stay on this showing of the page, which is what "new" means.
   const told = useRef(new Set<string>());
@@ -348,6 +424,8 @@ export function OwnerComments() {
   }, [list.data, refreshMe]);
 
   const threads = list.data ?? [];
+  // Resumatic makes one thing at a time, so no suggestion can be accepted while a check is starting or running.
+  const busy = starting || checkingIds(threads).size > 0;
   if (threads.length === 0 && !list.error) return null;
   return (
     <section className="card" aria-labelledby={`${id}-title`}>
@@ -362,7 +440,7 @@ export function OwnerComments() {
           {threads.map((thread) => (
             // A thread has no ID of its own. Its oldest comment's is the nearest thing that stays put.
             <li key={thread.comments[0]?.id ?? `${thread.grantId}:${targetKey(thread.target)}`}>
-              <OwnerThread thread={thread} onChanged={list.reload} />
+              <OwnerThread thread={thread} onChanged={list.reload} busy={busy} onStarting={setStarting} />
             </li>
           ))}
         </ul>
@@ -371,8 +449,27 @@ export function OwnerComments() {
   );
 }
 
-/** One thread as its owner reads it: who wrote it, about what, where to open that, and a reply while the copy is open. */
-function OwnerThread({ thread, onChanged }: { thread: OwnerCommentThread; onChanged: () => Promise<unknown> }) {
+/** The suggestions whose check is running, by ID. */
+function checkingIds(threads: readonly OwnerCommentThread[]): Set<string> {
+  return new Set(threads.flatMap((thread) => thread.comments).filter((comment) => comment.suggestion?.state === "checking").map((comment) => comment.id));
+}
+
+/**
+ * One thread as its owner reads it: who wrote it, about what, where to open that, and a reply while
+ * the copy is open. A suggestion in it has its own card. `busy` is true while any check is being
+ * started or is running; `onStarting` says when one of this thread's is being started.
+ */
+function OwnerThread({
+  thread,
+  onChanged,
+  busy,
+  onStarting,
+}: {
+  thread: OwnerCommentThread;
+  onChanged: () => Promise<unknown>;
+  busy: boolean;
+  onStarting: (starting: boolean) => void;
+}) {
   const id = useId();
   const reply = useAction();
   const remove = useAction();
@@ -395,13 +492,17 @@ function OwnerThread({ thread, onChanged }: { thread: OwnerCommentThread; onChan
         const name = chosenName(comment.name);
         return name ? `${name} (${thread.coachEmail})` : thread.coachEmail;
       }}
-      canDelete={() => true}
+      // A suggestion being checked stays until its check is over.
+      canDelete={(comment) => comment.suggestion?.state !== "checking"}
       onDelete={(comment) =>
         remove.run(async () => {
           await api.removeShareComment(comment.id);
           await onChanged();
         })
       }
+      suggestion={(comment) => (
+        <OwnerSuggestion comment={comment} quote={thread.quote} coachName={chosenName(comment.name)} busy={busy} onStarting={onStarting} onChanged={onChanged} />
+      )}
     >
       <ActionError message={remove.error} />
       <p className="rs-meta app-thread__from">
