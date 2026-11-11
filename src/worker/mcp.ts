@@ -233,7 +233,7 @@ function consentPage(details: ConsentDescription, handle: string): string {
   const offline = details.scope.includes("offline_access")
     ? '<p><label><input type="checkbox" name="scope" value="offline_access"> Keep access for up to 30 days</label></p>'
     : "";
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect an app · Resumatic</title><main><h1>Connect ${escapeHtml(details.clientName)}</h1><p>${domain} Access returns to <strong>${escapeHtml(details.redirectHost)}</strong>.</p>${details.redirectIsLoopback ? "<p><strong>This connects an app on your computer.</strong> Continue only if you started this connection.</p>" : ""}<p>The app can read your confirmed facts and finished resumes. Original uploads, evidence quotes and private application notes are excluded. You can revoke access in Account.</p><form method="post"><input type="hidden" name="handle" value="${escapeHtml(handle)}"><p><label><input type="checkbox" name="scope" value="vault:read" checked required> Read confirmed facts and finished resumes</label></p>${jobs}${generate}${offline}<p><button name="decision" value="approve">Connect app</button> <button name="decision" value="deny" formnovalidate>Cancel</button></p></form></main></html>`;
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect an app · Resumatic</title><main><h1>Connect ${escapeHtml(details.clientName)}</h1><p>${domain} Access returns to <strong>${escapeHtml(details.redirectHost)}</strong>.</p>${details.redirectIsLoopback ? "<p><strong>This connects an app on your computer.</strong> Continue only if you started this connection.</p>" : ""}<p>The app can read your confirmed facts and finished resumes. Original uploads, evidence quotes, private application notes and facts you've marked sensitive are excluded. You can revoke access in Account.</p><form method="post"><input type="hidden" name="handle" value="${escapeHtml(handle)}"><p><label><input type="checkbox" name="scope" value="vault:read" checked required> Read confirmed facts and finished resumes</label></p>${jobs}${generate}${offline}<p><button name="decision" value="approve">Connect app</button> <button name="decision" value="deny" formnovalidate>Cancel</button></p></form></main></html>`;
 }
 
 async function handleHash(handle: string): Promise<string> {
@@ -437,7 +437,7 @@ function serverFor(env: Env, claims: McpClaims): McpServer {
     "list_facts",
     {
       description:
-        "Read confirmed career facts. Excludes original uploads, evidence quotes and private notes.",
+        "Read confirmed career facts. Excludes original uploads, evidence quotes, private notes and facts marked sensitive.",
       inputSchema: z.object({
         limit: z.number().int().min(1).max(100).default(50),
       }),
@@ -452,7 +452,7 @@ function serverFor(env: Env, claims: McpClaims): McpServer {
     "search_facts",
     {
       description:
-        "Search confirmed facts by words without making a model call.",
+        "Search confirmed facts by words without making a model call. Excludes original uploads, evidence quotes, private notes and facts marked sensitive.",
       inputSchema: z.object({
         query: z.string().min(1).max(200),
         limit: z.number().int().min(1).max(100).default(20),

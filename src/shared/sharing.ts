@@ -54,6 +54,8 @@ export interface ShareableDocument {
   createdAt: number;
   /** False for one written before its evidence was kept: it has to be written again to be shared. */
   shareable: boolean;
+  /** True when a fact its owner has marked sensitive is the only reason it can't be shared. */
+  usesSensitive?: boolean;
 }
 /** The job a shared resume or document was made for, as the owner had it named when the copy was made. */
 export interface SharedJob {
@@ -141,7 +143,7 @@ export interface CoachClient {
   ownerName: string | null;
   addedAt: number;
   expiresAt: number;
-  /** False once the link has expired or been revoked, or the owner's account is gone. */
+  /** False once the link has expired or been revoked, or the owner's account is gone, and while the copy can't be opened. The counts are then zero. */
   active: boolean;
   factCount: number;
   resumeCount: number;

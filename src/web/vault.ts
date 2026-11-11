@@ -110,9 +110,10 @@ export function groupFacts(facts: FactView[], equivalentRoles: ReadonlySet<strin
   for (const fact of facts) {
     const role = fact.roleId && equivalentRoles.has(fact.roleId) ? "equivalent-role" : fact.roleId;
     const text = cleanExtractedText(fact.text);
+    // A marked copy and an unmarked one are shown apart: one control would say both things at once.
     const key = fact.origin === "extracted" && fact.sourceId && fact.quote && text && !fact.levelNeedsReview
       ? JSON.stringify([role, fact.kind, text, fact.level, fact.state,
-          fact.evidenceOrigin ?? "upload", fact.reviewReasons ?? [], (fact.confidence ?? 1) < 0.8])
+          fact.evidenceOrigin ?? "upload", fact.reviewReasons ?? [], (fact.confidence ?? 1) < 0.8, fact.sensitive === true])
       : null;
     const choices = key ? matching.get(key) : undefined;
     const group = choices?.find((items) => items.length < MAX_DUPLICATES);

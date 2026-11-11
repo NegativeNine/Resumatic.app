@@ -10,7 +10,7 @@ import { LineItem } from "./LineItem";
 import { useMarginLayout } from "./margin-layout";
 import { GapsCard, ReportCard } from "./ResumeReport";
 import { ResumePaper } from "./ResumePaper";
-import { ActionError } from "./ui";
+import { ActionError, Badge } from "./ui";
 
 export function ResumeSheet({
   resume,
@@ -42,7 +42,11 @@ export function ResumeSheet({
     ],
     [body],
   );
-  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
+  // What this version takes from facts marked sensitive. Those lines' notes start open, so the
+  // person sees which ones they are without hunting for them.
+  const sensitive = resume.sensitiveUse;
+  const sensitiveLines = useMemo(() => new Set(sensitive?.lineIds ?? []), [sensitive]);
+  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set(resume.sensitiveUse?.lineIds ?? []));
   const finalization = useAction();
   const allOpen = lineIds.length > 0 && lineIds.every((id) => open.has(id));
   const isEmpty =
@@ -84,7 +88,7 @@ export function ResumeSheet({
   return (
     <div className="resume-view">
         <div className="toolbar">
-          {!needsEvidence && <><a
+          {!needsEvidence && !sensitive && <><a
             className="rs-btn rs-btn--primary"
             href={api.pdfUrl(resume.id, resume.version)}
             download={`resume-v${resume.version}.pdf`}
@@ -125,6 +129,15 @@ export function ResumeSheet({
               : !readOnly && review
                 ? "Review each line against confirmed facts to prepare a checked version."
                 : "Select Latest or confirm facts and tailor a new version to create a downloadable resume."}
+          </p>
+        )}
+        {sensitive && (
+          <p className="notice" role="status">
+            This version uses a fact you’ve marked sensitive, or was checked against the line of an upload one was
+            read from, so it can’t be downloaded or shared, and connected apps can’t read it.{" "}
+            {readOnly
+              ? "Your text is still here. Select Latest to change it."
+              : "Remove the lines and skills marked ‘Sensitive fact’, or tailor a new version. Your text is still here."}
           </p>
         )}
         {!readOnly && needsEvidence && resume.provenance === "snapshot" && resume.needsGroundingReview && (
@@ -193,6 +206,7 @@ export function ResumeSheet({
                   expectedVersion={resume.version}
                   readOnly={readOnly}
                   canRemove={!needsEvidence}
+                  sensitive={sensitiveLines.has(line.id)}
                   onEditingChange={onLineEditingChange}
                   editingOutdated={editingOutdated}
                 />
@@ -237,7 +251,10 @@ export function ResumeSheet({
                     <ul className="app-tool-list">
                       {body.skills.map((skill, index) => (
                         <li key={index}>
-                          <span>{skill}</span>
+                          <span>
+                            {skill}
+                            {sensitive?.skills.includes(skill) && <> <Badge tone="sensitive">Sensitive fact</Badge></>}
+                          </span>
                           <button
                             type="button"
                             className="rs-btn rs-btn--sm"

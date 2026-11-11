@@ -9,6 +9,7 @@ import { SHARE_COACH_MIGRATIONS, SHARE_DETAIL_MIGRATIONS, SHARE_DOCUMENT_MIGRATI
 import { EXPORT_CACHE_MIGRATIONS } from "./export-cache";
 import { RECORD_MIGRATIONS } from "./record";
 import { PREFERENCES_MIGRATIONS } from "./preferences";
+import { SENSITIVE_MIGRATIONS } from "./sensitive";
 // Vault tables. Migrations run in order; schema_version in meta records how far a vault has got.
 // Only init() creates the schema, so a destroyed vault stays empty when it wakes.
 
@@ -250,6 +251,7 @@ export const MIGRATIONS: readonly string[][] = [
   [...RECORD_MIGRATIONS],
   [...SHARE_COACH_MIGRATIONS, ...COACH_CLIENT_MIGRATIONS],
   [...PREFERENCES_MIGRATIONS],
+  [...SENSITIVE_MIGRATIONS],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

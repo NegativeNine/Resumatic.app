@@ -43,6 +43,7 @@ import {
   MIN_JD_CHARS,
   isWebUrl,
   MAX_LINE_CHARS,
+  MAX_SENSITIVE_IDS,
   MAX_UPLOAD_BYTES,
   ROLE_KINDS,
   type FactKind,
@@ -840,6 +841,28 @@ api.post("/review", JSON_LIMIT, async (c) => {
           .record(z.string(), z.number().int().positive())
           .optional(),
       }),
+    ),
+  );
+  return c.body(null, 204);
+});
+
+// Marks facts sensitive, or unmarks them. The vault is the caller's own, from their session, so a
+// fact in anyone else's is simply not found. The request names the state it wants, which makes a
+// repeat harmless without a key, and the answer says nothing.
+api.post("/facts/sensitive", JSON_LIMIT, async (c) => {
+  await myVault(c).markSensitive(
+    c.get("who"),
+    await jsonBody(
+      c,
+      z
+        .object({
+          ids: Ids.min(1).max(MAX_SENSITIVE_IDS),
+          sensitive: z.boolean(),
+          expectedRevisions: z
+            .record(z.string(), z.number().int().positive())
+            .optional(),
+        })
+        .strict(),
     ),
   );
   return c.body(null, 204);

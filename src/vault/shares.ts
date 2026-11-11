@@ -15,6 +15,7 @@ import {
 } from "../shared/sharing";
 import type { RenderData, Who } from "../shared/types";
 import { sharedDocument, type DocumentVersion } from "./document-shares";
+import type { Withheld } from "./sensitive";
 import { assertGroundedResume, type ResumeVersion } from "./snapshots";
 
 export { SHARE_READ_INTERVAL_MS, SHARE_TTL_MS };
@@ -102,10 +103,14 @@ function roleSnapshot(
   };
 }
 
-/** Only server-loaded selections enter here. An explicit field list excludes evidence and private notes. */
+/**
+ * Only server-loaded selections enter here. An explicit field list excludes evidence and private
+ * notes. Given the facts withheld now, a marked fact is refused and so is a resume that uses one.
+ */
 export function snapshotSelection(
   selection: ShareSelection,
   now = Date.now(),
+  withheld?: Withheld,
 ): ShareSnapshot {
   if (!selection.facts.length && !selection.resumes.length)
     throw new AppError("invalid", "select at least one fact, resume or document");
@@ -124,6 +129,8 @@ export function snapshotSelection(
   const facts = selection.facts.map((fact) => {
     if (fact.state !== "confirmed")
       throw new AppError("invalid", "only confirmed facts can be shared");
+    if (withheld?.ids.has(fact.id))
+      throw new AppError("invalid", "A fact marked sensitive can't be shared. Unmark it, or leave it out.");
     const role = fact.roleId ? roles.get(fact.roleId) : null;
     if (fact.roleId && (!role || role.state !== "confirmed"))
       throw new AppError(
@@ -150,7 +157,7 @@ export function snapshotSelection(
           "invalid",
           "only finished resume versions can be shared",
         );
-      assertGroundedResume(render, facts, provenance, evidence, roleEvidence);
+      assertGroundedResume(render, facts, provenance, evidence, roleEvidence, withheld);
       const line = (value: ResumeLine): SharedLine => ({
         id: value.id,
         text: value.text,
@@ -271,6 +278,8 @@ export class ShareStore {
       authorizeOwner(who: Who): void;
       requireOpen(): void;
       currentEpoch(): string;
+      /** The facts marked sensitive now. A copy is made, and delivered, only without them. */
+      withheld(): Withheld;
     },
   ) {}
 
@@ -309,11 +318,12 @@ export class ShareStore {
       throw new AppError("too_large", "too many items selected for sharing");
     if (new Set(chosen.map((document) => document.id)).size !== chosen.length)
       throw new AppError("invalid", "duplicate share selection");
+    const withheld = this.auth.withheld();
     // Each document passes the same gate when the copy is made as it will each time the copy is read.
-    const documents = chosen.map((document) => sharedDocument(document.id, document.version, document.kind, document.data));
+    const documents = chosen.map((document) => sharedDocument(document.id, document.version, document.kind, document.data, withheld));
     // A copy can be documents alone. The facts and resumes are checked as they always were.
     const core: ShareSnapshot = selection.facts.length || selection.resumes.length || !documents.length
-      ? snapshotSelection(selection, now)
+      ? snapshotSelection(selection, now, withheld)
       : { schemaVersion: 1, createdAt: now, facts: [], resumes: [] };
     // The name and the jobs are added around the checked selection, so what a fact, a resume or a
     // document says is still exactly what read() rebuilds and compares.
@@ -362,6 +372,8 @@ export class ShareStore {
 
   list(who: Who, now = Date.now()): ShareGrant[] {
     this.auth.authorizeOwner(who);
+    // Read once for the whole list: every copy is judged against the same marks.
+    const withheld = this.auth.withheld();
     return this.sql
       .exec<GrantRow>(
         `SELECT id, epoch, created_at, expires_at, revoked_at, fact_count, resume_count, label, last_read_at, document_count, coach_email, coach_user_id, coach_name, coach_joined_at FROM share_grants ORDER BY created_at DESC LIMIT 200`,
@@ -371,7 +383,7 @@ export class ShareStore {
         const grant = grantView(row);
         if (row.revoked_at !== null || row.expires_at <= now) return grant;
         try {
-          this.read({ grantId: row.id, epoch: row.epoch }, now);
+          this.read({ grantId: row.id, epoch: row.epoch }, now, withheld);
           return { ...grant, available: true };
         } catch {
           // Preserve the snapshot and expose no content or internal error details.
@@ -403,9 +415,15 @@ export class ShareStore {
     );
   }
 
+  /**
+   * Delivers a copy, checked again on every read. A copy that holds a fact marked sensitive since
+   * it was made, or a resume or document that uses one, is closed while the mark stands, in the
+   * same words as a link that has ended: its reader is never told a fact exists or is marked.
+   */
   read(
     claims: { grantId: string; epoch: string },
     now = Date.now(),
+    withheld = this.auth.withheld(),
   ): SharedView {
     this.auth.requireOpen();
     const row = this.sql
@@ -429,6 +447,8 @@ export class ShareStore {
       if (snapshot.schemaVersion === 3
         ? !Array.isArray(documents) || documents.length === 0 || documents.length > MAX_SHARE_DOCUMENTS
         : documents !== undefined) throw new Error();
+      // A copied fact is its words. While its owner has it marked, the copy that holds it stays closed.
+      if (snapshot.facts.some((fact) => withheld.ids.has(fact?.id))) throw new Error();
       // Prior grants are immutable copies without citations. Reconstruct each
       // shared resume from its immutable version and require an exact match;
       // this also prevents detached historical edits from reaching a coach.
@@ -438,7 +458,7 @@ export class ShareStore {
         ).toArray()[0];
         if (!saved) throw new Error();
         const version = JSON.parse(saved.data) as ResumeVersion;
-        const expected = snapshotSelection({ facts: [], roles: [], resumes: [{ id: shared.id, ...version }] }, snapshot.createdAt).resumes[0];
+        const expected = snapshotSelection({ facts: [], roles: [], resumes: [{ id: shared.id, ...version }] }, snapshot.createdAt, withheld).resumes[0];
         // A version 2 copy names the resume's job beside it. The job is the owner's label, not
         // part of what the resume says, so it is set aside before the comparison.
         const { job, ...core } = shared;
@@ -453,7 +473,7 @@ export class ShareStore {
           shared.version, shared.id,
         ).toArray()[0];
         if (!saved) throw new Error();
-        const expected = sharedDocument(shared.id, shared.version, saved.kind, JSON.parse(saved.data) as DocumentVersion);
+        const expected = sharedDocument(shared.id, shared.version, saved.kind, JSON.parse(saved.data) as DocumentVersion, withheld);
         const { job, ...core } = shared;
         if (!validJob(job)) throw new Error();
         if (JSON.stringify(expected) !== JSON.stringify(core)) throw new Error();
@@ -499,10 +519,15 @@ export class ShareStore {
   /**
    * Ties the copy to the account its owner named. Only the account that signed in with that address
    * can do it, and only while holding the link. Returns what that account's client list shows.
+   * A copy that can't be delivered now is taken up by nobody, in the words of a link that has ended.
    */
   join(claims: { grantId: string; epoch: string }, coach: CoachAccount, now = Date.now()): { ownerName: string | null; expiresAt: number } {
     this.auth.requireOpen();
     const row = this.open(claims, now);
+    // Before anything is said about whose copy it is: a link's session can outlive its copy being
+    // open, and a copy closed since, by a fact marked sensitive or anything else, says no more
+    // here than it does to its link.
+    this.read(claims, now);
     if (!row.coach_email || row.coach_email !== coach.email)
       throw new AppError("forbidden", "this copy names a different address as its coach");
     const name = coach.name?.replace(/\s+/g, " ").trim().slice(0, 200) || null;
@@ -545,11 +570,21 @@ export class ShareStore {
     return { epoch: row.epoch, expiresAt: row.expires_at };
   }
 
-  /** What a coach's client list shows for one copy. An ended or unknown one is simply not active. */
+  /**
+   * What a coach's client list shows for one copy. An ended or unknown one is simply not active,
+   * and neither is one that can't be delivered now: a copy closed while a fact in it is marked
+   * sensitive is listed exactly as one that has ended, so its coach is not told which it is.
+   */
   coachStatus(grantId: string, coach: CoachAccount, now = Date.now()): Pick<CoachClient, "active" | "ownerName" | "expiresAt" | "factCount" | "resumeCount" | "documentCount"> | null {
     this.auth.requireOpen();
     const row = this.joined(grantId, coach, now);
     if (!row) return null;
+    try {
+      // Live only if it would open: the same check the list's own Open makes.
+      this.read({ grantId: row.id, epoch: row.epoch }, now);
+    } catch {
+      return null;
+    }
     return {
       active: true,
       ownerName: this.ownerName(row),

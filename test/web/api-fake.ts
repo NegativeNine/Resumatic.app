@@ -1,8 +1,9 @@
 import { vi } from "vitest";
 import type { DocumentView } from "../../src/shared/documents";
 import type { PostingRead } from "../../src/shared/postings";
-import { normalizePosting, type FactPatch, type NewFact, type NewRole, type Profile, type ReviewRequest, type RolePatch } from "../../src/shared/api";
+import { normalizePosting, type FactPatch, type NewFact, type NewRole, type Profile, type ReviewRequest, type RolePatch, type SensitiveRequest } from "../../src/shared/api";
 import { PREFERENCES_CHANGED, PREFERENCES_REFUSED, cleanPreferences, type Preferences, type PreferencesUpdate } from "../../src/shared/preferences";
+import { wording } from "../../src/shared/record";
 import type { Fixtures } from "./fixtures";
 
 export interface Call {
@@ -32,6 +33,9 @@ export class FakeApi {
 
   /** Documents written before their evidence was kept, which can't go into a copy. */
   readonly unshareable = new Set<string>();
+
+  /** Documents that use a fact marked sensitive, which can't go into a copy while it is marked. */
+  readonly usesSensitive = new Set<string>();
 
   /** What reading each link comes to. A link that isn't here can't be reached. */
   readonly pages = new Map<string, PostingRead>();
@@ -98,7 +102,11 @@ export class FakeApi {
         ok({
           documents: (this.state.documents ?? [])
             .filter((doc) => doc.state === "ready" && (doc.kind === "letter" || doc.kind === "prep"))
-            .map((doc) => ({ id: doc.id, kind: doc.kind, applicationId: doc.applicationId, version: doc.version, createdAt: doc.createdAt, shareable: !this.unshareable.has(doc.id) })),
+            .map((doc) => ({
+              id: doc.id, kind: doc.kind, applicationId: doc.applicationId, version: doc.version, createdAt: doc.createdAt,
+              shareable: !this.unshareable.has(doc.id) && !this.usesSensitive.has(doc.id),
+              ...(this.usesSensitive.has(doc.id) && !this.unshareable.has(doc.id) ? { usesSensitive: true } : {}),
+            })),
         }),
     ],
     [
@@ -276,6 +284,23 @@ export class FakeApi {
         return { status: 204 };
       },
     ],
+    [
+      "POST",
+      /^\/api\/facts\/sensitive$/,
+      (call) => {
+        const { ids, sensitive } = call.body as SensitiveRequest;
+        const named = ids.map((id) => this.state.facts.find((fact) => fact.id === id));
+        if (named.some((fact) => !fact)) return notFound("no such fact");
+        // As the vault does: every fact with the same words is marked or unmarked with the ones named.
+        const words = new Set(named.map((fact) => wording(fact!.text)));
+        for (const fact of this.state.facts) {
+          if (!ids.includes(fact.id) && !words.has(wording(fact.text))) continue;
+          if (sensitive) fact.sensitive = true;
+          else delete fact.sensitive;
+        }
+        return { status: 204 };
+      },
+    ],
 
     ["GET", /^\/api\/applications$/, () => ok({ applications: this.state.applications })],
     [
@@ -373,6 +398,33 @@ export class FakeApi {
       (_call, [id]) => {
         const resume = this.state.resumes[id];
         return resume ? ok(resume) : notFound("no such resume");
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/resumes\/([^/]+)\/remove-(line|skill)$/,
+      (call, [resumeId, what]) => {
+        const resume = this.state.resumes[resumeId!];
+        if (!resume?.body) return notFound("no such resume");
+        const { lineId, skillIndex } = call.body as { lineId?: string; skillIndex?: number };
+        // As the vault does: a new version without the line or the skill, and what that version
+        // still takes from facts marked sensitive is worked out for it.
+        const use = resume.sensitiveUse ?? { lineIds: [], skills: [] };
+        if (what === "line") {
+          if (resume.body.summary?.id === lineId) resume.body.summary = null;
+          resume.body.sections = resume.body.sections.flatMap((section) => {
+            const lines = section.lines.filter((line) => line.id !== lineId);
+            return lines.length || !section.lines.length ? [{ ...section, lines }] : [];
+          });
+          use.lineIds = use.lineIds.filter((id) => id !== lineId);
+        } else {
+          const [skill] = resume.body.skills.splice(skillIndex ?? -1, 1);
+          use.skills = use.skills.filter((name) => name !== skill);
+        }
+        if (use.lineIds.length || use.skills.length) resume.sensitiveUse = use;
+        else delete resume.sensitiveUse;
+        resume.version += 1;
+        return ok({ version: resume.version });
       },
     ],
     [

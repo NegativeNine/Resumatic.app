@@ -1,5 +1,12 @@
-/** Test-only helper to reconstruct a Vault schema before job preferences were kept, the latest migration. */
+/** Test-only helper to reconstruct a Vault schema before a fact could be marked sensitive, the latest migration. */
+export function removeSensitiveMigration(sql: SqlStorage): void {
+  sql.exec(`DROP INDEX IF EXISTS facts_sensitive`);
+  sql.exec(`ALTER TABLE facts DROP COLUMN sensitive`);
+}
+
+/** Test-only helper to reconstruct a Vault schema before job preferences were kept, and so before every later migration. */
 export function removePreferencesMigration(sql: SqlStorage): void {
+  removeSensitiveMigration(sql);
   sql.exec(`DROP TABLE IF EXISTS preferences`);
 }
 

@@ -65,6 +65,7 @@ That a mention is a tool, a name or a figure. A mention is held to the checks ab
 With `SPLIT_SHADOW_ENABLED=true`, reading an upload gains one stage after its facts are embedded and before it is marked ready:
 
 - It asks about the lines the reading proposed, other than skills.
+- A line marked sensitive is not asked about, so it is never put to the splitter or the judge.
 - What passes every check is stored as a shadow division on its fact, stamped `split/2` and with the two models that made and judged it.
 - **It cannot fail an upload.** A model failure or a refused answer leaves every line whole, and the upload finishes as it would have. It gets one try of at most three minutes. A stage that runs out of time is not run again, so no model call is made twice for it, and the upload finishes without it. That try is not cancelled, only no longer waited for: a division it stores before the upload is marked ready is kept, held to the same checks, and nothing is accepted from it afterwards ([merging.md](merging.md) says where this is read from).
 - It adds model calls to every upload, and the upload is marked ready after them. Before this is switched on anywhere people are waiting, move it after "ready".

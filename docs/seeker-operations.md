@@ -183,6 +183,8 @@ Job preferences are included in the owner's data export and fenced replacement t
 
 Resume exports, previews and coach shares require immutable evidence for every printed role heading, including empty education sections. Versions created before role evidence was recorded remain visible to the owner and in the owner's data export, but must enter grounding review before they can be exported or shared; existing links containing such a version become unavailable. Review requires matching current confirmed roles and rechecked lines. The owner can remove a section (including an empty one) from a new review version when its heading no longer matches; its lines are removed too. A heading cannot be rewritten in place, so generating a new resume is another option. Historical versions and share snapshots are not silently rewritten.
 
+A fact marked sensitive is in the owner's export and a fenced replacement with its mark, is excluded from generation, coach shares and MCP tools, and is removed with the vault. It stays in the search index, so an embedding rebuild embeds it again.
+
 ## Release evidence
 
 CI runs local type checks, tests, build and dependency auditing. `LIVE_EVALS_ENABLED` and `STAGING_DEPLOY_ENABLED` opt in the respective GitHub jobs. Missing live evidence cannot pass production promotion.

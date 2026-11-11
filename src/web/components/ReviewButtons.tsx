@@ -1,4 +1,4 @@
-import { useState, type RefObject } from "react";
+import { useState, type ReactNode, type RefObject } from "react";
 import type { ReviewState } from "../../shared/api";
 import { api } from "../api";
 import { useAction, type Reload } from "../hooks";
@@ -98,6 +98,8 @@ interface Props {
   disabled?: boolean;
   /** Show the keyboard hints, on the active item of the review queue. */
   showKeys?: boolean;
+  /** One more control for this item, after Reject. It has no key of its own. */
+  extra?: ReactNode;
 }
 
 export function ReviewButtons({
@@ -111,6 +113,7 @@ export function ReviewButtons({
   confirmDisabled = false,
   disabled = false,
   showKeys = false,
+  extra,
 }: Props) {
   const busy = review.deciding !== null || disabled;
   const suffix = noun ? ` ${noun}` : "";
@@ -157,6 +160,7 @@ export function ReviewButtons({
           {review.deciding === "reject" ? "Rejecting…" : `Reject${suffix}`}
         </button>
       )}
+      {extra}
       {showKeys && (
         <span className="rs-actions__keys" aria-hidden="true">
           {state !== "confirmed" && (

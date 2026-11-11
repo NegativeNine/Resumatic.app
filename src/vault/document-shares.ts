@@ -4,6 +4,7 @@ import { isInstruction } from "../pipeline/extract/verify";
 import { AppError } from "../shared/errors";
 import type { SharedDocument } from "../shared/sharing";
 import type { FactRecord } from "../shared/types";
+import { isWithheld, type Withheld } from "./sensitive";
 import { completeEvidence } from "./snapshots";
 
 /** A saved document version, as far as sharing reads it. Everything in it is checked before use. */
@@ -25,9 +26,11 @@ const MAX_QUESTIONS = 8;
 /**
  * The words of a cover letter or interview preparation, for a copy. A document is shared only if
  * every sentence in it still passes the deterministic checks against the evidence captured when
- * it was written: the same gate a resume passes before it is exported or shared.
+ * it was written: the same gate a resume passes before it is exported or shared. Given the facts
+ * withheld now, a sentence that cites one, or was checked against the line one was read from, is
+ * refused in the same words.
  */
-export function sharedDocument(id: string, version: number, kind: string, data: DocumentVersion | null | undefined): SharedDocument {
+export function sharedDocument(id: string, version: number, kind: string, data: DocumentVersion | null | undefined, withheld?: Withheld): SharedDocument {
   const refuse = () => new AppError("conflict", "this document can't be shared as it is; write it again, then share the new one");
   if (typeof id !== "string" || !id || !Number.isSafeInteger(version) || version < 1) throw refuse();
   if (kind !== "letter" && kind !== "prep") throw refuse();
@@ -61,6 +64,8 @@ export function sharedDocument(id: string, version: number, kind: string, data: 
       if (!stored || !completeEvidence(full) || full.id !== factId || full.text !== stored.text || full.quote !== stored.quote ||
           (unit.roleId !== null && full.roleId !== unit.roleId))
         throw refuse();
+      // A fact its owner has marked since supports nothing that is sent to someone else.
+      if (withheld && isWithheld(factId, stored, withheld)) throw refuse();
       const safe = authoritativeFact(full);
       return { text: safe.text, quote: safe.quote, level: safe.level };
     });
@@ -93,9 +98,9 @@ export function sharedDocument(id: string, version: number, kind: string, data: 
 }
 
 /** Whether a document could go into a copy now. Says nothing about why not. */
-export function canShareDocument(id: string, version: number, kind: string, data: DocumentVersion | null | undefined): boolean {
+export function canShareDocument(id: string, version: number, kind: string, data: DocumentVersion | null | undefined, withheld?: Withheld): boolean {
   try {
-    sharedDocument(id, version, kind, data);
+    sharedDocument(id, version, kind, data, withheld);
     return true;
   } catch {
     return false;

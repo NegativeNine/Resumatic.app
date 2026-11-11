@@ -216,6 +216,66 @@ describe("account tools", () => {
     expect(within(group).getByRole("checkbox", { name: /^Cover letter for/ })).toBeEnabled();
   });
 
+  it("doesn’t offer a fact marked sensitive for sharing, and says that some aren’t listed", async () => {
+    const state = fullVault();
+    const marked = state.facts.find((fact) => fact.id === "fact-pipeline")!;
+    marked.sensitive = true;
+    const api = installFakeApi(state);
+    renderWithSession(<AccountPage />, state.me);
+    await userEvent.click(await screen.findByRole("button", { name: "Choose what to share" }));
+    const facts = await screen.findByRole("group", { name: /^Confirmed facts/ });
+    expect(within(facts).getByText("Facts you’ve marked sensitive aren’t listed.")).toBeInTheDocument();
+    expect(within(facts).queryByRole("checkbox", { name: marked.text })).toBeNull();
+    // The other confirmed facts are all there to choose, and only they can be sent.
+    const offered = within(facts).getAllByRole("checkbox");
+    expect(offered).toHaveLength(state.facts.filter((fact) => fact.state === "confirmed" && !fact.sensitive).length);
+    for (const box of offered) await userEvent.click(box);
+    await userEvent.click(screen.getByRole("button", { name: "Create share link" }));
+    await screen.findByLabelText("Your share link");
+    const sent = api.callsTo("POST", /^\/api\/shares$/)[0]!.body as { factIds: string[] };
+    expect(sent.factIds).toHaveLength(offered.length);
+    expect(sent.factIds).not.toContain(marked.id);
+  });
+
+  it("says nothing about sensitive facts in the form when none is marked", async () => {
+    const state = fullVault();
+    installFakeApi(state);
+    renderWithSession(<AccountPage />, state.me);
+    await userEvent.click(await screen.findByRole("button", { name: "Choose what to share" }));
+    await screen.findByRole("group", { name: /^Confirmed facts/ });
+    expect(screen.queryByText(/marked sensitive/)).toBeNull();
+  });
+
+  it("won’t offer a document that uses a fact marked sensitive, and says to create a new one", async () => {
+    const state = fullVault();
+    const api = installFakeApi(state);
+    api.usesSensitive.add("doc-letter");
+    api.unshareable.add("doc-prep");
+    renderWithSession(<AccountPage />, state.me);
+    await userEvent.click(await screen.findByRole("button", { name: "Choose what to share" }));
+    const group = await screen.findByRole("group", { name: /^Cover letters and interview preparation/ });
+    const letter = within(group).getByRole("checkbox", { name: /^Cover letter for Platform Engineer at Litware, / });
+    expect(letter).toBeDisabled();
+    expect(letter.closest("li")!.textContent).toMatch(/\. Uses a fact you’ve marked sensitive\. Create a new one to share it\.$/);
+    // Each document gives its own reason: the other was written before documents could be shared.
+    const preparation = within(group).getByRole("checkbox", { name: /^Interview preparation for/ });
+    expect(preparation.closest("li")!.textContent).toMatch(/\. Written before documents could be shared\. Write a new one to share it\.$/);
+    expect(preparation.closest("li")!.textContent).not.toContain("marked sensitive");
+  });
+
+  it("says a closed link stays closed while a fact it holds is marked sensitive", async () => {
+    const state = fullVault();
+    state.shares![0]!.available = false;
+    installFakeApi(state);
+    renderWithSession(<AccountPage />, state.me);
+    const closed = (await screen.findByText("Dana Okafor")).closest("li")!;
+    expect(within(closed).getByRole("status")).toHaveTextContent(
+      "This link is currently unavailable. If it includes a resume, review that version before creating a new link. If it holds a fact you’ve marked sensitive, it stays closed while the fact is marked. You can still revoke this one.",
+    );
+    expect(within(closed).queryByText("Active")).toBeNull();
+    expect(within(closed).getByRole("button", { name: "Revoke link" })).toBeEnabled();
+  });
+
   it("has no documents to offer against a server without the list, and says so when the list fails", async () => {
     const state = fullVault();
     const api = installFakeApi(state);
