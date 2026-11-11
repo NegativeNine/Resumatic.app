@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm, writeFile, cp } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile, cp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -560,6 +560,55 @@ test("the build writes records, SQL and a manifest that says what went in and wh
     await writeFile(join(esco, "skills_en.csv"), Buffer.from([0xff, 0xfe, 0x00]));
     await assert.rejects(build({ esco, onet: join(FIXTURES, "onet"), crosswalk: join(FIXTURES, "crosswalk.csv"), out, escoVersion: "1.2.1", onetVersion: "31.0" }));
     await assert.rejects(build({ esco: dir, onet: join(FIXTURES, "onet"), crosswalk: join(FIXTURES, "crosswalk.csv"), out, escoVersion: "1.2.1", onetVersion: "31.0" }), /no CSV files in/);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("the build removes nothing but an earlier build, and never the files it reads", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "taxonomy-out-"));
+  try {
+    // The downloads kept together in one working folder, with something else beside them.
+    await cp(join(FIXTURES, "esco"), join(dir, "esco"), { recursive: true });
+    await cp(join(FIXTURES, "onet"), join(dir, "onet"), { recursive: true });
+    await cp(join(FIXTURES, "crosswalk.csv"), join(dir, "crosswalk.csv"));
+    await writeFile(join(dir, "notes.txt"), "where the files came from");
+    await mkdir(join(dir, "elsewhere"));
+    await writeFile(join(dir, "elsewhere", "thesis.txt"), "not a build");
+    const from = { esco: join(dir, "esco"), onet: join(dir, "onet"), crosswalk: join(dir, "crosswalk.csv"), escoVersion: "1.2.1", onetVersion: "31.0" };
+    const everything = async () => (await readdir(dir, { recursive: true })).sort();
+    const before = await everything();
+    assert.ok(before.includes(join("esco", "skills_en.csv")) && before.includes("crosswalk.csv") && before.includes(join("elsewhere", "thesis.txt")));
+
+    // --out naming the working folder itself, one of the folders read, or the crosswalk file.
+    for (const out of [dir, join(dir, "esco"), join(dir, "onet"), join(dir, "crosswalk.csv"), join(dir, "esco", "..")])
+      await assert.rejects(build({ ...from, out }), /holds the files being read/, out);
+    // A folder that holds something and no build, with or without some other program's manifest.json.
+    await assert.rejects(build({ ...from, out: join(dir, "elsewhere") }), /is not empty and does not hold an earlier build/);
+    await writeFile(join(dir, "elsewhere", "manifest.json"), JSON.stringify({ name: "another program's", version: "esco-1.2.1+onet-31.0+00000000" }));
+    await assert.rejects(build({ ...from, out: join(dir, "elsewhere") }), /is not empty and does not hold an earlier build/);
+    await rm(join(dir, "elsewhere", "manifest.json"));
+    // A file is not a folder to write into.
+    await assert.rejects(build({ ...from, out: join(dir, "notes.txt") }), /is not a folder/);
+    // The same from the command line, as "--out ." in the working folder.
+    const script = fileURLToPath(new URL("./taxonomy/build.mjs", import.meta.url));
+    const here = spawnSync(process.execPath, [script, "--esco", "esco", "--onet", "onet", "--crosswalk", "crosswalk.csv", "--out", ".", "--esco-version", "1.2.1", "--onet-version", "31.0"], { encoding: "utf8", cwd: dir });
+    assert.equal(here.status, 1);
+    assert.match(here.stderr, /taxonomy build failed: .* holds the files being read/);
+    // Every refusal left everything where it was.
+    assert.deepEqual(await everything(), before);
+    assert.equal(await readFile(join(dir, "elsewhere", "thesis.txt"), "utf8"), "not a build");
+
+    // A folder that isn't there yet, an empty one, and an earlier build are all written to.
+    await mkdir(join(dir, "empty"));
+    for (const out of [join(dir, "new", "deeper"), join(dir, "empty"), join(dir, "empty")]) {
+      const manifest = await build({ ...from, out });
+      assert.deepEqual((await readdir(out)).sort(), ["concepts.ndjson", "d1", "labels.ndjson", "manifest.json", "relations.ndjson"]);
+      assert.equal(JSON.parse(await readFile(join(out, "manifest.json"), "utf8")).contentHash, manifest.contentHash);
+    }
+    // An earlier build that the downloads were later put inside is still not removed.
+    await cp(join(dir, "esco"), join(dir, "empty", "esco"), { recursive: true });
+    await assert.rejects(build({ ...from, esco: join(dir, "empty", "esco"), out: join(dir, "empty") }), /holds the files being read/);
+    assert.ok((await readdir(join(dir, "empty", "esco"))).includes("skills_en.csv"));
+    assert.ok((await readdir(join(dir, "empty"))).includes("manifest.json"));
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

@@ -5,7 +5,7 @@
 //     --esco <folder of the ESCO classification CSV package> --esco-version 1.2.1 \
 //     --onet <folder of the O*NET CSV release>               --onet-version 31.0 \
 //     --crosswalk <the O*NET - ESCO occupations crosswalk CSV> \
-//     --out <folder to write>
+//     --out <folder to write: a new one, an empty one, or an earlier build to replace>
 //
 // It writes the records (concepts, labels, relations as one JSON object per line), the SQL that
 // loads them into D1, and a manifest: which files went in, by SHA-256, what came out, what was set
@@ -14,7 +14,7 @@
 
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { attribution, combine } from "./combine.mjs";
@@ -38,6 +38,34 @@ async function csvFolder(folder) {
   }
   if (Object.keys(files).length === 0) throw new Error(`no CSV files in ${folder}`);
   return { files, hashes };
+}
+
+/**
+ * The output folder is emptied before it is written, so that no file of an earlier build is left
+ * to be loaded with the new ones. That is all it may cost: a folder is emptied only when it holds
+ * an earlier build, and never when the files being read are in it. Anything else named by a wrong
+ * --out (the folder the downloads are kept in, a checkout, a file) stops the build with nothing
+ * removed.
+ */
+async function replaceable(target, inputs) {
+  for (const input of inputs) {
+    const within = relative(target, resolve(input));
+    if (within !== ".." && !within.startsWith(`..${sep}`) && !isAbsolute(within))
+      throw new Error(`${target} holds the files being read, and a build written there would remove them. Nothing was removed. Give --out a folder of its own.`);
+  }
+  let names;
+  try {
+    names = await readdir(target);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    if (error?.code === "ENOTDIR") throw new Error(`${target} is not a folder. Nothing was removed. Give --out a folder of its own.`);
+    throw error;
+  }
+  if (names.length === 0) return;
+  // An earlier build is known by the manifest it wrote last, which no other manifest.json resembles.
+  const manifest = await readFile(join(target, "manifest.json"), "utf8").then(JSON.parse).catch(() => null);
+  if (typeof manifest?.contentHash !== "string" || !/^[0-9a-f]{64}$/.test(manifest.contentHash))
+    throw new Error(`${target} is not empty and does not hold an earlier build. Nothing was removed. Give --out a new folder, an empty one, or an earlier build to replace.`);
 }
 
 export async function build({ esco, onet, crosswalk, out, escoVersion, onetVersion, crosswalkVersion, language = "en" }) {
@@ -67,6 +95,7 @@ export async function build({ esco, onet, crosswalk, out, escoVersion, onetVersi
   };
 
   const target = resolve(out);
+  await replaceable(target, [esco, onet, crosswalk]);
   await rm(target, { recursive: true, force: true });
   await mkdir(join(target, "d1"), { recursive: true });
   await writeFile(join(target, "concepts.ndjson"), bundle.text.concepts);
