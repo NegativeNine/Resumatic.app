@@ -3,6 +3,7 @@ import type { DocumentView } from "../../src/shared/documents";
 import type { PostingRead } from "../../src/shared/postings";
 import { normalizePosting, type FactPatch, type NewFact, type NewRole, type Profile, type ReviewRequest, type RolePatch, type SensitiveRequest } from "../../src/shared/api";
 import { PREFERENCES_CHANGED, PREFERENCES_REFUSED, cleanPreferences, type Preferences, type PreferencesUpdate } from "../../src/shared/preferences";
+import { normalizePastedText, pasteFilename, type PasteSourceRequest } from "../../src/shared/paste";
 import { wording } from "../../src/shared/record";
 import { targetText, type NewShareComment, type NewSuggestion, type ShareComment } from "../../src/shared/sharing";
 import { sharedView, type Fixtures } from "./fixtures";
@@ -12,6 +13,8 @@ export interface Call {
   /** Path and query, such as "/api/facts?state=proposed". */
   path: string;
   body: unknown;
+  /** The Idempotency-Key header, when the request sent one. */
+  key?: string;
 }
 
 type Reply = { status: number; body?: unknown };
@@ -41,6 +44,12 @@ export class FakeApi {
   /** What reading each link comes to. A link that isn't here can't be reached. */
   readonly pages = new Map<string, PostingRead>();
 
+  /** Request keys whose paste was reserved too long ago: replaying one is refused as the Vault refuses it. */
+  readonly expiredPasteKeys = new Set<string>();
+
+  /** The text of every paste so far, cleaned as the Worker stores it: the same text again is a second copy. */
+  private readonly pasted = new Set<string>();
+
   /** Whole postings, which the list of jobs doesn't carry. A fixture job's is its excerpt. */
   private readonly postings = new Map<string, string>();
   private posting(id: string): string {
@@ -61,7 +70,8 @@ export class FakeApi {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://localhost");
     const method = (init?.method ?? "GET").toUpperCase();
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : (init?.body ?? null);
-    const call: Call = { method, path: url.pathname + url.search, body };
+    const key = (init?.headers as Record<string, string> | undefined)?.["idempotency-key"];
+    const call: Call = { method, path: url.pathname + url.search, body, ...(key ? { key } : {}) };
     this.calls.push(call);
 
     const failure = this.failures.find((f) => f.method === method && f.path.test(url.pathname));
@@ -315,6 +325,30 @@ export class FakeApi {
         const filename = file instanceof File ? file.name : "upload.pdf";
         this.state.sources.unshift({ id, filename, state: "queued", error: null, createdAt: Date.now(), proposed: 0 });
         return { status: 201, body: { sourceId: id } };
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/sources\/paste$/,
+      (call) => {
+        const { text, title } = call.body as PasteSourceRequest;
+        if (call.key && this.expiredPasteKeys.has(call.key)) return conflict("This text wasn't added. Add it again.");
+        const stored = normalizePastedText(text);
+        if (this.pasted.has(stored)) return conflict("You've already pasted this text.");
+        this.pasted.add(stored);
+        const id = this.id("src");
+        this.state.sources.unshift({ id, filename: pasteFilename(title) ?? "Pasted text.txt", origin: "paste", state: "queued", error: null, createdAt: Date.now(), proposed: 0 });
+        return { status: 201, body: { sourceId: id } };
+      },
+    ],
+    [
+      "GET",
+      /^\/api\/sources\/([^/]+)\/text$/,
+      (_call, [sourceId]) => {
+        const markdown = this.state.sourceTexts?.[sourceId];
+        if (markdown === undefined) return conflict("this source has not been read yet");
+        const origin = this.state.sources.find((s) => s.id === sourceId)?.origin ?? "upload";
+        return ok({ markdown, revisionId: `${sourceId}:1`, origin });
       },
     ],
 

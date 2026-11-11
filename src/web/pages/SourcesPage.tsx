@@ -1,6 +1,6 @@
+import { AddSource } from "../components/AddSource";
 import { Review } from "../components/Review";
 import { SourceList } from "../components/SourceList";
-import { Uploader } from "../components/Uploader";
 import { ErrorNote, Loading, PageHeader, Tick } from "../components/ui";
 import { useResource } from "../hooks";
 import { isReading, loadVault, type Vault } from "../vault";
@@ -27,7 +27,7 @@ export function SourcesPage() {
             <h2 id="upload-heading" className="rs-visually-hidden">
               Add a source
             </h2>
-            <Uploader onUploaded={vault.reload} size="first-run" />
+            <AddSource onAdded={vault.reload} size="first-run" />
           </section>
           <Review vault={vault.data} reload={vault.reload} />
           <WhatHappensNext />
@@ -39,7 +39,7 @@ export function SourcesPage() {
             <h2 id="sources-heading" className="rs-h3">
               Your sources
             </h2>
-            <Uploader onUploaded={vault.reload} />
+            <AddSource onAdded={vault.reload} />
             <SourceList vault={vault.data} reload={vault.reload} />
           </aside>
           <div className="facts-main">

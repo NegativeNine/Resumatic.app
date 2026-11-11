@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { describe, expect, it, vi } from "vitest";
@@ -319,5 +319,191 @@ describe("marking a fact sensitive", () => {
     await userEvent.keyboard("e");
     await screen.findByLabelText("Fact", { selector: "textarea" }, { timeout: 4000 });
     expect(screen.queryByText(/This fact stays sensitive after you save/)).toBeNull();
+  });
+});
+
+describe("pasting text", () => {
+  const ZERO_WIDTH_SPACE = String.fromCodePoint(0x200b);
+  const pastePanel = () => screen.getByRole("form", { name: "Paste text" });
+  const textBox = () => within(pastePanel()).getByRole("textbox", { name: "Text to read" });
+  const titleBox = () => within(pastePanel()).getByRole("textbox", { name: /^Title/ });
+  const pasteCalls = (api: FakeApi) => api.callsTo("POST", /^\/api\/sources\/paste$/);
+
+  async function openPaste(state: Fixtures = fixtures()): Promise<FakeApi> {
+    const api = await openFacts(state);
+    await userEvent.click(screen.getByRole("button", { name: "Paste text" }));
+    return api;
+  }
+
+  async function pasteInto(box: HTMLElement, text: string) {
+    await userEvent.click(box);
+    await userEvent.paste(text);
+  }
+
+  it("offers Paste text beside Upload a file, with a textarea, a title and a count against 60,000", async () => {
+    await openFacts();
+    const group = screen.getByRole("group", { name: "Add a source" });
+    const [file, paste] = within(group).getAllByRole("button");
+    expect([file!.textContent, paste!.textContent]).toEqual(["Upload a file", "Paste text"]);
+    expect(file).toHaveAttribute("aria-pressed", "true");
+    expect(paste).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByRole("form", { name: "Paste text" })).toBeNull();
+
+    await userEvent.click(paste!);
+    expect(paste).toHaveAttribute("aria-pressed", "true");
+    expect(file).toHaveAttribute("aria-pressed", "false");
+    expect(textBox().tagName).toBe("TEXTAREA");
+    expect(titleBox()).toHaveAttribute("maxlength", "120");
+    expect(within(pastePanel()).getByText("0 of 60,000 characters")).toBeInTheDocument();
+    expect(textBox().getAttribute("aria-describedby")!.split(" ")).toContain(within(pastePanel()).getByText("0 of 60,000 characters").id);
+    // The upload panel is hidden, not gone, so an upload under way survives the switch.
+    expect(screen.queryByRole("button", { name: "Choose a file" })).toBeNull();
+    expect(document.querySelector(".app-drop--rail")).not.toBeNull();
+  });
+
+  it("counts characters as they will be stored", async () => {
+    await openPaste();
+    fireEvent.change(textBox(), { target: { value: `a\r\nb${ZERO_WIDTH_SPACE}` } });
+    expect(within(pastePanel()).getByText("3 of 60,000 characters")).toBeInTheDocument();
+    fireEvent.change(textBox(), { target: { value: "  \n\t " } });
+    expect(within(pastePanel()).getByText("0 of 60,000 characters")).toBeInTheDocument();
+  });
+
+  it("says Paste some text first without sending anything", async () => {
+    const api = await openPaste();
+    await pasteInto(textBox(), `   ${ZERO_WIDTH_SPACE}\n `);
+    await userEvent.click(within(pastePanel()).getByRole("button", { name: "Add text" }));
+    expect(within(pastePanel()).getByRole("alert")).toHaveTextContent("Paste some text first.");
+    expect(pasteCalls(api)).toHaveLength(0);
+  });
+
+  it("holds Add text and says how far over the text is", async () => {
+    const api = await openPaste();
+    fireEvent.change(textBox(), { target: { value: "a".repeat(60_005) } });
+    expect(within(pastePanel()).getByText("5 characters over the 60,000 limit")).toBeInTheDocument();
+    expect(textBox()).toHaveAttribute("aria-invalid", "true");
+    const add = within(pastePanel()).getByRole("button", { name: "Add text" });
+    expect(add).toBeDisabled();
+    fireEvent.submit(pastePanel());
+    expect(pasteCalls(api)).toHaveLength(0);
+    fireEvent.change(textBox(), { target: { value: "a".repeat(60_000) } });
+    expect(add).toBeEnabled();
+    expect(textBox()).toHaveAttribute("aria-invalid", "false");
+  });
+
+  it("sends the text and title with an idempotency key, then says it is being read", async () => {
+    const api = await openPaste();
+    await pasteInto(titleBox(), "Q3 review");
+    await pasteInto(textBox(), "Led the Q3 launch of the carrier rates service.");
+    await userEvent.click(within(pastePanel()).getByRole("button", { name: "Add text" }));
+    expect(
+      await within(pastePanel()).findByText("Added your text. Resumatic is reading it now, and its roles and facts will appear for you to review."),
+    ).toHaveAttribute("role", "status");
+    const [call] = pasteCalls(api);
+    expect(call!.body).toEqual({ text: "Led the Q3 launch of the carrier rates service.", title: "Q3 review" });
+    expect(call!.key).toMatch(/^[0-9a-f-]{36}$/);
+    expect(textBox()).toHaveValue("");
+    expect(titleBox()).toHaveValue("");
+    // The list is read again, and shows the source by the name its title gave.
+    const rail = screen.getByRole("complementary", { name: "Your sources" });
+    expect(await within(rail).findByText("Q3 review.txt")).toBeInTheDocument();
+  });
+
+  it("sends no title when none is given", async () => {
+    const api = await openPaste();
+    await pasteInto(textBox(), "Mentored four engineers.");
+    await userEvent.click(within(pastePanel()).getByRole("button", { name: "Add text" }));
+    await within(pastePanel()).findByText(/^Added your text\./);
+    expect(pasteCalls(api)[0]!.body).toEqual({ text: "Mentored four engineers.", title: null });
+  });
+
+  it("uses a new key for each Add text and the same key for Retry adding text", async () => {
+    const api = await openPaste();
+    api.fail("POST", /^\/api\/sources\/paste$/, 503, "unavailable", "Resumatic is busy right now.");
+    await pasteInto(textBox(), "Wrote the on-call runbook.");
+    await userEvent.click(within(pastePanel()).getByRole("button", { name: "Add text" }));
+    const retry = await within(pastePanel()).findByRole("button", { name: "Retry adding text" });
+    await userEvent.click(retry);
+    await within(pastePanel()).findByText(/^Added your text\./);
+    expect(within(pastePanel()).queryByRole("button", { name: "Retry adding text" })).toBeNull();
+    const [first, again] = pasteCalls(api);
+    expect(again!.key).toBe(first!.key);
+    expect(again!.body).toEqual(first!.body);
+
+    await pasteInto(textBox(), "Ran the hiring loop for the platform team.");
+    await userEvent.click(within(pastePanel()).getByRole("button", { name: "Add text" }));
+    await waitFor(() => expect(pasteCalls(api)).toHaveLength(3));
+    expect(pasteCalls(api)[2]!.key).not.toBe(first!.key);
+  });
+
+  it("shows This text wasn’t added after an expired paste, without a retry", async () => {
+    const api = await openPaste();
+    api.fail("POST", /^\/api\/sources\/paste$/, 503, "unavailable", "Resumatic is busy right now.");
+    await pasteInto(textBox(), "Wrote the on-call runbook.");
+    await userEvent.click(within(pastePanel()).getByRole("button", { name: "Add text" }));
+    const retry = await within(pastePanel()).findByRole("button", { name: "Retry adding text" });
+    // A day passes: the first press's reservation has expired.
+    api.expiredPasteKeys.add(pasteCalls(api)[0]!.key!);
+    await userEvent.click(retry);
+    expect(await within(pastePanel()).findByRole("alert")).toHaveTextContent("This text wasn’t added. Add it again.");
+    expect(within(pastePanel()).queryByRole("button", { name: "Retry adding text" })).toBeNull();
+    expect(textBox()).toHaveValue("Wrote the on-call runbook.");
+    // The next press is a new paste, under a new key.
+    await userEvent.click(within(pastePanel()).getByRole("button", { name: "Add text" }));
+    await within(pastePanel()).findByText(/^Added your text\./);
+    expect(pasteCalls(api)[2]!.key).not.toBe(pasteCalls(api)[0]!.key);
+  });
+
+  it("shows the server’s sentence when the same text is pasted twice", async () => {
+    const api = await openPaste();
+    await pasteInto(textBox(), "Wrote the on-call runbook.");
+    await userEvent.click(within(pastePanel()).getByRole("button", { name: "Add text" }));
+    await within(pastePanel()).findByText(/^Added your text\./);
+    await pasteInto(titleBox(), "Another title");
+    await pasteInto(textBox(), "Wrote the on-call runbook.");
+    await userEvent.click(within(pastePanel()).getByRole("button", { name: "Add text" }));
+    expect(await within(pastePanel()).findByRole("alert")).toHaveTextContent("You’ve already pasted this text.");
+    expect(within(pastePanel()).queryByRole("button", { name: "Retry adding text" })).toBeNull();
+    expect(pasteCalls(api)).toHaveLength(2);
+  });
+
+  it("keeps the first-run dropzone and adds the toggle above it", async () => {
+    const state = emptyVault();
+    installFakeApi(state);
+    renderWithSession(<SourcesPage />, state.me);
+    await screen.findByRole("heading", { name: "What happens next" });
+    const drop = document.querySelector(".app-drop--first-run")!;
+    expect(drop).not.toBeNull();
+    const group = screen.getByRole("group", { name: "Add a source" });
+    expect(group.compareDocumentPosition(drop) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await userEvent.click(within(group).getByRole("button", { name: "Paste text" }));
+    expect(textBox()).toHaveAttribute("rows", "12");
+  });
+
+  it("passes axe with the paste panel open", async () => {
+    await openPaste();
+    fireEvent.change(textBox(), { target: { value: "a".repeat(60_001) } });
+    const results = await axe.run(document.body, { rules: { "color-contrast": { enabled: false }, region: { enabled: false } } });
+    expect(results.violations.map((v) => `${v.id}: ${v.help}`)).toEqual([]);
+  });
+
+  it("shows a pasted source’s text with the quote highlighted", async () => {
+    const state = fixtures();
+    const quote = "Shipped the carrier rates service to 12 regions.";
+    const markdown = `Q3 review\n\nWhat I did\n\t- ${quote}\n- Mentored two engineers.`;
+    const start = markdown.indexOf(quote);
+    state.sources.unshift({ id: "src-paste", filename: "Q3 review.txt", origin: "paste", state: "ready", error: null, createdAt: 1793990000000, proposed: 1 });
+    state.facts.push({
+      id: "fact-pasted", roleId: "role-northwind", kind: "accomplishment", text: "Shipped carrier rates to 12 regions.", level: null,
+      origin: "extracted", state: "proposed", quote, span: [start, start + quote.length], sourceId: "src-paste",
+    });
+    state.sourceTexts = { "src-paste": markdown };
+    await openFacts(state);
+    expect(within(screen.getByRole("complementary", { name: "Your sources" })).getByText("Q3 review.txt")).toBeInTheDocument();
+    const fact = factItem("Shipped carrier rates to 12 regions.");
+    await userEvent.click(within(fact).getByRole("button", { name: "See this quote in its source" }));
+    const shown = await within(fact).findByLabelText("Source text with the evidence highlighted");
+    expect(shown.querySelector("mark")!.textContent).toBe(quote);
+    expect(shown.textContent).toBe(markdown);
   });
 });

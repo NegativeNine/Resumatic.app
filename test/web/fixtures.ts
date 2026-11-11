@@ -13,6 +13,8 @@ export interface Fixtures {
   /** The person's job preferences as saved. Absent until they first save: nothing said, at revision 0. */
   preferences?: Preferences;
   sources: SourceView[];
+  /** What each source was read as, by its ID, for "See this quote in its source". */
+  sourceTexts?: Record<string, string>;
   roles: RoleView[];
   facts: FactView[];
   applications: ApplicationView[];
