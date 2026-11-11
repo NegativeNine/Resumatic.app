@@ -68,4 +68,24 @@ describe("the privacy notice", () => {
     expect(MCP_GRANT_TTL_MS).toBe(30 * DAY);
     expect(section("Connecting an app")).toContain("Its access lasts an hour, or up to thirty days if you allow it to continue");
   });
+
+  it("names the job preferences that are kept, and says that nothing reads them", () => {
+    render(<LegalPage doc="privacy" />);
+    const kept = section("What we keep");
+    expect(kept).toContain("The job preferences you enter: a place, job types, when you’re available and a pay floor.");
+    expect(kept).toContain(
+      "They stay in your database. They are not shown to anyone, not put in a resume or a shared copy, not sent to a connected app or an AI model, and nothing uses them yet.",
+    );
+    // With the other details a person types about themselves, directly after the profile's.
+    const items = [...screen.getByRole("heading", { level: 2, name: "What we keep" }).closest("section")!.querySelectorAll("li")].map((item) => item.textContent!.replace(/\s+/g, " "));
+    const item = items.findIndex((text) => text.startsWith("The job preferences you enter"));
+    expect(items[item - 1]).toBe("The profile details you enter: name, email, phone, location and links.");
+    // Each of the four things stored is named, and nothing that isn't stored is.
+    for (const stored of ["a place", "job types", "when you’re available", "a pay floor"]) expect(items[item], stored).toContain(stored);
+    expect(items[item]).not.toMatch(/remote|authori[sz]|visa|citizen|permit|salary history/i);
+    expect(document.querySelector("article")!.textContent).not.toMatch(/remote work|work authori[sz]ation|right to work/i);
+    expect(section("Your choices")).toContain("every fact, role, profile detail and job preference can be edited, rejected or cleared under Facts and Account.");
+    // No app is given them, so what an app may do says nothing about them.
+    expect(section("Connecting an app")).not.toMatch(/preference/i);
+  });
 });
