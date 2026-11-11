@@ -152,6 +152,8 @@ A mention of one word is `weak` when any of these holds:
 
 A capital alone is not evidence, because every line starts with one. A label that is itself lower case ("communication") is an everyday word and is matched however the text writes it. How the text writes a word is how a person reads it: a character nobody sees in the word or straight after it, and an accent encoded another way, are not another spelling, in the text or in a label. The flag goes by spelling and nothing else: an everyday word that the text writes exactly as its label is written ("Chef at a 40-seat bistro", beside the software called Chef) is not marked, and telling those apart belongs to the checked step.
 
+The text these reads are given is someone else's (an upload, a job posting), so what reading it can cost is bounded. `mentions` refuses a text of more than 20,000 characters, and `lookup` finds nothing for one: no label is over a hundredth of that. Within the limit, a word may carry any number of combining marks and unseen characters. They are dropped before the word is put in its comparison form, and a word too long to be any way of writing its label is not compared with it, so the time a pile of marks on one letter takes to read grows with the pile and not with its square.
+
 Limits today: English only, and exact wording only. Finding the activity or skill a line describes in other words needs a vector index of the concepts, which is the next step.
 
 ## Credits
