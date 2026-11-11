@@ -124,6 +124,8 @@ export interface Me {
   signInEmail?: string;
   /** How many copies other people have shared with this account as their coach. */
   clients?: number;
+  /** How many comments a coach has written on this account's shared copies that its owner hasn't seen. */
+  newFromCoach?: number;
 }
 
 export interface SourceView {

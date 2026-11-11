@@ -78,6 +78,8 @@ import { canShareDocument, SHAREABLE_DOCUMENT_KINDS, type DocumentVersion } from
 import { CoachClientStore, type CoachClientEntry } from "./coach-clients";
 import type { CoachAccount } from "./shares";
 import type { ShareableDocument } from "../shared/sharing";
+import { ShareCommentStore } from "./share-comments";
+import type { CommentThread, NewShareComment, OwnerCommentThread, ShareComment } from "../shared/sharing";
 import { mergeRefinementEvidence } from "./refinement-evidence";
 import { validateTailorCheckpoint, validateTailorPublication } from "./tailor-publication";
 import { finalLegacyEvidence, legacyReceipt, legacyReview } from "./legacy-remediation";
@@ -237,6 +239,8 @@ export interface VaultExport extends RecordExport {
   shares: import("../shared/sharing").ShareGrant[];
   /** Copies other people shared with this account as their coach: whose, and until when. */
   coachClients: Omit<CoachClientEntry, "ownerVault">[];
+  /** What a coach wrote on copies this account shared, and its owner's replies, as stored. */
+  shareComments: Record<string, string | number | null>[];
   connectedApps: Omit<McpGrant, "oauthGrantId">[];
   billing: Entitlement | null;
   exportedAt: string;
@@ -672,6 +676,7 @@ export class Vault extends DurableObject<Env> {
       profile: this.readProfile(),
       quota: this.quota(),
       clients: this.coachClients.count(),
+      newFromCoach: this.shareComments.unseen(),
       capabilities: {
         ocr: !!this.env.MODEL_TRANSCRIBE,
         connectedApps: this.env.MCP_ENABLED === "true",
@@ -3053,6 +3058,11 @@ export class Vault extends DurableObject<Env> {
     });
   }
 
+  /** Comments on shared copies. Nothing else reads their table: not tailoring, a check, a copy or a connected app. */
+  private get shareComments(): ShareCommentStore {
+    return new ShareCommentStore(this.sql, this.shares, (who) => this.requireOwner(who));
+  }
+
   async createShare(
     who: Who,
     selection: {
@@ -3180,6 +3190,41 @@ export class Vault extends DurableObject<Env> {
 
   async coachShareStatus(grantId: string, coach: CoachAccount) {
     return this.shares.coachStatus(grantId, coach);
+  }
+
+  // Comments on a copy, kept here in its owner's vault. A coach's three calls arrive as the ones
+  // above do, with the account the Worker verified, and the grant decides each time. Every call
+  // makes its check and its read or write in one transaction with nothing awaited, so a copy that
+  // ends takes no comment that was allowed a moment before.
+
+  async coachComments(grantId: string, coach: CoachAccount): Promise<CommentThread[]> {
+    return this.ctx.storage.transactionSync(() => this.shareComments.listForCoach(grantId, coach));
+  }
+
+  async commentAsCoach(grantId: string, coach: CoachAccount, input: NewShareComment, requestKey: string): Promise<ShareComment> {
+    return this.ctx.storage.transactionSync(() => this.shareComments.addAsCoach(grantId, coach, input, requestKey));
+  }
+
+  async removeCommentAsCoach(grantId: string, coach: CoachAccount, id: string): Promise<void> {
+    this.ctx.storage.transactionSync(() => this.shareComments.removeAsCoach(grantId, coach, id));
+  }
+
+  // The owner's side of the same threads.
+
+  async listShareComments(who: Who): Promise<OwnerCommentThread[]> {
+    return this.ctx.storage.transactionSync(() => this.shareComments.listForOwner(who));
+  }
+
+  async replyToShareComment(who: Who, commentId: string, body: string, requestKey: string): Promise<ShareComment> {
+    return this.ctx.storage.transactionSync(() => this.shareComments.replyAsOwner(who, commentId, body, requestKey));
+  }
+
+  async removeShareComment(who: Who, id: string): Promise<void> {
+    this.ctx.storage.transactionSync(() => this.shareComments.removeAsOwner(who, id));
+  }
+
+  async markShareCommentsSeen(who: Who): Promise<void> {
+    this.ctx.storage.transactionSync(() => this.shareComments.markSeen(who));
   }
 
   // The rest are the coach's own list, in the coach's own vault.
@@ -3918,6 +3963,7 @@ export class Vault extends DurableObject<Env> {
         .toArray(),
       shares: this.shares.export(who),
       coachClients: this.coachClients.export(),
+      shareComments: this.shareComments.export(who),
       connectedApps: this.mcpGrants
         .list(who)
         .map(({ oauthGrantId: _remote, ...grant }) => grant),
