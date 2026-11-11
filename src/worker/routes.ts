@@ -1330,7 +1330,8 @@ function coachAccount(c: C): { userId: string; email: string } {
 // Takes up a copy the reader has open. The link's own session says which copy, and the reader's
 // account has to be the one the owner named.
 api.post("/coach/clients", JSON_LIMIT, async (c) => {
-  const { grantId } = await jsonBody(c, z.object({ grantId: z.string().max(100) }));
+  // Only a copy's ID names a cookie. Anything else is refused here, not by the cookie's own 410.
+  const { grantId } = await jsonBody(c, z.object({ grantId: z.uuid() }));
   const claims = await readShareToken(c.env.SESSION_KEY, getCookie(c, shareCookieName(grantId)), "coach-session");
   if (!claims || claims.grantId.toLowerCase() !== grantId.toLowerCase()) throw copyEnded();
   const account = coachAccount(c);

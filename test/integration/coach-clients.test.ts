@@ -122,6 +122,9 @@ describe("a copy that names its coach", () => {
     const noLink = await takeUp(shared.grant.id, dana.cookie);
     expect(noLink.status).toBe(409);
     expect(await noLink.json()).toMatchObject({ error: "conflict", message: expect.stringContaining("this copy has ended") });
+    // Something that isn't a copy's ID is a bad request, and never that 410 either.
+    for (const grantId of ["not-a-copy", "", `${shared.grant.id}0`])
+      expect((await takeUp(grantId, jar(link, dana.cookie))).status, grantId).toBe(422);
     const before = Date.now();
     expect((await takeUp(shared.grant.id, jar(link, dana.cookie))).status).toBe(204);
     expect((await read(shared.grant.id, jar(link, dana.cookie))).view!.reviewer).toBe("joined");
