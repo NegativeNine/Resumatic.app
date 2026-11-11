@@ -52,14 +52,19 @@ export class CoachClientStore {
     if (!/^[0-9a-f-]{36}$/i.test(client.grantId) || !/^[0-9a-f]{64}$/.test(client.ownerVault) || !Number.isSafeInteger(client.expiresAt))
       throw new AppError("invalid", "this copy can't be added");
     this.purge(now);
-    const known = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM coach_clients WHERE grant_id = ?`, client.grantId).one().n > 0;
-    if (!known && this.count(now) >= MAX_COACH_CLIENTS)
-      throw new AppError("conflict", "your client list is full; remove a copy that has ended, then add this one");
+    this.requireRoom(client.grantId, now);
     this.sql.exec(
       `INSERT INTO coach_clients (grant_id, owner_vault, owner_name, added_at, expires_at) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(grant_id) DO UPDATE SET owner_vault = excluded.owner_vault, owner_name = excluded.owner_name, expires_at = excluded.expires_at`,
       client.grantId, client.ownerVault, client.ownerName?.slice(0, 200) || null, now, client.expiresAt,
     );
+  }
+
+  /** Refuses a copy the list has no room for. One already on the list is only refreshed, so it always fits. */
+  requireRoom(grantId: string, now = Date.now()): void {
+    const known = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM coach_clients WHERE grant_id = ?`, grantId).one().n > 0;
+    if (!known && this.count(now) >= MAX_COACH_CLIENTS)
+      throw new AppError("conflict", "your client list is full; remove a copy that has ended, then add this one");
   }
 
   /** Newest first. */

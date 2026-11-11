@@ -51,7 +51,7 @@ import {
   type RoleKind,
 } from "../shared/api";
 import { AppError, errorCode, errorDetail, httpStatus } from "../shared/errors";
-import { MAX_SHARE_LABEL_CHARS, type CoachClient } from "../shared/sharing";
+import { MAX_SHARE_LABEL_CHARS, type CoachClient, type SharedView } from "../shared/sharing";
 import { hintFor, type CfLocation } from "../shared/location";
 import { docxKey, pdfKey, sourceKey } from "../shared/r2";
 import { directoryForSignIn, settleRoutedPlacement } from "../directory/routing";
@@ -1337,6 +1337,9 @@ api.post("/coach/clients", JSON_LIMIT, async (c) => {
   if (claims.vid === c.get("session").vid) throw new AppError("conflict", "this is your own copy");
   // Reading their own account both proves the session is current and gives the name they go by.
   const me = await myVault(c).me(c.get("who"));
+  // A list with no room refuses here, before the copy's owner's vault records a take-up, so its
+  // owner is never shown one that didn't happen.
+  await myVault(c).requireCoachClientRoom(c.get("who"), claims.grantId);
   const joined = await unlessEnded(
     vault(c.env, claims.vid).joinShareAsCoach(
       { grantId: claims.grantId, epoch: claims.epoch },
@@ -1439,12 +1442,25 @@ app.get("/share/snapshot", async (c) => {
   // What the copy says about its named coach depends on who is reading. Its owner is told nothing,
   // and so is everyone when it names no coach.
   const { reviewer, ...copy } = view;
-  const standing =
+  let standing: SharedView["reviewer"] | null =
     reviewer === "none" || own?.vid === claims.vid
       ? null
       : reviewer === "named"
         ? own ? "sign-in-again" : "sign-in"
         : reviewer;
+  // "joined" is the owner's vault saying this account took the copy up. Whether the copy is in the
+  // account's client list is for the account's own vault to say. A copy taken off that list, or one
+  // that never reached it, is read as not added: the page then offers to add it.
+  if (standing === "joined" && own) {
+    try {
+      const listed = await vault(c.env, own.vid).coachClient({ userId: own.uid, gen: own.gen, epoch: own.epoch }, claims.grantId);
+      if (!listed) standing = "you";
+    } catch {
+      // Their vault can't be asked: a session since signed out, or a vault that is away. The owner's
+      // vault's word stands, as it did before this was asked, and the list it points to is where a
+      // session that has ended is told so. Offering an add that same session can't make helps nobody.
+    }
+  }
   return c.json(standing ? { ...copy, reviewer: standing } : copy);
 });
 api.get("/billing", async (c) =>

@@ -118,7 +118,7 @@ export interface SharedView {
    * - sign-in: nobody is signed in;
    * - sign-in-again: signed in, but with a session from before the sign-in address was carried;
    * - other: signed in with a different address;
-   * - you: this is the named coach, who hasn't added the copy to their clients;
+   * - you: this is the named coach, and the copy isn't in their clients: never added, or taken off since;
    * - joined: the named coach, with the copy in their clients.
    */
   reviewer?: "sign-in" | "sign-in-again" | "other" | "you" | "joined";

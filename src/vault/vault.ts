@@ -3177,6 +3177,12 @@ export class Vault extends DurableObject<Env> {
 
   // The rest are the coach's own list, in the coach's own vault.
 
+  /** Refuses a copy the list has no room for. Asked before the copy's owner's vault is told of a take-up. */
+  async requireCoachClientRoom(who: Who, grantId: string): Promise<void> {
+    this.requireOwner(who);
+    this.coachClients.requireRoom(grantId);
+  }
+
   async addCoachClient(who: Who, client: Omit<CoachClientEntry, "addedAt">): Promise<void> {
     this.requireOwner(who);
     this.coachClients.add(client);
