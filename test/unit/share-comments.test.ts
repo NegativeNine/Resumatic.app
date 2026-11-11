@@ -102,6 +102,8 @@ function store() {
       if (!security.open) throw new AppError("gone", "this account is being deleted");
     },
     currentEpoch: () => security.epoch,
+    // Nothing is marked sensitive in these tests; the comments check reads the copy through the same gate.
+    withheld: () => ({ ids: new Set<string>(), quotes: new Set<string>() }),
   });
   const comments = new ShareCommentStore(sql, shares, authorizeOwner);
   const rows = () => db.prepare(`SELECT * FROM share_comments ORDER BY created_at, rowid`).all() as Record<string, string | number | null>[];
