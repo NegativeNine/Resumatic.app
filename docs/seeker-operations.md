@@ -35,6 +35,23 @@ For a staging-only deployment using the secret-protected test sign-in before Goo
 
 For an isolated, non-model staging smoke deployment, `--smoke-only` is a separate deploy-preflight mode. It requires test sign-in, the pilot budget binding and `PILOT_SHARED_BUDGET=true`, a zero daily spend cap, invite-only mode, billing and MCP disabled, and empty Google configuration by default. To test Google sign-in explicitly, add `--smoke-google` alongside `--smoke-only` and configure a nonempty Google client ID and the Worker secret; this flag is rejected outside staging smoke deployment. Cloudflare Access may be omitted entirely, leaving admin routes unavailable, or configured with both a valid HTTPS team origin and a nonempty audience; a partial pair fails preflight. Without that opt-in, Google sign-in remains unavailable; model requests and Browser Run fail closed in either smoke mode. It is not a live-model evaluation or a release gate. Before deploying, list the staging Worker's secret names and verify none shadow these variables; the evaluation-secret check alone does not check all of them. Verify the deployed bindings, settings, and denial paths before use, and use synthetic data only. The mode is rejected for production and does not establish that older deployed code or Workflows have drained.
 
+CI can make that model-free staging deployment on every push to `main`. The committed staging configuration is set up for it: `PILOT_SHARED_BUDGET` is `"true"`, the daily spend cap is zero, sign-in is invite-only with test sign-in, billing and MCP are off and Google is left empty. What it still needs:
+
+1. **The account.** Put the staging Cloudflare account ID in `CF_ACCOUNT_ID` under `env.staging` in `wrangler.jsonc`. It's an identifier, not a secret.
+2. **The first deploy.** From a terminal with access to that account, run `node scripts/setup.mjs staging` and review the plan, then `scripts/setup.sh staging --apply --secrets`. This creates the resources and sets the Worker secrets, including `TEST_SIGNIN_KEY` and `PILOT_BUDGET_KEY`.
+3. **GitHub.** In the `staging` environment, add the secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` and the variable `STAGING_URL` (the Worker's HTTPS origin). Then set the repository variables `STAGING_DEPLOY_ENABLED` and `STAGING_SMOKE_ONLY` to `true`.
+
+The `deploy-staging-smoke` job then:
+
+1. runs the `--smoke-only` preflight
+2. refuses Worker secrets that shadow a staging variable (`scripts/check-staging-secrets.mjs`)
+3. builds and deploys
+4. checks `/api/health` on `STAGING_URL`
+
+It makes no model call and runs no end-to-end test, and the full `deploy-staging` job stands aside while `STAGING_SMOKE_ONLY` is `true`.
+
+On that deployment, reading an upload, tailoring and an uncached PDF fail closed, so it shows the interface with synthetic data and nothing more. A live staging run sets `PILOT_SHARED_BUDGET` to `"false"`, a positive spend cap, Google and Access, and unsets `STAGING_SMOKE_ONLY`.
+
 Normal deployment and staging lifecycle preflight require a finite positive `DAILY_SPEND_CAP_USD` in the selected Worker configuration. The committed value is zero, so paid work remains disabled until the operator sets a cap. Bind all four per-Vault Workflows (`DISTILL`, `TAILOR`, `DOCUMENTS`, `REEMBED`). The public production workflow also refuses configured restore fences; maintenance deploys follow the fenced replacement procedure below.
 
 ### Reading a posting from a link
