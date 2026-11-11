@@ -374,7 +374,8 @@ export const api = {
     request<void>("DELETE", `/api/shares/${encodeURIComponent(id)}`),
   /** What a coach wrote on the copies this account shared, with its own replies. */
   shareComments: () => request<{ threads: OwnerCommentThread[] }>("GET", "/api/shares/comments"),
-  markShareCommentsSeen: () => request<void>("POST", "/api/shares/comments/seen"),
+  /** Marks seen the coach's comments the page showed as new, by ID, and no others. */
+  markShareCommentsSeen: (ids: string[]) => request<void>("POST", "/api/shares/comments/seen", { ids }),
   /** A reply to a coach's comment, by that comment's ID. */
   replyToShareComment: (id: string, body: string) =>
     generate<ShareComment>(`/api/shares/comments/${encodeURIComponent(id)}/replies`, { body }, ["id"]),

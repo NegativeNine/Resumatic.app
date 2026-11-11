@@ -3333,8 +3333,9 @@ export class Vault extends DurableObject<Env> {
     this.ctx.storage.transactionSync(() => this.shareComments.removeAsOwner(who, id));
   }
 
-  async markShareCommentsSeen(who: Who): Promise<void> {
-    this.ctx.storage.transactionSync(() => this.shareComments.markSeen(who));
+  /** Marks seen only the comments the page says it showed, so one written since stays new. */
+  async markShareCommentsSeen(who: Who, ids: string[]): Promise<void> {
+    this.ctx.storage.transactionSync(() => this.shareComments.markSeen(who, ids));
   }
 
   // The rest are the coach's own list, in the coach's own vault.

@@ -152,13 +152,24 @@ describe("comments on a copy that names its coach", () => {
     // The coach reads the thread on the copy: their own words, the owner's answer, and nobody's name or address.
     expect(await coachThreads(dana, grantId)).toEqual([{ target, quote: FACT, comments: [first, second] }]);
 
-    expect((await sam.send("POST", "/api/shares/comments/seen")).status).toBe(204);
+    // The page names what it showed. Without that list nothing is marked.
+    expect((await sam.send("POST", "/api/shares/comments/seen")).status).toBe(422);
+    expect((await sam.send("POST", "/api/shares/comments/seen", {})).status).toBe(422);
+    expect(await newFromCoach(sam)).toBe(1);
+    expect((await sam.send("POST", "/api/shares/comments/seen", { ids: [first.id] })).status).toBe(204);
     expect(await newFromCoach(sam)).toBe(0);
     expect(await ownerThreads(sam)).toEqual([{ ...thread, comments: [{ ...first, name: "Dana Okafor", seen: true }, second] }]);
     // A second comment on the fact joins the thread, and is new again.
     const other = await comment(dana, grantId, target, "And who asked for it.");
     expect(await newFromCoach(sam)).toBe(1);
     expect((await ownerThreads(sam))[0]!.comments.map((item) => [item.id, item.seen])).toEqual([[first.id, true], [second.id, undefined], [other.id, false]]);
+    // One written after the page read its list isn't marked by what the page showed.
+    const shown = (await ownerThreads(sam)).flatMap((held) => held.comments).filter((item) => item.seen === false).map((item) => item.id);
+    const meanwhile = await comment(dana, grantId, target, "Written while the page was open.");
+    expect((await sam.send("POST", "/api/shares/comments/seen", { ids: shown })).status).toBe(204);
+    expect(await newFromCoach(sam)).toBe(1);
+    expect((await ownerThreads(sam))[0]!.comments.map((item) => [item.id, item.seen])).toEqual([[first.id, true], [second.id, undefined], [other.id, true], [meanwhile.id, false]]);
+    expect((await dana.send("DELETE", `${commentsOf(grantId)}/${meanwhile.id}`)).status).toBe(204);
 
     // The coach's own vault holds nothing of it: the words are kept where the copy is.
     expect(await stored(vaultOf(dana))).toEqual([]);

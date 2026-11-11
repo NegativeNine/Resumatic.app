@@ -547,9 +547,9 @@ describe("an owner reading what their coach wrote", () => {
     const items = within(thread(LED_LINE)).getAllByRole("listitem");
     expect(items.map((item) => within(item).queryByText("New") !== null)).toEqual([true, false, true]);
     expect(within(thread(LED)).queryByText("New")).toBeNull();
-    // Told once, and the count beside Account is read again afterwards.
+    // Told once, naming what was shown as new, and the count beside Account is read again afterwards.
     await waitFor(() => expect(refreshed).toHaveBeenCalledTimes(1));
-    expect(api.callsTo("POST", /^\/api\/shares\/comments\/seen$/)).toHaveLength(1);
+    expect(api.callsTo("POST", /^\/api\/shares\/comments\/seen$/).map((call) => call.body)).toEqual([{ ids: ["c1", "c3"] }]);
     expect(state.me.newFromCoach).toBe(0);
     expect(within(thread(LED_LINE)).getAllByText("New")).toHaveLength(2);
     first.unmount();
@@ -560,6 +560,28 @@ describe("an owner reading what their coach wrote", () => {
     expect(screen.queryByText("New")).toBeNull();
     expect(api.callsTo("POST", /^\/api\/shares\/comments\/seen$/)).toHaveLength(1);
     expect(refreshed).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves new a comment written after the list was read", async () => {
+    const state = fixtures();
+    state.me.newFromCoach = 1;
+    state.shareComments = [fromDana()];
+    const api = installFakeApi(state);
+    // The coach writes again in the moment between the page reading the list and saying what it showed.
+    const reading = api.fetch.bind(api);
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const answered = await reading(input, init);
+      if (String(input).endsWith("/api/shares/comments") && (init?.method ?? "GET") === "GET")
+        state.shareComments![0]!.comments.push(comment("c7", "coach", "Written while the page was open.", { name: "Dana Okafor", seen: false }));
+      return answered;
+    });
+    renderWithSession(<OwnerComments />, state.me);
+    await screen.findByRole("region", { name: "Comments from your coach" });
+    await waitFor(() => expect(api.callsTo("POST", /^\/api\/shares\/comments\/seen$/)).toHaveLength(1));
+    expect(api.callsTo("POST", /^\/api\/shares\/comments\/seen$/)[0]!.body).toEqual({ ids: ["c1"] });
+    // It was never on the page, so it is still counted, and still new when the list is next read.
+    expect(state.me.newFromCoach).toBe(1);
+    expect(state.shareComments[0]!.comments.map((item) => [item.id, item.seen])).toEqual([["c1", true], ["c7", false]]);
   });
 
   it("sends a reply to the latest coach comment, and shows it under “You”", async () => {

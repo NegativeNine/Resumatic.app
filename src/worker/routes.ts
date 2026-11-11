@@ -54,6 +54,7 @@ import {
 import { AppError, errorCode, errorDetail, httpStatus } from "../shared/errors";
 import { MAX_SHARE_LABEL_CHARS, type CoachClient, type SharedView } from "../shared/sharing";
 import type { CommentThread, OwnerCommentThread } from "../shared/sharing";
+import { MAX_VAULT_COMMENTS } from "../vault/share-comments";
 import { hintFor, type CfLocation } from "../shared/location";
 import { PREFERENCES_REFUSED, cleanPreferences } from "../shared/preferences";
 import { docxKey, pdfKey, sourceKey } from "../shared/r2";
@@ -1365,8 +1366,11 @@ api.get("/shares/comments", async (c) => {
   const threads: OwnerCommentThread[] = await myVault(c).listShareComments(c.get("who"));
   return c.json({ threads });
 });
-api.post("/shares/comments/seen", async (c) => {
-  await myVault(c).markShareCommentsSeen(c.get("who"));
+// The page names the comments it showed as new. Only those are marked, so one a coach writes while
+// the page is open is still counted, and still marked new, the next time the list is read.
+api.post("/shares/comments/seen", JSON_LIMIT, async (c) => {
+  const { ids } = await jsonBody(c, z.object({ ids: z.array(z.string().max(100)).max(MAX_VAULT_COMMENTS) }));
+  await myVault(c).markShareCommentsSeen(c.get("who"), ids);
   return c.body(null, 204);
 });
 api.post("/shares/comments/:id/replies", JSON_LIMIT, async (c) => {

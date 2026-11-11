@@ -155,10 +155,12 @@ export class FakeApi {
     [
       "POST",
       /^\/api\/shares\/comments\/seen$/,
-      () => {
-        for (const thread of this.state.shareComments ?? [])
-          for (const comment of thread.comments) if (comment.author === "coach") comment.seen = true;
-        this.state.me.newFromCoach = 0;
+      (call) => {
+        // Only the comments the page names, as the vault does. The count is of what is left.
+        const ids = new Set((call.body as { ids: string[] }).ids);
+        const coaches = (this.state.shareComments ?? []).flatMap((thread) => thread.comments).filter((comment) => comment.author === "coach");
+        for (const comment of coaches) if (ids.has(comment.id)) comment.seen = true;
+        this.state.me.newFromCoach = coaches.filter((comment) => comment.seen === false).length;
         return { status: 204 };
       },
     ],

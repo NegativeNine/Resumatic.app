@@ -310,7 +310,8 @@ export function OwnerComments() {
       .map((comment) => comment.id);
     if (unseen.length === 0) return;
     for (const comment of unseen) told.current.add(comment);
-    api.markShareCommentsSeen().then(
+    // The page names what it showed. A comment written since the list was read stays new.
+    api.markShareCommentsSeen(unseen).then(
       () => refreshMe(),
       () => {
         // Not noted this time. They are still new, and the next showing tries again.

@@ -311,10 +311,17 @@ export class ShareCommentStore {
     return [...threads.values()].sort((a, b) => b.latest - a.latest || b.order - a.order).map((entry) => entry.thread);
   }
 
-  /** Notes that the owner has now seen every comment a coach wrote. */
-  markSeen(who: Who, now = Date.now()): void {
+  /**
+   * Notes that the owner has now seen these comments of a coach's: the ones the page showed as
+   * new. A comment written after the page read its list isn't among them, so it stays new and is
+   * counted until it has been shown. An ID that names no unseen coach's comment changes nothing.
+   */
+  markSeen(who: Who, ids: readonly string[], now = Date.now()): void {
     this.authorizeOwner(who);
-    this.sql.exec(`UPDATE share_comments SET seen_at = ? WHERE author = 'coach' AND seen_at IS NULL`, now);
+    if (!Array.isArray(ids) || ids.length > MAX_VAULT_COMMENTS || ids.some((id) => typeof id !== "string"))
+      throw new AppError("invalid", "name the comments that were shown");
+    for (const id of new Set(ids))
+      this.sql.exec(`UPDATE share_comments SET seen_at = ? WHERE id = ? AND author = 'coach' AND seen_at IS NULL`, now, id);
   }
 
   /** How many of a coach's comments the owner hasn't seen. It checks nobody: call it only for the owner. */
