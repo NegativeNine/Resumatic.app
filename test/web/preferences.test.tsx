@@ -88,7 +88,7 @@ describe("job preferences", () => {
     // The note is part of the card, not an announcement each time the page opens.
     expect(card.querySelector(".rs-msg")).not.toHaveAttribute("role");
     // On Account, directly after the profile.
-    expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent).slice(0, 3)).toEqual(["Profile", "Job preferences", "Appearance"]);
+    expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent).slice(0, 2)).toEqual(["Profile", "Job preferences"]);
     // Loaded by the card from its own route, once, and never with the session.
     expect(api.callsTo("GET", ROUTE)).toHaveLength(1);
     expect(JSON.stringify(state.me)).not.toMatch(/preferences|payFloor|jobTypes/);

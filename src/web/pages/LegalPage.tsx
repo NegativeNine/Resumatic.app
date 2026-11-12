@@ -67,6 +67,10 @@ function Privacy() {
           </li>
           <li>The resumes, cover letters, interview preparation and fit previews made from your facts for those jobs.</li>
           <li>
+            Saved answers and application kits stay in your vault, and the words of your answers are never sent to a model;
+            where matching by AI is turned on, only an employer’s question and the short labels you gave your answers are.
+          </li>
+          <li>
             The links you make to share a copy: what each copy holds, the label you give it and when it was last
             opened. If you name a coach on a link, their sign-in address is kept with it.
           </li>

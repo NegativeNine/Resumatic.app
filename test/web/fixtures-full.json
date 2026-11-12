@@ -378,6 +378,153 @@
       ]
     }
   },
+  "savedAnswers": [
+    {
+      "id": "saved-notice",
+      "revision": 2,
+      "label": "Notice period",
+      "answer": "Four weeks, from the day I accept an offer.",
+      "refusedKind": null,
+      "createdAt": 1793900000000,
+      "updatedAt": 1793990000000
+    },
+    {
+      "id": "saved-portfolio",
+      "revision": 1,
+      "label": "Portfolio link",
+      "answer": "https://example.com/sam-rivera",
+      "refusedKind": null,
+      "createdAt": 1793900100000,
+      "updatedAt": 1793900100000
+    },
+    {
+      "id": "saved-salary",
+      "revision": 1,
+      "label": "Expectations",
+      "answer": "A salary in line with the role.",
+      "refusedKind": "pay",
+      "createdAt": 1793800000000,
+      "updatedAt": 1793800000000
+    }
+  ],
+  "kits": {
+    "app-litware": {
+      "applicationId": "app-litware",
+      "revision": 6,
+      "state": "draft",
+      "approvedAt": null,
+      "resume": {
+        "id": "res-ready",
+        "version": 2
+      },
+      "letter": {
+        "id": "doc-letter",
+        "version": 1
+      },
+      "prep": null,
+      "questions": [
+        {
+          "id": "kq-notice",
+          "position": 0,
+          "text": "What is your notice period?",
+          "state": "matched",
+          "matchedBy": "judge",
+          "savedAnswer": {
+            "id": "saved-notice",
+            "revision": 2,
+            "label": "Notice period",
+            "answer": "Four weeks, from the day I accept an offer.",
+            "refusedKind": null,
+            "createdAt": 1793900000000,
+            "updatedAt": 1793990000000
+          },
+          "confirmed": false,
+          "sensitiveKind": null,
+          "typedAnswer": null
+        },
+        {
+          "id": "kq-portfolio",
+          "position": 1,
+          "text": "Portfolio link",
+          "state": "matched",
+          "matchedBy": "label",
+          "savedAnswer": {
+            "id": "saved-portfolio",
+            "revision": 1,
+            "label": "Portfolio link",
+            "answer": "https://example.com/sam-rivera",
+            "refusedKind": null,
+            "createdAt": 1793900100000,
+            "updatedAt": 1793900100000
+          },
+          "confirmed": true,
+          "sensitiveKind": null,
+          "typedAnswer": null
+        },
+        {
+          "id": "kq-why",
+          "position": 2,
+          "text": "Why do you want to work at Litware?",
+          "state": "asks",
+          "matchedBy": null,
+          "savedAnswer": null,
+          "confirmed": false,
+          "sensitiveKind": null,
+          "typedAnswer": null
+        },
+        {
+          "id": "kq-visa",
+          "position": 3,
+          "text": "Will you now or in the future require visa sponsorship?",
+          "state": "sensitive",
+          "matchedBy": null,
+          "savedAnswer": null,
+          "confirmed": false,
+          "sensitiveKind": "work_authorisation",
+          "typedAnswer": "No."
+        }
+      ],
+      "choices": {
+        "resumes": [
+          {
+            "id": "res-ready",
+            "version": 2,
+            "createdAt": 1794044520000
+          },
+          {
+            "id": "res-ready",
+            "version": 1,
+            "createdAt": 1794040000000
+          }
+        ],
+        "letters": [
+          {
+            "id": "doc-letter",
+            "version": 1,
+            "createdAt": 1794040920000
+          }
+        ],
+        "preps": [
+          {
+            "id": "doc-prep",
+            "version": 1,
+            "createdAt": 1794037320000
+          }
+        ]
+      },
+      "problems": [
+        {
+          "code": "unanswered",
+          "questionIds": [
+            "kq-notice",
+            "kq-why"
+          ]
+        }
+      ],
+      "ready": false,
+      "updatedAt": 1794045000000
+    }
+  },
   "billing": {
     "enabled": true,
     "plans": [

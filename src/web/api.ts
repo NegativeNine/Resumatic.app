@@ -21,6 +21,7 @@ import type {
 } from "../shared/api";
 import type { DocumentView, NewDocument } from "../shared/documents";
 import type { PasteSourceRequest } from "../shared/paste";
+import type { KitAnswerChange, KitPart, KitView, SavedAnswer, SavedAnswerInput } from "../shared/kit";
 import type { PreferenceValues, Preferences } from "../shared/preferences";
 import type { PostingRead } from "../shared/postings";
 import type { CoachClient, ShareableDocument, ShareGrant } from "../shared/sharing";
@@ -180,6 +181,13 @@ export const api = {
     request<Preferences>("PUT", "/api/preferences", { ...values, expectedRevision }),
   signOutEverywhere: () =>
     request<void>("POST", "/api/account/sign-out-everywhere"),
+  /** The person's saved answers. Loaded by their own card on Account. */
+  savedAnswers: () => request<{ savedAnswers: SavedAnswer[] }>("GET", "/api/saved-answers"),
+  /** Adds a saved answer. The same label and answer sent again returns the one already kept. */
+  addSavedAnswer: (input: SavedAnswerInput) => request<SavedAnswer>("POST", "/api/saved-answers", input),
+  editSavedAnswer: (id: string, input: SavedAnswerInput, expectedRevision: number) =>
+    request<SavedAnswer>("PUT", `/api/saved-answers/${encodeURIComponent(id)}`, { ...input, expectedRevision }),
+  deleteSavedAnswer: (id: string) => request<void>("DELETE", `/api/saved-answers/${encodeURIComponent(id)}`),
 
   uploadSource,
   pasteSource,
@@ -286,6 +294,18 @@ export const api = {
       undefined,
       ["resumeId"],
     ),
+  /** A job's application kit, with every check worked out now. */
+  kit: (applicationId: string) => request<KitView>("GET", `/api/applications/${encodeURIComponent(applicationId)}/kit`),
+  /** Replaces the kit's questions, in order: one with an ID is one already in the kit. */
+  saveKitQuestions: (applicationId: string, questions: { id?: string; text: string }[], expectedRevision: number) =>
+    request<KitView>("PUT", `/api/applications/${encodeURIComponent(applicationId)}/kit/questions`, { questions, expectedRevision }),
+  chooseKitParts: (applicationId: string, parts: { resume: KitPart | null; letter: KitPart | null; prep: KitPart | null }, expectedRevision: number) =>
+    request<KitView>("PUT", `/api/applications/${encodeURIComponent(applicationId)}/kit/parts`, { ...parts, expectedRevision }),
+  answerKitQuestion: (applicationId: string, questionId: string, change: KitAnswerChange, expectedRevision: number) =>
+    request<KitView>("POST", `/api/applications/${encodeURIComponent(applicationId)}/kit/questions/${encodeURIComponent(questionId)}`, { change, expectedRevision }),
+  approveKit: (applicationId: string, expectedRevision: number) =>
+    request<KitView>("POST", `/api/applications/${encodeURIComponent(applicationId)}/kit/approve`, { expectedRevision }),
+  kitArchiveUrl: (applicationId: string) => `/api/applications/${encodeURIComponent(applicationId)}/kit/archive`,
   documents: (applicationId: string) =>
     request<{ documents: DocumentView[] }>(
       "GET",

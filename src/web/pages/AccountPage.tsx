@@ -5,6 +5,7 @@ import { ActionError, Field, Glyph, PageHeader } from "../components/ui";
 import { BillingTools, CoachSharingTools } from "../components/AccountTools";
 import { ConnectedApps } from "../components/ConnectedApps";
 import { JobPreferences } from "../components/Preferences";
+import { SavedAnswers } from "../components/SavedAnswers";
 import { OwnerComments } from "../components/ShareComments";
 import { useAction } from "../hooks";
 import { href } from "../router";
@@ -24,6 +25,7 @@ export function AccountPage() {
       <div className="stack">
         <ProfileForm />
         <JobPreferences />
+        <SavedAnswers />
         <Appearance />
         <BillingTools />
         <CoachSharingTools />

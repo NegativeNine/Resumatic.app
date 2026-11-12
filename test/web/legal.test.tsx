@@ -132,6 +132,18 @@ describe("the privacy notice", () => {
     );
   });
 
+  it("says saved answers and kits stay in the vault, and that a model is given at most a question and labels", () => {
+    render(<LegalPage doc="privacy" />);
+    const items = [...screen.getByRole("heading", { level: 2, name: "What we keep" }).closest("section")!.querySelectorAll("li")].map((item) => item.textContent!.replace(/\s+/g, " ").trim());
+    const item = items.findIndex((text) => text.startsWith("Saved answers and application kits"));
+    expect(items[item]).toBe(
+      "Saved answers and application kits stay in your vault, and the words of your answers are never sent to a model; where matching by AI is turned on, only an employer’s question and the short labels you gave your answers are.",
+    );
+    // With the jobs and what is made for them.
+    expect(items[item - 1]).toBe("The resumes, cover letters, interview preparation and fit previews made from your facts for those jobs.");
+    expect(items[item - 2]).toMatch(/^The jobs you save/);
+  });
+
   it("names the job preferences that are kept, and says that nothing reads them", () => {
     render(<LegalPage doc="privacy" />);
     const kept = section("What we keep");
