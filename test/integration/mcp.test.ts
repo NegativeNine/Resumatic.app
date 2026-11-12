@@ -355,7 +355,10 @@ describe("a connected app and a fact marked sensitive", () => {
     try {
       const f = await fixture();
       // The person is told, on the page where they decide, what the app will never be given.
-      expect(f.html).toContain("Original uploads, evidence quotes, private application notes and facts you've marked sensitive are excluded.");
+      expect(f.html).toContain(
+        "The app can read your confirmed facts and finished resumes. Your files, the words your facts came from, your notes on jobs and the facts you keep private are left out. You can end its access at any time under Sharing › Connected apps.",
+      );
+      expect(f.html).toContain('value="vault:read" checked required> Read your confirmed facts and finished resumes</label>');
       const who = { userId: f.userId, gen: 1 };
       const { roleId } = await f.stub.addRole(who, { kind: "job", org: "Acme", title: "Engineer", startDate: "2021", endDate: null });
       const kept = (await f.stub.addFact(who, { roleId, kind: "accomplishment", text: GO_SERVICE, level: "implemented" })).factId;
@@ -425,7 +428,7 @@ describe("a connected app's fit preview", () => {
 
   it("is named on the consent page with the permission to generate", async () => {
     const f = await fixture("vault:read vault:jobs vault:generate");
-    expect(f.html).toContain('value="vault:generate"> Generate resumes using my plan quota, and check my fit for the saved jobs it can see</label>');
+    expect(f.html).toContain('value="vault:generate"> Tailor resumes, counted as documents in my plan, and check my fit for the saved jobs it can see</label>');
     expect(f.html).toContain('value="vault:jobs"> See my saved jobs and add new ones</label>');
     await waitOnExecutionContext(f.ctx);
   });

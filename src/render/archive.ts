@@ -14,6 +14,14 @@ export interface ArchiveOptions {
 export const MAX_ARCHIVE_BYTES = 100 * 1024 * 1024;
 export const MAX_ARCHIVE_ENTRIES = 1000;
 
+/**
+ * What the owner is told when their record can't go into one archive. The route, the Vault and the
+ * tests share these sentences; the web app curls their apostrophes on display.
+ */
+export const ARCHIVE_TOO_MANY_FILES = "Your record has too many files for one archive. Download the JSON and your files one at a time.";
+export const ARCHIVE_TOO_LARGE = "Your record is too large for one archive. Download the JSON and your files one at a time.";
+export const ARCHIVE_FILE_MISSING = "A file is missing from your record. Download the JSON and the files that are there one at a time.";
+
 const encoder = new TextEncoder();
 const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, i) => {
   let c = i;

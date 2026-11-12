@@ -173,7 +173,7 @@ export class CheckoutCoordinator {
     if (intent.canceling)
       throw new AppError(
         "conflict",
-        "finish cancelling the pending checkout first",
+        "Cancel the checkout you started first, then try again.",
       );
     const customer = await this.customer(intent);
     const subscriptions = await this.stripe.subscriptions(customer);

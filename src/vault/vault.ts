@@ -2,7 +2,7 @@ import { withoutFindings } from "../shared/sheet";
 import type { InterviewAnswer } from "../shared/interview";
 import { reviewViewStream } from "./review-stream";
 import { exportJsonChunks, exportJsonStream } from "./export-stream";
-import { MAX_ARCHIVE_BYTES } from "../render/archive";
+import { ARCHIVE_TOO_LARGE, ARCHIVE_TOO_MANY_FILES, MAX_ARCHIVE_BYTES } from "../render/archive";
 import {
   refinementCacheKey,
   cacheRefinement,
@@ -4227,7 +4227,7 @@ export class Vault extends DurableObject<Env> {
         selection.factIds.includes(f.id),
       );
       if (facts.length !== selection.factIds.length)
-        throw new AppError("invalid", "select confirmed facts from your vault");
+        throw new AppError("invalid", "Choose confirmed facts from your record.");
       const roles = this.readRoles();
       // The job a resume is for and the owner's name are left off unless the owner asks for them:
       // where someone is applying is theirs to tell, and a copy of facts alone names nobody.
@@ -4256,7 +4256,7 @@ export class Vault extends DurableObject<Env> {
           )
           .toArray()[0];
         if (!row || row.state !== "ready" || !row.data)
-          throw new AppError("invalid", "select finished cover letters or interview preparation from your vault");
+          throw new AppError("invalid", "Choose finished cover letters or interview preparation from your record.");
         const job = jobOf(row.application_id);
         if (job) documentJobs[id] = job;
         return { id, version, kind: row.kind, data: JSON.parse(row.data) as DocumentVersion };
@@ -4467,7 +4467,7 @@ export class Vault extends DurableObject<Env> {
       const cannotCheck = () =>
         new AppError(
           "conflict",
-          "A fact this resume cites has changed or is no longer in use, or the version is still being reviewed, so this wording can't be checked. Tailor a new version or finish the review, then accept again.",
+          "A fact this resume uses has changed or is no longer in use, or the version is still being checked line by line, so this wording can't be checked. Tailor a new version or finish checking it, then accept again.",
         );
       // The checked path would refuse at its finish what isn't true now, after spending an output.
       // So the version has to pass the gate, cite only facts in use, sit under confirmed roles and
@@ -5226,7 +5226,7 @@ export class Vault extends DurableObject<Env> {
   async exportArchiveStream(who: Who): Promise<Response> {
     const { data, files } = this.ctx.storage.transactionSync(() => this.exportArchiveSnapshot(who));
     if (files.length > 128)
-      throw new AppError("too_large", "Your vault has too many files for one archive. Download the JSON and the original files one at a time.");
+      throw new AppError("too_large", ARCHIVE_TOO_MANY_FILES);
     const manifestFiles = files.map((file, index) => {
       if (!/^[A-Za-z0-9_-]{1,100}$/.test(file.id))
         throw new AppError("unavailable", "a source identifier cannot be exported");
@@ -5242,7 +5242,7 @@ export class Vault extends DurableObject<Env> {
     for (const chunk of exportJsonChunks(data)) {
       jsonBytes += encoder.encode(chunk).byteLength;
       if (jsonBytes > MAX_ARCHIVE_BYTES)
-        throw new AppError("too_large", "Your vault is too large for one archive. Download the JSON and the original files one at a time.");
+        throw new AppError("too_large", ARCHIVE_TOO_LARGE);
     }
     const manifest = encoder.encode(JSON.stringify({ exportedAt: data.exportedAt, jsonBytes, files: manifestFiles }));
     if (manifest.byteLength > 1024 * 1024) throw new AppError("too_large", "archive metadata is too large");

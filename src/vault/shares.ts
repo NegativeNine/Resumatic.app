@@ -131,7 +131,7 @@ export function snapshotSelection(
     if (fact.state !== "confirmed")
       throw new AppError("invalid", "only confirmed facts can be shared");
     if (withheld?.ids.has(fact.id))
-      throw new AppError("invalid", "A fact marked sensitive can't be shared. Unmark it, or leave it out.");
+      throw new AppError("invalid", "A fact you keep private can't be shared. Leave it out, or stop keeping it private.");
     const role = fact.roleId ? roles.get(fact.roleId) : null;
     if (fact.roleId && (!role || role.state !== "confirmed"))
       throw new AppError(
@@ -217,7 +217,7 @@ export function snapshotSelection(
     new TextEncoder().encode(JSON.stringify(snapshot)).byteLength >
     MAX_SHARE_BYTES
   )
-    throw new AppError("too_large", "share snapshot is too large");
+    throw new AppError("too_large", "This shared copy is too large. Choose fewer facts, resumes or documents, then try again.");
   return snapshot;
 }
 
@@ -341,7 +341,7 @@ export class ShareStore {
         : {}),
     };
     if (new TextEncoder().encode(JSON.stringify(snapshot)).byteLength > MAX_SHARE_BYTES)
-      throw new AppError("too_large", "share snapshot is too large");
+      throw new AppError("too_large", "This shared copy is too large. Choose fewer facts, resumes or documents, then try again.");
     const grant: ShareGrant = {
       id: crypto.randomUUID(),
       epoch: this.auth.currentEpoch(),

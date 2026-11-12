@@ -232,7 +232,7 @@ function consentPage(details: ConsentDescription, handle: string): string {
     ? `Published by <strong>${escapeHtml(details.clientDomain)}</strong>.`
     : "This app's name is self-reported.";
   const generate = details.scope.includes("vault:generate")
-    ? '<p><label><input type="checkbox" name="scope" value="vault:generate"> Generate resumes using my plan quota, and check my fit for the saved jobs it can see</label></p>'
+    ? '<p><label><input type="checkbox" name="scope" value="vault:generate"> Tailor resumes, counted as documents in my plan, and check my fit for the saved jobs it can see</label></p>'
     : "";
   const jobs = details.scope.includes("vault:jobs")
     ? '<p><label><input type="checkbox" name="scope" value="vault:jobs"> See my saved jobs and add new ones</label></p>'
@@ -240,7 +240,7 @@ function consentPage(details: ConsentDescription, handle: string): string {
   const offline = details.scope.includes("offline_access")
     ? '<p><label><input type="checkbox" name="scope" value="offline_access"> Keep access for up to 30 days</label></p>'
     : "";
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect an app · Resumatic</title><main><h1>Connect ${escapeHtml(details.clientName)}</h1><p>${domain} Access returns to <strong>${escapeHtml(details.redirectHost)}</strong>.</p>${details.redirectIsLoopback ? "<p><strong>This connects an app on your computer.</strong> Continue only if you started this connection.</p>" : ""}<p>The app can read your confirmed facts and finished resumes. Original uploads, evidence quotes, private application notes and facts you've marked sensitive are excluded. You can revoke access in Account.</p><form method="post"><input type="hidden" name="handle" value="${escapeHtml(handle)}"><p><label><input type="checkbox" name="scope" value="vault:read" checked required> Read confirmed facts and finished resumes</label></p>${jobs}${generate}${offline}<p><button name="decision" value="approve">Connect app</button> <button name="decision" value="deny" formnovalidate>Cancel</button></p></form></main></html>`;
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect an app · Resumatic</title><main><h1>Connect ${escapeHtml(details.clientName)}</h1><p>${domain} Access returns to <strong>${escapeHtml(details.redirectHost)}</strong>.</p>${details.redirectIsLoopback ? "<p><strong>This connects an app on your computer.</strong> Continue only if you started this connection.</p>" : ""}<p>The app can read your confirmed facts and finished resumes. Your files, the words your facts came from, your notes on jobs and the facts you keep private are left out. You can end its access at any time under Sharing › Connected apps.</p><form method="post"><input type="hidden" name="handle" value="${escapeHtml(handle)}"><p><label><input type="checkbox" name="scope" value="vault:read" checked required> Read your confirmed facts and finished resumes</label></p>${jobs}${generate}${offline}<p><button name="decision" value="approve">Connect app</button> <button name="decision" value="deny" formnovalidate>Cancel</button></p></form></main></html>`;
 }
 
 async function handleHash(handle: string): Promise<string> {

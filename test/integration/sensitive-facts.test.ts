@@ -1085,7 +1085,7 @@ describe("shared copies and a marked fact", () => {
     // A new copy that would hold the fact, or a resume that uses it, is refused. Nothing is made.
     const refusedFact = await user.send("POST", "/api/shares", { factIds: [led.id, mentored.id], resumes: [] });
     expect(refusedFact.status).toBe(422);
-    expect(await refusedFact.json()).toEqual({ error: "invalid", message: "A fact marked sensitive can't be shared. Unmark it, or leave it out." });
+    expect(await refusedFact.json()).toEqual({ error: "invalid", message: "A fact you keep private can't be shared. Leave it out, or stop keeping it private." });
     const refusedResume = await user.send("POST", "/api/shares", { factIds: [], resumes: [{ id: resume.id, version: resume.version }] });
     expect(refusedResume.status).toBe(409);
     expect(await refusedResume.json()).toEqual({ error: "conflict", message: USES_SENSITIVE });

@@ -22,7 +22,7 @@ import {
 import { renderPdf } from "../render/pdf";
 import { PILOT_IDENTITY_PATHS, PILOT_MAX_CALLS, PILOT_MAX_MICROS } from "./pilot/ledger";
 import { stagingPilotBudget } from "./pilot/access";
-import { createArchive, MAX_ARCHIVE_BYTES, type ArchiveEntry } from "../render/archive";
+import { ARCHIVE_FILE_MISSING, ARCHIVE_TOO_LARGE, createArchive, MAX_ARCHIVE_BYTES, type ArchiveEntry } from "../render/archive";
 import { archivePreflight, readArchiveSnapshot } from "./archive-snapshot";
 import { guardedStream } from "./guarded-stream";
 import { cachedExport, snapshotCacheKey } from "./vault-export-cache";
@@ -1220,10 +1220,10 @@ api.get("/export/archive", async (c) => {
     let bytes = snapshot.manifest.jsonBytes;
     for (const file of snapshot.manifest.files) {
       const head = await archivePreflight(c.req.raw.signal, () => c.env.FILES.head(file.key));
-      if (!head) throw new AppError("conflict", "An original file is missing from your vault. Download the JSON and the available files one at a time.");
+      if (!head) throw new AppError("conflict", ARCHIVE_FILE_MISSING);
       const fileLimit = file.origin === "ocr" ? 12 * 1024 * 1024 + 1024 : MAX_UPLOAD_BYTES;
       if (!Number.isSafeInteger(head.size) || head.size < 0 || head.size > fileLimit || head.size > MAX_ARCHIVE_BYTES - bytes)
-        throw new AppError("too_large", "Your vault is too large for one archive. Download the JSON and the original files one at a time.");
+        throw new AppError("too_large", ARCHIVE_TOO_LARGE);
       bytes += head.size;
       const etag = head.etag;
       entries.push({

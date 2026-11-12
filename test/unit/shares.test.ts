@@ -28,6 +28,8 @@ import type { Withheld } from "../../src/vault/sensitive";
 const now = 1_800_000_000_000;
 const who = { userId: "owner", gen: 1 };
 const secret = "share-secret-that-is-at-least-32-bytes-long";
+/** What the owner is told when a copy is over the size limit, wherever the limit is met. */
+const TOO_LARGE = "This shared copy is too large. Choose fewer facts, resumes or documents, then try again.";
 const claims = {
   vid: "a".repeat(64),
   grantId: "0653389a-0d6d-4e90-94eb-23cc98b95c19",
@@ -200,7 +202,7 @@ describe("coach share snapshots", () => {
     expect(() => snapshotSelection(bad)).toThrow("confirm");
     const large = selection();
     large.facts[0]!.text = "x".repeat(1024 * 1024);
-    expect(() => snapshotSelection(large)).toThrow("too large");
+    expect(() => snapshotSelection(large)).toThrow(TOO_LARGE);
     expect(() =>
       snapshotSelection({
         ...selection(),
@@ -401,10 +403,10 @@ describe("what a copy says about its owner and its jobs", () => {
       // The selection alone fits exactly. What a copy adds around it has to fit as well.
       large.facts[0]!.text = "x".repeat(room);
       expect(size(snapshotSelection(large, now))).toBe(MAX_SHARE_BYTES);
-      expect(() => shares.create(who, large, now + 10_000, now)).toThrow("too large");
+      expect(() => shares.create(who, large, now + 10_000, now)).toThrow(TOO_LARGE);
       // A name is cut to 200 characters. With 100 bytes to spare it doesn't fit, and the copy without it does.
       large.facts[0]!.text = "x".repeat(room - 100);
-      expect(() => shares.create(who, large, now + 10_000, now, { owner: { name: "n".repeat(500) } })).toThrow("too large");
+      expect(() => shares.create(who, large, now + 10_000, now, { owner: { name: "n".repeat(500) } })).toThrow(TOO_LARGE);
       const grant = shares.create(who, large, now + 10_000, now);
       expect(read(shares, grant).snapshot.owner).toBeNull();
       large.facts[0]!.text = "x".repeat(room - 300);
@@ -525,7 +527,7 @@ describe("cover letters and interview preparation in a copy", () => {
       long.data.result.units = Array.from({ length: 400 }, (_, i) => ({ id: `u${i}`, roleId: "r1", text: SENTENCE, factIds: ["f1"], group: 0, status: "kept" }));
       const large = selection();
       large.facts[0]!.text = "x".repeat(MAX_SHARE_BYTES - 5_000);
-      expect(() => shares.create(who, { ...large, documents: [long] }, now + 10_000, now)).toThrow("too large");
+      expect(() => shares.create(who, { ...large, documents: [long] }, now + 10_000, now)).toThrow(TOO_LARGE);
       expect(shares.list(who, now)).toHaveLength(1);
     } finally { db.close(); }
   });
@@ -723,12 +725,12 @@ describe("a fact its owner has marked sensitive", () => {
     const { shares, security, db, chosen } = copies();
     try {
       security.withheld = marked(["f1"], [QUOTE]);
-      expect(() => shares.create(who, { ...selection(), resumes: [] }, now + 10_000, now)).toThrow("A fact marked sensitive can't be shared. Unmark it, or leave it out.");
+      expect(() => shares.create(who, { ...selection(), resumes: [] }, now + 10_000, now)).toThrow("A fact you keep private can't be shared. Leave it out, or stop keeping it private.");
       expect(() => shares.create(who, { ...selection(), facts: [] }, now + 10_000, now)).toThrow("This version uses a fact you marked sensitive");
       expect(() => shares.create(who, { ...none, documents: [chosen] }, now + 10_000, now)).toThrow("can't be shared as it is");
       expect(() => shares.create(who, { ...selection(), documents: [chosen] }, now + 10_000, now)).toThrow();
       // The gate itself, given the marks, refuses in the same words. Given none, it is as it was.
-      expect(() => snapshotSelection(selection(), now, marked(["f1"]))).toThrow("A fact marked sensitive can't be shared");
+      expect(() => snapshotSelection(selection(), now, marked(["f1"]))).toThrow("A fact you keep private can't be shared. Leave it out, or stop keeping it private.");
       expect(() => snapshotSelection({ ...selection(), facts: [] }, now, marked(["f1"]))).toThrow("marked sensitive");
       expect(() => snapshotSelection(selection(), now, unmarked)).not.toThrow();
       // Nothing was made beyond the three copies from before the mark.

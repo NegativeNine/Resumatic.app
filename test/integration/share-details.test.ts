@@ -164,6 +164,29 @@ describe("what a shared copy says, and what its owner sees", () => {
     expect((await share(user, { factIds: [factId], resumes: [], label: "x".repeat(80) })).grant.label).toHaveLength(80);
   });
 
+  it("refuses a fact that isn't confirmed and a document that isn't finished, in the interface's words", async () => {
+    const { user, factId } = await owner();
+    // A cover letter still being written.
+    await runInDurableObject(vaultOf(user), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO documents (id, application_id, kind, state, created_at) VALUES ('doc-writing', 'app-none', 'letter', 'running', ?)`,
+        Date.now(),
+      );
+    });
+    const unfinished = await user.send("POST", "/api/shares", { factIds: [factId], resumes: [], documents: [{ id: "doc-writing", version: 1 }] });
+    expect(unfinished.status).toBe(422);
+    expect(await unfinished.json()).toEqual({
+      error: "invalid",
+      message: "Choose finished cover letters or interview preparation from your record.",
+    });
+    // The fact, once left out, can't be shared either.
+    expect((await user.send("POST", "/api/review", { confirm: [], reject: [factId] })).status).toBe(204);
+    const left = await user.send("POST", "/api/shares", { factIds: [factId], resumes: [] });
+    expect(left.status).toBe(422);
+    expect(await left.json()).toEqual({ error: "invalid", message: "Choose confirmed facts from your record." });
+    expect(await grants(user)).toEqual([]);
+  });
+
   it("says which job a resume is for only when asked, as the job was named when the copy was made", async () => {
     const user = await signIn();
     const upload = await user.upload("synthetic.pdf", RESUME);
