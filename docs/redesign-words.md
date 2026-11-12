@@ -190,7 +190,7 @@ The 217 candidates, each counted once:
 
 | Where | Sites |
 | --- | --- |
-| The `AppError` table above (58 at 78502c9; stage 4 took out the 16 rows of the facts room when it changed them) | 58 |
+| The `AppError` table above (42), and the 16 rows of the facts room that stage 4 changed and took out of it | 58 |
 | The throw sites of the constants table (`src/vault/vault.ts:1010, 1122, 1138, 1142, 1143, 1197, 1218, 1378`, `src/worker/routes.ts:1512`) | 9 |
 | The term in another sense only (below) | 29 |
 | Never shown to a person (below) | 121 |

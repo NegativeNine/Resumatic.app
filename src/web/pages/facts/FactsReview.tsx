@@ -113,8 +113,9 @@ function Check({ live, reload }: { live: Vault; reload: () => Promise<Vault | un
   const question: ReviewQuestion | null = index >= 0 ? questions[index]! : null;
   const following = index >= 0 ? [...questions.slice(index + 1), ...questions.slice(0, index)].slice(0, UP_NEXT_MAX) : [];
 
-  // Skip and Back show another question in place. If focus was on the item that goes, it moves to
-  // the question's section, so the keys keep working.
+  // Skip and Back show another question in place. If focus was on the item that goes, or on Back
+  // as it reaches the first question and is disabled, it moves to the question's section, so the
+  // keys keep working.
   useEffect(() => {
     if (!refocus.current) return;
     refocus.current = false;
@@ -129,9 +130,12 @@ function Check({ live, reload }: { live: Vault; reload: () => Promise<Vault | un
 
   function move(by: 1 | -1) {
     if (index < 0) return;
+    const target = (index + by + keys.length) % keys.length;
     const focused = document.activeElement;
-    refocus.current = focused instanceof Node && itemArea.current?.contains(focused) === true;
-    setChosen(keys[(index + by + keys.length) % keys.length]!);
+    const onItem = focused instanceof Node && itemArea.current?.contains(focused) === true;
+    const onDisabledBack = focused instanceof HTMLElement && focused.dataset.reviewNav === "back" && target === 0;
+    refocus.current = onItem || onDisabledBack;
+    setChosen(keys[target]!);
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLElement>) {

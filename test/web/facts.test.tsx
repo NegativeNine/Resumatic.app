@@ -353,6 +353,24 @@ describe("To check’s keys", () => {
     expect(question()).toHaveFocus();
   });
 
+  it("keeps the keys working when Back is pressed onto the first question and is disabled", async () => {
+    await openCheck();
+    await userEvent.click(button("Skip for now"));
+    expect(asked()).toBe(LATENCY);
+    await userEvent.click(button("Back"));
+    expect(asked()).toBe(NORTHWIND);
+    expect(button("Back")).toBeDisabled();
+    // The button that had focus can't keep it, so the question takes it and the keys still answer.
+    expect(question()).toHaveFocus();
+    await userEvent.keyboard("j");
+    expect(asked()).toBe(LATENCY);
+    // Back pressed further on keeps its focus, so it can be pressed again.
+    await userEvent.click(button("Skip for now"));
+    await userEvent.click(button("Back"));
+    expect(asked()).toBe(LATENCY);
+    expect(button("Back")).toHaveFocus();
+  });
+
   it("keeps the keys working when J is pressed on an answer button", async () => {
     await openCheck();
     button("Fix it").focus();
@@ -649,6 +667,70 @@ describe("To check, the file beside the question", () => {
     expect(await screen.findByText("You’re all caught up")).toBeInTheDocument();
   });
 
+  it("names the words behind a role as the role’s", async () => {
+    await openCheck();
+    const current = await within(filePanel()).findByText(/^Senior Backend Engineer, Northwind/, { selector: "pre mark" });
+    expect(current.querySelector(".rs-visually-hidden")!.textContent).toBe("This role: ");
+    expect(within(filePanel()).getAllByRole("listitem")[0]).toHaveTextContent("The words behind the role you’re checking");
+  });
+
+  it("brings this fact’s words into view when the file is shown on a phone", async () => {
+    const scrolled = vi.spyOn(Element.prototype, "scrollTop", "set");
+    try {
+      await openCheck();
+      await userEvent.click(button("Skip for now"));
+      await within(filePanel()).findByText(/^Cut p95/, { selector: "pre mark" });
+      // Below 600px the panel was hidden when the text arrived, so it couldn't scroll then.
+      scrolled.mockClear();
+      await userEvent.click(within(question()).getByRole("button", { name: "See where this came from" }));
+      expect(scrolled).toHaveBeenCalledTimes(1);
+      expect(scrolled.mock.contexts[0]).toBe(fileText());
+    } finally {
+      scrolled.mockRestore();
+    }
+  });
+
+  it("leaves the file where the person scrolled it when the vault refreshes", async () => {
+    const scrolled = vi.spyOn(Element.prototype, "scrollTop", "set");
+    try {
+      const api = await openCheck();
+      await userEvent.click(button("Skip for now"));
+      await within(filePanel()).findByText(/^Cut p95/, { selector: "pre mark" });
+      scrolled.mockClear();
+      const loads = api.callsTo("GET", /^\/api\/v2\/vault$/).length;
+      act(() => void window.dispatchEvent(new Event(VAULT_CHANGED)));
+      await waitFor(() => expect(api.callsTo("GET", /^\/api\/v2\/vault$/).length).toBeGreaterThan(loads));
+      await act(async () => {});
+      expect(asked()).toBe(LATENCY);
+      expect(scrolled).not.toHaveBeenCalled();
+      // The next question does bring its words into view.
+      await userEvent.click(button("Skip for now"));
+      await within(filePanel()).findByText(/^Led migration/, { selector: "pre mark" });
+      expect(scrolled).toHaveBeenCalled();
+    } finally {
+      scrolled.mockRestore();
+    }
+  });
+
+  it("starts Confirm all closed for a question from another file", async () => {
+    const state = withText();
+    state.sources.push({ id: "src-2025", filename: "sam-rivera-2025.pdf", state: "ready", error: null, createdAt: 1793990000000, proposed: 1 });
+    state.sourceTexts = { ...state.sourceTexts, "src-2025": "Skills\nPostgreSQL\n" };
+    const postgres = state.facts.find((fact) => fact.id === "fact-postgres")!;
+    postgres.sourceId = "src-2025";
+    postgres.quote = "PostgreSQL";
+    postgres.span = [7, 17];
+    const api = await openCheck(state);
+    await userEvent.click(within(filePanel()).getByRole("button", { name: "Confirm all 4 from this file" }));
+    expect(within(filePanel()).getByRole("button", { name: "Yes, confirm 4" })).toBeInTheDocument();
+    await skipTo("PostgreSQL");
+    expect(within(filePanel()).getByRole("heading", { level: 2, name: "sam-rivera-2025.pdf" })).toBeInTheDocument();
+    // The question asked about the first file isn't carried over to this one's items.
+    expect(within(filePanel()).getByRole("button", { name: "Confirm all 1 from this file" })).toHaveAttribute("aria-expanded", "false");
+    expect(within(filePanel()).queryByRole("button", { name: /^Yes, confirm/ })).toBeNull();
+    expect(reviewCalls(api)).toHaveLength(0);
+  });
+
   it("says when an item came from no file", async () => {
     const state = withText();
     state.facts.find((fact) => fact.id === "fact-postgres")!.sourceId = null;
@@ -711,6 +793,24 @@ describe("To check, Keep private", () => {
     await waitFor(() => expect(sensitiveCalls(api)).toHaveLength(1));
     expect(sensitiveCalls(api)[0]).toEqual({ ids: ["fact-latency"], sensitive: false, expectedRevisions: { "fact-latency": 1 } });
     expect(await within(question()).findByRole("button", { name: "Keep private" })).toBeInTheDocument();
+    expect(reviewCalls(api)).toHaveLength(0);
+  });
+
+  it("closing More choices closes Stop keeping it private’s question and gives the keys back", async () => {
+    const state = withText();
+    state.facts.find((fact) => fact.id === "fact-latency")!.sensitive = true;
+    const api = await openCheck(state);
+    await userEvent.click(button("Skip for now"));
+    await moreChoices();
+    await userEvent.click(button("Stop keeping it private"));
+    expect(screen.getByRole("group", { name: "Stop keeping this fact private" })).toBeInTheDocument();
+    await moreChoices();
+    await waitFor(() => expect(question().querySelector(".rs-well")).toBeNull());
+    expect(question().querySelector("details")).not.toHaveAttribute("open");
+    question().focus();
+    await userEvent.keyboard("j");
+    expect(asked()).toBe(MIGRATION);
+    expect(sensitiveCalls(api)).toHaveLength(0);
     expect(reviewCalls(api)).toHaveLength(0);
   });
 

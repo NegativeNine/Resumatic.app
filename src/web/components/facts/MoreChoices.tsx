@@ -20,7 +20,8 @@ export function MoreChoices({
   disabled: boolean;
 }) {
   return (
-    <details className="rs-more facts-more">
+    // Closing More choices closes its question too, so no hidden question holds the review keys.
+    <details className="rs-more facts-more" onToggle={(e) => !e.currentTarget.open && control.close()}>
       <summary>
         <Glyph name="chevron" />
         More choices <span className="rs-more__hint">Keep it private, or split it in two</span>

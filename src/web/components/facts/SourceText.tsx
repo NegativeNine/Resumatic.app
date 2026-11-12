@@ -16,21 +16,38 @@ import { useSourceText } from "./useSourceText";
 // shown at once while the question keeps what it showed.
 
 /** Each mark's word, read out before its text, so nothing is said by colour alone. */
-const WORD: Readonly<Record<Tone, string>> = {
-  current: "This fact: ",
+const WORD: Readonly<Record<Exclude<Tone, "current">, string>> = {
   waiting: "To check: ",
   backed: "Confirmed: ",
 };
 
-/** The file's text, marked. Only the box scrolls, and it starts with the current mark in view. */
-export function SourceText({ markdown, marks }: { markdown: string; marks: readonly SourceMark[] }) {
+/** What the current item is called in the file's words and in the legend. */
+type ItemKind = ReviewQuestion["kind"];
+const CURRENT_WORD: Readonly<Record<ItemKind, string>> = { fact: "This fact: ", role: "This role: " };
+
+/**
+ * The file's text, marked. Only the box scrolls, and it brings the current mark into view when
+ * `at` changes: a new item, or the panel shown on a phone, where it was hidden and couldn't
+ * scroll. A refresh of the vault leaves the box where the person scrolled it.
+ */
+export function SourceText({
+  markdown,
+  marks,
+  at,
+  kind = "fact",
+}: {
+  markdown: string;
+  marks: readonly SourceMark[];
+  at: string;
+  kind?: ItemKind;
+}) {
   const box = useRef<HTMLPreElement>(null);
   const runs = useMemo(() => sourceRuns(markdown, marks), [markdown, marks]);
   useEffect(() => {
     const pre = box.current;
     const mark = pre?.querySelector<HTMLElement>("mark");
     if (pre && mark) pre.scrollTop = Math.max(0, mark.offsetTop - pre.clientHeight / 3);
-  }, [runs]);
+  }, [at, markdown]);
   return (
     <pre ref={box} className="facts-file__text" tabIndex={0}>
       {runs.map((run, i) =>
@@ -38,7 +55,7 @@ export function SourceText({ markdown, marks }: { markdown: string; marks: reado
           run.text
         ) : run.tone === "current" ? (
           <mark key={i} className="rs-hl">
-            <span className="rs-visually-hidden">{WORD.current}</span>
+            <span className="rs-visually-hidden">{CURRENT_WORD[kind]}</span>
             {run.text}
           </mark>
         ) : (
@@ -52,12 +69,12 @@ export function SourceText({ markdown, marks }: { markdown: string; marks: reado
   );
 }
 
-function Legend() {
+function Legend({ kind }: { kind: ItemKind }) {
   return (
     <ul className="facts-legend">
       <li>
         <span className="facts-legend__key facts-legend__key--current" aria-hidden="true" />
-        The words behind the fact you’re checking
+        The words behind the {kind} you’re checking
       </li>
       <li>
         <span className="facts-legend__key facts-legend__key--waiting" aria-hidden="true" />
@@ -139,12 +156,13 @@ export function FilePanel({
       ) : text.markdown === undefined ? (
         <Loading>Opening your file…</Loading>
       ) : (
-        <SourceText markdown={text.markdown} marks={marks} />
+        <SourceText markdown={text.markdown} marks={marks} at={`${question.key}:${open ? "open" : "shut"}`} kind={question.kind} />
       )}
-      <Legend />
+      <Legend kind={question.kind} />
       {toCheck.length > 0 && (
         <div className="facts-file__all">
-          <ConfirmAll filename={name} ids={toCheck} revisions={revisions} reload={reload} focusAfter={focusAfter} />
+          {/* Keyed by file, so a question about another file never inherits this one's open question. */}
+          <ConfirmAll key={source.id} filename={name} ids={toCheck} revisions={revisions} reload={reload} focusAfter={focusAfter} />
           <p className="rs-hint">Only do this once you’ve checked every one.</p>
         </div>
       )}
