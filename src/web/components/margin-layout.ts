@@ -53,7 +53,15 @@ export function useMarginLayout(page: RefObject<HTMLElement | null>, { stack: st
     // The card grows and shrinks as its editor opens, and the marks below it must follow.
     const card = stack.querySelector<HTMLElement>(cardSelector);
     if (card) observer?.observe(card);
+    // A backed line's mark takes no room until it is focused, and then the items below it must clear
+    // it, so the card never covers a focused mark; it gives the room back when focus moves on.
+    stack.addEventListener("focusin", layout);
+    stack.addEventListener("focusout", layout);
     void document.fonts?.ready.then(layout);
-    return () => observer?.disconnect();
+    return () => {
+      observer?.disconnect();
+      stack.removeEventListener("focusin", layout);
+      stack.removeEventListener("focusout", layout);
+    };
   });
 }

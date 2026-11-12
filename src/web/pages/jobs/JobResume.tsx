@@ -24,7 +24,11 @@ const REFINE: readonly DocumentKind[] = ["refine"];
 export function JobResume({ job, reloadJob, resume }: { job: ApplicationDetail; reloadJob: Reload; resume?: Resource<ResumeView> }) {
   const resumes = [...job.resumes].sort((a, b) => b.createdAt - a.createdAt);
   const newest = resumes[0];
-  const chosenId = resume ? resume.data?.id : newest?.id;
+  // The resume a line is being edited on stays shown when a newer one for the job arrives, from
+  // another window or a connected app, so the draft isn't lost; the newest is shown once the edit ends.
+  const [editingOn, setEditingOn] = useState<string | null>(null);
+  const shown = (editingOn !== null ? resumes.find((item) => item.id === editingOn) : undefined) ?? newest;
+  const chosenId = resume ? resume.data?.id : shown?.id;
   const listed = resumes.find((item) => item.id === chosenId);
   const id = useId();
   const tailor = useTailor();
@@ -55,26 +59,44 @@ export function JobResume({ job, reloadJob, resume }: { job: ApplicationDetail; 
             ))}
           </ul>
         )}
+        {!resume && shown && newest && shown.id !== newest.id && (
+          <p className="rs-meta" role="status">
+            A newer resume for this job was started. Finish or cancel your edit to see it.
+          </p>
+        )}
       </section>
       {resume ? (
-        <ChosenResume resource={resume} createdAt={listed?.createdAt} reloadJob={reloadJob} />
+        <ChosenResume jobId={job.id} resource={resume} createdAt={listed?.createdAt} reloadJob={reloadJob} />
       ) : (
-        newest && <NewestResume key={newest.id} id={newest.id} createdAt={newest.createdAt} reloadJob={reloadJob} />
+        shown && <NewestResume key={shown.id} jobId={job.id} id={shown.id} createdAt={shown.createdAt} reloadJob={reloadJob} onEditing={setEditingOn} />
       )}
     </>
   );
 }
 
-function NewestResume({ id, createdAt, reloadJob }: { id: string; createdAt: number; reloadJob: Reload }) {
+function NewestResume({ jobId, id, createdAt, reloadJob, onEditing }: {
+  jobId: string;
+  id: string;
+  createdAt: number;
+  reloadJob: Reload;
+  onEditing: (resumeId: string | null) => void;
+}) {
   const resource = useResource(
     () => api.resume(id),
     (r) => r.state === "running",
   );
-  return <ChosenResume resource={resource} createdAt={createdAt} reloadJob={reloadJob} />;
+  return <ChosenResume jobId={jobId} resource={resource} createdAt={createdAt} reloadJob={reloadJob} onEditing={onEditing} />;
 }
 
 /** The chosen resume, as a section headed by when it was tailored, in whatever state it is in. */
-function ChosenResume({ resource, createdAt, reloadJob }: { resource: Resource<ResumeView>; createdAt?: number; reloadJob: Reload }) {
+function ChosenResume({ jobId, resource, createdAt, reloadJob, onEditing }: {
+  jobId: string;
+  resource: Resource<ResumeView>;
+  createdAt?: number;
+  reloadJob: Reload;
+  /** Told which resume a line is being edited on, and when no line is. */
+  onEditing?: (resumeId: string | null) => void;
+}) {
   const r = resource.data;
   const { refreshMe } = useSession();
   const heading = useRef<HTMLHeadingElement>(null);
@@ -91,6 +113,7 @@ function ChosenResume({ resource, createdAt, reloadJob }: { resource: Resource<R
   }, [r, refreshMe, reloadJob]);
   const when = r?.createdAt ?? createdAt;
   const id = useId();
+  const ready = r?.state === "ready" && !!r.body;
 
   return (
     <section className="section app-job-section app-chosen-resume" aria-labelledby={`${id}-heading`}>
@@ -103,10 +126,12 @@ function ChosenResume({ resource, createdAt, reloadJob }: { resource: Resource<R
       {r?.state === "failed" && <TailorFailed resume={r} />}
       {r?.state === "ready" &&
         (r.body ? (
-          <ReadyResume key={r.id} resume={r} reload={resource.reload} fresh={fresh} heading={heading} />
+          <ReadyResume key={r.id} resume={r} reload={resource.reload} fresh={fresh} heading={heading} onEditing={onEditing} />
         ) : (
           <ErrorNote message="This resume is marked ready, but it has no content. Try tailoring a new version." />
         ))}
+      {/* Wording checks for the job can be stopped or tried again whatever state this resume is in. */}
+      {(r || resource.error) && !ready && <RefineWording applicationId={jobId} onUpdated={resource.reload} />}
     </section>
   );
 }
@@ -138,12 +163,14 @@ function ReadyResume({
   reload,
   fresh,
   heading,
+  onEditing,
 }: {
   resume: ResumeView;
   reload: Reload;
   fresh: boolean;
   /** The chosen resume's heading, where focus goes when the line whose card it held is gone. */
   heading: RefObject<HTMLHeadingElement | null>;
+  onEditing?: (resumeId: string | null) => void;
 }) {
   const { refreshMe } = useSession();
   const versions = useResource(() => api.resumeVersions(resume.id));
@@ -176,6 +203,12 @@ function ReadyResume({
   }, [reload, versions.reload]);
   const displayed = editing?.snapshot ?? resume;
   const editingOutdated = !!editing && editing.snapshot.version !== resume.version;
+  const isEditing = editing !== null;
+  useEffect(() => {
+    if (!isEditing || !onEditing) return;
+    onEditing(resume.id);
+    return () => onEditing(null);
+  }, [isEditing, onEditing, resume.id]);
 
   // A coach's suggested wordings on this person's copies, read once and again while one is being
   // checked. A server from before comments has none. When a check ends, the resume it changed is
@@ -275,7 +308,7 @@ function ReadyResume({
             focusRequest={focusRequest}
             suggestions={suggestions}
           />
-          <RefineWording resume={resume} onUpdated={refresh} />
+          <RefineWording applicationId={resume.applicationId} resume={resume} onUpdated={refresh} />
         </>
       ) : (
         <>
@@ -291,6 +324,7 @@ function ReadyResume({
             onChoose={setChosen}
             focusRequest={focusRequest}
           />
+          <RefineWording applicationId={resume.applicationId} onUpdated={refresh} />
         </>
       )}
     </>
@@ -326,55 +360,60 @@ function ArchivedResume({ id, version, chosen, onChoose, focusRequest }: {
 /**
  * Refine wording: an instruction for the latest version, and the wording checks running or failed
  * for this job, line checks and accepted suggestions among them, each with Cancel or Retry. A
- * finished one is the resume's new version, so it isn't listed here.
+ * finished one is the resume's new version, so it isn't listed here. Without `resume` (the resume
+ * shown isn't a ready latest version) there is nothing to refine, but the job's wording checks are
+ * still listed, so they can be stopped and tried again here; with none, nothing is shown.
  */
-function RefineWording({ resume, onUpdated }: { resume: ResumeView; onUpdated: Reload }) {
-  const jobDocs = useJobDocuments(resume.applicationId, onUpdated);
+function RefineWording({ applicationId, resume, onUpdated }: { applicationId: string; resume?: ResumeView; onUpdated: Reload }) {
+  const jobDocs = useJobDocuments(applicationId, onUpdated);
   const [instruction, setInstruction] = useState("");
   const id = useId();
   const elsewhere = runningElsewhere(jobDocs, REFINE);
+  if (!resume && !jobDocs.docs.some((doc) => doc.kind === "refine" && doc.state !== "ready")) return null;
   return (
     <section className="section app-job-section app-refine" aria-labelledby={`${id}-heading`}>
       <h2 id={`${id}-heading`}>Refine wording</h2>
-      <form
-        className="inline-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void jobDocs.start({
-            kind: "refine",
-            resumeId: resume.id,
-            expectedVersion: resume.version,
-            instruction: instruction.trim(),
-          });
-        }}
-      >
-        <Field
-          id={`${id}-instruction`}
-          label={`Refine resume version ${resume.version}`}
-          hint="Describe a change in wording or emphasis. A rewrite your facts don’t support keeps your current text, and an unchanged resume isn’t counted."
+      {resume && (
+        <form
+          className="inline-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void jobDocs.start({
+              kind: "refine",
+              resumeId: resume.id,
+              expectedVersion: resume.version,
+              instruction: instruction.trim(),
+            });
+          }}
         >
-          <textarea
+          <Field
             id={`${id}-instruction`}
-            rows={2}
-            maxLength={1000}
-            value={instruction}
-            onChange={(event) => setInstruction(event.target.value)}
-            placeholder="Make the bullets shorter, or emphasize my leadership experience."
-            aria-describedby={`${id}-instruction-hint`}
-          />
-        </Field>
-        <div className="actions">
-          <button
-            type="submit"
-            className="primary"
-            disabled={jobDocs.action.pending || jobDocs.running || jobDocs.available === 0 || !instruction.trim()}
-            aria-describedby={elsewhere ? `${id}-elsewhere` : undefined}
+            label={`Refine resume version ${resume.version}`}
+            hint="Describe a change in wording or emphasis. A rewrite your facts don’t support keeps your current text, and an unchanged resume isn’t counted."
           >
-            Refine wording
-          </button>
-          <span className="rs-meta">Your saved versions stay available.</span>
-        </div>
-      </form>
+            <textarea
+              id={`${id}-instruction`}
+              rows={2}
+              maxLength={1000}
+              value={instruction}
+              onChange={(event) => setInstruction(event.target.value)}
+              placeholder="Make the bullets shorter, or emphasize my leadership experience."
+              aria-describedby={`${id}-instruction-hint`}
+            />
+          </Field>
+          <div className="actions">
+            <button
+              type="submit"
+              className="primary"
+              disabled={jobDocs.action.pending || jobDocs.running || jobDocs.available === 0 || !instruction.trim()}
+              aria-describedby={elsewhere ? `${id}-elsewhere` : undefined}
+            >
+              Refine wording
+            </button>
+            <span className="rs-meta">Your saved versions stay available.</span>
+          </div>
+        </form>
+      )}
       <StartNotes id={`${id}-elsewhere`} jobDocs={jobDocs} kinds={REFINE} counted />
       <DocumentList jobDocs={jobDocs} kinds={REFINE} open="none" />
     </section>

@@ -253,6 +253,50 @@ describe("the margin", () => {
     expect(within(opened).getByRole("button", { name: "Edit line" })).toBeInTheDocument();
   });
 
+  it("makes room for a backed line’s mark while it is focused, so the card below never covers it", async () => {
+    // jsdom lays nothing out and reads no stylesheet: the margin is placed as beside a wide page, a
+    // hidden mark measures nothing, a focused one its button, a visible one its marks, and the card
+    // its own height. Every line is at the top of the page.
+    const computed = window.getComputedStyle;
+    const styles = vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) => {
+      const style = computed(element, pseudo);
+      const position = (element as HTMLElement).classList.contains("app-margin-stack") ? "relative" : "absolute";
+      return new Proxy(style, {
+        get: (target, key) => {
+          if (key === "position") return position;
+          const value: unknown = Reflect.get(target, key);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    });
+    const heights = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("app-line-card")) return 200;
+      if (!this.matches(".app-line-marks > li")) return 0;
+      const button = this.querySelector("button")!;
+      if (!button.classList.contains("app-mark--quiet")) return 24;
+      return button === document.activeElement ? 32 : 0;
+    });
+    try {
+      await openResume();
+      const items = [...marks().querySelectorAll<HTMLLIElement>(":scope > li")];
+      const at = items.findIndex((item, index) => item.querySelector(".app-mark--quiet") && items[index + 1]);
+      const quiet = items[at]!;
+      const below = items[at + 1]!;
+      await userEvent.click(mark(below.dataset.noteFor!));
+      const top = (element: HTMLElement) => parseFloat(element.style.top);
+      expect(top(below)).toBeLessThan(top(quiet) + 32);
+      act(() => mark(quiet.dataset.noteFor!).focus());
+      await waitFor(() => expect(top(below)).toBeGreaterThanOrEqual(top(quiet) + 32));
+      expect(top(card()!)).toBeGreaterThanOrEqual(top(quiet) + 32);
+      // Focus moving on gives the room back.
+      act(() => mark(below.dataset.noteFor!).focus());
+      await waitFor(() => expect(top(below)).toBeLessThan(top(quiet) + 32));
+    } finally {
+      heights.mockRestore();
+      styles.mockRestore();
+    }
+  });
+
   it("says a line check counts toward your documents for this period", async () => {
     await openResume();
     await userEvent.click(mark("line-migration"));
@@ -644,6 +688,66 @@ describe("the resumes for a job", () => {
     await waitFor(() => expect(api.callsTo("POST", /^\/api\/runs\/run-refine\/retry$/)).toHaveLength(1));
     // A finished check is the resume's new version, not a card here.
     expect(within(refine).queryByText("Read resume refinement")).toBeNull();
+  });
+
+  it("keeps Cancel and Retry for wording checks when the resume shown failed, or is a saved version", async () => {
+    const state = fixtures();
+    // The newest resume failed; a wording check on the earlier one runs, and another failed.
+    state.applications[0]!.resumes.push({ id: "res-failed", state: "failed", createdAt: 1794100000000 });
+    state.resumes["res-failed"] = { ...state.resumes["res-ready"]!, id: "res-failed", state: "failed", body: null, error: "unavailable", createdAt: 1794100000000 };
+    state.documents = [
+      { id: "doc-check", applicationId: "app-litware", kind: "refine", state: "running", version: 1, createdAt: 1794000000000, error: null, result: null, facts: {} },
+      { id: "doc-refine-failed", applicationId: "app-litware", kind: "refine", state: "failed", retryRunId: "run-refine", version: 1, createdAt: 1793000000000, error: "unavailable", result: null, facts: {} },
+    ];
+    const api = installFakeApi(state);
+    let shown = renderWithSession(<JobPage id="app-litware" tab="resume" />, state.me);
+    await screen.findByText("This resume couldn’t be finished");
+    let refine = await screen.findByRole("region", { name: "Refine wording" });
+    // Nothing to refine here, but the runs can still be stopped and tried again.
+    expect(within(refine).queryByRole("textbox")).toBeNull();
+    await userEvent.click(await within(refine).findByRole("button", { name: "Cancel this document" }));
+    await waitFor(() => expect(api.callsTo("POST", /^\/api\/runs\/doc-check\/cancel$/)).toHaveLength(1));
+    expect(within(refine).getByRole("button", { name: "Retry resume refinement" })).toBeDisabled();
+    shown.unmount();
+
+    // A saved version of a ready resume.
+    state.applications[0]!.resumes = state.applications[0]!.resumes.filter((resume) => resume.id !== "res-failed");
+    state.documents = state.documents.filter((held) => held.id !== "doc-check");
+    // An earlier version is saved too.
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input) === "/api/resumes/res-ready/versions"
+        ? new Response(JSON.stringify({ versions: [{ version: 1, createdAt: 1794040000000 }, { version: 2, createdAt: 1794044520000 }] }), { headers: { "content-type": "application/json" } })
+        : api.fetch(input, init)));
+    shown = renderWithSession(<JobPage id="app-litware" tab="resume" />, state.me);
+    await screen.findByRole("article", { name: "Resume preview" });
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Saved version" }), await screen.findByRole("option", { name: /^Version 1, saved/ }));
+    await screen.findByText(/This is a saved version\./);
+    refine = await screen.findByRole("region", { name: "Refine wording" });
+    expect(within(refine).queryByRole("textbox")).toBeNull();
+    await waitFor(() => expect(within(refine).getByRole("button", { name: "Retry resume refinement" })).toBeEnabled());
+    await userEvent.click(within(refine).getByRole("button", { name: "Retry resume refinement" }));
+    await waitFor(() => expect(api.callsTo("POST", /^\/api\/runs\/run-refine\/retry$/)).toHaveLength(1));
+    shown.unmount();
+  });
+
+  it("keeps the resume being edited when a newer resume for the job arrives, then shows the newest", async () => {
+    const state = fixtures();
+    await openResume(state);
+    await userEvent.click(mark("line-latency"));
+    await userEvent.click(within(card()!).getByRole("button", { name: "Edit line" }));
+    const box = within(card()!).getByRole("textbox", { name: "Line" });
+    await userEvent.clear(box);
+    await userEvent.type(box, "Cut p95 API latency with Redis.");
+    // A resume for this job is tailored elsewhere, by another window or a connected app.
+    state.applications[0]!.resumes.push({ id: "res-new", state: "running", createdAt: 1794100000000 });
+    state.resumes["res-new"] = { ...state.resumes["res-ready"]!, id: "res-new", state: "running", body: null, createdAt: 1794100000000 };
+    act(() => window.dispatchEvent(new Event(VAULT_CHANGED)));
+    expect(await screen.findByText("A newer resume for this job was started. Finish or cancel your edit to see it.")).toBeInTheDocument();
+    expect(within(card()!).getByRole("textbox", { name: "Line" })).toHaveValue("Cut p95 API latency with Redis.");
+    expect(sheet()).toBeInTheDocument();
+    await userEvent.click(within(card()!).getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByRole("button", { name: "Cancel tailoring" })).toBeInTheDocument();
+    expect(screen.queryByText(/A newer resume for this job was started/)).toBeNull();
   });
 });
 

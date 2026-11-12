@@ -14,8 +14,10 @@ import { ActionError, CharCount, Field, Glyph } from "../ui";
 
 /**
  * Correcting a job's details, and deleting a job that has nothing attached. The form starts from
- * the job as the page last read it, and its save names that revision. The job description is sent
- * only when it changed, so a name can be corrected while a resume is being tailored.
+ * the job as the page read it when the form opened, and its save names that revision, even when the
+ * page reads the job again meanwhile: a change made elsewhere is then refused, and the draft kept.
+ * The job description is sent only when it differs from the one the form opened with, so a name can
+ * be corrected while a resume is being tailored.
  * `onSaved` reads the job again; `onDescriptionSaved` says the description itself was replaced.
  */
 export function JobDetails({
@@ -32,6 +34,8 @@ export function JobDetails({
   const [company, setCompany] = useState("");
   const [link, setLink] = useState("");
   const [text, setText] = useState("");
+  // The revision and job description the form was filled from.
+  const [base, setBase] = useState<{ revision: number | undefined; jdText: string } | null>(null);
   const [saved, setSaved] = useState(false);
   const action = useAction();
   const id = useId();
@@ -47,6 +51,7 @@ export function JobDetails({
     setCompany(job.company ?? "");
     setLink(job.url ?? "");
     setText(job.jdText);
+    setBase({ revision: job.revision, jdText: job.jdText });
     setMode("editing");
   }
 
@@ -57,8 +62,9 @@ export function JobDetails({
 
   async function save() {
     setSaved(false);
+    if (!base) return;
     const description = text.trim();
-    const replaced = description !== job.jdText;
+    const replaced = description !== base.jdText;
     const ok = await action.run(async () => {
       await api.updateApplication(job.id, {
         title: title.trim(),
@@ -66,7 +72,7 @@ export function JobDetails({
         url,
         // Unchanged text isn't sent, so details can be corrected while a resume is being tailored.
         ...(replaced ? { jdText: description } : {}),
-        expectedRevision: job.revision,
+        expectedRevision: base.revision,
       });
       if (replaced) onDescriptionSaved();
       await onSaved();

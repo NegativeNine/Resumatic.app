@@ -83,9 +83,10 @@ function JobFrame({ jobId, tab, resume }: { jobId: string; tab: JobTab; resume?:
       throw error;
     }
   }, isTailoring);
-  // When the job description was last saved on this visit, so a fit check made before it says so.
-  const [descriptionSavedAt, setDescriptionSavedAt] = useState<number | null>(null);
-  const described = useCallback(() => setDescriptionSavedAt(Date.now()), []);
+  // The fit checks there were when the job description was last saved on this visit, so each of them
+  // says it was made before. They are told apart by ID: the vault's clock and this device's can differ.
+  const [fitsBeforeDescription, setFitsBeforeDescription] = useState<ReadonlySet<string> | null>(null);
+  const described = useCallback((fitIds: ReadonlySet<string>) => setFitsBeforeDescription(fitIds), []);
   const data = job.data;
 
   if (data === null)
@@ -128,7 +129,7 @@ function JobFrame({ jobId, tab, resume }: { jobId: string; tab: JobTab; resume?:
       <p className="rs-lede app-job-lede">{TAB_LEDES[tab]}</p>
       {/* Each tab is keyed by the person and the tab: one person's start guard is never another's. */}
       <div className="app-job-tab" key={`${me.userId}:${tab}`}>
-        {tab === "fit" && <JobFit job={data} reload={job.reload} descriptionSavedAt={descriptionSavedAt} onDescriptionSaved={described} />}
+        {tab === "fit" && <JobFit job={data} reload={job.reload} fitsBeforeDescription={fitsBeforeDescription} onDescriptionSaved={described} />}
         {tab === "resume" && <JobResume job={data} reloadJob={job.reload} resume={resume} />}
         {tab === "letter" && <JobLetter job={data} />}
         {tab === "interview" && <JobInterview job={data} />}

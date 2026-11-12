@@ -14,14 +14,14 @@ const FIT: readonly DocumentKind[] = ["fit", "questions"];
 export function JobFit({
   job,
   reload,
-  descriptionSavedAt,
+  fitsBeforeDescription,
   onDescriptionSaved,
 }: {
   job: ApplicationDetail;
   reload: () => Promise<unknown>;
-  /** When the job description was saved on this visit, if it was. */
-  descriptionSavedAt: number | null;
-  onDescriptionSaved: () => void;
+  /** The fit checks, running or done, there were when the job description was saved on this visit, if it was. */
+  fitsBeforeDescription: ReadonlySet<string> | null;
+  onDescriptionSaved: (fitIds: ReadonlySet<string>) => void;
 }) {
   const jobDocs = useJobDocuments(job.id);
   const id = useId();
@@ -30,7 +30,7 @@ export function JobFit({
   const describedBy = elsewhere ? `${id}-elsewhere` : undefined;
   const fits = jobDocs.docs.filter((doc) => doc.kind === "fit" && doc.state === "ready").sort((a, b) => b.createdAt - a.createdAt);
   const newest = fits[0];
-  const changedSince = newest !== undefined && descriptionSavedAt !== null && descriptionSavedAt > newest.createdAt;
+  const changedSince = newest !== undefined && !!fitsBeforeDescription?.has(newest.id);
 
   return (
     <>
@@ -69,7 +69,11 @@ export function JobFit({
         <div className="rs-well app-job-description" role="region" aria-label="Job description" tabIndex={0}>
           {job.jdText}
         </div>
-        <JobDetails job={job} onSaved={reload} onDescriptionSaved={onDescriptionSaved} />
+        <JobDetails
+          job={job}
+          onSaved={reload}
+          onDescriptionSaved={() => onDescriptionSaved(new Set(jobDocs.docs.filter((doc) => doc.kind === "fit").map((doc) => doc.id)))}
+        />
       </section>
     </>
   );

@@ -166,6 +166,22 @@ describe("Fit", () => {
     await userEvent.type(within(form).getByLabelText("Job description"), " Remote.");
     await userEvent.click(within(form).getByRole("button", { name: "Save details" }));
     expect(await screen.findByText("You changed the job description after this check. Check again to see how your record covers it.")).toBeInTheDocument();
+    // A check made after the save is against the new description.
+    await userEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(screen.queryByText(/You changed the job description after this check/)).toBeNull());
+  });
+
+  it("says so for a check made before the description changed, whatever this device’s clock says", async () => {
+    // The vault stamps checks by its own clock, which can run ahead of this device's.
+    const state = fixtures();
+    state.documents = [fitCheck(Date.now() + 10 * 60_000)];
+    open("fit", state);
+    await screen.findByText("Your record covers 1 of the 2 things this job asks for.");
+    await userEvent.click(screen.getByRole("button", { name: "Edit details" }));
+    const form = screen.getByRole("form", { name: "Job details" });
+    await userEvent.type(within(form).getByLabelText("Job description"), " Remote.");
+    await userEvent.click(within(form).getByRole("button", { name: "Save details" }));
+    expect(await screen.findByText("You changed the job description after this check. Check again to see how your record covers it.")).toBeInTheDocument();
   });
 
   it("shows the job description as plain text in a well, an instruction in it included, never as a quote", async () => {
@@ -212,6 +228,34 @@ describe("Fit", () => {
     await userEvent.click(within(confirm).getByRole("button", { name: "Delete job" }));
     await waitFor(() => expect(window.location.hash).toBe("#/jobs"));
     expect(api.callsTo("DELETE", /^\/api\/applications\/app-unnamed$/)).toHaveLength(1);
+  });
+
+  it("saves details against the job as the form was opened, so a change made elsewhere is refused and the draft kept", async () => {
+    const state = fixtures();
+    state.applications[0]!.revision = 3;
+    const api = open("fit", state);
+    await screen.findByRole("heading", { level: 1, name: "Platform Engineer" });
+    await userEvent.click(screen.getByRole("button", { name: "Edit details" }));
+    const form = screen.getByRole("form", { name: "Job details" });
+    const opened = (within(form).getByLabelText("Job description") as HTMLTextAreaElement).value;
+    // Another window renames the job and replaces its description, and this page reads the job again.
+    await api.fetch("/api/applications/app-litware", {
+      method: "PATCH",
+      body: JSON.stringify({ title: "Staff Platform Engineer", jdText: `${opened} Remote.`, expectedRevision: 3 }),
+    });
+    act(() => window.dispatchEvent(new Event(VAULT_CHANGED)));
+    expect(await screen.findByRole("heading", { level: 1, name: "Staff Platform Engineer" })).toBeInTheDocument();
+    // This form still holds what it was opened with; its save names that revision, and doesn't
+    // count the description it holds as a new one.
+    api.fail("PATCH", /^\/api\/applications\/app-litware$/, 409, "conflict", "This job changed. Refresh the page, then try again.");
+    await userEvent.clear(within(form).getByLabelText(/^Company/));
+    await userEvent.type(within(form).getByLabelText(/^Company/), "Litware Inc.");
+    await userEvent.click(within(form).getByRole("button", { name: "Save details" }));
+    expect(await screen.findByText("This job changed. Refresh the page, then try again.")).toBeInTheDocument();
+    const sent = api.callsTo("PATCH", /^\/api\/applications\/app-litware$/).at(-1)!.body as Record<string, unknown>;
+    expect(sent).toMatchObject({ title: "Platform Engineer", company: "Litware Inc.", expectedRevision: 3 });
+    expect(sent).not.toHaveProperty("jdText");
+    expect(within(form).getByLabelText(/^Company/)).toHaveValue("Litware Inc.");
   });
 
   it("offers no delete for a job with resumes, and says why", async () => {
