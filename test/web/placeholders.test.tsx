@@ -95,4 +95,33 @@ describe("placeholders", () => {
     // And each placeholder section has the page it is shown on.
     expect(Object.keys(SECTION_PAGES).sort()).toEqual(Object.keys(PLACEHOLDER_SECTIONS).sort());
   });
+
+  it("each hiring page says what it waits for, with no control", () => {
+    const state = fullVault();
+    installFakeApi(state);
+    const waits: Record<string, RegExp> = {
+      hiringOpenings: /^The hiring workspace isn’t open yet\. Openings wait for organisation verification, legal sign-off and the result of a paid pilot\.$/,
+      hiringCandidates: /^The hiring workspace isn’t open yet\. Searching for candidates waits for legal sign-off and the result of a paid pilot\.$/,
+      hiringIntroductions: /^The hiring workspace isn’t open yet\. Introductions open first, arranged by hand in a small paid pilot, once it has legal sign-off\.$/,
+      hiringOrganisation: /^The hiring workspace isn’t open yet\. Organisations wait for verification checks and legal sign-off\.$/,
+    };
+    const hiring = ROUTES.filter((route) => route.workspace === "hiring").map((route) => route.name);
+    expect(hiring.sort()).toEqual(Object.keys(waits).sort());
+    // There is no page for an opening's applicants: the board marks it Later, and it has no address.
+    expect(ROUTES.flatMap((route) => route.paths).filter((path) => /applicant/i.test(path))).toEqual([]);
+    for (const name of hiring) {
+      const route = parseRoute(addressOf(name as PlaceholderName));
+      const shown = renderWithSession(<main>{SCREENS[name].render(route)}</main>, state.me);
+      expect(shown.container.querySelector(".app-placeholder__note")!.textContent, name).toMatch(waits[name]!);
+      nothingToDo(shown.container);
+      // Its one way back is to looking for work.
+      expect(within(shown.container).getAllByRole("link").map((link) => link.textContent), name).toEqual(["Back to looking for work"]);
+      shown.unmount();
+    }
+    // Coaching's organisation is a placeholder too, and leads back to the clients that are real.
+    const organisation = renderWithSession(<main>{SCREENS.coachingOrganisation.render(parseRoute("#/coaching/organisation"))}</main>, state.me);
+    expect(screen.getByText("A coaching practice shares one client list, so a colleague can pick up where you left off.")).toBeInTheDocument();
+    expect(screen.getByText("Coaching organisations and seats open later. A client will still choose who may read their copy.")).toBeInTheDocument();
+    expect(within(organisation.container).getByRole("link", { name: "Back to your clients" })).toHaveAttribute("href", "#/coaching/clients");
+  });
 });

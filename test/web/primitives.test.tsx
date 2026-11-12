@@ -21,6 +21,7 @@ import {
   type MarkTone,
   type TickState,
 } from "../../src/web/components/ui";
+import { StateCard, Stopped } from "../../src/web/components/States";
 
 describe("messages", () => {
   it("announces a failed load as an alert, with a way to try again", async () => {
@@ -166,3 +167,31 @@ describe("page parts", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Loading your jobs…");
   });
 });
+
+describe("states", () => {
+  it("StateCard names what happened under its heading; Stopped is an alert with at most one action", () => {
+    const card = render(
+      <StateCard title="This copy can’t be opened" action={<a href="#/coaching/clients">Back to your clients</a>}>
+        This copy has ended.
+      </StateCard>,
+    );
+    const region = screen.getByRole("region", { name: "This copy can’t be opened" });
+    expect(region).toHaveClass("rs-panel", "app-state-card");
+    expect(screen.getByRole("heading", { level: 2, name: "This copy can’t be opened" })).toHaveClass("rs-h3");
+    expect(screen.getByText("This copy has ended.")).toHaveClass("rs-meta");
+    expect(screen.getByRole("link", { name: "Back to your clients" })).toBeInTheDocument();
+    card.unmount();
+    // Where the card is the whole page, its heading is the page's.
+    const page = render(<StateCard level={1} title="This link isn’t available">Ask them for a new one.</StateCard>);
+    expect(screen.getByRole("heading", { level: 1, name: "This link isn’t available" })).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
+    page.unmount();
+    render(<Stopped action={<a href="#/account/plan">See plans</a>}>You’ve used all 20 documents for this month.</Stopped>);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveClass("rs-msg", "rs-msg--error");
+    expect(alert).toHaveTextContent("You’ve used all 20 documents for this month.See plans");
+    expect(alert.querySelector(".rs-g--alert")).toHaveAttribute("aria-hidden", "true");
+    expect(alert.querySelectorAll("a, button")).toHaveLength(1);
+  });
+});
+

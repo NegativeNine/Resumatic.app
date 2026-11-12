@@ -989,18 +989,6 @@ main:focus {
   }
 }
 
-/* Clients: the copies other people have shared with this account as their coach. */
-.app-clients { display: grid; gap: var(--space-4); }
-.app-client { display: grid; gap: var(--space-3); }
-.app-client__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
-.app-client__head h2 { margin: 0; overflow-wrap: anywhere; }
-.app-client__head .rs-meta { margin: 2px 0 0; }
-.app-client__head .rs-mark { flex: none; }
-.app-client__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-/* A quiet button has no edge of its own, so when it comes first its words line up with the name above. */
-.app-client__actions > .rs-btn--quiet:first-child { margin-inline-start: calc(-1 * var(--space-3)); }
-.app-clients__foot { margin: var(--space-6) 0 0; max-width: 70ch; }
-
 /* Comments on a shared copy: a thread is what it is about, then each comment under who wrote it. */
 .app-threads { display: grid; gap: var(--space-4); }
 .app-thread { display: grid; gap: var(--space-3); padding: var(--space-4); background: var(--paper); border: 1px solid var(--rule); border-radius: var(--radius-lg); }
@@ -1131,3 +1119,7 @@ button.rs-who { background: none; border: 0; cursor: pointer; }
 /* stage 6: sharing and account */
 
 /* stage 7: outside */
+
+/* A state in place of what a page would show (States.tsx): what happened, what to do, at most one way on. */
+.app-state-card { display: grid; justify-items: start; gap: var(--space-3); max-width: 70ch; }
+.app-state-card > h1, .app-state-card > h2, .app-state-card > p, .app-state-card > .rs-loading { margin: 0; }

@@ -492,3 +492,22 @@ describe("the footer", () => {
     expect(within(footer).getAllByRole("link").map((a) => a.textContent)).toEqual(["Privacy", "Terms", "Send feedback"]);
   });
 });
+
+describe("the hiring workspace", () => {
+  it("links to the hiring workspace only from the account menu", async () => {
+    installFakeApi(fixtures());
+    renderWithSession(<Routed />, { ...fixtures().me, clients: 2 });
+    for (const hash of ["#/facts/check", "#/jobs", "#/sharing", "#/coaching/clients"]) {
+      act(() => goTo(hash));
+      await waitFor(() => expect(document.title).not.toBe(""));
+      // Outside the menu, nothing on the page leads into hiring.
+      const outside = [...document.querySelectorAll<HTMLAnchorElement>("a[href^='#/hiring']")].filter((link) => !link.closest(".app-menu"));
+      expect(outside.map((link) => link.textContent), hash).toEqual([]);
+      await userEvent.click(menuButton());
+      const panel = document.querySelector<HTMLElement>(".app-menu")!;
+      const hiring = within(panel).getAllByRole("link").filter((link) => link.getAttribute("href")!.startsWith("#/hiring"));
+      expect(hiring.map((link) => [link.textContent, link.getAttribute("href")]), hash).toEqual([["HiringNot open yet", "#/hiring/openings"]]);
+      await userEvent.keyboard("{Escape}");
+    }
+  });
+});

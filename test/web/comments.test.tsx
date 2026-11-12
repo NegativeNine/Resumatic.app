@@ -77,7 +77,7 @@ describe("a coach commenting on a client's copy", () => {
     expect(await screen.findByText(/^Shared with you until \d+ Nov 2026\. You can comment\. Only Sam Rivera can change it\.$/)).toBeInTheDocument();
     // The mark comes first, then what the reader can do, then the way back to their list.
     expect(screen.getByText("Fixed copy").parentElement!.textContent).toMatch(/^Fixed copy Shared with you until \d+ Nov 2026\. You can comment\. Only Sam Rivera can change it\. Open your clients$/);
-    expect(screen.getByRole("link", { name: "Open your clients" })).toHaveAttribute("href", "/#/clients");
+    expect(screen.getByRole("link", { name: "Open your clients" })).toHaveAttribute("href", "/#/coaching/clients");
     expect(await screen.findByText("No comments yet.")).toBeInTheDocument();
     expect(api.callsTo("GET", /^\/api\/coach\/clients\/[^/]+\/comments$/).map((call) => call.path)).toEqual([`/api/coach/clients/${GRANT}/comments`]);
 
@@ -225,7 +225,7 @@ describe("a coach commenting on a client's copy", () => {
   it("gives other readers, and a copy of documents alone, nothing to choose", async () => {
     for (const reviewer of [undefined, "sign-in", "sign-in-again", "other", "you"] as const) {
       const { api, page } = open(joined((view) => { view.reviewer = reviewer; }));
-      await screen.findByRole("heading", { name: "Shared career snapshot" });
+      await screen.findByText("Sam Rivera", { selector: "h1.app-share__title" });
       expect(screen.getByText(LED_LINE)).toBeInTheDocument();
       expect(screen.queryAllByRole("button", { pressed: false }), String(reviewer)).toEqual([]);
       expect(screen.queryByRole("complementary")).toBeNull();

@@ -50,8 +50,6 @@ const DEFERRED: Readonly<Record<string, string>> = {
   "Application kit": "stage 5",
   // Stage 6, sharing and account: card becomes anonymous profile.
   "Card preview": "stage 6",
-  // Stage 7, outside: snapshot becomes shared copy.
-  "Shared career snapshot": "stage 7",
 };
 
 /** Every label on the page now, as a person reads it. */
