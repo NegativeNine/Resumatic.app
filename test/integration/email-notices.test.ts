@@ -525,6 +525,66 @@ describe("the address a notice goes to", () => {
     expect(noticePoints(metrics)).toEqual([{ indexes: [sessionOf(sam).vid], blobs: ["email", "email_notice", "comment", "E_ADDRESS_CHANGED", "paused"], doubles: [1, 0, 0, 0] }]);
   });
 
+  it("a notice the Directory has no address for fails and sends nothing", async () => {
+    const { sam, dana, target, grantId } = await coached();
+    const recorder = installEmail(env);
+    const metrics = recordMetrics();
+    await turnOn(sam, "comment");
+    await comment(dana, grantId, target, "Nobody to tell");
+    const lookup = vi.spyOn(Directory.prototype, "noticeAddress").mockResolvedValueOnce(null);
+    try {
+      await pass(vaultOf(sam), NOTICE_DELAY_MS);
+      await fire(vaultOf(sam));
+      expect(lookup).toHaveBeenCalledTimes(1);
+    } finally {
+      lookup.mockRestore();
+    }
+    expect(recorder.calls).toEqual([]);
+    expect(await rowOf(vaultOf(sam), "comment")).toMatchObject({ attempts: 0, retry_at: null, outcome: "failed" });
+    expect(await read(sam)).toMatchObject({ comment: true, status: "failing" });
+    expect(noticePoints(metrics).map((point) => point.blobs.slice(2))).toEqual([["comment", "E_NO_ADDRESS", "failed"]]);
+  });
+
+  it("a kind turned off, or paused by another sign-in, while its address is looked up sends nothing", async () => {
+    const { sam, dana, target, grantId } = await coached();
+    const recorder = installEmail(env);
+    const { uid } = sessionOf(sam);
+    await turnOn(sam, "comment");
+    // Turned off while the Directory is being asked.
+    await comment(dana, grantId, target, "Turned off in flight");
+    let lookup = vi.spyOn(Directory.prototype, "noticeAddress").mockImplementationOnce(async () => {
+      expect((await turn(sam, "comment", false)).status).toBe(200);
+      return sam.email;
+    });
+    try {
+      await pass(vaultOf(sam), NOTICE_DELAY_MS);
+      await fire(vaultOf(sam));
+      expect(lookup).toHaveBeenCalledTimes(1);
+    } finally {
+      lookup.mockRestore();
+    }
+    expect(recorder.calls).toEqual([]);
+    expect(await rowOf(vaultOf(sam), "comment")).toMatchObject({ on_at: null, attempts: 0, retry_at: null, outcome: null });
+    // Paused by a sign-in with another address while the Directory is being asked.
+    await pass(vaultOf(sam), DAY);
+    await turnOn(sam, "comment");
+    await comment(dana, grantId, target, "Paused in flight");
+    lookup = vi.spyOn(Directory.prototype, "noticeAddress").mockImplementationOnce(async () => {
+      await vaultOf(sam).openSession(uid, uniqueEmail("other"));
+      return sam.email;
+    });
+    try {
+      await pass(vaultOf(sam), NOTICE_DELAY_MS);
+      await fire(vaultOf(sam));
+      expect(lookup).toHaveBeenCalledTimes(1);
+    } finally {
+      lookup.mockRestore();
+    }
+    expect(recorder.calls).toEqual([]);
+    expect(await rowOf(vaultOf(sam), "comment")).toMatchObject({ outcome: "paused", attempts: 0, retry_at: null, pending_at: null });
+    expect(await read(sam)).toMatchObject({ comment: true, status: "paused" });
+  });
+
   it("the Directory gives no address for a retired vault, a deleting account or another account's vault", async () => {
     const sam = await signIn();
     const other = await signIn();
