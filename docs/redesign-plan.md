@@ -68,11 +68,11 @@ The phone bar is CSS only, and no test shows it.
 | Address | Name | Room › tab | Stage-2 screen | Replaced by |
 | --- | --- | --- | --- | --- |
 | `#/today` | today | Today | `PlaceholderPage name="today"` | 3 |
-| `#/facts/check` | factsCheck | Facts › To check | `SourcesPage` | 4 |
-| `#/facts/all` | factsAll | Facts › All facts | `SourcesPage` | 4 |
+| `#/facts/check` | factsCheck | Facts › To check | `SourcesPage` | 4, done: `FactsReview` |
+| `#/facts/all` | factsAll | Facts › All facts | `SourcesPage` | 4, done: `FactsRecord` |
 | `#/facts/all/ask` | attest | Facts › All facts | placeholder | 4 |
-| `#/facts/skills` | factsSkills | Facts › Skills | placeholder | 4 |
-| `#/facts/files` | factsFiles | Facts › Your files | `SourcesPage` | 4 |
+| `#/facts/skills` | factsSkills | Facts › Skills | placeholder | 4, done: `FactsSkills` |
+| `#/facts/files` | factsFiles | Facts › Your files | `SourcesPage` | 4, done: `FactsSources` |
 | `#/jobs` | jobs | Jobs › Your jobs | `JobsPage` | 5 |
 | `#/jobs/find` | jobsFind | Jobs › Find jobs | placeholder | 5 |
 | `#/jobs/applications` | jobsApplications | Jobs › Applications | placeholder | 5 |
@@ -124,6 +124,53 @@ Open questions for the owner, each built as stated; the answer changes only a la
 2. Kits for jobs whose status is Closed still count as waiting, as the kit page reports them. Should they?
 3. Kit question text and stored read errors are left out of Today. If stage 3's board needs either, stage 3 adds it, an error only through `sourceErrorMessage`.
 4. The phone bottom bar holds the four rooms (the shell board), while the phone boards add Account as a fifth. Stage 7 settles it; stage 2 ships four.
+
+### Stage 4: Facts
+
+The Facts room's four tabs are built, and `SourcesPage` is gone. Asking a colleague (`#/facts/all/ask`) stays a placeholder: it opens later.
+
+To check asks one question at a time from `reviewQuestions`, the same groups Today counts. Its keys only click enabled buttons.
+
+- **To check** shows a role or a fact with every quote it rests on, the answers, and More choices (Keep private, and Split it in two as a placeholder). The file it came from sits beside it, with the words behind this item highlighted and the words behind the file's other roles and facts underlined: amber still to check, green confirmed, each with its word. Up next lists the next four. Before the first upload the page opens on the big dropzone and keeps it for the visit, so a file read in that visit is asked about under it. On a phone the file is hidden until “See where this came from” opens it under the question.
+- **All facts** is the list it was, showing Confirmed and Left out, with one link to ask a colleague.
+- **Skills** lists the confirmed skills a fact names, where each came from, and Years per skill as a placeholder.
+- **Your files** lists what was added beside adding another, and says what to do about a file that couldn't be read.
+- **Private.** A fact the person keeps to themselves is private in every label and sentence; stored and API names stay `sensitive`. The privacy notice says so.
+- **Server sentences.** The Facts room's refusals speak of files. The old import sentence stays in `SAFE_DETAILS` for one release, and `EARLIER` rewords it.
+
+The room's styles are in `src/web/styles/rooms/facts.css`, as section 1 of the cross-stage decisions and `styles/README.md` place a room's own rules, with its own `@media (max-width: 600px)`. The dead `.facts-layout`, `.facts-rail` and `.facts-main` rules are left for the stage that next owns that part of app.css.
+
+Decisions, each with the alternative rejected:
+
+1. **One question at a time, built from today's parts.** `ReviewButtons`, `useReview`, `useSensitive`, `FactEditor` and `RoleForm` are reused, and `FactMeta`, `FactHints`, `FactEvidence` and `RoleRejectWell` are extracted from `FactItem` and `RoleGroup`, so the list and the question share code. A new review component, a second copy of the ask-first and confirm rules, was rejected.
+2. **Keys click their own enabled buttons.** The shared guard `reviewKeyOf` is used by `ReviewQueue` and the question. An action registry with its own busy checks was rejected: the design's first draft let Y confirm the old wording while Fix it was open.
+3. **Questions is left out of the filter.** Experience questions live only in each job's kit or documents, and no route lists them across jobs. N+1 requests, and a new endpoint the brief doesn't name, were rejected.
+4. **`reviewQuestions` lives in `src/shared/review-groups.ts`,** so the page and Today count from one module. A web-only builder, which could drift from the count, was rejected.
+5. **The file panel reads the live vault; the question reads the held one.** Confirm all is a background change, and the smoke test relies on it. Holding the panel was rejected.
+6. **File counts are raw records,** the IDs Confirm all sends. Grouped counts, which would not match what is sent, were rejected.
+7. **Highlights are placed only on verified spans** (`validSpan`). Searching for the quote text (it can match the wrong line), and colour alone, were rejected.
+8. **The phone toggle is CSS only.** A `matchMedia` hook (a second render path) and a sticky bar (a second fixed bar above stage 2's) were rejected.
+9. **First run stays on To check, with the queue under the dropzone.** Sign-in lands there, and the smoke test uploads and checks there. Sending a new person to Your files was rejected.
+10. **All facts changes `Review` in place, and the add controls stay inside it.** AddFact and AddRole in the page head, which would need a hook into Review's filter, and a `filters` prop with one caller, were rejected.
+11. **One Attest link per page.** A link per fact was rejected, because the route takes no fact.
+12. **Skills shows only usable facts.** Taxonomy tags, which owners haven't confirmed, were rejected.
+13. **Private everywhere in `src/web`**, including stage 5 and 6 files. Mixed names between merges were rejected.
+14. **Split it in two is a `PlaceholderSection` inside `details`**, styled smaller. The reach test opens More choices. A heading-level prop on stage 2's component was rejected.
+15. **Titles are the tab names.**
+16. **The room's CSS is its own file,** `rooms/facts.css`, imported by its pages. Up next uses `.facts-upnext`, because `.facts-next` styles What happens next. The design's block in app.css was rejected: the cross-stage decisions and the styles README keep app.css's stage blocks for shared rules.
+17. **A fact under a left-out role stays in the queue but can't be confirmed there.** The hint points to All facts › Left out. Dropping it from the queue, which would make the count disagree with Today, was rejected.
+18. **Every copy's quote is shown with its file.** Rewording the note to name files only, which would let a person confirm quotes they never saw, was rejected.
+19. **The old distill sentence stays in `SAFE_DETAILS` for one release**, beside the new one, so a failure from a run in flight keeps its words. Falling back to `GENERIC_DETAIL` was rejected.
+20. **The Keep private row states only what the privacy notice promises.** “Never used in anything Resumatic writes / never shared” was rejected: the search index still receives the words, and existing resumes remain.
+
+Open questions for the owner, each built as stated; an answer changes only later work:
+
+1. “Everything” and “Roles and facts” hold the same questions until another kind is built. Should both stay, or only one?
+2. Experience questions stay on each job's page, with a placeholder here. Is a list across jobs (a new read route) wanted later?
+3. All facts leaves out the board's Private and Added by you filters and its search. Should they be added?
+4. Is one page-level “Ask a colleague” link right, rather than one per fact?
+5. The file panel and Your files count records (a copy counts twice), while To check counts questions. Is that acceptable?
+6. Should the phone layout get a sticky action bar above the rooms bar?
 
 ---
 
