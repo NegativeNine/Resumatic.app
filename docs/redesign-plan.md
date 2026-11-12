@@ -125,6 +125,27 @@ Open questions for the owner, each built as stated; the answer changes only a la
 3. Kit question text and stored read errors are left out of Today. If stage 3's board needs either, stage 3 adds it, an error only through `sourceErrorMessage`.
 4. The phone bottom bar holds the four rooms (the shell board), while the phone boards add Account as a fifth. Stage 7 settles it; stage 2 ships four.
 
+### Stage 5: Jobs and a job's page
+
+A job has its own page with five tabs, from the routes stage 2 registered: Fit, Resume, Cover letter, Interview and Application. Your jobs lists each job as a row that opens its page, with no fit on it; the workspace that opened inside the list is gone. A resume opens on its job's Resume tab, and saved answers moved from Account to Jobs › Rules and answers. There is no migration, no new route and no model call: the work is the web app, the server's wording for the Jobs room (`docs/redesign-words.md`), tests and docs.
+
+Decisions, each with the alternative rejected:
+
+1. **Documents are split by tab over one hook, `useJobDocuments`.** Fit checks and experience questions are on Fit, wording checks (Refine wording, every line check and every accepted suggestion) on Resume, letters on Cover letter and preparation on Interview, so Cancel and Retry are on the tab that owns each kind. Starting stays one at a time across all kinds, and a start that waits on another tab's run names that run and its tab. The combined "Prepare your application" panel on every tab (several brand buttons on a page) and listing only letters and preparation (stranding Cancel and Retry for the other kinds) were rejected.
+2. **The check sentence counts the displayed version's lines, and "left out" appears only on version 1**, tailoring's own, from its report. Every later version comes from a line check, a refine or a removal. The report's own counts (a line check resets them), an "edited by you" clause (never true of a checked version) and carrying the left-out count forward in the Vault (a pipeline change for one clause) were rejected.
+3. **A line's card is a sibling of the marks' list, not a member.** `useMarginLayout` takes the stack and the card's selector and places the card as one more item right after its line's mark, so the marks below move down to clear it and nothing hides a focused mark. A `<div>` or role-bearing item inside the list (which fails axe's `list` and `aria-allowed-role` rules) and floating the card over the marks were rejected. Below 860px the card is a non-modal sheet from the bottom.
+4. **One brand button per tab outside forms, with named demotions:** Check your fit or Check again; on Resume one of Download PDF, Tailor again or Tailor a resume; Write a cover letter; Prepare for an interview; Approve kit. Tailor a new version, Create checked version, Save tracking details, the kit's Save questions and Use this answer, and the line card's Accept and check are plain (`OwnerSuggestion` takes `emphasis`, so Account is unchanged). Exceptions written into the test were rejected.
+
+The room's rules are in `src/web/styles/rooms/jobs.css` under new class names, and `app.css` is untouched. These `app.css` rules are no longer used, and go once stage 7 merges: `.app-notes*`, `.app-check-strip*`, `.app-legend` and the `.application-workspace` layout.
+
+Open questions for the owner, each built as stated:
+
+1. The board copy (the header link, the tab sentences and the placeholder notes) was not checked against the boards. It ships as written; the roadmap row says so.
+2. Marks beyond the brief's four kinds (a fact kept private, a line waiting for a fresh check, a waiting suggestion) are kept.
+3. Opening a line's card doesn't mark its coach's comments seen; Sharing does.
+4. Experience questions sit on Fit.
+5. The unused `app.css` rules go after stage 7 merges.
+
 ---
 
 Nov 7, 2026. Revised after PR #2 (the job seeker roadmap) merged, which changed 42 of the web app's files. The redesign is rebuilt on that `main` (`215a3e3`).

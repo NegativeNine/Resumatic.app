@@ -8,7 +8,7 @@ The types, caps, sentences and rules are in `src/shared/kit.ts`; the tables and 
 
 ## Saved answers
 
-An owner keeps up to 50. Each has a label of up to 80 characters and an answer of up to 4,000, both cleaned of characters that are not shown. Two labels that read the same once folded (case, apostrophes, punctuation and spacing) are one label: a second is refused, and the same label and answer sent twice return the one already kept. An edit names the revision it was read at.
+Saved answers are kept under Jobs › Rules and answers, and a job's kit is on that job's Application tab. An owner keeps up to 50. Each has a label of up to 80 characters and an answer of up to 4,000, both cleaned of characters that are not shown. Two labels that read the same once folded (case, apostrophes, punctuation and spacing) are one label: a second is refused, and the same label and answer sent twice return the one already kept. An edit names the revision it was read at.
 
 A save is refused, in the words of the kind, when its label or its answer is on the refused list below. The list can grow after an answer was saved; such an answer is kept and shown with what it is about, and is never matched or used.
 
