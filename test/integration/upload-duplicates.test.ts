@@ -86,6 +86,20 @@ describe("duplicate uploads", () => {
     expect((await upload(user, "resume.docx", RESUME)).status).toBe(409);
   });
 
+  it("a pasted text never blocks a file, nor a file a paste", async () => {
+    const user = await signIn();
+    const paste = (text: string) =>
+      user.fetch("/api/sources/paste", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
+    const first = await paste(RESUME);
+    expect(first.status).toBe(201);
+    await waitForSource(user, ((await first.json()) as { sourceId: string }).sourceId);
+    expect((await uploaded(user, "sam-rivera.pdf", `${RESUME}\nVolunteer: Code Club mentor, 2019`)).state).toBe("ready");
+    const second = await paste(`${RESUME}\nAwards: Globex innovation award, 2020`);
+    expect(second.status, await second.clone().text()).toBe(201);
+    await waitForSource(user, ((await second.json()) as { sourceId: string }).sourceId);
+    expect((await user.json<{ sources: unknown[] }>("/api/sources")).sources).toHaveLength(3);
+  });
+
   it("adds the digest column to an existing vault, and older sources never block an upload", async () => {
     const user = await signIn();
     expect((await uploaded(user, "older.pdf", RESUME)).state).toBe("ready");

@@ -19,6 +19,8 @@ export interface Fixtures {
   /** Which email notices are on, and the address they go to. Absent: every kind off, to the session's address. */
   emailNotices?: EmailNotices;
   sources: SourceView[];
+  /** What each source was read as, by its ID, for "See this quote in its source". */
+  sourceTexts?: Record<string, string>;
   roles: RoleView[];
   facts: FactView[];
   applications: ApplicationView[];

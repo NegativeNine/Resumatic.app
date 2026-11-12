@@ -141,6 +141,13 @@ describe("a posting's markup as text", () => {
     expect(htmlToText("Run our ‮setenrebuk‬ fleet")).toBe("Run our setenrebuk fleet");
   });
 
+  it("keeps a soft hyphen in a posting, as before", () => {
+    // Pasted text loses every character Unicode marks as not shown; a posting keeps its narrower set.
+    const softHyphen = String.fromCharCode(0xad);
+    expect(htmlToText(`<p>Kuber${softHyphen}netes</p>`)).toBe(`Kuber${softHyphen}netes`);
+    expect(htmlToText("Kuber&#xAD;netes")).toBe(htmlToText(`Kuber${softHyphen}netes`));
+  });
+
   it("keeps right-to-left writing and every other letter as it was", () => {
     expect(htmlToText("<p>Hebrew: שלום; Arabic: مرحبا; café — naïve</p>"))
       .toBe("Hebrew: שלום; Arabic: مرحبا; café — naïve");

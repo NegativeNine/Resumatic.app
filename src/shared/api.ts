@@ -16,6 +16,7 @@
 //   PUT    /api/preferences            PreferencesUpdate -> Preferences
 //   POST   /api/account/sign-out-everywhere   204
 //   POST   /api/sources                multipart field "file" (PDF or DOCX, at most 10 MB) -> 201 { sourceId }
+//   POST   /api/sources/paste   PasteSourceRequest + Idempotency-Key -> 201 { sourceId }
 //   GET    /api/sources                { sources: SourceView[] }
 //   GET    /api/sources/:id/file       source object as an attachment (OCR sources contain JSON input)
 //   POST   /api/sources/:id/cancel     request cancellation of the current reading run
@@ -58,6 +59,8 @@ export type FactKind = "accomplishment" | "skill" | "credential";
 export type Level = "contributed" | "implemented" | "led" | "owned" | "founded";
 export type ReviewState = "proposed" | "confirmed" | "rejected";
 export type SourceState = "queued" | "ready" | "failed";
+/** How a source arrived: a file, page images read from a PDF, or text pasted on the Facts page. */
+export type SourceOrigin = "upload" | "ocr" | "paste";
 export type ResumeState = "running" | "ready" | "failed";
 export type LineStatus = "kept" | "repaired" | "replaced" | "edited";
 export type FactOrigin = "extracted" | "user";
@@ -148,7 +151,7 @@ export interface SourceView {
    * This does not assert the number of pages in the original PDF. */
   conversionImageCount?: number | null;
   conversionWarnings?: ("little-text" | "short-lines" | "no-structure")[];
-  origin?: "upload" | "ocr";
+  origin?: SourceOrigin;
   /** Original upload used to create an image-transcription source, if known. */
   parentSourceId?: string | null;
   extractor?: string | null;
@@ -194,7 +197,7 @@ export interface FactView {
   previousLevel?: Level;
   /** Original user-authored interview answer; it is historical after a fact edit. */
   interview?: import("./interview").InterviewProvenance | null;
-  evidenceOrigin?: "upload" | "ocr";
+  evidenceOrigin?: SourceOrigin;
   confidence?: number | null;
   reviewReasons?: string[];
   revision?: number;

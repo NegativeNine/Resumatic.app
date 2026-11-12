@@ -462,6 +462,28 @@ main:focus {
   line-height: 18px;
 }
 
+/* Adding a source: Upload a file or Paste text above the panel chosen. */
+.app-add-source {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.app-add-source > .app-view-toggle {
+  justify-self: start;
+}
+
+.app-paste {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.app-paste textarea {
+  width: 100%;
+  resize: vertical;
+}
+
 .app-source-panel {
   padding: var(--space-1) var(--space-5);
 }
@@ -522,6 +544,10 @@ main:focus {
 .facts-first-run > div {
   width: 100%;
   max-width: var(--layout-paper);
+}
+
+.facts-first-run .app-add-source > .app-view-toggle {
+  justify-self: center;
 }
 
 .app-drop--first-run {

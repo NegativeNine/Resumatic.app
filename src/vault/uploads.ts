@@ -1,4 +1,6 @@
+import type { SourceOrigin } from "../shared/api";
 import { AppError } from "../shared/errors";
+import { MAX_PASTE_BYTES, MAX_PASTE_TITLE_CHARS, PASTE_CONTENT_TYPE } from "../shared/paste";
 import { sourceKey } from "../shared/r2";
 
 /** Cleanup scheduling threshold, never extended by retries. It does not prove an R2 put has settled. */
@@ -22,7 +24,7 @@ export interface UploadDescriptor {
   r2Key: string;
   byteLength: number;
   contentType: string;
-  origin?: "upload" | "ocr";
+  origin?: SourceOrigin;
   parentSourceId?: string;
   /**
    * SHA-256 of the file's bytes alone, as lowercase hex. The Worker computes it from the bytes it
@@ -35,7 +37,7 @@ export interface UploadIntent extends Omit<
   "origin" | "parentSourceId" | "sha256"
 > {
   sourceId: string;
-  origin: "upload" | "ocr";
+  origin: SourceOrigin;
   parentSourceId: string | null;
   state: "pending" | "complete" | "expired";
   createdAt: number;
@@ -49,7 +51,7 @@ type Row = {
   r2_key: string;
   byte_length: number;
   content_type: string;
-  origin: "upload" | "ocr";
+  origin: SourceOrigin;
   parent_source_id: string | null;
   state: UploadIntent["state"];
   created_at: number;
@@ -58,6 +60,8 @@ type Row = {
 };
 type Transaction = <T>(callback: () => T) => T;
 type Reservation = { intent: UploadIntent; replay: boolean };
+/** A paste reserved too long ago to be completed. The next press of Add text is a new paste. */
+const PASTE_EXPIRED = "This text wasn't added. Add it again.";
 
 /**
  * The Vault authenticates before using this store. reserve precedes every R2 put; complete follows
@@ -92,7 +96,7 @@ export class UploadStore {
         if (previous.state === "expired")
           throw new AppError(
             "conflict",
-            "this upload expired; start a new upload",
+            input.origin === "paste" ? PASTE_EXPIRED : "this upload expired; start a new upload",
           );
         return { intent: previous, replay: true };
       }
@@ -134,7 +138,9 @@ export class UploadStore {
       if (queued + pending >= this.options.maxQueued)
         throw new AppError(
           "conflict",
-          "Resumatic is still reading your other sources. Wait for one to finish, then upload this file.",
+          input.origin === "paste"
+            ? "Resumatic is still reading your other sources. Wait for one to finish, then add this text."
+            : "Resumatic is still reading your other sources. Wait for one to finish, then upload this file.",
         );
       if (total + pending >= this.options.maxSources)
         throw new AppError(
@@ -180,7 +186,7 @@ export class UploadStore {
       if (intent.state === "expired")
         throw new AppError(
           "conflict",
-          "this upload expired; start a new upload",
+          input.origin === "paste" ? PASTE_EXPIRED : "this upload expired; start a new upload",
         );
       const result: unknown = persist(intent);
       if (result && typeof (result as { then?: unknown }).then === "function")
@@ -341,12 +347,21 @@ export class UploadStore {
       input.contentType.length > 100 ||
       (input.origin !== undefined &&
         input.origin !== "upload" &&
-        input.origin !== "ocr") ||
+        input.origin !== "ocr" &&
+        input.origin !== "paste") ||
       (input.parentSourceId !== undefined &&
         (typeof input.parentSourceId !== "string" ||
           !input.parentSourceId ||
           input.parentSourceId.length > 100)) ||
-      (input.origin === "ocr") !== Boolean(input.parentSourceId)
+      (input.origin === "ocr") !== Boolean(input.parentSourceId) ||
+      // Pasted text is only ever plain text under a ".txt" name its title gave, and no longer
+      // than the most characters a paste may hold. It has no original source.
+      (input.origin === "paste" &&
+        (input.contentType !== PASTE_CONTENT_TYPE ||
+          !/\.txt$/.test(input.filename) ||
+          input.filename.length > MAX_PASTE_TITLE_CHARS + 4 ||
+          input.byteLength > MAX_PASTE_BYTES ||
+          input.parentSourceId !== undefined))
     ) {
       throw new AppError("invalid", "invalid upload descriptor");
     }

@@ -23,17 +23,30 @@ function problemWith(file: File): string | null {
   return null;
 }
 
-export function Uploader({ onUploaded, size = "rail" }: { onUploaded: Reload; size?: "rail" | "first-run" }) {
+/**
+ * The upload panel. Its notice, the sentence for the file it last added, is kept by the page (see
+ * `AddSourceState`), because adding the first source replaces the first-run panel with the rail's.
+ */
+export function Uploader({
+  onUploaded,
+  size = "rail",
+  notice,
+  onNotice,
+}: {
+  onUploaded: Reload;
+  size?: "rail" | "first-run";
+  notice: string | null;
+  onNotice: (sentence: string | null) => void;
+}) {
   const input = useRef<HTMLInputElement>(null);
   const { run, pending, error, setError } = useAction();
   const [uploading, setUploading] = useState<string | null>(null);
-  const [uploaded, setUploaded] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [retry, setRetry] = useState<{ file: File; key: string } | null>(null);
 
   async function upload(file: File, key: string = crypto.randomUUID()) {
     setRetry(null);
-    setUploaded(null);
+    onNotice(null);
     const problem = problemWith(file);
     if (problem) {
       setError(problem);
@@ -58,7 +71,7 @@ export function Uploader({ onUploaded, size = "rail" }: { onUploaded: Reload; si
       },
     );
     setUploading(null);
-    if (ok) setUploaded(file.name);
+    if (ok) onNotice(`Uploaded ${file.name}. Resumatic is reading it now, and its roles and facts will appear for you to review.`);
     else if (retryable) setRetry({ file, key });
   }
 
@@ -109,9 +122,9 @@ export function Uploader({ onUploaded, size = "rail" }: { onUploaded: Reload; si
         />
       </div>
       {uploading && <Loading>Uploading {uploading}…</Loading>}
-      {uploaded && (
+      {notice && (
         <p className="success" role="status">
-          Uploaded {uploaded}. Resumatic is reading it now, and its roles and facts will appear for you to review.
+          {notice}
         </p>
       )}
       <ActionError message={error} />

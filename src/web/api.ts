@@ -20,6 +20,7 @@ import type {
   SourceView,
 } from "../shared/api";
 import type { DocumentView, NewDocument } from "../shared/documents";
+import type { PasteSourceRequest } from "../shared/paste";
 import type { PreferenceValues, Preferences } from "../shared/preferences";
 import type { CardPreview } from "../shared/card";
 import type { EmailNotices, NoticeKind } from "../shared/email-notices";
@@ -155,6 +156,12 @@ async function uploadSource(
   ), ["sourceId"]);
 }
 
+// As with uploads, the caller keeps one key for the retries of one Add text action; each new
+// action gets a new key, so an expired paste is never resent under its old key.
+async function pasteSource(body: PasteSourceRequest, requestKey: string = crypto.randomUUID()): Promise<{ sourceId: string }> {
+  return requireResponseFields(await request<{ sourceId: string }>("POST", "/api/sources/paste", body, requestKey), ["sourceId"]);
+}
+
 const versionQuery = (version?: number) =>
   version === undefined ? "" : `?version=${version}`;
 
@@ -184,6 +191,7 @@ export const api = {
     request<void>("POST", "/api/account/sign-out-everywhere"),
 
   uploadSource,
+  pasteSource,
   reviewView: () => request<{ sources: SourceView[]; roles: RoleView[]; facts: FactView[] }>("GET", "/api/v2/vault"),
   sources: () => request<{ sources: SourceView[] }>("GET", "/api/sources"),
   retryRun: (runId: string) =>
