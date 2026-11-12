@@ -30,6 +30,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Application kit and saved answers | Merged in #36. Adds a vault migration directly after suggested wording's | Matching by the judge is off and refused in production; it has not been run against the real judge. Submission and a queue across jobs are not built |
 | Redesign stage 1: the plain identity | `redesign/01-identity`, based on main at 78502c9. No migration | Stage 2 builds on it; server wording and deferred labels move with the room stages (`docs/redesign-words.md`) |
 | Redesign stage 2: the shell | `redesign/02-shell`, based on `redesign/01-identity`. No migration | Stages 3–7 build on it, each inside its own marked block, and replace their routes' screens |
+| Redesign stage 6: Sharing and Account | `redesign/06-sharing`, based on `redesign/02-shell`. No migration | Merges after stages 4 and 5; consent page, export, share and reminder sentences changed with their tests |
 
 The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments, suggested wording (two columns on the comments' table), saved answers and application kits (three tables), email notices (one table). Only that order is deployed.
 

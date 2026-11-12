@@ -85,17 +85,15 @@ HTML pages and emails always reach a person.
 
 **Proposed sentences** are fixed, in the voice, with the full new words. A proposal that says “private” ships with stage 4 or after it. None changes in stage 1.
 
+**Shipped.** Each room stage removes its rows below once it has changed them. Stage 6 (sharing and account) changed every sharing/account row: the share, export, checkout and suggestion messages, the consent page and the reminder email, with the archive's three sentences now constants in `src/render/archive.ts`. Its rows that needed no change (the comment and suggestion notices and the email footer) are gone too. The counts in section 4 are as they stood at `78502c9`.
+
 ### `AppError` messages
 
 | File:line at 78502c9 | Code | Current text | Proposed sentence | Room |
 | --- | --- | --- | --- | --- |
-| `src/vault/checkout.ts:174` | conflict | finish cancelling the pending checkout first | Cancel the checkout you started first, then try again. | sharing/account |
 | `src/vault/legacy-remediation.ts:39` | conflict | the checked line is missing its evidence | A checked line no longer shows where it came from. Check that line again. | jobs |
 | `src/vault/refinement-evidence.ts:15` | conflict | the resume or its supporting evidence changed; generate a new resume or choose different facts | The resume or the facts behind it changed. Tailor a new resume, or choose different facts. | jobs |
 | `src/vault/runs.ts:161` | quota | the output allowance for this period is exhausted | You’ve used all your documents for this period. More arrive when your allowance renews. | jobs |
-| `src/vault/shares.ts:133` | invalid | A fact marked sensitive can't be shared. Unmark it, or leave it out. | A fact you keep private can’t be shared. Leave it out, or stop keeping it private. | sharing/account |
-| `src/vault/shares.ts:219` | too_large | share snapshot is too large | This shared copy is too large. Choose fewer facts, resumes or documents, then try again. | sharing/account |
-| `src/vault/shares.ts:343` | too_large | share snapshot is too large | This shared copy is too large. Choose fewer facts, resumes or documents, then try again. | sharing/account |
 | `src/vault/snapshots.ts:68` | conflict | fact evidence is incomplete; generate the resume again | Where a fact came from is incomplete. Tailor the resume again. | jobs |
 | `src/vault/snapshots.ts:86` | conflict | role evidence is incomplete; generate the resume again | Where a role came from is incomplete. Tailor the resume again. | jobs |
 | `src/vault/snapshots.ts:186` | conflict | This version uses a fact you marked sensitive. Remove those lines or tailor a new version, then try again. | This version uses a fact you keep private. Remove those lines or tailor a new version, then try again. | jobs |
@@ -125,9 +123,6 @@ HTML pages and emails always reach a person.
 | `src/vault/vault.ts:3477` | conflict | the review section is missing or invalid | That section can’t be found in this version. Refresh the resume, then try again. | jobs |
 | `src/vault/vault.ts:3511` | conflict | only a review version can remove a skill | Only a version being checked line by line can remove a skill. | jobs |
 | `src/vault/vault.ts:3514` | conflict | the review skill is missing | That skill can’t be found in this version. Refresh the resume, then try again. | jobs |
-| `src/vault/vault.ts:4172` | invalid | select confirmed facts from your vault | Choose confirmed facts from your record. | sharing/account |
-| `src/vault/vault.ts:4201` | invalid | select finished cover letters or interview preparation from your vault | Choose finished cover letters or interview preparation from your record. | sharing/account |
-| `src/vault/vault.ts:4410` | conflict | A fact this resume cites has changed or is no longer in use, or the version is still being reviewed, so this wording can't be checked. Tailor a new version or finish the review, then accept again. | A fact this resume uses has changed or is no longer in use, or the version is still being checked line by line, so this wording can’t be checked. Tailor a new version or finish checking it, then accept again. | sharing/account |
 | `src/vault/vault.ts:4561` | not_found | no such application | This job can’t be found. It may have been deleted. | jobs |
 | `src/vault/vault.ts:4566` | conflict | the application changed; refresh and try again | This job changed. Refresh the page, then try again. | jobs |
 | `src/vault/vault.ts:4571` | invalid | enter the posting's web address, starting with https:// | Enter the job’s web address, starting with https://. | jobs |
@@ -136,16 +131,12 @@ HTML pages and emails always reach a person.
 | `src/vault/vault.ts:4673` | invalid | the resume is not ready for this application | This resume isn’t ready for this job yet. | jobs |
 | `src/vault/vault.ts:4696` | invalid | Choose facts that aren't marked sensitive. | Choose facts you don’t keep private. | jobs |
 | `src/vault/vault.ts:4700` | conflict | This version uses a fact you marked sensitive. Remove those lines or tailor a new version, then try again. | This version uses a fact you keep private. Remove those lines or tailor a new version, then try again. | jobs |
-| `src/vault/vault.ts:5171` | too_large | Your vault has too many files for one archive. Download the JSON and the original files one at a time. | Your record has too many files for one archive. Download the JSON and your files one at a time. | sharing/account |
-| `src/vault/vault.ts:5187` | too_large | Your vault is too large for one archive. Download the JSON and the original files one at a time. | Your record is too large for one archive. Download the JSON and your files one at a time. | sharing/account |
 | `src/vault/vault.ts:6358` | conflict | this source already has a newer run | This file is already being read again. | facts |
 | `src/vault/vault.ts:6368` | conflict | extraction is already committed for this source | This file has already been read. | facts |
 | `src/vault/vault.ts:6379` | conflict | wait for other uploads to finish | Wait for your other files to finish reading, then try again. | facts |
 | `src/vault/vault.ts:6914` | conflict | this source is no longer being read | This file is no longer being read. | facts |
 | `src/vault/vault.ts:6949` | not_found | no such source | This file can’t be found. It may have been deleted. | facts |
 | `src/vault/vault.ts:7010` | invalid | That role was rejected. Choose another role for this fact. | That role was left out. Choose another role for this fact. | facts |
-| `src/worker/routes.ts:1220` | conflict | An original file is missing from your vault. Download the JSON and the available files one at a time. | A file is missing from your record. Download the JSON and the files that are there one at a time. | sharing/account |
-| `src/worker/routes.ts:1223` | too_large | Your vault is too large for one archive. Download the JSON and the original files one at a time. | Your record is too large for one archive. Download the JSON and your files one at a time. | sharing/account |
 | `src/workflows/distill.ts:147` | conflict | The import source changed. Upload it again. | The file changed while it was being read. Upload it again. | facts |
 
 ### Messages held in constants
@@ -178,19 +169,12 @@ HTML pages and emails always reach a person.
 
 | Where | Current text | Proposed text | Room |
 | --- | --- | --- | --- |
-| `src/worker/mcp.ts:244` `consentPage` | The app can read your confirmed facts and finished resumes. Original uploads, evidence quotes, private application notes and facts you've marked sensitive are excluded. You can revoke access in Account. | The app can read your confirmed facts and finished resumes. Your files, the words your facts came from, your notes on jobs and the facts you keep private are left out. You can turn off its access under Account. | sharing/account, with or after stage 4 |
-| `src/worker/mcp.ts:244` `consentPage` | Read confirmed facts and finished resumes | Read your confirmed facts and finished resumes | sharing/account |
-| `src/worker/mcp.ts:235` `consentPage` | Generate resumes using my plan quota, and check my fit for the saved jobs it can see | Tailor resumes, counted as documents in my plan, and check my fit for the saved jobs it can see | sharing/account |
 | `src/worker/mcp.ts:280` the connect sign-in page | Sign in to connect an app; Continue with Google | No earlier word. It takes the plain identity's lockup and type with the sign-in sheet. | outside |
 
 ### Email
 
 | Where | Current text | Proposed text | Room |
 | --- | --- | --- | --- |
-| `src/shared/email-notices.ts:79` `noticeMessage`, subject | Facts are waiting for your review in Resumatic | Facts are waiting for you to check in Resumatic | sharing/account |
-| `src/shared/email-notices.ts:80` `noticeMessage`, body | Some facts Resumatic read for you have been waiting for your review for 3 days or more. Sign in to review them: … | Some facts Resumatic found for you have been waiting for you to check them for 3 days or more. Sign in to check them: … | sharing/account |
-| `src/shared/email-notices.ts:69–75` `noticeMessage`, the comment and suggestion notices | A coach has left a new comment on a copy you shared. / A coach has suggested new wording for a line in a copy you shared. | No earlier word. | sharing/account |
-| `src/shared/email-notices.ts:62` `FOOTER` | You get this email because you turned on email notices in Resumatic. To stop them, turn them off under Account. | No earlier word. | sharing/account |
 | `docs/beta/invite-email.md`, step 2 | Resumatic reads it and proposes roles and facts, each shown next to the exact words it came from. | Resumatic reads it and finds roles and facts for you to check, each shown next to the exact words it came from. | outside |
 | `docs/beta/invite-email.md`, step 3 | Confirm the facts that are true, edit the ones that are nearly right, and reject the rest. | Say “That’s right” to the facts that are true, fix the ones that are nearly right, and leave out the rest. | outside |
 | `docs/beta/invite-email.md`, step 4 | … and lists the job's requirements your facts don't cover. | … and lists what the job asks for that your record doesn’t show. | outside |
@@ -207,7 +191,7 @@ The 217 candidates, each counted once:
 
 | Where | Sites |
 | --- | --- |
-| The `AppError` table above | 58 |
+| The `AppError` table above, at `78502c9` | 58 |
 | The throw sites of the constants table (`src/vault/vault.ts:1010, 1122, 1138, 1142, 1143, 1197, 1218, 1378`, `src/worker/routes.ts:1512`) | 9 |
 | The term in another sense only (below) | 29 |
 | Never shown to a person (below) | 121 |
