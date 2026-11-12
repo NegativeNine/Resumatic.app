@@ -76,6 +76,8 @@ describe("a coach commenting on a client's copy", () => {
     const { api } = open(joined());
     expect(await screen.findByText(/^Shared with you until \d+ Nov 2026\. You can comment\. Only Sam Rivera can change it\.$/)).toBeInTheDocument();
     // The mark comes first, then what the reader can do, then the way back to their list.
+    // A fixed copy is neither backed nor go, so its mark is a neutral note.
+    expect(screen.getByText("Fixed copy")).toHaveClass("rs-mark--note");
     expect(screen.getByText("Fixed copy").parentElement!.textContent).toMatch(/^Fixed copy Shared with you until \d+ Nov 2026\. You can comment\. Only Sam Rivera can change it\. Open your clients$/);
     expect(screen.getByRole("link", { name: "Open your clients" })).toHaveAttribute("href", "/#/coaching/clients");
     expect(await screen.findByText("No comments yet.")).toBeInTheDocument();
@@ -595,7 +597,7 @@ describe("an owner reading what their coach wrote", () => {
     expect(unnamed.getByRole("textbox", { name: "Reply to dana@example.test" })).toBeInTheDocument();
     const fact = within(thread(LED));
     expect(fact.getByText("From dana@example.test, on a fact you shared.")).toBeInTheDocument();
-    expect(fact.getByRole("link", { name: "Open Facts" })).toHaveAttribute("href", "#/facts/check");
+    expect(fact.getByRole("link", { name: "Open All facts" })).toHaveAttribute("href", "#/facts/all");
     expect(await violations()).toEqual([]);
   });
 

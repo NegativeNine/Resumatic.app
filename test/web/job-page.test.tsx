@@ -282,6 +282,9 @@ describe("Fit", () => {
     await waitFor(() => expect(within(fit).getByRole("button", { name: "Retry fit preview" })).toBeEnabled());
     await userEvent.click(within(fit).getByRole("button", { name: "Retry fit preview" }));
     await waitFor(() => expect(api.callsTo("POST", /^\/api\/runs\/run-fit\/retry$/)).toHaveLength(1));
+    // The retry started: the new run shows with its Cancel, and nothing says it was refused.
+    expect(await within(fit).findByRole("button", { name: "Cancel this document" })).toBeInTheDocument();
+    expect(within(fit).queryByRole("alert")).toBeNull();
   });
 });
 
@@ -345,6 +348,9 @@ describe("Cover letter and Interview", () => {
     await waitFor(() => expect(retry).toBeEnabled());
     await userEvent.click(retry);
     await waitFor(() => expect(api.callsTo("POST", /^\/api\/runs\/run-prep\/retry$/)).toHaveLength(1));
+    // The retry started: the new run shows with its Cancel, and nothing says it was refused.
+    expect(await screen.findByRole("button", { name: "Cancel this document" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("won’t start a counted document when the allowance is used, and says why", async () => {

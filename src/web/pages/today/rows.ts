@@ -232,8 +232,10 @@ export function knownEvents(today: Today): TodayEvent[] {
 export function eventSentence(event: TodayEvent): string {
   switch (event.kind) {
     case "copyOpened": {
+      // Anyone holding the link may have opened it, and the copy promises its reader that the owner
+      // can't see who did, so the sentence names the copy, never a reader.
       const coach = coachLabel(event);
-      if (coach) return `${coach} opened the copy you shared.`;
+      if (coach) return `The copy you shared with ${coach} was opened.`;
       const label = event.label?.trim();
       return label ? `The copy you shared as “${label}” was opened.` : "A copy you shared was opened.";
     }

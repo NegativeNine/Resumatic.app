@@ -6,6 +6,7 @@ import type { FactView, ResumeLine, ResumeView, RoleView } from "../../src/share
 import type { KitView } from "../../src/shared/kit";
 import { countByState } from "../../src/shared/review-groups";
 import type { ShareComment, ShareGrant, ShareTarget } from "../../src/shared/sharing";
+import type { McpGrant } from "../../src/shared/mcp";
 import { emptyStanding, MAX_TODAY_RECENT, TODAY_RECENT_MS, type Today, type TodayWaiting } from "../../src/shared/today";
 import { vault } from "../../src/shared/stubs";
 import { Vault } from "../../src/vault/vault";
@@ -540,6 +541,39 @@ describe("where things stand", () => {
     // The grant's row is unchanged, but its generation can no longer reach the vault, so none is counted.
     const apps = await runInDurableObject(vaultOf(sam), async (instance) => (await instance.today({ ...whoOf(sam), gen: gen + 1 })).standing?.apps);
     expect(apps).toBe(0);
+  });
+
+  it("lists a connected app that signing out everywhere ended as ended, so Sharing agrees with Today", async () => {
+    const sam = await signIn();
+    const now = Date.now();
+    const { gen, epoch = "legacy" } = whoOf(sam);
+    const id = crypto.randomUUID();
+    const other = crypto.randomUUID();
+    const insert = (grantId: string, at: { epoch: string; gen: number }) =>
+      sql(sam, (db) =>
+        db.exec(
+          `INSERT INTO mcp_grants (id, client_id, client_name, scopes, epoch, gen, created_at, expires_at, revoked_at, oauth_grant_id, state) VALUES (?, 'https://client.test/app', 'A client', '["vault:read"]', ?, ?, ?, ?, NULL, ?, 'active')`,
+          grantId, at.epoch, at.gen, now, now + DAY, `remote_${grantId}`,
+        ),
+      );
+    await insert(id, { epoch, gen });
+    // A grant from another epoch, as a vault move leaves one, is refused too.
+    await insert(other, { epoch: "an-earlier-epoch", gen });
+    const before = await sam.fetch("/api/mcp/grants");
+    expect(before.status).toBe(200);
+    const states = Object.fromEntries(((await before.json()) as { grants: McpGrant[] }).grants.map((grant) => [grant.id, grant.state]));
+    expect(states).toEqual({ [id]: "active", [other]: "revoked" });
+    expect((await today(sam)).today.standing?.apps).toBe(1);
+    expect((await sam.send("POST", "/api/account/sign-out-everywhere", {})).status).toBe(204);
+    // The row is unchanged, but the access check refuses its generation, so the list says it ended.
+    const after = await runInDurableObject(vaultOf(sam), async (instance) => {
+      const who = { ...whoOf(sam), gen: gen + 1 };
+      const grants = await instance.listMcpGrants(who);
+      return { states: Object.fromEntries(grants.map((grant) => [grant.id, grant.state])), apps: (await instance.today(who)).standing?.apps };
+    });
+    expect(after).toEqual({ states: { [id]: "revoked", [other]: "revoked" }, apps: 0 });
+    const row = await sql(sam, (db) => db.exec<{ state: string; gen: number }>(`SELECT state, gen FROM mcp_grants WHERE id = ?`, id).one());
+    expect(row).toEqual({ state: "active", gen });
   });
 
   it("holds only numbers in standing", async () => {

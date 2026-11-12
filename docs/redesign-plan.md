@@ -145,16 +145,16 @@ Decisions, each with the alternative rejected:
 4. **Unknown kinds are filtered, not counted out.** The lede and the list's count keep `counts.today`, so they agree with the header, and the closing line names Facts, Jobs and Sharing, so it is true whichever kind is hidden. The quiet line depends on `counts.today === 0`, never on no known item. Counting only known kinds (the page would disagree with the header) and a closing line naming only Jobs and Sharing (false for a hidden kind outside them) were rejected.
 5. **Caught up is a quiet line with no button**, as the brief says. `rs-next--clear` with "Add a job" was rejected.
 6. **The page reads the shell's Today.** Its own `useResource(api.today)` (a doubled read, and the page and header could disagree) and drawing the error in place of the page (the shell polls every 2 s while work runs, so one dropped request would wipe the next step and the focused sentence) were rejected.
-7. **The header keeps stage 2's rule:** no count from a failed Today. The first-row count falls back to the session's `newFromCoach`. Zero (a coach's comment left uncounted) and counting from the last good Today (a stale number shown as current) were rejected.
+7. **The header keeps stage 2's rule:** no count from a failed Today. The first-row count falls back to the session's `newFromCoach`. Zero (a coach's comment left uncounted) and counting from the last good Today (a stale number shown as current) were rejected. *Changed where the stages meet:* the header and tabs now count from the last good Today, as this page does; see below.
 8. **First run reuses `AddSource`.** The uploader alone with a link to paste on Facts was rejected: it leaves the page.
-9. **Comments and suggestions link to Coaches**, where the owner's comments and the tab count are. The job's resume page was rejected: suggestions aren't answered there.
+9. **Comments and suggestions link to Coaches**, where the owner's comments and the tab count are. The job's resume page was rejected: suggestions aren't answered there. (Since stage 5, a resume's line card also shows a coach's suggestion with Accept and check; Coaches is still where all of them are.)
 10. **Copies count as shared when neither revoked nor expired.** Running the delivery check on every refresh was rejected: the words claim nothing about whether a copy can be read.
 11. **The board's words are corrected.** "By email" names its three kinds, because "when something joins this list" is false for kits and unreadable files; "for marketing" matches the privacy notice; "every line checked" replaces "every line backed".
 12. **"from {coach}", not a possessive**, because a coach may be shown by an address.
 13. **The phone layout is CSS only:** the columns wrap, with the next step first in the DOM. The board's "2 more" collapse was rejected.
 14. **Export, don't copy:** `STEPS` from `TailorProgress.tsx` and `chosenName` from `ShareComments.tsx`.
 15. **The web fake works out `standing` from its own record** when a test sets no `today`. Upload and paste routes writing a Today were rejected: they cover only those two paths and duplicate state.
-16. **A connected app counts only while its grant can still reach the vault:** active, not revoked or expired, and made in the vault's current security epoch and session generation, which is what the grant check itself requires. Signing out everywhere changes no grant row, so counting every active row was rejected: Today would name apps that can no longer read anything. The Connected apps list on Account still shows such a grant as active; that is older than this stage and is left to stage 6.
+16. **A connected app counts only while its grant can still reach the vault:** active, not revoked or expired, and made in the vault's current security epoch and session generation, which is what the grant check itself requires. Signing out everywhere changes no grant row, so counting every active row was rejected: Today would name apps that can no longer read anything. The Connected apps list on Account still shows such a grant as active; that is older than this stage and is left to stage 6. *Done where the stages meet:* the list now applies the same rule; see below.
 
 Open questions for the owner, each built as stated:
 
@@ -190,7 +190,7 @@ Decisions, each with the alternative rejected:
 6. **File counts are raw records,** the IDs Confirm all sends. Grouped counts, which would not match what is sent, were rejected.
 7. **Highlights are placed only on verified spans** (`validSpan`). Searching for the quote text (it can match the wrong line), and colour alone, were rejected.
 8. **The phone toggle is CSS only.** A `matchMedia` hook (a second render path) and a sticky bar (a second fixed bar above stage 2's) were rejected.
-9. **First run stays on To check, with the queue under the dropzone.** Sign-in lands there, and the smoke test uploads and checks there. Sending a new person to Your files was rejected.
+9. **First run stays on To check, with the queue under the dropzone.** The smoke test uploads and checks there. (Sign-in lands on Today once stage 3 merges, since `TODAY_OPEN` is true; Today's first run links on to Facts.) Sending a new person to Your files was rejected.
 10. **All facts changes `Review` in place, and the add controls stay inside it.** AddFact and AddRole in the page head, which would need a hook into Review's filter, and a `filters` prop with one caller, were rejected.
 11. **One Attest link per page.** A link per fact was rejected, because the route takes no fact.
 12. **Skills shows only usable facts.** Taxonomy tags, which owners haven't confirmed, were rejected.
@@ -223,7 +223,7 @@ Decisions, each with the alternative rejected:
 3. **A line's card is a sibling of the marks' list, not a member.** `useMarginLayout` takes the stack and the card's selector and places the card as one more item right after its line's mark, so the marks below move down to clear it and nothing hides a focused mark. A `<div>` or role-bearing item inside the list (which fails axe's `list` and `aria-allowed-role` rules) and floating the card over the marks were rejected. Below 860px the card is a non-modal sheet from the bottom.
 4. **One brand button per tab outside forms, with named demotions:** Check your fit or Check again; on Resume one of Download PDF, Tailor again or Tailor a resume; Write a cover letter; Prepare for an interview; Approve kit. Tailor a new version, Create checked version, Save tracking details, the kit's Save questions and Use this answer, and the line card's Accept and check are plain (`OwnerSuggestion` takes `emphasis`, so Account is unchanged). Exceptions written into the test were rejected.
 
-The room's rules are in `src/web/styles/rooms/jobs.css` under new class names, and `app.css` is untouched. These `app.css` rules are no longer used, and go once stage 7 merges: `.app-notes*`, `.app-check-strip*`, `.app-legend` and the `.application-workspace` layout.
+The room's rules are in `src/web/styles/rooms/jobs.css` under new class names, and `app.css` is untouched. These `app.css` rules are no longer used: `.app-notes*`, `.app-check-strip*` and `.app-legend`. They are still in `app.css` after stage 7 merged, with stage 4's unused `.facts-layout`, `.facts-rail` and `.facts-main`, and go in a later clean-up.
 
 Open questions for the owner, each built as stated:
 
@@ -338,6 +338,19 @@ Open questions for the owner, each built as stated:
 3. If production turns on `MCP_ENABLED`, should the "general assistant" comparison row return?
 4. Coach-comment and review emails link to `/`, so a signed-out reader lands on the landing page. Should stage 6 link them to `/#/sign-in`?
 5. Plans and testimonials stay off the landing page until prices, the 30-day pass and a consented quote exist. Is that right?
+
+### Where the stages meet
+
+A review of the merged branch found places where one stage's work contradicted another's. Each is fixed in the code, with a test:
+
+- **Sign-in lands on Today**, not To check: `TODAY_OPEN` is true, and `#/sign-in` is an alias of `href.home`.
+- **Links to Facts open the tab their words name.** `href.facts` is To check. Files go to Your files (`href.files`), and confirmed facts, a coach's comment on a shared fact and adding a fact go to All facts (`href.factsAll`).
+- **The header and tabs count from the last good Today.** After a failed read the Today page keeps its last counts with Try again, so the header, the second-row tabs and Your jobs' kit marks keep them too. This replaces stage 3's decision 7.
+- **Connected apps follow the access check.** `McpGrantStore.list` reports a grant from an earlier security epoch or session generation as revoked, so after Sign out everywhere Sharing says no app is connected, as Today does. The row itself is unchanged.
+- **Today names the copy, not its reader.** Anyone with the link may open a copy, and the copy promises that the owner can't see who did, so the event reads "The copy you shared with {coach} was opened."
+- **A kit answer waiting for you is amber.** A matched answer not yet checked reads "Check this answer" (`needs-you`); only a checked one is a green "Saved answer"; a match the list now refuses reads "Asked every time" (`note`).
+- **The shared copy's "Fixed copy" mark is a neutral note**, as the coach copy page marks the same state.
+- **Suggestions can also be answered on a resume's line card** (stage 5), beside Coaches.
 
 ---
 

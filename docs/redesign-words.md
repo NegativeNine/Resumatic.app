@@ -49,8 +49,7 @@ Server messages, stored messages (shown through `sourceErrorMessage`, `resumeErr
 
 The interface's own labels that keep an earlier word, each with the stage that renames it. `test/web/words.test.tsx` fails if a label on Facts, Jobs, a resume, Account, Sharing or a shared copy uses one of these words and isn't listed in its `DEFERRED`, and it fails if an entry there isn't listed here.
 
-| Label | Where | Stage |
-| --- | --- | --- |
+Every label once listed here has been renamed by its stage, so the list, and `DEFERRED`, are empty.
 
 Sentences that hold one of these words and none of stage 1's five nouns are unchanged as well, such as the sensitive notices on a resume. Their room's stage changes them with the labels. Stage 5 renamed the Jobs room's labels and the posting reader's messages, and took its rows out of this list.
 
@@ -78,13 +77,11 @@ No server message is assigned to Today. Its first run shows the facts room’s u
 
 ### `AppError` messages
 
-| File:line at 78502c9 | Code | Current text | Proposed sentence | Room |
-| --- | --- | --- | --- | --- |
+Every row is done: stages 4, 5 and 6 changed each message once listed here and took its row out.
 
 ### Messages held in constants
 
-| Defined and thrown | Code | Current text | Proposed sentence | Room |
-| --- | --- | --- | --- | --- |
+Every row is done: the stage of each message's room changed it and took its row out.
 
 ### `/share`'s gone sentence
 
@@ -128,7 +125,7 @@ Stage 7 changed every row marked outside: steps 2 to 5, “Your data” and “D
 
 ## 4. Not shown to people, and why
 
-**How this was counted.** Every `new AppError(code, message)` call site at 78502c9 in `src/worker`, `src/vault`, `src/shared`, `src/workflows`, `src/pipeline` and `src/ai`, tests left out: 814 sites. A site's message is read from its literal, or from the constant it names (both branches where it chooses between two); values interpolated into it are not read. A site is a candidate when its message holds one of the terms above as a whole word, taking “document”, “upload” and “review” in any sense: 217 sites. Two more sites, `src/vault/vault.ts:1201` and `1222`, throw a sentence looked up from `KIT_PROBLEMS`; they are listed under messages held in constants and are not in these counts.
+**How this was counted.** Every `new AppError(code, message)` call site at 78502c9 in `src/worker`, `src/vault`, `src/shared`, `src/workflows`, `src/pipeline` and `src/ai`, tests left out: 814 sites. A site's message is read from its literal, or from the constant it names (both branches where it chooses between two); values interpolated into it are not read. A site is a candidate when its message holds one of the terms above as a whole word, taking “document”, “upload” and “review” in any sense: 217 sites. Two more sites, `src/vault/vault.ts:1201` and `1222`, throw a sentence looked up from `KIT_PROBLEMS`; they were listed under messages held in constants and are not in these counts.
 
 The 217 candidates, each counted once:
 

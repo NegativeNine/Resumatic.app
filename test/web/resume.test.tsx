@@ -435,6 +435,8 @@ describe("the margin", () => {
     )).toBeInTheDocument();
     expect(within(panel).getAllByRole("button", { name: /^Add a fact for/ })).toHaveLength(2);
     expect(within(panel).getByText(/Resumatic never fills in what’s missing by itself\./)).toBeInTheDocument();
+    // Adding a fact is on All facts; To check has no form for it.
+    expect(within(panel).getByRole("link", { name: "add it under Facts › All facts" })).toHaveAttribute("href", "#/facts/all");
     // After the sheet, beside it.
     expect(sheet().compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // Nothing listed is said plainly, without claiming more.
@@ -460,7 +462,7 @@ describe("the margin", () => {
 
 describe("a version that uses a fact kept private", () => {
   const NOTICE =
-    "This version uses a fact you keep private, or was checked against the line of an upload one was read from, so it can’t be downloaded or shared, and connected apps can’t read it.";
+    "This version uses a fact you keep private, or was checked against a line in the file one was read from, so it can’t be downloaded or shared, and connected apps can’t read it.";
   /** The fixture resume as the server sends it once one cited fact and one printed skill are marked. */
   function marked(): Fixtures {
     const state = fixtures();
@@ -567,6 +569,22 @@ describe("a version that uses a fact kept private", () => {
     await userEvent.click(mark("line-migration"));
     expect(within(card()!).getByRole("button", { name: "Review line" })).toBeVisible();
     expect(within(card()!).getByRole("button", { name: "Remove line (keeps earlier versions)" })).toBeVisible();
+  });
+
+  it("sends an older version’s unmatched headings to the confirmed facts, and a blocked one’s review says shared copies", async () => {
+    const state = fixtures();
+    const resume = state.resumes["res-ready"]!;
+    resume.provenance = "legacy";
+    resume.legacyReview = { verifiedLineIds: [], totalLines: 7, headersReady: false, skillsReady: true };
+    await openResume(state);
+    const note = await screen.findByText(/Some headings don’t match confirmed roles\./);
+    expect(within(note).getByRole("link", { name: "Facts › All facts" })).toHaveAttribute("href", "#/facts/all");
+    cleanup();
+    const blocked = fixtures();
+    Object.assign(blocked.resumes["res-ready"]!, { provenance: "snapshot", needsGroundingReview: true });
+    await openResume(blocked);
+    const card = await screen.findByRole("region", { name: "Review blocked resume" });
+    expect(card).toHaveTextContent("Your existing versions and shared copies remain in your data;");
   });
 
   it("doesn’t offer a marked fact as evidence for a line", async () => {
@@ -686,6 +704,9 @@ describe("the resumes for a job", () => {
     await waitFor(() => expect(within(refine).getByRole("button", { name: "Retry resume refinement" })).toBeEnabled());
     await userEvent.click(within(refine).getByRole("button", { name: "Retry resume refinement" }));
     await waitFor(() => expect(api.callsTo("POST", /^\/api\/runs\/run-refine\/retry$/)).toHaveLength(1));
+    // The retry started: the new run shows with its Cancel, and nothing says it was refused.
+    expect(await within(refine).findByRole("button", { name: "Cancel this document" })).toBeInTheDocument();
+    expect(within(refine).queryByRole("alert")).toBeNull();
     // A finished check is the resume's new version, not a card here.
     expect(within(refine).queryByText("Read resume refinement")).toBeNull();
   });
@@ -727,6 +748,8 @@ describe("the resumes for a job", () => {
     await waitFor(() => expect(within(refine).getByRole("button", { name: "Retry resume refinement" })).toBeEnabled());
     await userEvent.click(within(refine).getByRole("button", { name: "Retry resume refinement" }));
     await waitFor(() => expect(api.callsTo("POST", /^\/api\/runs\/run-refine\/retry$/)).toHaveLength(1));
+    expect(await within(refine).findByRole("button", { name: "Cancel this document" })).toBeInTheDocument();
+    expect(within(refine).queryByRole("alert")).toBeNull();
     shown.unmount();
   });
 

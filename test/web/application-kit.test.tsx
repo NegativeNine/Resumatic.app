@@ -66,9 +66,10 @@ describe("a job's kit", () => {
     for (const words of ["What is your notice period?", "Portfolio link", "Why do you want to work at Litware?", "Will you now or in the future require visa sponsorship?"])
       expect(item(words)).toBeInstanceOf(HTMLLIElement);
 
-    // Matched by the judge, not yet checked.
+    // Matched by the judge, not yet checked: waiting for you, as Today and Your jobs count it.
     const notice = item("What is your notice period?");
-    expect(within(notice).getByText("Saved answer")).toBeInTheDocument();
+    expect(within(notice).getByText("Check this answer")).toHaveClass("rs-mark--needs-you");
+    expect(within(notice).queryByText("Saved answer")).toBeNull();
     expect(within(notice).getByText("Matched to your saved answer “Notice period”.")).toBeInTheDocument();
     expect(within(notice).getByText("Four weeks, from the day I accept an offer.")).toBeInTheDocument();
     expect(within(notice).getByText("Suggested from your answers’ labels. Check that it fits.")).toBeInTheDocument();
@@ -77,6 +78,7 @@ describe("a job's kit", () => {
     expect(within(notice).getByRole("button", { name: "Not this one" })).toBeEnabled();
     // Matched by its label, and checked.
     const portfolio = item("Portfolio link");
+    expect(within(portfolio).getByText("Saved answer")).toHaveClass("rs-mark--backed");
     expect(within(portfolio).getByText("You’ve checked this answer.")).toBeInTheDocument();
     expect(within(portfolio).queryByText("Suggested from your answers’ labels. Check that it fits.")).toBeNull();
     expect(within(portfolio).queryByRole("button", { name: "Use this answer" })).toBeNull();
@@ -117,6 +119,27 @@ describe("a job's kit", () => {
         "This question asks about something answers are never saved for: work authorisation, pay or personal details. Answers to questions like this are never saved or matched. Type your answer for this job only.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("shows a question matched to an answer the list now refuses as asked every time, never as a saved answer", async () => {
+    openKit((state) => {
+      const kit = state.kits![JOB]!;
+      const notice = kit.questions[0]!;
+      notice.savedAnswer = { ...notice.savedAnswer!, refusedKind: "pay" };
+      kit.problems = [{ code: "refused_kind", questionIds: [notice.id] }, { code: "unanswered", questionIds: ["kq-why"] }];
+    });
+    await screen.findByRole("button", { name: "Approve kit" });
+    const notice = item("What is your notice period?");
+    expect(within(notice).getByText("Asked every time")).toHaveClass("rs-mark--note");
+    expect(within(notice).queryByText("Saved answer")).toBeNull();
+    expect(within(notice).queryByText("Check this answer")).toBeNull();
+    expect(within(notice).queryByText(/^Matched to your saved answer/)).toBeNull();
+    expect(
+      within(notice).getByText("Answers to questions like this are never saved or matched. Choose “Not this one”, then type your answer for this job only."),
+    ).toBeInTheDocument();
+    // Using it would be refused, so it isn't offered; letting it go is.
+    expect(within(notice).queryByRole("button", { name: "Use this answer" })).toBeNull();
+    expect(within(notice).getByRole("button", { name: "Not this one" })).toBeEnabled();
   });
 
   it("enables approval once every question is answered, approves, and offers the download", async () => {

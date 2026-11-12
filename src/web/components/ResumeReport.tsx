@@ -55,7 +55,7 @@ export function GapsCard({ gaps, applicationId, readOnly = false }: { gaps: stri
           </ul>
           <p className="rs-meta app-gaps-note">
             Resumatic never fills in what’s missing by itself. If you have this experience, add it as a fact, then
-            tailor a new version. You can also <a href={href.facts}>add it under Facts</a>.
+            tailor a new version. You can also <a href={href.factsAll}>add it under Facts › All facts</a>.
           </p>
         </>
       )}

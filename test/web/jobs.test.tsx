@@ -52,6 +52,8 @@ describe("Your jobs", () => {
     expect(within(unnamed).queryByRole("link", { name: /^Latest resume/ })).toBeNull();
     // No workspace opens on the list any more.
     expect(screen.queryByRole("button", { name: /Track and prepare|Close workspace/ })).toBeNull();
+    // The lede’s confirmed facts are on All facts, not To check.
+    expect(screen.getByRole("link", { name: "Facts" })).toHaveAttribute("href", "#/facts/all");
   });
 
   it("shows no fit on the list and keeps every job, newest first", async () => {

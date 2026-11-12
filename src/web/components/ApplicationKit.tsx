@@ -342,9 +342,24 @@ function QuestionAnswer({ question, view, action, write, saved }: PartProps & { 
 
   if (question.state === "matched") {
     const match = question.savedAnswer;
+    // The vault counts a match it now refuses, and one not yet checked, as waiting: Today and Your
+    // jobs mark them so, and only a checked answer is marked as backed.
+    const refused = !!match?.refusedKind || view.problems.some((problem) => problem.code === "refused_kind" && problem.questionIds?.includes(question.id));
+    if (refused)
+      return (
+        <div className="app-kit__answer">
+          <Badge tone="note">Asked every time</Badge>
+          <p>Answers to questions like this are never saved or matched. Choose “Not this one”, then type your answer for this job only.</p>
+          <div className="actions">
+            <button type="button" className="small" disabled={action.pending} onClick={() => void send({ kind: "reject" })}>
+              Not this one
+            </button>
+          </div>
+        </div>
+      );
     return (
       <div className="app-kit__answer">
-        <Badge tone="backed">Saved answer</Badge>
+        {question.confirmed ? <Badge tone="backed">Saved answer</Badge> : <Badge tone="needs-you">Check this answer</Badge>}
         {match && (
           <>
             <p>Matched to your saved answer “{match.label}”.</p>

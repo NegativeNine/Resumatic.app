@@ -166,14 +166,21 @@ export class McpGrantStore {
     return { userId: claims.uid, gen: claims.gen, epoch: claims.epoch } as Who;
   }
 
+  /**
+   * The owner's grants. One made in an earlier security epoch or session generation is listed as
+   * revoked: `checked` refuses it, and `activeCount` doesn't count it, so the list says the same as
+   * Today. Its row is unchanged, and revoking it still clears its credentials.
+   * `authorizeOwner` has just confirmed that `who.gen` is the current generation.
+   */
   list(who: Who): McpGrant[] {
     this.auth.authorizeOwner(who);
+    const epoch = this.auth.currentEpoch();
     return this.sql
       .exec<GrantRow>(
         `SELECT * FROM mcp_grants ORDER BY created_at DESC LIMIT 200`,
       )
       .toArray()
-      .map(view);
+      .map((row): McpGrant => (row.epoch === epoch && row.gen === who.gen ? view(row) : { ...view(row), state: "revoked" }));
   }
 
   revoke(

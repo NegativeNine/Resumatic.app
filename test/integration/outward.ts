@@ -39,7 +39,7 @@ export interface OutwardGiven {
 
 /** One thing sent out, and where it went. */
 export interface OutwardPart {
-  surface: "copy by its link" | "copy as its coach" | "coach's client list" | "coach's comments" | "list_facts" | "search_facts" | "list_jobs" | "get_resume" | "preview_fit" | "PDF" | "Word" | "print preview" | "application kit" | "model input" | "card preview" | "email notice";
+  surface: "copy by its link" | "copy as its coach" | "copy in the coach's app" | "coach's client list" | "coach's comments" | "list_facts" | "search_facts" | "list_jobs" | "get_resume" | "preview_fit" | "PDF" | "Word" | "print preview" | "application kit" | "model input" | "card preview" | "email notice";
   text: string;
 }
 
@@ -71,7 +71,8 @@ export async function outwardParts({ owner, copies, inputs, notices = [] }: Outw
   const parts: OutwardPart[] = [];
   const add = (surface: OutwardPart["surface"], text: string) => parts.push({ surface, text });
 
-  // Each copy, as anyone with its link reads it and as the coach it names reads it.
+  // Each copy, as anyone with its link reads it and as the coach it names reads it, by the link and
+  // in their own app.
   for (const copy of copies) {
     const exchange = await call("/share/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: copy.token }) });
     const link = exchange.status === 200 ? cookieFrom(exchange, `__Host-share-${copy.grant.id}`) : null;
@@ -92,6 +93,9 @@ export async function outwardParts({ owner, copies, inputs, notices = [] }: Outw
       const read = await call(`/share/snapshot?g=${copy.grant.id}`, { cookie: jar(link, copy.coach.cookie) });
       if (read.status === 200) add("copy as its coach", await read.text());
     }
+    // The copy as the coach's own pages read it, from their session alone, with no link or cookie.
+    const inApp = await copy.coach.fetch(`/api/coach/clients/${copy.grant.id}/copy`);
+    if (inApp.status === 200) add("copy in the coach's app", await inApp.text());
     // What the coach wrote on the copy, suggested wording included, with the owner's replies and
     // where each suggestion stands, as the coach's page reads them.
     const comments = await copy.coach.fetch(`/api/coach/clients/${copy.grant.id}/comments`);

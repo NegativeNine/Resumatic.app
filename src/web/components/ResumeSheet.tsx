@@ -179,7 +179,7 @@ export function ResumeSheet({
         )}
         {sensitive && (
           <p className="notice" role="status">
-            This version uses a fact you keep private, or was checked against the line of an upload one was
+            This version uses a fact you keep private, or was checked against a line in the file one was
             read from, so it can’t be downloaded or shared, and connected apps can’t read it.{" "}
             {readOnly
               ? "Your text is still here. Select Latest to change it."
@@ -189,7 +189,7 @@ export function ResumeSheet({
         {!readOnly && needsEvidence && resume.provenance === "snapshot" && resume.needsGroundingReview && (
           <section className="card" aria-label="Review blocked resume">
             <h2>Review this resume</h2>
-            <p>Start a new review version, then check each line against confirmed facts. The review becomes your latest version and cannot be downloaded until all checks pass. Your existing versions and share snapshots remain in your data; links to versions needing review are unavailable.</p>
+            <p>Start a new review version, then check each line against confirmed facts. The review becomes your latest version and cannot be downloaded until all checks pass. Your existing versions and shared copies remain in your data; links to versions needing review are unavailable.</p>
             <button type="button" disabled={finalization.pending}
               onClick={() => void finalization.run(async () => {
                 await api.beginResumeReview(resume.id, resume.version);
@@ -211,7 +211,7 @@ export function ResumeSheet({
                   : !review.headersReady
                     ? "Some headings don’t match confirmed roles."
                     : "Some skills don’t match confirmed facts."}{" "}
-                Review your confirmed experience in <a href={href.facts}>Facts</a>, then return and refresh this page.
+                Review your confirmed experience in <a href={href.factsAll}>Facts › All facts</a>, then return and refresh this page.
                 You can also remove a section or skill from this review version below.
               </p>
             )}

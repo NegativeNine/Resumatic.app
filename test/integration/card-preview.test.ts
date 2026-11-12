@@ -255,7 +255,7 @@ describe("the card preview", () => {
     const copy = { grant, token: new URL(url).hash.slice(1), coach };
     const parts = await outwardParts({ owner: sam, copies: [copy], inputs: [] });
     // The copy was read by its link and by its coach: the canary isn't looking at nothing.
-    expect(parts.map((part) => part.surface)).toEqual(expect.arrayContaining(["copy by its link", "copy as its coach", "coach's client list", "card preview"]));
+    expect(parts.map((part) => part.surface)).toEqual(expect.arrayContaining(["copy by its link", "copy as its coach", "copy in the coach's app", "coach's client list", "card preview"]));
     // The owner's groups are on the owner's card and nowhere else.
     for (const label of [RESOURCES.label, ORCHESTRATION.label, DEVELOPER.label])
       expect(parts.filter((part) => part.text.includes(label)).map((part) => part.surface), label).toEqual(["card preview"]);

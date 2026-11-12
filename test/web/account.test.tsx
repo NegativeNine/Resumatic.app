@@ -97,8 +97,10 @@ describe("Account", () => {
     );
     expect(within(rows[0] as HTMLElement).getByRole("link", { name: "Download your record and files (ZIP)" })).toHaveAttribute("download");
     expect(rows[1]).toHaveTextContent(
-      "One JSON file. For a larger record, download this and the individual files from Facts while your account is active.",
+      "One JSON file. For a larger record, download this and the individual files from Facts › Your files while your account is active.",
     );
+    // The individual files are listed with their downloads on Your files, not on To check.
+    expect(within(rows[1] as HTMLElement).getByRole("link", { name: "Facts › Your files" })).toHaveAttribute("href", "#/facts/files");
     expect(within(rows[1] as HTMLElement).getByRole("link", { name: "Download your record (JSON)" })).toHaveAttribute("download");
     // Where the record is kept can't be chosen yet, and says so in the privacy notice's words.
     const region = screen.getByRole("region", { name: "Where your record is kept" });

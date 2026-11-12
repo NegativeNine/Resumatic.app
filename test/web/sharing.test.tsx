@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { McpGrant } from "../../src/shared/mcp";
@@ -348,6 +348,26 @@ describe("Sharing › Overview", () => {
     expect(apps).not.toHaveTextContent("Claude");
     await userEvent.click(within(alert).getByRole("button", { name: "Try again" }));
     expect(await within(apps).findByText("1 connected")).toBeInTheDocument();
+  });
+
+  it("counts no app as connected when signing out everywhere ended its access, as Today counts none", async () => {
+    // The vault lists a grant from an earlier session generation as revoked, with no time of its own.
+    overview((state) => {
+      state.mcpGrants = [grant({ id: "g-old", clientName: "Claude", state: "revoked" })];
+    });
+    const apps = way("Connected apps");
+    await within(apps).findByText("No app is connected.");
+    expect(apps.querySelector(".rs-mark")).toBeNull();
+    cleanup();
+    const state = fullVault();
+    state.mcpGrants = [grant({ id: "g-old", clientName: "Claude", state: "revoked" })];
+    installFakeApi(state);
+    renderWithSession(<SharingApps />, state.me);
+    const row = (await screen.findByText(/^Claude/)).closest("li")!;
+    expect(within(row).getByText("Access ended")).toHaveClass("rs-mark--note");
+    expect(within(row).queryByText("Connected")).toBeNull();
+    expect(row).not.toHaveTextContent("Access ends");
+    expect(within(row).getByRole("button", { name: "Remove credentials" })).toBeInTheDocument();
   });
 
   it("shows an app's and a coach's chosen name as text", async () => {

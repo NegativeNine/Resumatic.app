@@ -179,6 +179,23 @@ describe("the header", () => {
     await within(rooms()).findByRole("link", { name: "Today, 10 waiting for you" });
   });
 
+  it("keeps the last counts in the header and the tabs when a later read of Today fails, as Today keeps them", async () => {
+    const api = installFakeApi(withToday());
+    renderWithSession(<Shell route={parseRoute("#/facts/check")} title="Facts">content</Shell>, { ...fixtures().me, newFromCoach: 1 });
+    await within(rooms()).findByRole("link", { name: "Today, 10 waiting for you" });
+    await screen.findByRole("link", { name: "To check, 4 waiting for you" });
+    const reads = api.callsTo("GET", /^\/api\/v2\/today$/).length;
+    api.fail("GET", /^\/api\/v2\/today$/, 503, "unavailable", "busy", false);
+    act(() => {
+      window.dispatchEvent(new Event(COUNTS_CHANGED));
+    });
+    await waitFor(() => expect(api.callsTo("GET", /^\/api\/v2\/today$/).length).toBeGreaterThan(reads));
+    // The Today page shows its last counts with Try again, so the header and the tabs keep them too.
+    await act(async () => {});
+    expect(roomNames()).toEqual(["Today, 10 waiting for you", "Facts", "Jobs", "Sharing"]);
+    expect(screen.getByRole("link", { name: "To check, 4 waiting for you" })).toBeInTheDocument();
+  });
+
   it("keeps To check's and Coaches' counts in the second row", async () => {
     installFakeApi(withToday());
     const tabsOf = (room: string) => within(screen.getByRole("navigation", { name: room })).getAllByRole("link");

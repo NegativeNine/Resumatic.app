@@ -782,15 +782,23 @@ export class FakeApi {
         return { status: 202 };
       },
     ],
+    // One route retries a file's reading and a job's document, as the Worker's one route does: the
+    // first match answers, so a second handler for the same path would never run.
     [
       "POST",
       /^\/api\/runs\/([^/]+)\/retry$/,
       (_call, [runId]) => {
         const source = this.state.sources.find((s) => s.retryRunId === runId);
-        if (!source) return conflict("This file is already being read again.");
-        Object.assign(source, { state: "queued", error: null });
-        delete source.retryRunId;
-        return { status: 202, body: { runId: this.id("run"), targetId: source.id } };
+        if (source) {
+          Object.assign(source, { state: "queued", error: null });
+          delete source.retryRunId;
+          return { status: 202, body: { runId: this.id("run"), targetId: source.id } };
+        }
+        const failed = (this.state.documents ?? []).find((held) => held.retryRunId === runId && held.state === "failed");
+        if (!failed) return notFound("no such run");
+        const id = this.id("doc");
+        (this.state.documents ??= []).unshift({ ...failed, id, state: "running", error: null, retryRunId: undefined, createdAt: Date.now(), result: null });
+        return { status: 202, body: { runId: id, targetId: id } };
       },
     ],
 
@@ -832,17 +840,7 @@ export class FakeApi {
         return { status: 202 };
       },
     ],
-    [
-      "POST",
-      /^\/api\/runs\/([^/]+)\/retry$/,
-      (_call, [runId]) => {
-        const failed = (this.state.documents ?? []).find((held) => held.retryRunId === runId && held.state === "failed");
-        if (!failed) return notFound("no such run");
-        const id = this.id("doc");
-        (this.state.documents ??= []).unshift({ ...failed, id, state: "running", error: null, retryRunId: undefined, createdAt: Date.now(), result: null });
-        return { status: 202, body: { runId: id, targetId: id } };
-      },
-    ],
+    // A document's retry is answered by the one runs/retry route under stage 4.
     [
       "POST",
       /^\/api\/resumes\/([^/]+)\/cancel$/,

@@ -91,7 +91,7 @@ export function AccountPage({ section }: { section?: AccountSection } = {}) {
                   <strong>Your record only</strong>
                   <span>
                     One JSON file. For a larger record, download this and the individual files from{" "}
-                    <a href={href.facts}>Facts</a> while your account is active.
+                    <a href={href.files}>Facts › Your files</a> while your account is active.
                   </span>
                 </p>
                 <a className="rs-btn" href={api.exportUrl} download>

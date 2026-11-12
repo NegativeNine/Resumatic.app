@@ -5,7 +5,10 @@ import type { Today } from "../shared/today";
 // waits. Pages read it here rather than asking the API again.
 
 export interface TodayState {
-  /** Undefined until it has loaded, and after any failure: then nothing is counted from it. */
+  /**
+   * The last Today that loaded, kept through a later failure as the Today page keeps it, so every
+   * count agrees with it. Undefined until one has loaded: then nothing is counted from it.
+   */
   today: Today | undefined;
   /** The last Today that loaded, kept through a failure, for a page that keeps showing it. */
   last: Today | undefined;

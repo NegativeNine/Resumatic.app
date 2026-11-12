@@ -100,7 +100,7 @@ export function JobsPage() {
       <PageHeader title="Jobs">
         Paste a job description, then tailor a resume to it. Every line comes
         from facts you’ve confirmed under{" "}
-        <a href={href.facts}>Facts</a>.
+        <a href={href.factsAll}>Facts</a>.
       </PageHeader>
       {/* On small screens the quota leaves the header for the top of Jobs. */}
       <QuotaMeter className="app-quota-small" />

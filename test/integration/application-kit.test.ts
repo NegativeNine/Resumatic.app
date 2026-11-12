@@ -965,7 +965,7 @@ describe("a kit's life with its vault", { timeout: 120_000 }, () => {
     // The kit's words leave only in its own ZIP, which its owner sends on.
     for (const words of [SAVED, TYPED, QUESTION]) expect(surfaces(parts, words), words).toEqual(["application kit"]);
     // The ZIP carries the resume and letter, which every other way out of a copy carries too.
-    expect(surfaces(parts, FACT)).toEqual(expect.arrayContaining(["application kit", "copy by its link", "copy as its coach", "list_facts", "PDF", "Word", "model input"]));
+    expect(surfaces(parts, FACT)).toEqual(expect.arrayContaining(["application kit", "copy by its link", "copy as its coach", "copy in the coach's app", "list_facts", "PDF", "Word", "model input"]));
 
     // Marked sensitive, a fact the kit's resume and letter use closes the kit: its surface gives nothing.
     expect((await user.send("POST", "/api/facts/sensitive", { ids: factIds, sensitive: true })).status).toBe(204);

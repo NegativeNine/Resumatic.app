@@ -57,8 +57,10 @@ export function Shell({
   const { me } = useSession();
   const loaded = useResource(api.today, (today) => today.working.length > 0);
   const reload = loaded.reload;
-  // A failure of any kind, an older server's included, shows no count from Today at all.
-  const today: Today | undefined = loaded.error ? undefined : loaded.data;
+  // The counts come from the last Today that loaded, as the Today page shows it with Try again
+  // after a failed read, so the header, the tabs and the pages agree. A Today that never loaded,
+  // an older server's included, shows no count from it at all.
+  const today: Today | undefined = loaded.data;
   const main = useRef<HTMLElement>(null);
   const key = routeKey(route);
   const shownKey = useRef(key);

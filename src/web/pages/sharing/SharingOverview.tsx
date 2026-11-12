@@ -153,7 +153,7 @@ function RecruitersWay() {
  * the rules ConnectedApps applies to its own list, so the two never disagree.
  */
 function appStanding(grant: McpGrant, now: number): "inactive" | "pending" | "active" | "other" {
-  const inactive = grant.revokedAt !== null || grant.expiresAt <= now;
+  const inactive = grant.revokedAt !== null || grant.state === "revoked" || grant.expiresAt <= now;
   if (inactive) return "inactive";
   if (grant.state === "pending") return "pending";
   if (grant.state === "active") return "active";

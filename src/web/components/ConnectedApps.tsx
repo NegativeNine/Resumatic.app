@@ -73,7 +73,8 @@ export function ConnectedApps() {
       {grants && grants.length > 0 && (
         <ul className="plain-list app-share-links">
           {grants.map((grant) => {
-            const inactive = grant.revokedAt !== null || grant.expiresAt <= Date.now();
+            // A grant signing out everywhere ended is listed as revoked, with no time of its own.
+            const inactive = grant.revokedAt !== null || grant.state === "revoked" || grant.expiresAt <= Date.now();
             const pending = !inactive && grant.state === "pending";
             return (
               <li className="rs-setting" key={grant.id}>

@@ -203,7 +203,7 @@ export const api = {
   profile: () => request<Profile>("GET", "/api/profile"),
   updateProfile: (patch: Partial<Profile>, expectedRevision: number) =>
     request<Profile>("PUT", "/api/v2/profile", { ...patch, expectedRevision }),
-  /** The person's job preferences. Loaded by their own card on Account, never with the session. */
+  /** The person's job preferences. Loaded by their own card on Sharing › Recruiters, never with the session. */
   preferences: () => request<Preferences>("GET", "/api/preferences"),
   /** Replaces all four values, if `expectedRevision` is still the saved revision. */
   updatePreferences: (values: PreferenceValues, expectedRevision: number) =>
@@ -217,7 +217,7 @@ export const api = {
     request<EmailNotices>("PUT", `/api/email-notices/${kind}`, { on }),
   signOutEverywhere: () =>
     request<void>("POST", "/api/account/sign-out-everywhere"),
-  /** The person's saved answers. Loaded by their own card on Account. */
+  /** The person's saved answers. Loaded by their own card on Jobs › Rules and answers, and by a job's kit. */
   savedAnswers: () => request<{ savedAnswers: SavedAnswer[] }>("GET", "/api/saved-answers"),
   /** Adds a saved answer. The same label and answer sent again returns the one already kept. */
   addSavedAnswer: (input: SavedAnswerInput) => request<SavedAnswer>("POST", "/api/saved-answers", input),

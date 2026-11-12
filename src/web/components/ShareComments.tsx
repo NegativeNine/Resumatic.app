@@ -521,8 +521,8 @@ function OwnerThread({
         ) : (
           <>
             From {thread.coachEmail}, on a fact you shared.{" "}
-            <a className="rs-link" href={href.facts}>
-              Open Facts
+            <a className="rs-link" href={href.factsAll}>
+              Open All facts
             </a>
           </>
         )}

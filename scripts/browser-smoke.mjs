@@ -786,7 +786,7 @@ if (!browser?.startsWith("/")) {
     await evalPage(`location.hash = '#/account/data'`);
     await wait(`!!document.querySelector('a[href="/api/export/archive"]')`);
     if (!await evalPage(`!!document.querySelector('a[href="/api/export/archive"]')`)) throw new Error("ARCHIVE_LINK_MISSING");
-    if (!await evalPage(`!!document.querySelector('a[href="/api/export"]') && [...document.querySelectorAll('a[href="#/facts/check"]')].some(x => x.textContent.includes('Facts'))`)) throw new Error("EXPORT_DOWNLOAD_LINKS_MISSING");
+    if (!await evalPage(`!!document.querySelector('a[href="/api/export"]') && [...document.querySelectorAll('a[href="#/facts/files"]')].some(x => x.textContent.includes('Your files'))`)) throw new Error("EXPORT_DOWNLOAD_LINKS_MISSING");
     stage = "resource_reload";
     if (!await evalPage(`import('/test/support/resource-browser.tsx').then(m => m.checkResourceReload())`)) throw new Error("RESOURCE_RELOAD_DID_NOT_SETTLE");
     stage = "share_retry";

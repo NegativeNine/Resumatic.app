@@ -392,7 +392,8 @@ describe("work in progress and what happened", () => {
     const recent = await screen.findByRole("region", { name: `Since ${formatDate(today.since)}` });
     const items = [...recent.querySelectorAll("li")];
     expect(items.map((item) => [item.querySelector("span")!.textContent, item.querySelector("time")!.textContent])).toEqual([
-      ["Dana Okafor opened the copy you shared.", formatDateTime(NOW)],
+      // The copy names its coach, but anyone with the link may have opened it, so the reader isn't named.
+      ["The copy you shared with Dana Okafor was opened.", formatDateTime(NOW)],
       ["dana@example.test wrote on the copy you shared.", formatDateTime(NOW - 60_000)],
       ["A new version of your resume for Platform Engineer at Litware is ready.", formatDateTime(NOW - 120_000)],
       ["The copy you shared as “Recruiter at Fabrikam” was opened.", formatDateTime(NOW - 180_000)],
@@ -674,11 +675,12 @@ describe("when Today can't be read", () => {
     expect(within(alert).getByRole("button", { name: "Try again" })).toBeInTheDocument();
     // Directly under the page's name, above the sentence and the next step.
     expect(document.querySelector(".page-head")!.nextElementSibling).toBe(alert);
-    // Every section stays where it was, the sentence keeps focus, and the header counts nothing from a failed Today.
+    // Every section stays where it was, the sentence keeps focus, and the header keeps the count the
+    // page still shows.
     expect(shownBefore()).toEqual(before);
     expect(sentence).toHaveFocus();
     expect(sentence).toBeInTheDocument();
-    expect(spoken(within(rooms()).getByRole("link", { name: /^Today/ }))).toBe("Today");
+    expect(spoken(within(rooms()).getByRole("link", { name: /^Today/ }))).toBe("Today, 11 waiting for you");
 
     await userEvent.click(within(alert).getByRole("button", { name: "Try again" }));
     await within(rooms()).findByRole("link", { name: "Today, 11 waiting for you" });
