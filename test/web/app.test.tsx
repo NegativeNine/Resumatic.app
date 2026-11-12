@@ -6,25 +6,28 @@ import { fixtures } from "./fixtures";
 import { goTo } from "./render";
 
 describe("the app shell", () => {
-  it("signs in and opens To check", async () => {
+  it("signs in and opens Today", async () => {
     installFakeApi(fixtures());
     render(<App />);
-    expect(await screen.findByText("sam-rivera-2024.pdf")).toBeInTheDocument();
-    expect(window.location.hash).toBe("#/facts/check");
+    expect(await screen.findByRole("heading", { name: "Today", level: 1 })).toBeInTheDocument();
+    expect(window.location.hash).toBe("#/today");
     const rooms = screen.getByRole("navigation", { name: "Rooms" });
-    expect(within(rooms).getByRole("link", { name: "Facts" })).toHaveAttribute("aria-current", "page");
-    expect(within(screen.getByRole("navigation", { name: "Facts" })).getByRole("link", { name: "To check" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getAllByText("Northwind Logistics").length).toBeGreaterThan(0);
-    await waitFor(() => expect(document.title).toBe("Facts – Resumatic"));
+    expect(within(rooms).getByRole("link", { name: "Today" })).toHaveAttribute("aria-current", "page");
+    // Today has no second row.
+    expect(document.querySelector(".app-sub")).toBeNull();
+    // The record holds files and facts, so it is the full page, worked out from the record: nothing waits.
+    expect(await screen.findByText("Nothing needs you right now.")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Where things stand" })).toHaveTextContent("9 confirmed");
+    await waitFor(() => expect(document.title).toBe("Today – Resumatic"));
   });
 
-  it("#/today shows its placeholder", async () => {
+  it("#/today shows Today", async () => {
     installFakeApi(fixtures());
     goTo("#/today");
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Today", level: 1 })).toBeInTheDocument();
-    expect(screen.getByText("Not available yet")).toHaveClass("rs-mark--note");
-    expect(screen.getByRole("link", { name: "Check your facts" })).toHaveAttribute("href", "#/facts/check");
+    expect(screen.queryByText("Not available yet")).toBeNull();
+    await screen.findByRole("heading", { name: "Where things stand" });
     expect(within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("link", { name: "Today" })).toHaveAttribute("aria-current", "page");
     await waitFor(() => expect(document.title).toBe("Today – Resumatic"));
   });

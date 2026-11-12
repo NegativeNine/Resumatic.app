@@ -1,3 +1,4 @@
+import { APPLICATION_STATUSES, type ApplicationStatus } from "./api";
 import type { DocumentKind } from "./documents";
 
 // What waits for the owner across their rooms, as GET /api/v2/today gives it. It is derived from the
@@ -65,9 +66,33 @@ export interface Today {
   counts: TodayCounts;
   /** Where recent events start: TODAY_RECENT_MS before the request. */
   since: number;
+  /** Where things stand in each room. Absent from a server that predates it. */
+  standing?: TodayStanding;
 }
 
 /** Nothing waiting, working or recent. */
 export function emptyToday(now: number): Today {
-  return { waiting: [], working: [], recent: [], counts: { today: 0, facts: 0, jobs: 0, sharing: 0 }, since: now - TODAY_RECENT_MS };
+  return { waiting: [], working: [], recent: [], counts: { today: 0, facts: 0, jobs: 0, sharing: 0 }, since: now - TODAY_RECENT_MS, standing: emptyStanding() };
+}
+
+/** Where things stand in each room, for the side of Today. Counts only. */
+export interface TodayStanding {
+  /** Files and pasted text, in any state. */
+  files: number;
+  /** Roles and facts, each counted once as the review groups them (countByState). To check is `waiting`'s check items. */
+  confirmed: number;
+  leftOut: number;
+  /** Jobs by tracking status; every status present. */
+  jobs: Record<ApplicationStatus, number>;
+  /** Shared copies neither revoked nor expired, and those naming a coach. */
+  copies: number;
+  coachCopies: number;
+  /** Connected apps whose access is active now: bound, unrevoked, unexpired, and not ended by signing out everywhere. */
+  apps: number;
+}
+
+/** Nothing anywhere: no file, fact, job, copy or app. */
+export function emptyStanding(): TodayStanding {
+  const jobs = Object.fromEntries(APPLICATION_STATUSES.map((status) => [status, 0])) as Record<ApplicationStatus, number>;
+  return { files: 0, confirmed: 0, leftOut: 0, jobs, copies: 0, coachCopies: 0, apps: 0 };
 }

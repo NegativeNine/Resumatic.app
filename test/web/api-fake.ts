@@ -28,7 +28,8 @@ import {
 } from "../../src/shared/kit";
 import { wording } from "../../src/shared/record";
 import { targetText, type NewShareComment, type NewSuggestion, type ShareComment } from "../../src/shared/sharing";
-import { emptyToday } from "../../src/shared/today";
+import { countByState } from "../../src/shared/review-groups";
+import { emptyStanding, emptyToday, type Today, type TodayStanding } from "../../src/shared/today";
 import { sharedView, type Fixtures } from "./fixtures";
 
 export interface Call {
@@ -765,7 +766,7 @@ export class FakeApi {
 
     // stage 2: the shell
     // What waits for the owner, as the fixtures give it: nothing at all unless a test says.
-    ["GET", /^\/api\/v2\/today$/, () => ok(this.state.today ?? emptyToday(0))],
+    ["GET", /^\/api\/v2\/today$/, () => ok(this.todayReply())],
 
     // stage 3: today
 
@@ -777,6 +778,16 @@ export class FakeApi {
 
     // stage 7: outside
   ];
+
+  // stage 3: today
+  /**
+   * Today as a test set it, with or without `standing`. Otherwise nothing waits, works or happened,
+   * and where things stand is worked out from the record, so adding the first file ends first run.
+   */
+  private todayReply(): Today {
+    if (this.state.today) return this.state.today;
+    return { ...emptyToday(0), standing: standingOf(this.state, Date.now()) };
+  }
 
   /** The email notice settings as saved, or every kind off, to the session's address. */
   private notices(): EmailNotices {
@@ -841,6 +852,28 @@ export class FakeApi {
       source.proposed = this.state.facts.filter((f) => f.sourceId === source.id && f.state === "proposed").length;
     }
   }
+}
+
+// stage 3: today
+/**
+ * Where things stand in a record, as the Vault counts it: every file, roles and facts as the review
+ * groups them, jobs by status, copies neither revoked nor expired at `now`, and active apps. The
+ * fake has one security epoch and session generation, so it skips the Vault's match on them.
+ */
+export function standingOf(state: Fixtures, now: number): TodayStanding {
+  const states = countByState({ roles: state.roles, facts: state.facts });
+  const jobs = emptyStanding().jobs;
+  for (const application of state.applications) jobs[application.status ?? "saved"] += 1;
+  const copies = (state.shares ?? []).filter((share) => share.revokedAt === null && share.expiresAt > now);
+  return {
+    files: state.sources.length,
+    confirmed: states.confirmed,
+    leftOut: states.rejected,
+    jobs,
+    copies: copies.length,
+    coachCopies: copies.filter((share) => share.coach).length,
+    apps: (state.mcpGrants ?? []).filter((grant) => grant.state === "active" && grant.revokedAt === null && grant.expiresAt > now).length,
+  };
 }
 
 /** Installs a fake API over the given fixtures as the global fetch, and returns it. */

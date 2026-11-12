@@ -125,6 +125,46 @@ Open questions for the owner, each built as stated; the answer changes only a la
 3. Kit question text and stored read errors are left out of Today. If stage 3's board needs either, stage 3 adds it, an error only through `sourceErrorMessage`.
 4. The phone bottom bar holds the four rooms (the shell board), while the phone boards add Account as a fifth. Stage 7 settles it; stage 2 ships four.
 
+### Stage 3: Today
+
+Today is the signed-in default. It opens with the one next step, chosen in a fixed order: a file that couldn’t be read, a coach’s suggestion, facts to check, a kit’s questions, then comments. When nothing waits, it says so with no button.
+
+Its counts are the header’s. A kind this version doesn’t know is counted but never shown or chosen.
+
+If a refresh fails, the page keeps what it last showed, with Try again above it.
+
+`GET /api/v2/today` gains `standing`: counts of files, of confirmed and left-out roles and facts, of jobs by status, of shared copies and of active connected apps. It is derived and holds numbers only.
+
+`TODAY_OPEN` is now true, so an empty address and `href.home` are `#/today`, and only Today carries a count in the first row; To check and Coaches keep theirs in the second. The page reads the shell's Today (`useToday()`, which now carries `last` and `error` too) and never asks for its own. Before anything is added, it shows three steps, the first with the Facts page's own `AddSource`; adding the first file or text opens the full page with that sentence focused.
+
+Decisions, each with the alternative rejected:
+
+1. **Today gains `standing`.** First run needs the totals of files, roles and facts, which `waiting` can't give. Reading the review view, the jobs, the shares and the connected apps on the landing page was rejected: four requests, and the heavy read stage 2 rejected.
+2. **Priority: unreadable, suggestions, check, kit, comments.** A file that can't be read blocks part of the record and only the person can fix it; a suggestion has a coach waiting for an answer; facts unlock every resume; a kit blocks one job; comments are only to read. `NEXT_PRIORITY` is a `Record` over every kind, so the compiler ranks a new one. Kits before facts (the NextStep component's rule) was rejected: its examples are placeholder kinds.
+3. **Counts are in the header's units.** The next step's things plus the list's count equal `counts.today`. Counting rows was rejected: the header would say 12 and the page 6.
+4. **Unknown kinds are filtered, not counted out.** The lede and the list's count keep `counts.today`, so they agree with the header, and the closing line names Facts, Jobs and Sharing, so it is true whichever kind is hidden. The quiet line depends on `counts.today === 0`, never on no known item. Counting only known kinds (the page would disagree with the header) and a closing line naming only Jobs and Sharing (false for a hidden kind outside them) were rejected.
+5. **Caught up is a quiet line with no button**, as the brief says. `rs-next--clear` with "Add a job" was rejected.
+6. **The page reads the shell's Today.** Its own `useResource(api.today)` (a doubled read, and the page and header could disagree) and drawing the error in place of the page (the shell polls every 2 s while work runs, so one dropped request would wipe the next step and the focused sentence) were rejected.
+7. **The header keeps stage 2's rule:** no count from a failed Today. The first-row count falls back to the session's `newFromCoach`. Zero (a coach's comment left uncounted) and counting from the last good Today (a stale number shown as current) were rejected.
+8. **First run reuses `AddSource`.** The uploader alone with a link to paste on Facts was rejected: it leaves the page.
+9. **Comments and suggestions link to Coaches**, where the owner's comments and the tab count are. The job's resume page was rejected: suggestions aren't answered there.
+10. **Copies count as shared when neither revoked nor expired.** Running the delivery check on every refresh was rejected: the words claim nothing about whether a copy can be read.
+11. **The board's words are corrected.** "By email" names its three kinds, because "when something joins this list" is false for kits and unreadable files; "for marketing" matches the privacy notice; "every line checked" replaces "every line backed".
+12. **"from {coach}", not a possessive**, because a coach may be shown by an address.
+13. **The phone layout is CSS only:** the columns wrap, with the next step first in the DOM. The board's "2 more" collapse was rejected.
+14. **Export, don't copy:** `STEPS` from `TailorProgress.tsx` and `chosenName` from `ShareComments.tsx`.
+15. **The web fake works out `standing` from its own record** when a test sets no `today`. Upload and paste routes writing a Today were rejected: they cover only those two paths and duplicate state.
+16. **A connected app counts only while its grant can still reach the vault:** active, not revoked or expired, and made in the vault's current security epoch and session generation, which is what the grant check itself requires. Signing out everywhere changes no grant row, so counting every active row was rejected: Today would name apps that can no longer read anything. The Connected apps list on Account still shows such a grant as active; that is older than this stage and is left to stage 6.
+
+Open questions for the owner, each built as stated:
+
+1. Is unreadable, suggestions, check, kit, comments the right order, or should kits come before facts, as the NextStep component's rule suggests?
+2. Should "Since" events link to what they name? The board has none.
+3. Should a copy that can no longer be delivered (it uses a fact since kept private) still count as shared?
+4. Should the phone board's "2 more: …" collapse be built?
+5. When nothing waits, should Today offer something to start, such as "Add a job"? The brief said no button, so none is shown.
+6. Is it right that a person with jobs but no files, roles or facts still sees first run?
+
 ---
 
 Nov 7, 2026. Revised after PR #2 (the job seeker roadmap) merged, which changed 42 of the web app's files. The redesign is rebuilt on that `main` (`215a3e3`).

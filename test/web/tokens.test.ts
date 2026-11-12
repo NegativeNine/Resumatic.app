@@ -181,7 +181,12 @@ it("the app's own stylesheets use no raw colour", () => {
     ...readdirSync(resolve(root, "src/web/components"))
       .filter((name) => name.endsWith(".css"))
       .map((name) => `src/web/components/${name}`),
+    // Each room's own stylesheet, from stage 3 on.
+    ...readdirSync(resolve(root, "src/web/styles/rooms"))
+      .filter((name) => name.endsWith(".css"))
+      .map((name) => `src/web/styles/rooms/${name}`),
   ];
+  expect(own).toContain("src/web/styles/rooms/today.css");
   const offenders = own.flatMap((path) =>
     [...read(path).matchAll(/#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\(/g)].map((m) => `${path}: ${m[0]}`),
   );

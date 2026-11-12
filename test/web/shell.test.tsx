@@ -84,17 +84,17 @@ describe("the header", () => {
     expect(screen.getByText("Private beta")).toHaveClass("rs-mark", "rs-mark--beta");
   });
 
-  it("counts Facts, Jobs and Sharing only where something waits, named in words, while Today is closed", async () => {
+  it("counts only Today in the first row, named in words, once Today is open", async () => {
     installFakeApi(withToday());
     const first = renderWithSession(<Shell route={parseRoute("#/jobs")} title="Jobs">content</Shell>, fixtures().me);
-    await within(rooms()).findByRole("link", { name: "Facts, 5 waiting for you" });
-    expect(roomNames()).toEqual(["Today", "Facts, 5 waiting for you", "Jobs, 2 waiting for you", "Sharing, 3 waiting for you"]);
+    await within(rooms()).findByRole("link", { name: "Today, 10 waiting for you" });
+    // Facts, Jobs and Sharing have things waiting, but only Today counts them: nothing else is counted.
+    expect(roomNames()).toEqual(["Today, 10 waiting for you", "Facts", "Jobs", "Sharing"]);
+    expect(document.querySelectorAll(".rs-nav__count")).toHaveLength(1);
     // The number is for the eye, amber, and hidden from the link's name, which says it in words.
-    const count = within(rooms()).getByRole("link", { name: "Facts, 5 waiting for you" }).querySelector(".rs-nav__count")!;
-    expect(count).toHaveTextContent(/^5$/);
+    const count = within(rooms()).getByRole("link", { name: "Today, 10 waiting for you" }).querySelector(".rs-nav__count")!;
+    expect(count).toHaveTextContent(/^10$/);
     expect(count).toHaveAttribute("aria-hidden", "true");
-    // Today carries none of its own until it opens.
-    expect(within(rooms()).getByRole("link", { name: "Today" }).querySelector(".rs-nav__count")).toBeNull();
     first.unmount();
 
     // Where nothing waits, nothing is counted.
@@ -104,9 +104,9 @@ describe("the header", () => {
     expect(document.querySelector(".rs-nav__count")).toBeNull();
   });
 
-  it("reaches a waiting coach comment from the header in one click", async () => {
+  it("reaches a waiting coach comment from the header's count, through Today", async () => {
     const state = fullVault();
-    state.today = { ...waiting(), counts: { facts: 0, jobs: 0, sharing: 1, today: 1 } };
+    state.today = { ...waiting(), waiting: waiting().waiting.filter((item) => item.kind === "comments"), counts: { facts: 0, jobs: 0, sharing: 2, today: 2 } };
     state.shareComments = [
       {
         target: { kind: "fact", factId: "fact-migration" },
@@ -120,19 +120,22 @@ describe("the header", () => {
     installFakeApi(state);
     goTo("#/facts/check");
     renderWithSession(<Routed />, state.me);
-    await userEvent.click(await within(rooms()).findByRole("link", { name: "Sharing, 1 waiting for you" }));
-    expect(window.location.hash).toBe("#/sharing");
+    await userEvent.click(await within(rooms()).findByRole("link", { name: "Today, 2 waiting for you" }));
+    expect(window.location.hash).toBe("#/today");
+    // The comment is the next step, and its one button opens Coaches, where comments are read.
+    await userEvent.click(await screen.findByRole("link", { name: "Read them" }));
+    expect(window.location.hash).toBe("#/sharing/coaches");
     expect(await screen.findByRole("region", { name: "Comments from your coach" })).toBeInTheDocument();
     expect(screen.getByText("How long did it take?")).toBeInTheDocument();
   });
 
-  it("keeps the Sharing count from the session when the Today API fails or isn't there", async () => {
+  it("counts a coach's comment on Today from the session when the Today API fails", async () => {
     for (const [status, error] of [[404, "not_found"], [500, "internal"], [503, "unavailable"]] as const) {
       const api = installFakeApi(withToday());
       api.fail("GET", /^\/api\/v2\/today$/, status, error, "no such route", false);
       const shown = renderWithSession(<Shell route={parseRoute("#/jobs")} title="Jobs">content</Shell>, { ...fixtures().me, newFromCoach: 2 });
       await waitFor(() => expect(api.callsTo("GET", /^\/api\/v2\/today$/).length).toBeGreaterThan(0));
-      expect(roomNames()).toEqual(["Today", "Facts", "Jobs", "Sharing, 2 waiting for you"]);
+      expect(roomNames()).toEqual(["Today, 2 waiting for you", "Facts", "Jobs", "Sharing"]);
       // No error is shown for it, and the session goes on.
       expect(screen.queryByRole("alert")).toBeNull();
       expect(shown.ended).toEqual([]);
@@ -141,12 +144,12 @@ describe("the header", () => {
     // Before Today has answered, the session's count stands too.
     installFakeApi(withToday());
     renderWithSession(<Shell route={parseRoute("#/jobs")} title="Jobs">content</Shell>, { ...fixtures().me, newFromCoach: 4 });
-    expect(roomNames()).toContain("Sharing, 4 waiting for you");
+    expect(roomNames()).toContain("Today, 4 waiting for you");
     // Once it has, Today's count is the one shown.
-    await within(rooms()).findByRole("link", { name: "Sharing, 3 waiting for you" });
+    await within(rooms()).findByRole("link", { name: "Today, 10 waiting for you" });
   });
 
-  it("shows the room's tabs with To check and Coaches counts", async () => {
+  it("keeps To check's and Coaches' counts in the second row", async () => {
     installFakeApi(withToday());
     const tabsOf = (room: string) => within(screen.getByRole("navigation", { name: room })).getAllByRole("link");
     const facts = renderWithSession(<Shell route={parseRoute("#/facts/all")} title="Facts">content</Shell>, fixtures().me);
@@ -313,7 +316,7 @@ describe("the header", () => {
 
   it("rewrites a v1 address to its new name", () => {
     installFakeApi(fixtures());
-    for (const [old, now, name] of [["#/applications", "#/jobs", "jobs"], ["#/sources", "#/facts/check", "factsCheck"], ["#/clients", "#/coaching/clients", "coachingClients"], ["/", "#/facts/check", "factsCheck"]]) {
+    for (const [old, now, name] of [["#/applications", "#/jobs", "jobs"], ["#/sources", "#/facts/check", "factsCheck"], ["#/clients", "#/coaching/clients", "coachingClients"], ["/", "#/today", "today"]]) {
       goTo(old!);
       const shown = renderWithSession(<RoutedShell />, fixtures().me);
       expect(screen.getByText(`Page for ${name}`)).toBeInTheDocument();
@@ -401,7 +404,7 @@ describe("the account menu", () => {
     const first = renderWithSession(<Shell route={parseRoute("#/jobs")} title="Jobs">content</Shell>, fixtures().me);
     await userEvent.click(menuButton());
     expect(workspaces()).toEqual([
-      ["Looking for work", "#/facts/check", "true"],
+      ["Looking for work", "#/today", "true"],
       ["HiringNot open yet", "#/hiring/openings", null],
     ]);
     expect(document.querySelector(".app-menu a[aria-current='true'] .rs-g--check")).not.toBeNull();
@@ -409,7 +412,7 @@ describe("the account menu", () => {
     const coach = renderWithSession(<Shell route={parseRoute("#/jobs")} title="Jobs">content</Shell>, { ...fixtures().me, clients: 2 });
     await userEvent.click(menuButton());
     expect(workspaces()).toEqual([
-      ["Looking for work", "#/facts/check", "true"],
+      ["Looking for work", "#/today", "true"],
       ["Coaching2 clients", "#/coaching/clients", null],
       ["HiringNot open yet", "#/hiring/openings", null],
     ]);
@@ -417,7 +420,7 @@ describe("the account menu", () => {
     const one = renderWithSession(<Shell route={parseRoute("#/coaching/clients")} title="Clients">content</Shell>, { ...fixtures().me, clients: 1 });
     await userEvent.click(menuButton());
     expect(workspaces()).toEqual([
-      ["Looking for work", "#/facts/check", null],
+      ["Looking for work", "#/today", null],
       ["Coaching1 client", "#/coaching/clients", "true"],
       ["HiringNot open yet", "#/hiring/openings", null],
     ]);
@@ -426,7 +429,7 @@ describe("the account menu", () => {
     renderWithSession(<Shell route={parseRoute("#/coaching/clients")} title="Clients">content</Shell>, { ...fixtures().me, clients: 0 });
     await userEvent.click(menuButton());
     expect(workspaces()).toEqual([
-      ["Looking for work", "#/facts/check", null],
+      ["Looking for work", "#/today", null],
       ["Coaching", "#/coaching/clients", "true"],
       ["HiringNot open yet", "#/hiring/openings", null],
     ]);

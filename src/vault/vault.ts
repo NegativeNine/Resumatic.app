@@ -136,7 +136,7 @@ import { RecordStore } from "./record";
 import { readCardMaterial } from "./card";
 import { CARD_PREVIEW_OFF, type CardMaterial } from "../shared/card";
 import { MAX_TODAY_LIST, MAX_TODAY_RECENT, TODAY_RECENT_MS, type Today } from "../shared/today";
-import { proposedBySource } from "../shared/review-groups";
+import { countByState, proposedBySource } from "../shared/review-groups";
 import { TodayStore, todayView, type KitCount } from "./today";
 import { IDENTICAL_ROLE_METHOD, IDENTICAL_WORDING_METHOD, MAX_OFFER_PAIRS, OFFERS_PER_FACT, OFFER_MIN_COSINE, identicalMatches, type JudgedOffer, type OfferPair } from "../pipeline/match";
 import { roleKey, sameWording, stampProblem } from "../shared/record";
@@ -1752,7 +1752,8 @@ export class Vault extends DurableObject<Env> {
   // stored nowhere. It is read after the same reconciliation as the review screen, in one
   // transaction, and holds counts, IDs and names: no fact, comment, question, answer or stored
   // error. It loads with every room, so it reads each file's name and state alone, and each kit's
-  // questions for two counts per job.
+  // questions for two counts per job. Where each room stands is numbers only: files, roles and facts
+  // by review state, jobs by status, open copies and active connected apps.
 
   private get todayStore(): TodayStore {
     return new TodayStore(this.sql);
@@ -1773,9 +1774,12 @@ export class Vault extends DurableObject<Env> {
         const { refused, unanswered } = this.kitQuestionProblems(applicationId);
         if (refused.length || unanswered.length) kits.push({ applicationId, unanswered: unanswered.length, sensitive: refused.length });
       }
+      // Roles and facts are read once: To check and where Facts stands are counted from the same rows.
+      const entries = { roles: this.readRoles(), facts: this.readFacts() };
+      const states = countByState(entries);
       return todayView(
         {
-          check: proposedBySource({ roles: this.readRoles(), facts: this.readFacts() }),
+          check: proposedBySource(entries),
           sourceNames: this.todayStore.sourceNames(),
           unreadable: this.todayStore.unreadable(),
           comments: this.shareComments.unseenByCopy(),
@@ -1786,6 +1790,11 @@ export class Vault extends DurableObject<Env> {
           resumesReady: this.todayStore.resumesReady(since, MAX_TODAY_RECENT),
           copiesOpened: this.shares.recentlyOpened(since, MAX_TODAY_RECENT),
           coachComments: this.shareComments.recentByCopy(since, MAX_TODAY_RECENT),
+          confirmed: states.confirmed,
+          leftOut: states.rejected,
+          jobs: this.todayStore.jobsByStatus(),
+          copies: this.shares.openCounts(now),
+          apps: this.mcpGrants.activeCount(who, now),
         },
         now,
       );

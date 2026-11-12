@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { MAX_TODAY_LIST, MAX_TODAY_RECENT, TODAY_RECENT_MS } from "../../src/shared/today";
+import { emptyStanding, MAX_TODAY_LIST, MAX_TODAY_RECENT, TODAY_RECENT_MS } from "../../src/shared/today";
 import { TodayStore, todayView, type TodayParts } from "../../src/vault/today";
 
 const now = 1_800_000_000_000;
@@ -18,7 +18,7 @@ function store() {
     },
   } as unknown as SqlStorage;
   db.exec(`CREATE TABLE sources (id TEXT PRIMARY KEY, filename TEXT NOT NULL, r2_key TEXT NOT NULL, markdown TEXT, state TEXT NOT NULL, error TEXT, run_id TEXT, created_at INTEGER NOT NULL)`);
-  db.exec(`CREATE TABLE applications (id TEXT PRIMARY KEY, company TEXT, title TEXT, jd_text TEXT NOT NULL, created_at INTEGER NOT NULL)`);
+  db.exec(`CREATE TABLE applications (id TEXT PRIMARY KEY, company TEXT, title TEXT, jd_text TEXT NOT NULL, created_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'saved')`);
   db.exec(`CREATE TABLE resumes (id TEXT PRIMARY KEY, application_id TEXT NOT NULL, state TEXT NOT NULL, step TEXT, error TEXT, body TEXT, created_at INTEGER NOT NULL)`);
   db.exec(`CREATE TABLE resume_versions (resume_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(resume_id, version))`);
   db.exec(`CREATE TABLE documents (id TEXT PRIMARY KEY, application_id TEXT NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, result TEXT, error TEXT, created_at INTEGER NOT NULL)`);
@@ -42,6 +42,11 @@ const nothing = (): TodayParts => ({
   resumesReady: [],
   copiesOpened: [],
   coachComments: [],
+  confirmed: 0,
+  leftOut: 0,
+  jobs: emptyStanding().jobs,
+  copies: { copies: 0, coachCopies: 0 },
+  apps: 0,
 });
 
 describe("Today's reads", () => {
@@ -172,6 +177,45 @@ describe("Today's reads", () => {
     } finally {
       db.close();
     }
+  });
+
+  it("counts jobs by status, every status present, and reads no posting", () => {
+    const { db, today, statements } = store();
+    try {
+      // The store's one job is saved. Two more are applied, one is at interview, and one carries a status this version doesn't know.
+      for (const [id, status] of [["a1", "applied"], ["a2", "applied"], ["i1", "interview"], ["odd", "archived"]] as const)
+        db.prepare(`INSERT INTO applications (id, company, title, jd_text, created_at, status) VALUES (?, NULL, NULL, 'Another posting', ?, ?)`).run(id, now, status);
+      statements.length = 0;
+      expect(today.jobsByStatus()).toEqual({ saved: 1, applied: 2, interview: 1, offer: 0, closed: 0 });
+      expect(statements).toEqual([`SELECT status, COUNT(*) AS n FROM applications GROUP BY status`]);
+      db.exec(`DELETE FROM applications`);
+      expect(today.jobsByStatus()).toEqual(emptyStanding().jobs);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("makes files the number of files it names", () => {
+    const { db, today, source } = store();
+    try {
+      expect(todayView({ ...nothing(), sourceNames: today.sourceNames() }, now).standing?.files).toBe(0);
+      source("ok", "ready", now - 3);
+      source("bad", "failed", now - 2);
+      source("reading", "queued", now - 1);
+      // Read, unreadable and being read: each is a file.
+      expect(todayView({ ...nothing(), sourceNames: today.sourceNames() }, now).standing?.files).toBe(3);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("puts confirmed, left-out, copies and apps into standing as given", () => {
+    const jobs = { saved: 2, applied: 1, interview: 0, offer: 1, closed: 4 };
+    const view = todayView({ ...nothing(), confirmed: 9, leftOut: 3, jobs, copies: { copies: 5, coachCopies: 2 }, apps: 4 }, now);
+    expect(view.standing).toEqual({ files: 0, confirmed: 9, leftOut: 3, jobs, copies: 5, coachCopies: 2, apps: 4 });
+    // Numbers only: where things stand adds nothing to what waits.
+    expect(view.counts).toEqual({ today: 0, facts: 0, jobs: 0, sharing: 0 });
+    expect(Object.values(view.standing!).every((value) => typeof value === "number" || Object.values(value).every((n) => typeof n === "number"))).toBe(true);
   });
 
   it("names the jobs it is asked about, and leaves out one that has gone", () => {

@@ -10,6 +10,7 @@ import { JobsPage } from "./pages/JobsPage";
 import { LEGAL_TITLES, LegalPage } from "./pages/LegalPage";
 import { ResumePage } from "./pages/ResumePage";
 import { SourcesPage } from "./pages/SourcesPage";
+import { TodayPage } from "./pages/today/TodayPage";
 import { PLACEHOLDERS, type PlaceholderName } from "./placeholders";
 import { href, NOT_FOUND_ROUTE, routeNeeds, type Route, type RouteName } from "./router";
 
@@ -32,7 +33,7 @@ export const SCREENS: { [K in RouteName]: Screen } = {
   notFound: { title: "Page not found", render: () => <NotFoundPage /> },
 
   // stage 3: today
-  today: placeholder("today"),
+  today: { title: "Today", render: () => <TodayPage /> },
 
   // stage 4: facts
   factsCheck: { title: "Facts", render: () => <SourcesPage /> },

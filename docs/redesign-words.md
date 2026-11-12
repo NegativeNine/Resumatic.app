@@ -86,6 +86,8 @@ HTML pages and emails always reach a person.
 
 **Proposed sentences** are fixed, in the voice, with the full new words. A proposal that says “private” ships with stage 4 or after it. None changes in stage 1.
 
+No server message is assigned to Today. Its first run shows the facts room’s upload and paste messages, which stage 4 changes.
+
 ### `AppError` messages
 
 | File:line at 78502c9 | Code | Current text | Proposed sentence | Room |

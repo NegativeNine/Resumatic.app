@@ -1,5 +1,7 @@
+import { APPLICATION_STATUSES, type ApplicationStatus } from "../shared/api";
 import type { DocumentKind } from "../shared/documents";
 import {
+  emptyStanding,
   MAX_TODAY_LIST,
   MAX_TODAY_RECENT,
   TODAY_RECENT_MS,
@@ -60,6 +62,15 @@ export interface TodayParts {
   resumesReady: Extract<TodayEvent, { kind: "resumeReady" }>[];
   copiesOpened: CopyOpened[];
   coachComments: CopyComment[];
+  /** Roles and facts confirmed and left out, each counted once as the review groups them. */
+  confirmed: number;
+  leftOut: number;
+  /** Jobs by tracking status, every status present. */
+  jobs: Record<ApplicationStatus, number>;
+  /** Shared copies neither revoked nor expired, and those of them naming a coach. */
+  copies: { copies: number; coachCopies: number };
+  /** Connected apps whose access is active. */
+  apps: number;
 }
 
 export class TodayStore {
@@ -116,6 +127,14 @@ export class TodayStore {
       .map((row) => ({ kind: "resumeReady", resumeId: row.resume_id, version: row.version, at: row.at, ...job(row) }));
   }
 
+  /** How many jobs have each tracking status, every status present. It reads the status alone, never a posting. */
+  jobsByStatus(): Record<ApplicationStatus, number> {
+    const counts = emptyStanding().jobs;
+    for (const row of this.sql.exec<{ status: string; n: number }>(`SELECT status, COUNT(*) AS n FROM applications GROUP BY status`).toArray())
+      if ((APPLICATION_STATUSES as readonly string[]).includes(row.status)) counts[row.status as ApplicationStatus] = row.n;
+    return counts;
+  }
+
   /** The names of these jobs, by ID. A job that has gone is left out. */
   jobNames(ids: readonly string[]): Map<string, { title: string | null; company: string | null }> {
     if (ids.length === 0) return new Map();
@@ -148,6 +167,8 @@ const workId = (item: TodayWorking) => (item.kind === "reading" ? item.sourceId 
  * Today, from its parts, with recent events from TODAY_RECENT_MS before `now`. Each kind's list keeps at most MAX_TODAY_LIST items, and the counts total
  * every item, listed or not: Facts what To check asks and the files that couldn't be read, Jobs
  * what the kits wait on, Sharing what coaches wait on, and Today the three rooms together.
+ * `standing` is where each room stands, as numbers only: files, roles and facts confirmed and left
+ * out, jobs by status, open copies and active connected apps.
  */
 export function todayView(parts: TodayParts, now: number): Today {
   const since = now - TODAY_RECENT_MS;
@@ -183,5 +204,14 @@ export function todayView(parts: TodayParts, now: number): Today {
     recent,
     counts: { today: facts + jobs + sharing, facts, jobs, sharing },
     since,
+    standing: {
+      files: parts.sourceNames.size,
+      confirmed: parts.confirmed,
+      leftOut: parts.leftOut,
+      jobs: parts.jobs,
+      copies: parts.copies.copies,
+      coachCopies: parts.copies.coachCopies,
+      apps: parts.apps,
+    },
   };
 }

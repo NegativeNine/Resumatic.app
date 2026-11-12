@@ -49,8 +49,8 @@ describe("the route table", () => {
 
   it("rewrites every old address", () => {
     const old: [string, string, RouteName][] = [
-      ["", DEFAULT_HASH, "factsCheck"],
-      ["#/", DEFAULT_HASH, "factsCheck"],
+      ["", DEFAULT_HASH, "today"],
+      ["#/", DEFAULT_HASH, "today"],
       ["#/sources", "#/facts/check", "factsCheck"],
       ["#/facts", "#/facts/check", "factsCheck"],
       ["#/applications", "#/jobs", "jobs"],
@@ -70,12 +70,14 @@ describe("the route table", () => {
     expect(canonicalHash("#/account/plan")).toBeNull();
   });
 
-  it("sends an empty address to Facts until Today opens", () => {
-    expect(TODAY_OPEN).toBe(false);
-    expect(DEFAULT_HASH).toBe("#/facts/check");
-    expect(href.home).toBe("#/facts/check");
-    expect(parseRoute("").name).toBe("factsCheck");
-    // Today has its address all the same.
+  it("sends an empty address to Today, now that it is open", () => {
+    expect(TODAY_OPEN).toBe(true);
+    expect(DEFAULT_HASH).toBe("#/today");
+    expect(href.home).toBe("#/today");
+    for (const empty of ["", "#", "#/", "#//"]) {
+      expect(canonicalHash(empty), empty).toBe("#/today");
+      expect(parseRoute(empty).name, empty).toBe("today");
+    }
     expect(parseRoute("#/today")).toMatchObject({ name: "today", room: "today", tab: null });
   });
 
@@ -116,7 +118,7 @@ describe("the route table", () => {
 
   it("builds every href that parses back to its route", () => {
     const built: [string, RouteName, RouteParams?][] = [
-      [href.home, "factsCheck"],
+      [href.home, "today"],
       [href.today, "today"],
       [href.facts, "factsCheck"],
       [href.factsAll, "factsAll"],

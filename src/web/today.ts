@@ -7,11 +7,15 @@ import type { Today } from "../shared/today";
 export interface TodayState {
   /** Undefined until it has loaded, and after any failure: then nothing is counted from it. */
   today: Today | undefined;
+  /** The last Today that loaded, kept through a failure, for a page that keeps showing it. */
+  last: Today | undefined;
+  /** Why the latest read failed, as a sentence to show; null once one succeeds. */
+  error: string | null;
   /** Reads Today again. */
   reload: () => Promise<unknown>;
 }
 
-const NOTHING: TodayState = { today: undefined, reload: async () => undefined };
+const NOTHING: TodayState = { today: undefined, last: undefined, error: null, reload: async () => undefined };
 
 export const TodayContext = createContext<TodayState>(NOTHING);
 

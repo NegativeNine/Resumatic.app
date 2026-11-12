@@ -120,3 +120,19 @@ describe("groupByRole", () => {
       group.facts.length === 1 && group.facts[0]?.id === `f${size - i - 1}`)).toBe(true);
   });
 });
+
+describe("countByState", () => {
+  it("countByState totals zero exactly when there are no roles and no facts", () => {
+    const total = (vault: Vault) => Object.values(countByState(vault)).reduce((sum, n) => sum + n, 0);
+    expect(total({ sources: [], roles: [], facts: [] })).toBe(0);
+    // Today's first run rests on this: one role or one fact, in any state, alone or as a copy of another, is counted.
+    for (const state of ["proposed", "confirmed", "rejected"] as const) {
+      expect(total({ sources: [], roles: [role("r", state)], facts: [] }), `a ${state} role`).toBeGreaterThan(0);
+      expect(total({ sources: [], roles: [], facts: [fact("f", null, state)] }), `a ${state} loose fact`).toBeGreaterThan(0);
+      expect(total({ sources: [], roles: [role("r", "confirmed")], facts: [fact("f", "r", state)] }), `a ${state} fact`).toBeGreaterThan(0);
+      expect(total({ sources: [], roles: [], facts: [fact("f", "gone", state)] }), `a ${state} fact whose role has gone`).toBeGreaterThan(0);
+    }
+    const copy: RoleView = { ...role("first", "proposed"), org: "Acme", title: "Engineer", startDate: "2021-01", sourceId: "s1" };
+    expect(total({ sources: [], roles: [copy, { ...copy, id: "second", sourceId: "s2" }], facts: [] })).toBe(1);
+  });
+});

@@ -6,7 +6,7 @@ import type { FactView, ResumeLine, ResumeView, RoleView } from "../../src/share
 import type { KitView } from "../../src/shared/kit";
 import { countByState } from "../../src/shared/review-groups";
 import type { ShareComment, ShareGrant, ShareTarget } from "../../src/shared/sharing";
-import { MAX_TODAY_RECENT, TODAY_RECENT_MS, type Today, type TodayWaiting } from "../../src/shared/today";
+import { emptyStanding, MAX_TODAY_RECENT, TODAY_RECENT_MS, type Today, type TodayWaiting } from "../../src/shared/today";
 import { vault } from "../../src/shared/stubs";
 import { Vault } from "../../src/vault/vault";
 import { fromBase64url } from "../../src/worker/crypto";
@@ -168,6 +168,8 @@ describe("what waits for the owner", () => {
     const theirs = (await named.json()) as Today;
     expect(theirs.waiting).toEqual([]);
     expect(theirs.counts).toEqual({ today: 0, facts: 0, jobs: 0, sharing: 0 });
+    expect(theirs.standing).toEqual(emptyStanding());
+    expect((await today(sam)).today.standing?.files).toBe(1);
     // Sam's vault, asked with Dana's identity, refuses; so does a stale generation of Sam's own.
     expect(await asking(sam, whoOf(dana))).toMatch(/^forbidden: /);
     expect(await asking(sam, { ...whoOf(sam), gen: whoOf(sam).gen + 1 })).toMatch(/^unauthenticated: /);
@@ -440,5 +442,122 @@ describe("what waits for the owner", () => {
     expect((await sam.send("POST", "/api/review", { confirm: [fact.id], reject: [] })).status).toBe(204);
     const after = (await today(sam)).today.counts;
     expect(after).toEqual({ ...before, facts: before.facts - 1, today: before.today - 1 });
+  });
+});
+
+describe("where things stand", () => {
+  it("stands at zero everywhere in a new vault", async () => {
+    const sam = await signIn();
+    expect((await today(sam)).today.standing).toEqual(emptyStanding());
+  });
+
+  it("counts files in any state, and roles and facts confirmed and left out as countByState does", async () => {
+    const sam = await signIn();
+    await upload(sam, "synthetic.pdf", RESUME);
+    await unreadable(sam);
+    const vid = sessionOf(sam).vid;
+    await sql(sam, (db) =>
+      db.exec(`INSERT INTO sources (id, filename, r2_key, state, created_at) VALUES ('reading', 'linkedin-export.zip', ?, 'queued', ?)`, `vaults/${vid}/sources/reading`, Date.now()),
+    );
+    let view = await reviewView(sam);
+    expect(view.facts.length).toBeGreaterThan(2);
+    // Every role confirmed, one fact confirmed and one left out; the rest still to check.
+    const [kept, left] = view.facts;
+    expect((await sam.send("POST", "/api/review", { confirm: [...view.roles.map((role) => role.id), kept!.id], reject: [left!.id] })).status).toBe(204);
+    // And one the owner adds, which starts confirmed.
+    expect((await sam.send("POST", "/api/facts", { roleId: null, kind: "skill", text: "Terraform", level: null })).status).toBe(201);
+    view = await reviewView(sam);
+    const states = countByState(view);
+    expect(states.rejected).toBeGreaterThan(0);
+    const { today: answer } = await today(sam);
+    expect(answer.standing).toMatchObject({ files: 3, confirmed: states.confirmed, leftOut: states.rejected });
+    // To check is what waits, as the header counts it.
+    expect(toCheck(answer)).toBe(states.proposed);
+  });
+
+  it("counts jobs by status", async () => {
+    const sam = await signIn();
+    const [first, second, third, fourth] = [await job(sam), await job(sam), await job(sam), await job(sam)];
+    expect((await today(sam)).today.standing?.jobs).toEqual({ saved: 4, applied: 0, interview: 0, offer: 0, closed: 0 });
+    for (const [id, status] of [[first, "applied"], [second, "applied"], [third, "interview"], [fourth, "closed"]] as const)
+      expect((await sam.send("PATCH", `/api/applications/${id}`, { status })).status).toBe(204);
+    expect((await today(sam)).today.standing?.jobs).toEqual({ saved: 0, applied: 2, interview: 1, offer: 0, closed: 1 });
+  });
+
+  it("counts shared copies and those naming a coach, and drops a revoked one", async () => {
+    const sam = await signIn();
+    const added = await sam.send("POST", "/api/facts", { roleId: null, kind: "skill", text: "Terraform", level: null });
+    const { factId } = (await added.json()) as { factId: string };
+    const plain = await share(sam, { factIds: [factId] });
+    const named = await share(sam, { factIds: [factId], coachEmail: uniqueEmail("coach") });
+    await share(sam, { factIds: [factId], coachEmail: uniqueEmail("coach") });
+    const expiring = await share(sam, { factIds: [factId], coachEmail: uniqueEmail("coach") });
+    expect((await today(sam)).today.standing).toMatchObject({ copies: 4, coachCopies: 3 });
+    expect((await sam.send("DELETE", `/api/shares/${named.grant.id}`)).status).toBe(204);
+    expect((await today(sam)).today.standing).toMatchObject({ copies: 3, coachCopies: 2 });
+    // One that has expired, before the alarm erases it, and one revoked plain copy.
+    await sql(sam, (db) => db.exec(`UPDATE share_grants SET expires_at = ? WHERE id = ?`, Date.now() - 1, expiring.grant.id));
+    expect((await sam.send("DELETE", `/api/shares/${plain.grant.id}`)).status).toBe(204);
+    expect((await today(sam)).today.standing).toMatchObject({ copies: 1, coachCopies: 1 });
+  });
+
+  it("counts connected apps whose access is active", async () => {
+    const sam = await signIn();
+    const now = Date.now();
+    const { gen, epoch = "legacy" } = whoOf(sam);
+    // Grants are made in the session's own epoch and generation, as McpGrantStore.create makes them.
+    const grant = (id: string, state: string, expiresAt: number, revokedAt: number | null, at = { epoch, gen }) =>
+      sql(sam, (db) =>
+        db.exec(
+          `INSERT INTO mcp_grants (id, client_id, client_name, scopes, epoch, gen, created_at, expires_at, revoked_at, oauth_grant_id, state) VALUES (?, 'https://client.test/app', 'A client', '["vault:read"]', ?, ?, ?, ?, ?, ?, ?)`,
+          id, at.epoch, at.gen, now, expiresAt, revokedAt, state === "pending" ? null : `remote_${id}`, state,
+        ),
+      );
+    await grant(crypto.randomUUID(), "active", now + DAY, null);
+    await grant(crypto.randomUUID(), "active", now + DAY, null);
+    await grant(crypto.randomUUID(), "pending", now + DAY, null);
+    await grant(crypto.randomUUID(), "revoked", now + DAY, now - 1);
+    await grant(crypto.randomUUID(), "active", now + DAY, now - 1);
+    await grant(crypto.randomUUID(), "active", now - 1, null);
+    // Access the vault would refuse: a grant from a generation already signed out, or from another epoch.
+    await grant(crypto.randomUUID(), "active", now + DAY, null, { epoch, gen: gen - 1 });
+    await grant(crypto.randomUUID(), "active", now + DAY, null, { epoch: "an-earlier-epoch", gen });
+    expect((await today(sam)).today.standing?.apps).toBe(2);
+  });
+
+  it("counts no connected app once the owner signs out everywhere", async () => {
+    const sam = await signIn();
+    const now = Date.now();
+    const { gen, epoch = "legacy" } = whoOf(sam);
+    await sql(sam, (db) =>
+      db.exec(
+        `INSERT INTO mcp_grants (id, client_id, client_name, scopes, epoch, gen, created_at, expires_at, revoked_at, oauth_grant_id, state) VALUES (?, 'https://client.test/app', 'A client', '["vault:read"]', ?, ?, ?, ?, NULL, 'remote_app', 'active')`,
+        crypto.randomUUID(), epoch, gen, now, now + DAY,
+      ),
+    );
+    expect((await today(sam)).today.standing?.apps).toBe(1);
+    expect((await sam.send("POST", "/api/account/sign-out-everywhere", {})).status).toBe(204);
+    // The grant's row is unchanged, but its generation can no longer reach the vault, so none is counted.
+    const apps = await runInDurableObject(vaultOf(sam), async (instance) => (await instance.today({ ...whoOf(sam), gen: gen + 1 })).standing?.apps);
+    expect(apps).toBe(0);
+  });
+
+  it("holds only numbers in standing", async () => {
+    const sam = await signIn();
+    await upload(sam, "synthetic.pdf", RESUME);
+    await unreadable(sam);
+    const applicationId = await job(sam);
+    expect((await sam.send("PATCH", `/api/applications/${applicationId}`, { status: "applied" })).status).toBe(204);
+    const added = await sam.send("POST", "/api/facts", { roleId: null, kind: "skill", text: "Vellichor tooling", level: null });
+    const { factId } = (await added.json()) as { factId: string };
+    const copy = await share(sam, { factIds: [factId], coachEmail: uniqueEmail("coach"), label: "For Dana at Quillfeather" });
+    const { today: answer } = await today(sam);
+    const standing = answer.standing!;
+    expect(Object.keys(standing).sort()).toEqual(["apps", "coachCopies", "confirmed", "copies", "files", "jobs", "leftOut"]);
+    expect(Object.keys(standing.jobs)).toEqual(["saved", "applied", "interview", "offer", "closed"]);
+    const leaves = [...Object.entries(standing).filter(([key]) => key !== "jobs").map(([, value]) => value), ...Object.values(standing.jobs)];
+    for (const value of leaves) expect(Number.isSafeInteger(value) && (value as number) >= 0, String(value)).toBe(true);
+    const text = JSON.stringify(standing);
+    for (const words of ["synthetic.pdf", "unreadable-cv.docx", "Vellichor", "Quillfeather", copy.grant.id, applicationId, factId]) expect(text, words).not.toContain(words);
   });
 });
