@@ -8,6 +8,10 @@ import { AccountPage } from "../../src/web/pages/AccountPage";
 import { JobsPage } from "../../src/web/pages/JobsPage";
 import { ResumePage } from "../../src/web/pages/ResumePage";
 import { SourcesPage } from "../../src/web/pages/SourcesPage";
+import { SharingApps } from "../../src/web/pages/sharing/SharingApps";
+import { SharingCoaches } from "../../src/web/pages/sharing/SharingCoaches";
+import { SharingOverview } from "../../src/web/pages/sharing/SharingOverview";
+import { SharingRecruiters } from "../../src/web/pages/sharing/SharingRecruiters";
 import { installFakeApi } from "./api-fake";
 import { fullVault, sharedView } from "./fixtures";
 import { renderWithSession } from "./render";
@@ -48,8 +52,6 @@ const DEFERRED: Readonly<Record<string, string>> = {
   "Track this application": "stage 5",
   "Prepare your application": "stage 5",
   "Application kit": "stage 5",
-  // Stage 6, sharing and account: card becomes anonymous profile.
-  "Card preview": "stage 6",
   // Stage 7, outside: snapshot becomes shared copy.
   "Shared career snapshot": "stage 7",
 };
@@ -61,7 +63,7 @@ function labels(): string[] {
   return [...texts, ...aria].filter(Boolean);
 }
 
-/** Facts in each filter, Jobs with a workspace open, a resume, Account and a shared copy, with fullVault(). */
+/** Facts in each filter, Jobs with a workspace open, a resume, Account, the Sharing pages and a shared copy, with fullVault(). */
 async function everyScreen(): Promise<Map<string, string>> {
   const seen = new Map<string, string>();
   const take = (where: string) => {
@@ -101,12 +103,42 @@ async function everyScreen(): Promise<Map<string, string>> {
   state = fullVault();
   installFakeApi(state);
   page = renderWithSession(<AccountPage />, state.me);
-  await screen.findByText("Dana Okafor");
   await screen.findByRole("combobox", { name: "Choose a plan" });
+  await screen.findByRole("checkbox", { name: "A coach comments on a copy you shared" });
+  for (const details of document.querySelectorAll("details")) details.open = true;
+  take("Account");
+  page.unmount();
+
+  state = fullVault();
+  installFakeApi(state);
+  page = renderWithSession(<SharingOverview />, state.me);
+  await screen.findByText(/^Dana Okafor: /);
+  await screen.findByText("1 connected");
+  take("Sharing");
+  page.unmount();
+
+  state = fullVault();
+  installFakeApi(state);
+  page = renderWithSession(<SharingCoaches />, state.me);
+  await screen.findByText("Dana Okafor");
+  await userEvent.click(screen.getByRole("button", { name: "Choose what to share" }));
+  await screen.findByRole("checkbox", { name: "Say which job each resume and document is for" });
+  take("Coaches");
+  page.unmount();
+
+  state = fullVault();
+  installFakeApi(state);
+  page = renderWithSession(<SharingRecruiters />, state.me);
   await screen.findByRole("button", { name: "Save preferences" });
   await screen.findByText("Web platform development software");
-  await screen.findByRole("checkbox", { name: "A coach comments on a copy you shared" });
-  take("Account");
+  take("Recruiters");
+  page.unmount();
+
+  state = fullVault();
+  installFakeApi(state);
+  page = renderWithSession(<SharingApps />, state.me);
+  await screen.findByText("Career Notebook");
+  take("Connected apps");
   page.unmount();
 
   const copy = render(<ShareSnapshotContent view={sharedView()} />);

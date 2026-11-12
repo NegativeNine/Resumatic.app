@@ -5,10 +5,13 @@ import { EmptyState, PageHeader } from "./components/ui";
 import { AccountPage } from "./pages/AccountPage";
 import { ClientsPage } from "./pages/ClientsPage";
 import { RulesInterim } from "./pages/interim/jobs";
-import { AppsInterim, CoachesInterim, RecruitersInterim, SharingInterim } from "./pages/interim/sharing";
 import { JobsPage } from "./pages/JobsPage";
 import { LEGAL_TITLES, LegalPage } from "./pages/LegalPage";
 import { ResumePage } from "./pages/ResumePage";
+import { SharingApps } from "./pages/sharing/SharingApps";
+import { SharingCoaches } from "./pages/sharing/SharingCoaches";
+import { SharingOverview } from "./pages/sharing/SharingOverview";
+import { SharingRecruiters } from "./pages/sharing/SharingRecruiters";
 import { SourcesPage } from "./pages/SourcesPage";
 import { PLACEHOLDERS, type PlaceholderName } from "./placeholders";
 import { href, NOT_FOUND_ROUTE, routeNeeds, type Route, type RouteName } from "./router";
@@ -50,12 +53,12 @@ export const SCREENS: { [K in RouteName]: Screen } = {
   resume: { title: "Tailored resume", render: (route) => <ResumePage id={route.params.resumeId!} /> },
 
   // stage 6: sharing and account
-  sharing: { title: "Sharing", render: () => <SharingInterim /> },
-  sharingCoaches: { title: "Coaches", render: () => <CoachesInterim /> },
-  sharingRecruiters: { title: "Recruiters", render: () => <RecruitersInterim /> },
+  sharing: { title: "Sharing", render: () => <SharingOverview /> },
+  sharingCoaches: { title: "Coaches", render: () => <SharingCoaches /> },
+  sharingRecruiters: { title: "Recruiters", render: () => <SharingRecruiters /> },
   introRequest: placeholder("introRequest"),
-  sharingApps: { title: "Connected apps", render: () => <AppsInterim /> },
-  account: { title: "Account", render: () => <AccountPage /> },
+  sharingApps: { title: "Connected apps", render: () => <SharingApps /> },
+  account: { title: "Account", render: (route) => <AccountPage section={route.params.section} /> },
 
   // stage 7: outside
   coachingClients: { title: "Clients", render: () => <ClientsPage /> },

@@ -62,6 +62,7 @@ export const PLACEHOLDERS = {
     title: "Introduction request",
     lede: "A recruiter’s request to meet you, and what they’ve seen so far.",
     note: "Introduction requests open later, once recruiters can find an anonymous profile. No recruiter can find you today.",
+    back: { label: "Back to Recruiters", to: href.recruiters },
   },
 
   // stage 7: outside
@@ -112,12 +113,24 @@ export const PLACEHOLDER_SECTIONS = {
 
   // stage 6: sharing and account
   recruitersVisibility: {
-    title: "Visibility, blocks and requests",
-    note: "Choosing whether recruiters can find you, blocking an employer and answering their requests open later. No recruiter can find you today.",
+    title: "Can recruiters find you?",
+    note: "Choosing whether recruiters can find you, the companies to hide from and how many requests reach you each week opens later, once consent and notices have legal sign-off. No recruiter can find you today.",
+  },
+  recruitersRequests: {
+    title: "Requests to meet you",
+    note: "Introduction requests open later, once recruiters can find an anonymous profile. Until then, none can reach you.",
   },
   liveAccess: {
     title: "Live access",
     note: "Letting a coach follow your record as it changes opens next. Every copy you share today is fixed.",
+  },
+  moreNotices: {
+    title: "More email notices",
+    note: "Email when a resume or document is ready, or the day before a link or an app’s access ends, opens later. The three notices above work now.",
+  },
+  accountRegion: {
+    title: "Where your record is kept",
+    note: "Choosing to keep your record in the European Union opens later. Until then, it is created in a Cloudflare region near where you first sign in.",
   },
 
   // stage 7: outside

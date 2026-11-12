@@ -2,7 +2,9 @@ import { screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import { RulesInterim } from "../../src/web/pages/interim/jobs";
-import { CoachesInterim, RecruitersInterim } from "../../src/web/pages/interim/sharing";
+import { AccountPage } from "../../src/web/pages/AccountPage";
+import { SharingCoaches } from "../../src/web/pages/sharing/SharingCoaches";
+import { SharingRecruiters } from "../../src/web/pages/sharing/SharingRecruiters";
 import { PLACEHOLDERS, PLACEHOLDER_SECTIONS, type PlaceholderName, type PlaceholderSectionName } from "../../src/web/placeholders";
 import { parseRoute, ROUTES, type RouteParams } from "../../src/web/router";
 import { SCREENS } from "../../src/web/screens";
@@ -18,8 +20,11 @@ import { renderWithSession } from "./render";
 /** The real page each placeholder section is shown on. */
 const SECTION_PAGES: Record<PlaceholderSectionName, () => ReactNode> = {
   rules: () => <RulesInterim />,
-  liveAccess: () => <CoachesInterim />,
-  recruitersVisibility: () => <RecruitersInterim />,
+  liveAccess: () => <SharingCoaches />,
+  recruitersVisibility: () => <SharingRecruiters />,
+  recruitersRequests: () => <SharingRecruiters />,
+  moreNotices: () => <AccountPage />,
+  accountRegion: () => <AccountPage />,
 };
 
 const SAMPLE: Required<RouteParams> = { id: "sample-id", resumeId: "res-ready", jobTab: "fit", section: "profile" };
@@ -78,6 +83,8 @@ describe("placeholders", () => {
       const shown = renderWithSession(<main>{SECTION_PAGES[name]()}</main>, state.me);
       // The real page is there around it, with its own heading.
       expect(screen.getByRole("heading", { level: 1 }), name).toBeInTheDocument();
+      // A section behind More choices is searched for with the row open, as a person would find it.
+      for (const details of document.querySelectorAll("details")) details.open = true;
       const section = await screen.findByRole("region", { name: copy.title });
       expect(within(section).getByRole("heading", { level: 2, name: copy.title }), name).toBeInTheDocument();
       expect(section.querySelector(".rs-mark--note"), name).toHaveTextContent("Not available yet");

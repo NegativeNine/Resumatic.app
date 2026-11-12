@@ -2,72 +2,109 @@ import { useId, useState, type ChangeEvent, type ReactNode } from "react";
 import type { Profile } from "../../shared/api";
 import { api, ApiError } from "../api";
 import { ActionError, Field, Glyph, PageHeader } from "../components/ui";
-import { BillingTools, CoachSharingTools } from "../components/AccountTools";
-import { ConnectedApps } from "../components/ConnectedApps";
+import { MoreChoices } from "../components/account/MoreChoices";
+import { BillingTools } from "../components/AccountTools";
 import { EmailNotices } from "../components/EmailNotices";
-import { JobPreferences } from "../components/Preferences";
-import { CardPreviewSection } from "../components/CardPreview";
-import { SavedAnswers } from "../components/SavedAnswers";
-import { OwnerComments } from "../components/ShareComments";
+import { PlaceholderSection } from "../components/Placeholder";
 import { useAction } from "../hooks";
-import { ACCOUNT_ANCHORS, href, type AccountSection } from "../router";
+import { ACCOUNT_ANCHORS, ACCOUNT_SECTIONS, href, type AccountSection } from "../router";
 import { useSession } from "../session";
 import { isProfileSnapshot, profileWriteObserved } from "../profile-save";
 import { getThemeChoice, setThemeChoice, type ThemeChoice } from "../theme";
+import "../styles/rooms/account.css";
+
+// Account: who the person is on a resume, what their plan allows, their notices and theme, their
+// data, signing in, and deleting the account, last. What leaves the record (coaches, recruiters and
+// connected apps) is under Sharing, and saved answers are under Jobs › Rules and answers.
 
 const CONFIRM_PHRASE = "delete my account";
 const DELETION_NOTE =
-  "Your account is being deleted. You’ve been signed out, and your uploads, facts, applications and resumes are being removed.";
+  "Your account is being deleted. You’ve been signed out, and your files, facts, jobs and documents are being removed.";
 
-export function AccountPage() {
+/** Each section's name in the list beside them. */
+const SECTION_NAMES: Readonly<Record<AccountSection, string>> = {
+  profile: "Profile",
+  plan: "Plan",
+  notifications: "Notifications",
+  appearance: "Appearance",
+  data: "Your data",
+  "signing-in": "Signing in",
+};
+
+/** `section` is the one the address names, if any: the shell scrolls to it and focuses it. */
+export function AccountPage({ section }: { section?: AccountSection } = {}) {
   const { me } = useSession();
+  const notices = me.capabilities?.emailNotices === true;
+  const listed = ACCOUNT_SECTIONS.filter((name) => name !== "notifications" || notices);
   return (
     <>
-      <PageHeader title="Account" />
-      <div className="stack">
-        <Anchor section="profile"><ProfileForm /></Anchor>
-        <JobPreferences />
-        {me.capabilities?.cardPreview && <CardPreviewSection />}
-        <SavedAnswers />
-        <Anchor section="appearance"><Appearance /></Anchor>
-        <Anchor section="plan"><BillingTools /></Anchor>
-        <CoachSharingTools />
-        <OwnerComments />
-        {me.capabilities?.emailNotices && <Anchor section="notifications"><EmailNotices /></Anchor>}
-        {me.capabilities?.connectedApps && <ConnectedApps />}
-        <Anchor section="signing-in"><SignOutCard /></Anchor>
-        <Anchor section="data">
-          <section className="card" aria-labelledby="data-heading">
-            <h2 id="data-heading">Your data</h2>
-            <div className="rs-setting">
-              <p className="rs-setting__text">
-                <strong>Everything</strong>
-                <span>
-                  Your record and your files together, as a ZIP archive. It holds up to 128 files and 100 MiB of
-                  data.
-                </span>
-              </p>
-              <a className="rs-btn" href={api.exportArchiveUrl} download>
-                <Glyph name="download" />
-                Download your record and files (ZIP)
-              </a>
-            </div>
-            <div className="rs-setting">
-              <p className="rs-setting__text">
-                <strong>Your record only</strong>
-                <span>
-                  One JSON file. For a larger record, download this and the individual files from{" "}
-                  <a href={href.facts}>Facts</a> while your account is active.
-                </span>
-              </p>
-              <a className="rs-btn" href={api.exportUrl} download>
-                <Glyph name="download" />
-                Download your record (JSON)
-              </a>
-            </div>
-          </section>
-        </Anchor>
-        <DeleteAccount />
+      <PageHeader title="Account">Who you are on a resume, what your plan allows, and what happens to your data.</PageHeader>
+      <div className="app-account">
+        <div className="app-account-side">
+          <nav aria-label="Account sections" className="app-account-nav">
+            <ul>
+              {listed.map((name) => (
+                <li key={name}>
+                  <a href={href.accountSection(name)} aria-current={name === section ? "location" : undefined}>
+                    {SECTION_NAMES[name]}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+          <p className="rs-meta app-account-moved">
+            Saved answers are under <a href={href.rules}>Jobs › Rules and answers</a>.
+          </p>
+        </div>
+        <div className="app-stack">
+          <Anchor section="profile"><ProfileForm /></Anchor>
+          <Anchor section="plan"><BillingTools /></Anchor>
+          {notices && (
+            <Anchor section="notifications">
+              <EmailNotices>
+                <MoreChoices hint="A resume or document is ready, or a link or an app’s access is about to end">
+                  <PlaceholderSection name="moreNotices" />
+                </MoreChoices>
+              </EmailNotices>
+            </Anchor>
+          )}
+          <Anchor section="appearance"><Appearance /></Anchor>
+          <Anchor section="data">
+            <section className="card" aria-labelledby="data-heading">
+              <h2 id="data-heading">Your data</h2>
+              <p className="card-text meta">Your record is kept in a database of its own, separate from everyone else’s.</p>
+              <div className="rs-setting">
+                <p className="rs-setting__text">
+                  <strong>Everything</strong>
+                  <span>
+                    Your record and your files together, as a ZIP archive. It holds up to 128 files and 100 MiB of
+                    data.
+                  </span>
+                </p>
+                <a className="rs-btn" href={api.exportArchiveUrl} download>
+                  <Glyph name="download" />
+                  Download your record and files (ZIP)
+                </a>
+              </div>
+              <div className="rs-setting">
+                <p className="rs-setting__text">
+                  <strong>Your record only</strong>
+                  <span>
+                    One JSON file. For a larger record, download this and the individual files from{" "}
+                    <a href={href.facts}>Facts</a> while your account is active.
+                  </span>
+                </p>
+                <a className="rs-btn" href={api.exportUrl} download>
+                  <Glyph name="download" />
+                  Download your record (JSON)
+                </a>
+              </div>
+            </section>
+          </Anchor>
+          <PlaceholderSection name="accountRegion" />
+          <Anchor section="signing-in"><SignOutCard /></Anchor>
+          <DeleteAccount />
+        </div>
       </div>
     </>
   );
@@ -213,7 +250,7 @@ function ProfileForm() {
     >
       <h2 id="profile-heading">Profile</h2>
       <p className="card-text meta">
-        Your contact details, for the top of your resumes.
+        Your contact details, for the top of your resumes. Nothing here is a fact about your work.
       </p>
       <div className="field-grid">
         <Field id={`${id}-name`} label="Name">
@@ -292,7 +329,7 @@ function ProfileForm() {
 }
 
 function SignOutCard() {
-  const { endSession } = useSession();
+  const { me, endSession } = useSession();
   const here = useAction();
   const everywhere = useAction();
   const busy = here.pending || everywhere.pending;
@@ -312,7 +349,9 @@ function SignOutCard() {
 
   return (
     <section className="card" aria-labelledby="sign-out-heading">
-      <h2 id="sign-out-heading">Signing out</h2>
+      <h2 id="sign-out-heading">Signing in</h2>
+      {/* A session from before the address was carried says nothing, rather than guess. */}
+      {me.signInEmail && <p className="card-text meta app-account-signed-in">Signed in with Google as {me.signInEmail}.</p>}
       <div className="rs-setting">
         <p className="rs-setting__text">
           <strong>This device</strong>
@@ -349,13 +388,12 @@ function DeleteAccount() {
   const confirmed = typed.trim().toLowerCase() === CONFIRM_PHRASE;
 
   return (
-    <section className="card danger-card" aria-labelledby="delete-heading">
-      <h2 id="delete-heading">Delete account</h2>
+    <section className="rs-panel rs-danger-zone" aria-labelledby="delete-heading">
+      <h2 id="delete-heading" className="rs-h2">Delete account</h2>
       <p className="card-text">
-        This permanently deletes your account and everything in your record:
-        uploaded files, roles, facts, jobs and resumes. It can’t be undone.
-        Before deleting, download your record and any original files
-        you want to keep from <a href={href.facts}>Facts</a>.
+        This permanently deletes your account and everything in your record: your files, roles, facts, jobs and
+        documents. Copies you’ve shared stop working and connected apps lose access. It can’t be undone, so{" "}
+        <a href={href.accountSection("data")}>download your record</a> first if you want to keep it.
       </p>
       <form
         onSubmit={(e) => {
@@ -372,6 +410,7 @@ function DeleteAccount() {
         </label>
         <input
           id={id}
+          className="rs-input"
           type="text"
           value={typed}
           onChange={(e) => setTyped(e.target.value)}
@@ -381,7 +420,7 @@ function DeleteAccount() {
         <div className="actions">
           <button
             type="submit"
-            className="danger"
+            className="rs-btn rs-btn--danger"
             disabled={!confirmed || pending}
           >
             {pending ? "Deleting…" : "Delete my account"}

@@ -29,6 +29,7 @@ import type { PostingRead } from "../shared/postings";
 import type { CoachClient, ShareableDocument, ShareGrant } from "../shared/sharing";
 import type { CommentThread, NewShareComment, NewSuggestion, OwnerCommentThread, ShareComment } from "../shared/sharing";
 import type { Today } from "../shared/today";
+import type { McpGrant } from "../shared/mcp";
 
 export interface BillingView {
   enabled: boolean;
@@ -468,6 +469,8 @@ export const api = {
   // stage 5: jobs
 
   // stage 6: sharing and account
+  /** The apps this person connected, for Sharing › Overview. ConnectedApps reads the same route itself. */
+  mcpGrants: () => request<{ grants: McpGrant[] }>("GET", "/api/mcp/grants"),
 
   // stage 7: outside
 };

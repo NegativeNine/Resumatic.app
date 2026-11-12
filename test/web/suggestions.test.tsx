@@ -4,7 +4,7 @@ import axe from "axe-core";
 import { describe, expect, it, vi } from "vitest";
 import type { CommentThread, OwnerCommentThread, ShareComment, ShareSuggestion, SharedView, ShareTarget } from "../../src/shared/sharing";
 import { VAULT_CHANGED } from "../../src/web/live";
-import { AccountPage } from "../../src/web/pages/AccountPage";
+import { SharingCoaches } from "../../src/web/pages/sharing/SharingCoaches";
 import { SharePage } from "../../src/web/pages/SharePage";
 import { quotaMessage } from "../../src/web/tailor";
 import { FakeApi, installFakeApi } from "./api-fake";
@@ -210,7 +210,7 @@ describe("an owner answering suggested wording", () => {
       ]),
     ];
     installFakeApi(state);
-    renderWithSession(<AccountPage />, state.me);
+    renderWithSession(<SharingCoaches />, state.me);
     await screen.findByRole("region", { name: "Comments from your coach" });
     expect(told("Waiting wording")).toEqual([
       "Waiting for you",
@@ -246,7 +246,7 @@ describe("an owner answering suggested wording", () => {
     const state = fullVault();
     state.shareComments = [thread([named("w", { state: "waiting" }, "Waiting wording"), named("x", { state: "waiting" }, "Another wording")])];
     const api = installFakeApi(state);
-    renderWithSession(<AccountPage />, state.me);
+    renderWithSession(<SharingCoaches />, state.me);
     await screen.findByRole("region", { name: "Comments from your coach" });
     await userEvent.click(itemOf("Waiting wording").getByRole("button", { name: "Accept and check" }));
     expect(await itemOf("Waiting wording").findByText("Checking this wording against the cited facts…")).toBeInTheDocument();
@@ -272,7 +272,7 @@ describe("an owner answering suggested wording", () => {
       ]),
     ];
     installFakeApi(state);
-    renderWithSession(<AccountPage />, state.me);
+    renderWithSession(<SharingCoaches />, state.me);
     await screen.findByRole("region", { name: "Comments from your coach" });
     expect(told("Changed wording")).toEqual([
       "Waiting for you",
@@ -289,7 +289,7 @@ describe("an owner answering suggested wording", () => {
     state.shareComments = [thread([named("w", { state: "waiting" }, "Waiting wording")], { coachEmail: "coach@example.test" })];
     state.shareComments[0]!.comments[0]!.name = null;
     const api = installFakeApi(state);
-    renderWithSession(<AccountPage />, state.me);
+    renderWithSession(<SharingCoaches />, state.me);
     await screen.findByRole("region", { name: "Comments from your coach" });
     // A coach without a name is “your coach”.
     expect(itemOf("Waiting wording").getByText("From your coach")).toBeInTheDocument();

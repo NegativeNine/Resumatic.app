@@ -45,7 +45,7 @@ Server messages, stored messages (shown through `sourceErrorMessage`, `resumeErr
 
 ### Deferred interface labels
 
-The interface's own labels that keep an earlier word, each with the stage that renames it. `test/web/words.test.tsx` fails if a label on Facts, Jobs, a resume, Account or a shared copy uses one of these words and isn't listed in its `DEFERRED`, and it fails if an entry there isn't listed here.
+The interface's own labels that keep an earlier word, each with the stage that renames it. `test/web/words.test.tsx` fails if a label on Facts, Jobs, a resume, Account, Sharing or a shared copy uses one of these words and isn't listed in its `DEFERRED`, and it fails if an entry there isn't listed here.
 
 | Label | Where | Stage |
 | --- | --- | --- |
@@ -63,7 +63,6 @@ The interface's own labels that keep an earlier word, each with the stage that r
 | “Track this application” | ApplicationWorkspace | 5, jobs: application becomes job |
 | “Prepare your application” | Documents | 5, jobs |
 | “Application kit” | ApplicationKit | 5, jobs |
-| “Card preview” | CardPreview on Account | 6, sharing and account: card becomes anonymous profile |
 | “Shared career snapshot” | ShareSnapshotContent | 7, outside: snapshot becomes shared copy |
 
 Sentences that hold one of these words and none of stage 1's five nouns are unchanged as well, such as the sensitive notices on a resume and the posting reader's messages on Jobs. Their room's stage changes them with the labels.

@@ -716,8 +716,12 @@ if (!browser?.startsWith("/")) {
     finishProfile();
     await wait(`document.body?.innerText.includes('Profile saved.')`);
     if (me.profile.revision !== 4 || me.profile.name !== "Changed elsewhere Reconciled" || !await evalPage(`document.querySelector('input[autocomplete="name"]')?.value === 'Changed elsewhere Reconciled'`)) throw new Error("PROFILE_LOST_RESPONSE_NOT_RECONCILED");
+    // The copies shared with a coach are on Sharing › Coaches, and the downloads on Account.
+    await evalPage(`location.hash = '#/sharing/coaches'`);
     await wait(`document.body?.innerText.includes('This link is currently unavailable.')`);
     if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Revoke link')`)) throw new Error("SHARE_REVOKE_MISSING");
+    await evalPage(`location.hash = '#/account/data'`);
+    await wait(`!!document.querySelector('a[href="/api/export/archive"]')`);
     if (!await evalPage(`!!document.querySelector('a[href="/api/export/archive"]')`)) throw new Error("ARCHIVE_LINK_MISSING");
     if (!await evalPage(`!!document.querySelector('a[href="/api/export"]') && [...document.querySelectorAll('a[href="#/facts/check"]')].some(x => x.textContent.includes('Facts'))`)) throw new Error("EXPORT_DOWNLOAD_LINKS_MISSING");
     stage = "resource_reload";

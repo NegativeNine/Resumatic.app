@@ -104,7 +104,7 @@ describe("the header", () => {
     expect(document.querySelector(".rs-nav__count")).toBeNull();
   });
 
-  it("reaches a waiting coach comment from the header in one click", async () => {
+  it("reaches a waiting coach comment from the header: Sharing says it waits, and its Coaches tab shows it", async () => {
     const state = fullVault();
     state.today = { ...waiting(), counts: { facts: 0, jobs: 0, sharing: 1, today: 1 } };
     state.shareComments = [
@@ -122,6 +122,13 @@ describe("the header", () => {
     renderWithSession(<Routed />, state.me);
     await userEvent.click(await within(rooms()).findByRole("link", { name: "Sharing, 1 waiting for you" }));
     expect(window.location.hash).toBe("#/sharing");
+    // The overview counts it, and leaves it new: it never shows a comment, so it never marks one seen.
+    const coaches = await screen.findByRole("region", { name: "Coaches" });
+    expect(within(coaches).getByText("1 waiting for you")).toBeInTheDocument();
+    expect(screen.queryByText("How long did it take?")).toBeNull();
+    // The Coaches tab carries the same count, and shows the comment.
+    await userEvent.click(screen.getByRole("link", { name: "Coaches, 1 waiting for you" }));
+    expect(window.location.hash).toBe("#/sharing/coaches");
     expect(await screen.findByRole("region", { name: "Comments from your coach" })).toBeInTheDocument();
     expect(screen.getByText("How long did it take?")).toBeInTheDocument();
   });

@@ -10,7 +10,10 @@ import { ResumePage } from "../../src/web/pages/ResumePage";
 import { SignedOut } from "../../src/web/pages/SignedOut";
 import { SourcesPage } from "../../src/web/pages/SourcesPage";
 import { RulesInterim } from "../../src/web/pages/interim/jobs";
-import { AppsInterim, CoachesInterim, RecruitersInterim, SharingInterim } from "../../src/web/pages/interim/sharing";
+import { SharingApps } from "../../src/web/pages/sharing/SharingApps";
+import { SharingCoaches } from "../../src/web/pages/sharing/SharingCoaches";
+import { SharingOverview } from "../../src/web/pages/sharing/SharingOverview";
+import { SharingRecruiters } from "../../src/web/pages/sharing/SharingRecruiters";
 import { PlaceholderPage } from "../../src/web/components/Placeholder";
 import { Shell } from "../../src/web/components/Shell";
 import { PLACEHOLDERS, type PlaceholderName } from "../../src/web/placeholders";
@@ -78,26 +81,15 @@ describe("accessibility", () => {
     expect(await violations()).toEqual([]);
   });
 
-  it("Account, with plans, share links, connected apps and the card preview", async () => {
+  it("Account, with every section and its More choices open", async () => {
     const state = fullVault();
+    state.me.signInEmail = "sam.rivera@example.com";
     installFakeApi(state);
-    renderWithSession(<AccountPage />, state.me);
-    await screen.findByText("Dana Okafor");
-    await screen.findByText("Career Notebook");
+    renderWithSession(<AccountPage section="plan" />, state.me);
     await screen.findByRole("combobox", { name: "Choose a plan" });
-    // The job preferences card loads by itself, so its form is waited for too.
-    await screen.findByRole("button", { name: "Save preferences" });
-    // So does the card preview, with an occupation, a band and two skill groups.
-    await screen.findByText("Web platform development software");
-    // So does the email notices card.
+    // The email notices load by themselves, so their form is waited for too.
     await screen.findByRole("checkbox", { name: "A coach comments on a copy you shared" });
-    // So is the saved answers card, with an answer the list now refuses.
-    await screen.findByText("Portfolio link", { selector: "strong" });
-    await screen.findByText(/can’t be offered any more/);
-    expect(await violations()).toEqual([]);
-    // The form for a new link: what to share, who it’s for and what the copy should say.
-    await userEvent.click(screen.getByRole("button", { name: "Choose what to share" }));
-    await screen.findByRole("checkbox", { name: "Say which job each resume and document is for" });
+    for (const details of document.querySelectorAll("details")) details.open = true;
     expect(await violations()).toEqual([]);
   });
 
@@ -129,15 +121,35 @@ describe("accessibility", () => {
     }
   });
 
-  it("the interim Sharing pages and Rules and answers", async () => {
+  it("the Sharing pages", async () => {
     const state = fullVault();
+    state.today!.waiting.push({ kind: "suggestions", grantId: "sh-1", coachName: "Dana Okafor", coachEmail: "dana.okafor@example.com", count: 1, latest: 1794051720000 });
     installFakeApi(state);
+    // The overview in its shell, so the whole page is in its landmarks and the region rule is on.
+    const overview = renderWithSession(
+      <Shell route={parseRoute("#/sharing")} title="Sharing">
+        <SharingOverview />
+      </Shell>,
+      state.me,
+    );
+    await screen.findByText("1 connected");
+    await screen.findByText(/^Dana Okafor: /);
+    await screen.findByText("2 new comments and 1 line of suggested wording.");
+    expect(await violations(true), "Overview").toEqual([]);
+    overview.unmount();
+    // Coaches, with the form for a new copy open.
+    const coaches = renderWithSession(<SharingCoaches />, state.me);
+    await screen.findByText("Dana Okafor");
+    await userEvent.click(screen.getByRole("button", { name: "Choose what to share" }));
+    await screen.findByRole("checkbox", { name: "Say which job each resume and document is for" });
+    expect(await violations(), "Coaches").toEqual([]);
+    coaches.unmount();
     const pages: [string, () => React.ReactNode, () => Promise<unknown>][] = [
-      ["Sharing", () => <SharingInterim />, () => screen.findByRole("heading", { name: "Sharing", level: 1 })],
-      ["Coaches", () => <CoachesInterim />, () => screen.findByText("Dana Okafor")],
-      ["Recruiters", () => <RecruitersInterim />, () => screen.findByText("Web platform development software")],
-      ["Connected apps", () => <AppsInterim />, () => screen.findByText("Career Notebook")],
-      ["Rules and answers", () => <RulesInterim />, () => screen.findByText("Portfolio link", { selector: "strong" })],
+      ["Recruiters", () => <SharingRecruiters />, async () => {
+        await screen.findByText("Web platform development software");
+        await screen.findByRole("button", { name: "Save preferences" });
+      }],
+      ["Connected apps", () => <SharingApps />, () => screen.findByText("Career Notebook")],
     ];
     for (const [name, page, loaded] of pages) {
       const shown = renderWithSession(<>{page()}</>, state.me);
@@ -145,6 +157,15 @@ describe("accessibility", () => {
       expect(await violations(), name).toEqual([]);
       shown.unmount();
     }
+  });
+
+  // Until stage 5 replaces it with its own page.
+  it("Rules and answers (interim)", async () => {
+    const state = fullVault();
+    installFakeApi(state);
+    renderWithSession(<RulesInterim />, state.me);
+    await screen.findByText("Portfolio link", { selector: "strong" });
+    expect(await violations()).toEqual([]);
   });
 
   it("the shared copy a coach reads", async () => {

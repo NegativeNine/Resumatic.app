@@ -255,8 +255,8 @@ describe("what can reach saved answers and application kits", () => {
     expect(naming(/\bapi\.kitArchiveUrl\b/)).toEqual(["src/web/components/ApplicationKit.tsx"]);
     expect(naming("/api/saved-answers")).toEqual(["src/shared/api.ts", "src/web/api.ts"]);
     expect(naming('"/saved-answers')).toEqual([ROUTES]);
-    // On Account and on Rules and answers until stage 5 replaces the interim page.
-    expect(naming(/\bSavedAnswers\b/)).toEqual(["src/web/components/SavedAnswers.tsx", "src/web/pages/AccountPage.tsx", "src/web/pages/interim/jobs.tsx"]);
+    // On Rules and answers alone, on its interim page until stage 5 replaces it.
+    expect(naming(/\bSavedAnswers\b/)).toEqual(["src/web/components/SavedAnswers.tsx", "src/web/pages/interim/jobs.tsx"]);
     expect(naming(/\bApplicationKit\b/)).toEqual(["src/web/components/ApplicationKit.tsx", "src/web/components/ApplicationWorkspace.tsx"]);
     expect(naming("kit-save")).toEqual(["src/web/components/ApplicationKit.tsx"]);
     // Nothing under the pipelines, the Workflows, the copies' store or the connected apps' server names any of it.
