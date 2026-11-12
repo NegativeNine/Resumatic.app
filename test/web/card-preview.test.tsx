@@ -12,7 +12,7 @@ import { renderWithSession } from "./render";
 const ROUTE = /^\/api\/v2\/card-preview$/;
 const ALWAYS = "Only you can see this. Nothing is published: there’s no way to make a card visible to anyone, and this preview doesn’t change that.";
 const INTRO =
-  "If you ever chose to be found, recruiters would see a card like this instead of your resume. It’s built only from tags you’ve confirmed on your jobs and facts. It never holds your name, employers, dates or your own words, or anything from a fact you’ve marked sensitive.";
+  "If you ever chose to be found, recruiters would see a card like this instead of your resume. It’s built only from tags you’ve confirmed on your jobs and facts. It never holds your name, employers, dates or your own words, or anything from a fact you keep private.";
 const EMPTY = "Your card is empty. It uses only confirmed tags, and none of yours are confirmed: tags are still being tested, and nobody can confirm one in Resumatic yet.";
 const UNAVAILABLE = "The card preview isn’t available here yet. It needs the list of occupations and skills that tags come from, and that isn’t connected.";
 const LEFT_OUT = "A card would also say where you’d work, the kinds of job you want and when you could start. Those come from your job preferences, which this preview doesn’t read.";

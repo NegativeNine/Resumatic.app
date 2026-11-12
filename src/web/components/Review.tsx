@@ -3,7 +3,7 @@ import type { FactView, ReviewState, RoleView } from "../../shared/api";
 import { STATE_LABEL } from "../format";
 import { useAction, type Reload } from "../hooks";
 import { href } from "../router";
-import { countByState, groupByRole, isReading, type Vault } from "../vault";
+import { countByState, groupByRole, type Vault } from "../vault";
 import { AddFact } from "./AddFact";
 import { FactList } from "./FactItem";
 import { REVIEW_HEADING_ID } from "./ReviewButtons";
@@ -12,10 +12,18 @@ import { RoleGroup } from "./RoleGroup";
 import { ReviewQueue } from "./ReviewQueue";
 import { EmptyState } from "./ui";
 
-const FILTERS: readonly ReviewState[] = ["proposed", "confirmed", "rejected"];
+// Facts › All facts: what the person has confirmed, by role, and what they left out. What is still
+// to check is asked on To check, one question at a time.
+
+const FILTERS: readonly ReviewState[] = ["confirmed", "rejected"];
+
+const HEADING: Partial<Record<ReviewState, string>> = {
+  confirmed: "Confirmed, by role",
+  rejected: "Left out, by role",
+};
 
 export function Review({ vault, reload }: { vault: Vault; reload: () => Promise<Vault | undefined> }) {
-  const [filter, setFilter] = useState<ReviewState>("proposed");
+  const [filter, setFilter] = useState<ReviewState>("confirmed");
   const [held, setHeld] = useState<Vault | null>(null);
   const latest = useRef(vault);
   latest.current = vault;
@@ -55,24 +63,22 @@ export function Review({ vault, reload }: { vault: Vault; reload: () => Promise<
     const fact = next?.facts.find((f) => f.id === factId);
     // A manual fact starts confirmed. If a refresh fails or a newer refresh
     // supersedes this one, still show the tab where it was created. The
-    // refresh error remains visible and can be retried.
-    showFilter(fact?.state ?? "confirmed");
+    // refresh error remains visible and can be retried. A state this list
+    // doesn't show leaves the filter as it is.
+    const state = fact?.state ?? "confirmed";
+    showFilter(FILTERS.includes(state) ? state : filter);
   }
 
   return (
     <section className="section" aria-labelledby={REVIEW_HEADING_ID}>
       <h2 id={REVIEW_HEADING_ID} tabIndex={-1}>
-        Check your roles and facts
+        {HEADING[filter]}
       </h2>
-      <p className="section-intro">
-        Check each one against the words it came from. Say what’s right, fix what’s nearly right, and leave out the
-        rest.
-      </p>
       <div className="add-row">
         <AddFact roles={vault.roles} onAdded={showAdded} />
         <AddRole reload={reload} onAdded={() => showFilter("confirmed")} />
       </div>
-      {held && <p role="status" className="hint">The review list is paused while you edit. New changes appear when you close the editor. Your draft will be lost if you leave or reload this page.</p>}
+      {held && <p role="status" className="hint">This list is paused while you edit. New changes appear when you close the editor. Your draft will be lost if you leave or reload this page.</p>}
       <fieldset className="rs-filter app-review-filter" disabled={!!held}>
         <legend>Show</legend>
         {FILTERS.map((state) => (
@@ -84,8 +90,11 @@ export function Review({ vault, reload }: { vault: Vault; reload: () => Promise<
           </label>
         ))}
       </fieldset>
+      <p className="rs-meta facts-attest">
+        Want someone who worked with you to back a fact? <a href={href.attest}>Ask a colleague</a>.
+      </p>
       {groups.length === 0 ? (
-        <EmptyReview filter={filter} vault={displayed} />
+        <EmptyReview filter={filter} />
       ) : (
         <ReviewQueue>
         {groups.map((group) =>
@@ -158,26 +167,13 @@ function LooseFacts(props: { facts: FactView[]; roles: RoleView[]; filenames: Re
   );
 }
 
-function EmptyReview({ filter, vault }: { filter: ReviewState; vault: Vault }) {
-  if (filter === "confirmed") {
-    return (
-      <EmptyState title="No confirmed facts yet">
-        Say “That’s right” to the facts that are true, and your resumes will use them.
-      </EmptyState>
-    );
-  }
+function EmptyReview({ filter }: { filter: ReviewState }) {
   if (filter === "rejected") {
     return <EmptyState title="Nothing left out">Anything you leave out is kept here and never used.</EmptyState>;
   }
-  if (isReading(vault)) {
-    return <EmptyState>Resumatic is reading your file. What it finds will appear here for you to check.</EmptyState>;
-  }
-  if (vault.roles.length === 0 && vault.facts.length === 0) {
-    return <EmptyState>Nothing to check yet. Upload a resume or CV, or add a fact yourself.</EmptyState>;
-  }
   return (
-    <EmptyState title="You’re all caught up">
-      Nothing is waiting for you to check. Next, <a href={href.jobs}>add a job</a> and tailor a resume to it.
+    <EmptyState title="No confirmed facts yet">
+      Say “That’s right” to the facts that are true, and your resumes will use them.
     </EmptyState>
   );
 }

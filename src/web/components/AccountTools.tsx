@@ -274,8 +274,8 @@ export function CoachSharingTools() {
                   {active && grant.available === false && (
                     <Message tone="info">
                       This link is currently unavailable. If it includes a resume, review that version before
-                      creating a new link. If it holds a fact you’ve marked sensitive, it stays closed while the
-                      fact is marked. You can still revoke this one.
+                      creating a new link. If it holds a fact you keep private, it stays closed while the fact
+                      is private. You can still revoke this one.
                     </Message>
                   )}
                 </div>
@@ -470,7 +470,7 @@ function ShareSelection({
             <legend>
               Confirmed facts ({factIds.size} selected, up to 100)
             </legend>
-            {choices.data.withheld && <p className="rs-meta">Facts you’ve marked sensitive aren’t listed.</p>}
+            {choices.data.withheld && <p className="rs-meta">Facts you keep private aren’t listed.</p>}
             {choices.data.facts.length === 0 ? (
               <p className="rs-meta">You have no confirmed facts to share yet.</p>
             ) : (
@@ -565,7 +565,7 @@ function ShareSelection({
                           {/* It can't go into a copy: it uses a marked fact, or its sentences can't be checked again. */}
                           {!document.shareable &&
                             (document.usesSensitive
-                              ? ". Uses a fact you’ve marked sensitive. Create a new one to share it."
+                              ? ". Uses a fact you keep private. Create a new one to share it."
                               : ". Written before documents could be shared. Write a new one to share it.")}
                         </span>
                       </span>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FactView, ReviewState, RoleView } from "../../src/shared/api";
-import { countByState, groupByRole, groupFacts, proposedBySource, sourceReviewSummaries, type Vault } from "../../src/web/vault";
+import { countByState, groupByRole, groupFacts, proposedBySource, reviewQuestions, sourceReviewSummaries, type Vault } from "../../src/web/vault";
 
 const role = (id: string, state: ReviewState): RoleView => ({
   id, state, kind: "job", org: id, title: null, startDate: null, endDate: null, quote: null, sourceId: null,
@@ -134,5 +134,49 @@ describe("countByState", () => {
     }
     const copy: RoleView = { ...role("first", "proposed"), org: "Acme", title: "Engineer", startDate: "2021-01", sourceId: "s1" };
     expect(total({ sources: [], roles: [copy, { ...copy, id: "second", sourceId: "s2" }], facts: [] })).toBe(1);
+  });
+});
+
+describe("reviewQuestions", () => {
+  /** A vault with a role read from two files, a fact read from both, a role of its own and loose facts. */
+  function mixed(): Vault {
+    const first: RoleView = { ...role("r1", "proposed"), org: "Acme", title: "Engineer", startDate: "2021-01", sourceId: "s1", quote: "Acme Engineer" };
+    const copy = { ...first, id: "r2", sourceId: "s2" };
+    const other: RoleView = { ...first, id: "r3", org: "Initrode", sourceId: "s2" };
+    const confirmedRole: RoleView = { ...role("r4", "confirmed"), sourceId: "s2" };
+    const one: FactView = { ...fact("f1", "r1", "proposed"), origin: "extracted", text: "Led a team", quote: "Led a team", sourceId: "s1" };
+    const again = { ...one, id: "f2", roleId: "r2", sourceId: "s2" };
+    const own: FactView = { ...one, id: "f3", roleId: "r3", text: "Ran the cluster", quote: "Ran the cluster", sourceId: "s2" };
+    const under = { ...fact("f4", "r4", "proposed"), sourceId: "s2" };
+    const typed = fact("f5", null, "proposed");
+    const done = { ...fact("f6", "r1", "confirmed"), sourceId: "s1" };
+    const rejected = fact("f7", "r3", "rejected");
+    return { sources: [], roles: [first, copy, other, confirmedRole], facts: [typed, one, again, own, under, done, rejected] };
+  }
+
+  it("reviewQuestions asks as many questions as countByState counts and proposedBySource sums", () => {
+    for (const vault of [mixed(), { sources: [], roles: [], facts: [] }]) {
+      const questions = reviewQuestions(vault);
+      const bySource = [...proposedBySource(vault).values()].reduce((sum, counts) => sum + counts.roles + counts.facts, 0);
+      expect(questions).toHaveLength(countByState(vault).proposed);
+      expect(questions).toHaveLength(bySource);
+    }
+    // The same fact read from two files is one question, with the other copy beside it.
+    const questions = reviewQuestions(mixed());
+    expect(questions).toHaveLength(6);
+    const led = questions.find((q) => q.key === "fact:f1");
+    expect(led?.kind === "fact" && led.duplicates.map((f) => f.id)).toEqual(["f2"]);
+    const acme = questions.find((q) => q.key === "role:r1");
+    // Leaving out Acme leaves out the two copies of its fact still to check, under either copy of the role.
+    expect(acme?.kind === "role" && [acme.duplicates.map((r) => r.id), acme.proposedUnder]).toEqual([["r2"], 2]);
+  });
+
+  it("puts a role before its facts and loose facts last", () => {
+    const questions = reviewQuestions(mixed());
+    expect(questions.map((q) => q.key)).toEqual(["role:r1", "fact:f1", "role:r3", "fact:f3", "fact:f4", "fact:f5"]);
+    // A fact is asked under the role it is shown with; a loose fact under none.
+    expect(questions.map((q) => (q.kind === "fact" ? q.role?.id ?? null : q.role.id))).toEqual(["r1", "r1", "r3", "r3", "r4", null]);
+    // A confirmed role asks nothing itself, but its facts still to check are asked.
+    expect(questions.some((q) => q.key === "role:r4")).toBe(false);
   });
 });

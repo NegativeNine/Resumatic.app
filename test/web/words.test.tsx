@@ -7,7 +7,10 @@ import { ShareSnapshotContent } from "../../src/web/components/ShareSnapshotCont
 import { AccountPage } from "../../src/web/pages/AccountPage";
 import { JobsPage } from "../../src/web/pages/JobsPage";
 import { ResumePage } from "../../src/web/pages/ResumePage";
-import { SourcesPage } from "../../src/web/pages/SourcesPage";
+import { FactsRecord } from "../../src/web/pages/facts/FactsRecord";
+import { FactsReview } from "../../src/web/pages/facts/FactsReview";
+import { FactsSkills } from "../../src/web/pages/facts/FactsSkills";
+import { FactsSources } from "../../src/web/pages/facts/FactsSources";
 import { TodayPage } from "../../src/web/pages/today/TodayPage";
 import { Shell } from "../../src/web/components/Shell";
 import { parseRoute } from "../../src/web/router";
@@ -23,9 +26,9 @@ import { renderWithSession } from "./render";
 const LABELS =
   "button, a, h1, h2, h3, h4, h5, h6, legend, summary, figcaption, .rs-mark, .rs-filter__opt, .hint, .rs-hint, [role=status]";
 
-/** Earlier words no label may use. */
+/** Earlier words no label may use. "Kept" is the earlier line status; "Kept private" is a fact's own state, since stage 4. */
 const EARLIER =
-  /^(Confirm|Edit|Reject)( role)?$|Proposed|Rejected|\bKept\b|Repaired|Dropped|own claim|\bvault\b|\bsources?\b|evidence|\bgaps?\b|\boutputs?\b/;
+  /^(Confirm|Edit|Reject)( role)?$|Proposed|Rejected|\bKept\b(?! private)|Repaired|Dropped|own claim|\bvault\b|\bsources?\b|evidence|\bgaps?\b|\boutputs?\b/;
 
 /** Earlier words that their own room stage renames. A label using one must be on the list below. */
 const LATER = /\b(postings?|snapshots?|[Cc]ard|[Ss]ensitive|[Aa]pplications?)\b/;
@@ -35,11 +38,6 @@ const LATER = /\b(postings?|snapshots?|[Cc]ard|[Ss]ensitive|[Aa]pplications?)\b/
  * removes its own entries here and from docs/redesign-words.md when it renames them.
  */
 const DEFERRED: Readonly<Record<string, string>> = {
-  // Stage 4, facts: sensitive becomes private, with the privacy notice.
-  Sensitive: "stage 4",
-  "Sensitive fact": "stage 4",
-  "Mark sensitive": "stage 4",
-  "Unmark sensitive": "stage 4",
   // Stage 5, jobs: posting becomes job description, and application becomes job.
   "The posting": "stage 5",
   "Read the posting": "stage 5",
@@ -64,7 +62,7 @@ function labels(): string[] {
   return [...texts, ...aria].filter(Boolean);
 }
 
-/** Facts in each filter, Jobs with a workspace open, a resume, Account, a shared copy and Today, with fullVault(); and Today the first time. */
+/** Facts' four pages (All facts in each filter, To check with More choices open), Jobs with a workspace open, a resume, Account, a shared copy and Today, with fullVault(); and Today the first time. */
 async function everyScreen(): Promise<Map<string, string>> {
   const seen = new Map<string, string>();
   const take = (where: string) => {
@@ -73,12 +71,40 @@ async function everyScreen(): Promise<Map<string, string>> {
 
   let state = fullVault();
   installFakeApi(state);
-  let page = renderWithSession(<SourcesPage />, state.me);
-  await screen.findAllByRole("button", { name: /That’s right/ });
-  for (const filter of ["To check", "Confirmed", "Left out"]) {
+  let page = renderWithSession(<FactsReview />, state.me);
+  await screen.findByRole("button", { name: "That’s right" });
+  // The first question is a role; the next is a fact, with More choices under it.
+  await userEvent.click(screen.getByRole("button", { name: "Skip for now" }));
+  await userEvent.click(await screen.findByText("More choices"));
+  for (const details of document.querySelectorAll("details")) details.open = true;
+  await screen.findByText(/^The text Resumatic read from your file\./);
+  take("To check");
+  page.unmount();
+
+  state = fullVault();
+  // One fact kept private, so its mark and its hint are read too.
+  state.facts.find((fact) => fact.id === "fact-pipeline")!.sensitive = true;
+  installFakeApi(state);
+  page = renderWithSession(<FactsRecord />, state.me);
+  await screen.findByRole("radio", { name: /^Confirmed/ });
+  for (const filter of ["Confirmed", "Left out"]) {
     await userEvent.click(screen.getByRole("radio", { name: new RegExp(`^${filter}`) }));
-    take(`Facts, ${filter}`);
+    take(`All facts, ${filter}`);
   }
+  page.unmount();
+
+  state = fullVault();
+  installFakeApi(state);
+  page = renderWithSession(<FactsSkills />, state.me);
+  await screen.findByRole("heading", { name: /^\d+ skills?$/ });
+  take("Skills");
+  page.unmount();
+
+  state = fullVault();
+  installFakeApi(state);
+  page = renderWithSession(<FactsSources />, state.me);
+  await screen.findByText("sam-rivera-2024.pdf");
+  take("Your files");
   page.unmount();
 
   state = fullVault();
@@ -143,7 +169,7 @@ describe("the interface's words", () => {
   it("labels use the plain words", () => {
     // Enough of every screen was read for the check to mean something.
     expect(seen.size).toBeGreaterThan(150);
-    for (const label of ["That’s right", "Fix it", "Leave it out", "Your files", "To check", "Left out", "Backed", "Where things stand", "1. Add the resume you have"]) {
+    for (const label of ["That’s right", "Fix it", "Leave it out", "Your files", "To check", "Left out", "Backed", "Keep private", "Private", "Where things stand", "1. Add the resume you have"]) {
       expect([...seen.keys()], label).toContain(label);
     }
     const earlier = [...seen].filter(([label]) => EARLIER.test(label)).map(([label, where]) => `${where}: ${label}`);

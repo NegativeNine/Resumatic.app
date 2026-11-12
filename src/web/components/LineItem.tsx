@@ -75,7 +75,7 @@ export function LineItem({
         <Badge tone={legacyReview === "pending" ? "needs-you" : LINE_MARK[line.status]} title={legacyReview === "pending" ? "This older line needs a fresh check against confirmed facts." : LINE_STATUS_HINT[line.status]}>
           {legacyReview === "pending" ? "Needs review" : legacyReview === "verified" ? "Checked" : LINE_STATUS_LABEL[line.status]}
         </Badge>
-        {sensitive && <Badge tone="note">Sensitive fact</Badge>}
+        {sensitive && <Badge tone="note">Private fact</Badge>}
         <button
           type="button"
           className="rs-note__toggle"

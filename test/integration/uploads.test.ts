@@ -157,11 +157,11 @@ describe("durable upload reservations", () => {
       store.reserve(two);
       store.reserve(three);
       expect(() => store.reserve(descriptor(id, "four"))).toThrow(
-        "Resumatic is still reading your other sources",
+        "Resumatic is still reading your other files. Wait for one to finish, then upload this file.",
       );
       store.complete(one, (intent) => insert(sql, intent));
       expect(() => store.reserve(descriptor(id, "four"))).toThrow(
-        "Resumatic is still reading your other sources",
+        "Resumatic is still reading your other files. Wait for one to finish, then upload this file.",
       );
       sql.exec(`UPDATE sources SET state = 'ready'`);
       expect(store.reserve(descriptor(id, "four")).intent.state).toBe(
@@ -172,7 +172,7 @@ describe("durable upload reservations", () => {
       store.reserve(descriptor(id, "one"));
       store.reserve(descriptor(id, "two"));
       expect(() => store.reserve(descriptor(id, "three"))).toThrow(
-        "You can keep up to 2 sources during the beta",
+        "You can keep up to 2 files during the beta. Email support@resumatic.app if you need more.",
       );
     }, 2);
   });
@@ -188,7 +188,7 @@ describe("durable upload reservations", () => {
       clock.now++;
       expect(() =>
         store.complete(input, (intent) => insert(sql, intent)),
-      ).toThrow("expired");
+      ).toThrow("This file wasn't added. Upload it again.");
       expect(store.get(input.requestKey)?.state).toBe("expired");
       expect(store.isExpired(input)).toBe(true);
       expect(store.isExpired({ ...input, descriptorDigest: "b".repeat(64) })).toBe(false);
@@ -202,7 +202,7 @@ describe("durable upload reservations", () => {
       store.markCleaned(input.requestKey, input.r2Key);
       expect(store.cleanupCandidates()).toEqual([]);
       expect(store.nextAlarm()).toBeNull();
-      expect(() => store.reserve(input)).toThrow("expired");
+      expect(() => store.reserve(input)).toThrow("This file wasn't added. Upload it again.");
       expect(() =>
         store.reserve({ ...input, requestKey: "other-request" }),
       ).toThrow("storage key is already reserved");
@@ -307,9 +307,9 @@ describe("durable upload reservations", () => {
       await expect(completeReservedUpload(env.FILES, expired.r2Key, async () =>
         store.complete(expired, (intent) => insert(sql, intent)), {
           expired: async () => store.isExpired(expired),
-        })).rejects.toThrow("expired");
+        })).rejects.toThrow("This file wasn't added. Upload it again.");
       expect(await env.FILES.get(expired.r2Key)).toBeNull();
-      expect(() => store.reserve(expired)).toThrow("expired");
+      expect(() => store.reserve(expired)).toThrow("This file wasn't added. Upload it again.");
       expect(() => store.reserve({ ...expired, requestKey: "new-request" })).toThrow("already reserved");
 
       const committed = descriptor(id, "committed");
@@ -342,11 +342,11 @@ describe("durable upload reservations", () => {
     const complete = () => stub.completeUpload(who, input);
     await expect(completeReservedUpload(env.FILES, input.r2Key, complete, {
       expired: () => stub.expiredUploadForCleanup({ ...who, gen: gen + 1 }, input),
-    })).rejects.toThrow("expired");
+    })).rejects.toThrow("This file wasn't added. Upload it again.");
     expect(await (await env.FILES.get(input.r2Key))!.text()).toBe("late");
     await expect(completeReservedUpload(env.FILES, input.r2Key, complete, {
       expired: () => stub.expiredUploadForCleanup(who, input),
-    })).rejects.toThrow("expired");
+    })).rejects.toThrow("This file wasn't added. Upload it again.");
     expect(await env.FILES.get(input.r2Key)).toBeNull();
   });
 
@@ -383,7 +383,7 @@ describe("durable upload reservations", () => {
       );
       expect(() =>
         store.reserve({ ...input, origin: "ocr", parentSourceId: "missing" }),
-      ).toThrow("no such original");
+      ).toThrow("The original file can't be found. It may have been deleted.");
       expect(() =>
         store.complete(input, (intent) => insert(sql, intent)),
       ).toThrow("reserve the upload");

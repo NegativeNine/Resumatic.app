@@ -41,6 +41,8 @@ From voice and writing (design system Resumatic, version 1794444170-a305). One n
 - **Added by you.** A fact the person wrote or changed is marked Added by you, in its mark, its editor's note, the add-a-fact and add-a-role notes, and the margin and document notes (“Added by you, with no quote from a file.”).
 - **Other labels with an earlier control name.** The saved answer and kit question buttons that read “Edit” read “Change”, because “Edit” is now the earlier word for Fix it.
 
+Stage 4 named a fact the person keeps to themselves private in every label and sentence (Keep private, Stop keeping it private, Private, Private fact); stored and API names stay `sensitive`.
+
 Server messages, stored messages (shown through `sourceErrorMessage`, `resumeErrorMessage` and `typeset(asSentence())`) and the legal pages are unchanged. So is every earlier word outside an edited sentence: posting, snapshot, card, application and sensitive.
 
 ### Deferred interface labels
@@ -49,10 +51,6 @@ The interface's own labels that keep an earlier word, each with the stage that r
 
 | Label | Where | Stage |
 | --- | --- | --- |
-| “Sensitive” | FactItem's mark | 4, facts: becomes private, with the privacy notice |
-| “Sensitive fact” | the margin and the skill list on a resume | 4, facts |
-| “Mark sensitive” | SensitiveControl | 4, facts |
-| “Unmark sensitive” | SensitiveControl | 4, facts |
 | “The posting” | JobPosting's heading | 5, jobs: posting becomes job description |
 | “Read the posting” | JobPosting | 5, jobs |
 | “Hide the posting” | JobPosting | 5, jobs |
@@ -106,16 +104,7 @@ No server message is assigned to Today. Its first run shows the facts room’s u
 | `src/vault/snapshots.ts:225` | conflict | experience requires review; generate the document again | Some of your experience still needs checking. Make the document again. | jobs |
 | `src/vault/snapshots.ts:239` | conflict | experience requires review; generate the document again | Some of your experience still needs checking. Make the document again. | jobs |
 | `src/vault/snapshots.ts:345` | conflict | a role changed while this draft was being made; generate it again | A role changed while this draft was being made. Make it again. | jobs |
-| `src/vault/uploads.ts:97` | conflict | this upload expired; start a new upload (a file; a paste says “This text wasn’t added.”) | This file wasn’t added. Upload it again. | facts |
-| `src/vault/uploads.ts:126` | not_found | no such original source | The original file can’t be found. It may have been deleted. | facts |
-| `src/vault/uploads.ts:139` | conflict | Resumatic is still reading your other sources. Wait for one to finish, then add this text. / … then upload this file. | Resumatic is still reading your other files. Wait for one to finish, then add this text. / … then upload this file. | facts |
-| `src/vault/uploads.ts:146` | quota | You can keep up to ${this.options.maxSources} sources during the beta. Email support@resumatic.app if you need more. | You can keep up to {n} files during the beta. Email support@resumatic.app if you need more. | facts |
-| `src/vault/uploads.ts:187` | conflict | this upload expired; start a new upload (a file; a paste says “This text wasn’t added.”) | This file wasn’t added. Upload it again. | facts |
 | `src/vault/vault.ts:1244` | not_found | no such application | This job can’t be found. It may have been deleted. | jobs |
-| `src/vault/vault.ts:1675` | conflict | Resumatic is still reading your other sources. Wait for one to finish, then upload this file. | Resumatic is still reading your other files. Wait for one to finish, then upload this file. | facts |
-| `src/vault/vault.ts:1680` | quota | You can keep up to ${MAX_SOURCES} sources during the beta. Email support@resumatic.app if you need more. | You can keep up to {n} files during the beta. Email support@resumatic.app if you need more. | facts |
-| `src/vault/vault.ts:1856` | conflict | this source has not been read yet | This file hasn’t been read yet. Wait for it to finish, then try again. | facts |
-| `src/vault/vault.ts:1868` | invalid | source has not been converted yet | This file hasn’t been read yet. Wait for it to finish, then try again. | facts |
 | `src/vault/vault.ts:3095` | invalid | enter the posting's web address, starting with https:// | Enter the job’s web address, starting with https://. | jobs |
 | `src/vault/vault.ts:3147` | not_found | no such application | This job can’t be found. It may have been deleted. | jobs |
 | `src/vault/vault.ts:3167` | not_found | no such application | This job can’t be found. It may have been deleted. | jobs |
@@ -141,15 +130,8 @@ No server message is assigned to Today. Its first run shows the facts room’s u
 | `src/vault/vault.ts:4700` | conflict | This version uses a fact you marked sensitive. Remove those lines or tailor a new version, then try again. | This version uses a fact you keep private. Remove those lines or tailor a new version, then try again. | jobs |
 | `src/vault/vault.ts:5171` | too_large | Your vault has too many files for one archive. Download the JSON and the original files one at a time. | Your record has too many files for one archive. Download the JSON and your files one at a time. | sharing/account |
 | `src/vault/vault.ts:5187` | too_large | Your vault is too large for one archive. Download the JSON and the original files one at a time. | Your record is too large for one archive. Download the JSON and your files one at a time. | sharing/account |
-| `src/vault/vault.ts:6358` | conflict | this source already has a newer run | This file is already being read again. | facts |
-| `src/vault/vault.ts:6368` | conflict | extraction is already committed for this source | This file has already been read. | facts |
-| `src/vault/vault.ts:6379` | conflict | wait for other uploads to finish | Wait for your other files to finish reading, then try again. | facts |
-| `src/vault/vault.ts:6914` | conflict | this source is no longer being read | This file is no longer being read. | facts |
-| `src/vault/vault.ts:6949` | not_found | no such source | This file can’t be found. It may have been deleted. | facts |
-| `src/vault/vault.ts:7010` | invalid | That role was rejected. Choose another role for this fact. | That role was left out. Choose another role for this fact. | facts |
 | `src/worker/routes.ts:1220` | conflict | An original file is missing from your vault. Download the JSON and the available files one at a time. | A file is missing from your record. Download the JSON and the files that are there one at a time. | sharing/account |
 | `src/worker/routes.ts:1223` | too_large | Your vault is too large for one archive. Download the JSON and the original files one at a time. | Your record is too large for one archive. Download the JSON and your files one at a time. | sharing/account |
-| `src/workflows/distill.ts:147` | conflict | The import source changed. Upload it again. | The file changed while it was being read. Upload it again. | facts |
 
 ### Messages held in constants
 
@@ -172,7 +154,7 @@ No server message is assigned to Today. Its first run shows the facts room’s u
 
 ### Workflow details, fallbacks and stored messages
 
-- **`SAFE_DETAILS`** (`src/workflows/steps.ts:33`). One qualifies: “The import source changed. Upload it again.”, thrown at `src/workflows/distill.ts:147` and listed in the table above (facts). The others use no earlier word in the sense above (“review again” is the verb).
+- **`SAFE_DETAILS`** (`src/workflows/steps.ts:33`). One qualified: “The import source changed. Upload it again.”, thrown at `src/workflows/distill.ts:147`. Stage 4 changed it to “The file changed while it was being read. Upload it again.” The old import sentence stays one release for runs in flight; EARLIER rewords it. The others use no earlier word in the sense above (“review again” is the verb).
 - **`GENERIC_DETAIL`** (`src/workflows/steps.ts:48`). None qualifies.
 - **`FALLBACK_WORDS`** and **`SIGN_IN_WORDS`** (`src/web/errors.ts`). None qualifies.
 - **`NOT_FINISHED`** and **`EARLIER`** (`src/web/source-error.ts`). None qualifies.
@@ -210,7 +192,7 @@ The 217 candidates, each counted once:
 
 | Where | Sites |
 | --- | --- |
-| The `AppError` table above | 58 |
+| The `AppError` table above (42), and the 16 rows of the facts room that stage 4 changed and took out of it | 58 |
 | The throw sites of the constants table (`src/vault/vault.ts:1010, 1122, 1138, 1142, 1143, 1197, 1218, 1378`, `src/worker/routes.ts:1512`) | 9 |
 | The term in another sense only (below) | 29 |
 | Never shown to a person (below) | 121 |

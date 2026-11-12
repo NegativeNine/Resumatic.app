@@ -1,6 +1,9 @@
 import { screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
+import { FactsReview } from "../../src/web/pages/facts/FactsReview";
+import { FactsSkills } from "../../src/web/pages/facts/FactsSkills";
 import { RulesInterim } from "../../src/web/pages/interim/jobs";
 import { CoachesInterim, RecruitersInterim } from "../../src/web/pages/interim/sharing";
 import { PLACEHOLDERS, PLACEHOLDER_SECTIONS, type PlaceholderName, type PlaceholderSectionName } from "../../src/web/placeholders";
@@ -20,6 +23,21 @@ const SECTION_PAGES: Record<PlaceholderSectionName, () => ReactNode> = {
   rules: () => <RulesInterim />,
   liveAccess: () => <CoachesInterim />,
   recruitersVisibility: () => <RecruitersInterim />,
+  factsCheckKinds: () => <FactsReview />,
+  factsSplit: () => <FactsReview />,
+  factsSkillYears: () => <FactsSkills />,
+};
+
+/**
+ * What a person does on the page to reach a section that isn't shown at first, awaited before the
+ * section is looked for. Split it in two is under a fact's More choices, and the first question is
+ * a role, so it skips to the first fact.
+ */
+const SECTION_REACH: Partial<Record<PlaceholderSectionName, () => Promise<void>>> = {
+  factsSplit: async () => {
+    await userEvent.click(await screen.findByRole("button", { name: "Skip for now" }));
+    await userEvent.click(await screen.findByText("More choices"));
+  },
 };
 
 const SAMPLE: Required<RouteParams> = { id: "sample-id", resumeId: "res-ready", jobTab: "fit", section: "profile" };
@@ -78,6 +96,7 @@ describe("placeholders", () => {
       const shown = renderWithSession(<main>{SECTION_PAGES[name]()}</main>, state.me);
       // The real page is there around it, with its own heading.
       expect(screen.getByRole("heading", { level: 1 }), name).toBeInTheDocument();
+      await SECTION_REACH[name]?.();
       const section = await screen.findByRole("region", { name: copy.title });
       expect(within(section).getByRole("heading", { level: 2, name: copy.title }), name).toBeInTheDocument();
       expect(section.querySelector(".rs-mark--note"), name).toHaveTextContent("Not available yet");

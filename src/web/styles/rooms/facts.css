@@ -1,0 +1,103 @@
+/*
+ * The Facts room (redesign stage 4): To check, All facts, Skills and Your files. Tokens only.
+ * The first-run dropzone and "What happens next" keep their rules in app.css, as do the earlier
+ * rail layout's .facts-layout, .facts-rail and .facts-main, which no page uses now.
+ */
+
+/* To check: the question, with its file beside it, Up next under it and what isn't built yet. */
+.facts-filter { margin-top: var(--space-6); }
+.facts-paused { margin: var(--space-3) 0 0; }
+
+.facts-check {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 380px);
+  grid-template-areas: "ask file" "next file" "kinds file";
+  grid-template-rows: auto auto 1fr;
+  gap: var(--space-6);
+  align-items: start;
+  margin-top: var(--space-4);
+}
+.facts-ask { grid-area: ask; display: grid; gap: var(--space-3); }
+.facts-ask:focus { outline: none; }
+.facts-ask:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.facts-ask > .rs-h2 { margin: 0; }
+.facts-ask__meta .rs-meta { margin: 0; }
+.facts-ask__meta .rs-linkbtn:disabled { color: var(--ink-muted); text-decoration: none; cursor: default; }
+.facts-ask__item { display: grid; gap: var(--space-3); }
+.facts-ask__text { margin: 0; font: 600 22px/31px var(--font-sans); color: var(--ink); overflow-wrap: anywhere; }
+.facts-ask__item > .rs-fact__meta,
+.facts-ask__item > .hint,
+.facts-ask__item > .meta { margin: 0; }
+.facts-ask__item > .rs-actions { margin-top: var(--space-3); }
+.facts-ask__where { display: none; justify-self: start; }
+
+.facts-more__row { flex-wrap: nowrap; }
+.facts-more__text { margin: 0; font-size: 14px; line-height: 20px; }
+.facts-more__body { display: grid; gap: var(--space-3); }
+.facts-more .app-placeholder { padding: var(--space-4); }
+.facts-more .app-placeholder h2 { font-family: var(--font-sans); font-size: 17px; line-height: 24px; font-weight: 700; }
+
+/* The file beside the question. Only its text scrolls, so the words being checked stay in view. */
+.facts-file { grid-area: file; display: grid; gap: var(--space-3); min-width: 0; }
+.facts-file__name { margin: 0; overflow-wrap: anywhere; }
+.facts-file .rs-meta { margin: 0; }
+.facts-file__text {
+  position: relative;
+  max-height: 28rem;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  overflow: auto;
+  font: 400 14px/22px var(--font-sans);
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--paper-sunken);
+  border-radius: var(--radius-md);
+}
+.facts-u--waiting,
+.facts-u--backed {
+  color: var(--ink);
+  text-decoration-line: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.3em;
+}
+.facts-u--waiting { text-decoration-color: var(--needs-you-strong); }
+.facts-u--backed { text-decoration-color: var(--brand); }
+
+.facts-legend { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; font-size: 13px; line-height: 18px; color: var(--ink-muted); }
+.facts-legend li { display: flex; align-items: center; gap: var(--space-2); }
+.facts-legend__key { flex: none; width: 28px; }
+.facts-legend__key--current { height: 14px; background: var(--backed-soft); border-radius: var(--radius-paper); }
+.facts-legend__key--waiting { border-top: 2px solid var(--needs-you-strong); }
+.facts-legend__key--backed { border-top: 2px solid var(--brand); }
+.facts-file__all { display: grid; gap: var(--space-2); padding-top: var(--space-3); border-top: 1px solid var(--rule); }
+.facts-file__all .rs-hint { margin: 0; }
+
+/* Up next, then what To check will ask about later. */
+.facts-upnext { grid-area: next; }
+.facts-upnext__list { margin: var(--space-2) 0 0; padding: 0; list-style: none; }
+.facts-upnext__text { font-weight: 400; overflow-wrap: anywhere; }
+.facts-upnext .rs-meta { margin: 0; }
+.facts-upnext__add { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--rule); }
+.facts-kinds { grid-area: kinds; min-width: 0; }
+
+/* All facts and Your files. */
+.facts-attest { margin: 0 0 var(--space-5); }
+.facts-what-to-do { margin: var(--space-1) 0 0; }
+.facts-files .rs-sources { margin-top: var(--space-2); }
+
+/* Skills. */
+.facts-skills__list .app-inline { margin: 0; }
+.facts-skills__list .rs-note__label { margin: var(--space-2) 0 0; }
+.facts-skills__from { display: grid; gap: var(--space-2); margin: var(--space-1) 0 0; padding: 0; list-style: none; }
+.facts-skills__from .rs-meta { margin: 0; }
+
+/* On a phone the question, its file and Up next stack. The file waits until it is asked for, and then sits under the question. */
+@media (max-width: 600px) {
+  .facts-check { grid-template-columns: minmax(0, 1fr); grid-template-areas: "ask" "file" "next" "kinds"; grid-template-rows: none; }
+  .facts-ask__where { display: inline-flex; }
+  .facts-file { display: none; }
+  .facts-file.is-open { display: grid; }
+  .facts-ask__item > .rs-actions .rs-actions__keys { display: none; }
+  .facts-more__row { flex-wrap: wrap; }
+}

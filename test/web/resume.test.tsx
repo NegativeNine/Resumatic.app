@@ -123,9 +123,9 @@ describe("the margin", () => {
   });
 });
 
-describe("a version that uses a fact marked sensitive", () => {
+describe("a version that uses a fact kept private", () => {
   const NOTICE =
-    "This version uses a fact you’ve marked sensitive, or was checked against the line of an upload one was read from, so it can’t be downloaded or shared, and connected apps can’t read it.";
+    "This version uses a fact you keep private, or was checked against the line of an upload one was read from, so it can’t be downloaded or shared, and connected apps can’t read it.";
   const note = (lineId: string) => document.querySelector<HTMLElement>(`[data-note-for="${lineId}"]`)!;
   /** The fixture resume as the server sends it once one cited fact and one printed skill are marked. */
   function marked(): Fixtures {
@@ -137,15 +137,15 @@ describe("a version that uses a fact marked sensitive", () => {
   it("offers its downloads as usual while nothing it uses is marked", async () => {
     await openResume();
     for (const name of ["Download PDF", "Download Word", "Print preview"]) expect(screen.getByRole("link", { name })).toBeInTheDocument();
-    expect(screen.queryByText(/marked sensitive/)).toBeNull();
-    expect(screen.queryByText("Sensitive fact")).toBeNull();
+    expect(screen.queryByText(/keep private/)).toBeNull();
+    expect(screen.queryByText("Private fact")).toBeNull();
   });
 
   it("says why it can’t be downloaded or shared and what to do, and offers no download", async () => {
     await openResume(marked());
     const notice = screen.getByText(new RegExp(`^${NOTICE.replace(/[.’]/g, (c) => (c === "." ? "\\." : c))}`));
     expect(notice).toHaveTextContent(
-      `${NOTICE} Remove the lines and skills marked ‘Sensitive fact’, or tailor a new version. Your text is still here.`,
+      `${NOTICE} Remove the lines and skills marked ‘Private fact’, or tailor a new version. Your text is still here.`,
     );
     expect(notice).toHaveAttribute("role", "status");
     for (const name of ["Download PDF", "Download Word", "Print preview"]) expect(screen.queryByRole("link", { name })).toBeNull();
@@ -161,7 +161,7 @@ describe("a version that uses a fact marked sensitive", () => {
     const state = marked();
     const api = await openResume(state);
     const flagged = note("line-migration");
-    expect(within(flagged).getByText("Sensitive fact")).toHaveClass("rs-mark--note");
+    expect(within(flagged).getByText("Private fact")).toHaveClass("rs-mark--note");
     // Its note is open without being asked, with its evidence and its one tool.
     expect(within(flagged).getByRole("button", { name: "Hide where it came from" })).toHaveAttribute("aria-expanded", "true");
     expect(within(flagged).getByText("Led migration of 40 services from Heroku to Kubernetes")).toBeVisible();
@@ -169,11 +169,11 @@ describe("a version that uses a fact marked sensitive", () => {
     expect(within(flagged).getByRole("button", { name: "Remove line (keeps earlier versions)" })).toBeVisible();
     // Every other line is as it always is: closed, unmarked, and editable once opened.
     const other = note("line-latency");
-    expect(within(other).queryByText("Sensitive fact")).toBeNull();
+    expect(within(other).queryByText("Private fact")).toBeNull();
     expect(within(other).getByRole("button", { name: /^\d+ facts?$/ })).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(within(other).getByRole("button", { name: /^\d+ facts?$/ }));
     expect(within(other).getByRole("button", { name: "Edit line" })).toBeVisible();
-    expect(screen.getAllByText("Sensitive fact", { selector: ".app-notes .rs-mark" })).toHaveLength(1);
+    expect(screen.getAllByText("Private fact", { selector: ".app-notes .rs-mark" })).toHaveLength(1);
 
     // Removing the line is the existing request, for this line and this version.
     await userEvent.click(within(flagged).getByRole("button", { name: "Remove line (keeps earlier versions)" }));
@@ -181,13 +181,13 @@ describe("a version that uses a fact marked sensitive", () => {
     expect(api.callsTo("POST", /^\/api\/resumes\/res-ready\/remove-line$/)[0]!.body).toEqual({ lineId: "line-migration", expectedVersion: 2 });
     // The new version has no such line, and a marked skill still holds it back.
     await waitFor(() => expect(note("line-migration")).toBeNull());
-    expect(screen.getByText(/marked sensitive, or was checked against/)).toBeInTheDocument();
+    expect(screen.getByText(/keep private, or was checked against/)).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Download PDF" })).toBeNull();
     // With the skill removed as well, nothing does, and the downloads are back.
     await userEvent.click(screen.getByRole("button", { name: "Remove skill Redis" }));
     expect(await screen.findByRole("link", { name: "Download PDF" })).toHaveAttribute("href", "/api/resumes/res-ready/pdf?version=4");
-    expect(screen.queryByText(/marked sensitive/)).toBeNull();
-    expect(screen.queryByText("Sensitive fact")).toBeNull();
+    expect(screen.queryByText(/keep private/)).toBeNull();
+    expect(screen.queryByText("Private fact")).toBeNull();
     expect(api.callsTo("POST", /^\/api\/resumes\/res-ready\/remove-skill$/)[0]!.body).toEqual({ skillIndex: 2, expectedVersion: 3 });
   });
 
@@ -195,8 +195,8 @@ describe("a version that uses a fact marked sensitive", () => {
     await openResume(marked());
     const tools = screen.getByRole("region", { name: "Change this version" });
     const skill = (name: string) => within(tools).getByRole("button", { name: `Remove skill ${name}` }).closest("li")!;
-    expect(within(skill("Redis")).getByText("Sensitive fact")).toHaveClass("rs-mark--note");
-    for (const name of ["Python", "Apache Airflow", "PostgreSQL", "Kubernetes"]) expect(within(skill(name)).queryByText("Sensitive fact")).toBeNull();
+    expect(within(skill("Redis")).getByText("Private fact")).toHaveClass("rs-mark--note");
+    for (const name of ["Python", "Apache Airflow", "PostgreSQL", "Kubernetes"]) expect(within(skill(name)).queryByText("Private fact")).toBeNull();
     expect(within(skill("Redis")).getByRole("button", { name: "Remove skill Redis" })).toBeEnabled();
   });
 
@@ -210,7 +210,7 @@ describe("a version that uses a fact marked sensitive", () => {
     expect(screen.queryByRole("link", { name: "Download PDF" })).toBeNull();
     // A saved version is read, not changed: its marked line shows its mark and offers no tool.
     const flagged = note("line-migration");
-    expect(within(flagged).getByText("Sensitive fact")).toBeInTheDocument();
+    expect(within(flagged).getByText("Private fact")).toBeInTheDocument();
     expect(within(flagged).queryByRole("button", { name: /Edit line|Remove line/ })).toBeNull();
   });
 
@@ -221,7 +221,7 @@ describe("a version that uses a fact marked sensitive", () => {
     resume.legacyReview = { verifiedLineIds: [], totalLines: 7, headersReady: true, skillsReady: true };
     await openResume(state);
     const flagged = note("line-migration");
-    expect(within(flagged).getByText("Sensitive fact")).toBeInTheDocument();
+    expect(within(flagged).getByText("Private fact")).toBeInTheDocument();
     expect(within(flagged).getByRole("button", { name: "Review line" })).toBeVisible();
     expect(within(flagged).getByRole("button", { name: "Remove line (keeps earlier versions)" })).toBeVisible();
   });

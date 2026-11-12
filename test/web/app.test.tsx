@@ -32,6 +32,16 @@ describe("the app shell", () => {
     await waitFor(() => expect(document.title).toBe("Today – Resumatic"));
   });
 
+  it("#/facts/check shows To check", async () => {
+    installFakeApi(fixtures());
+    goTo("#/facts/check");
+    render(<App />);
+    expect(await screen.findByText("Senior Backend Engineer at Northwind Logistics")).toBeInTheDocument();
+    expect(within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("link", { name: "Facts" })).toHaveAttribute("aria-current", "page");
+    expect(within(screen.getByRole("navigation", { name: "Facts" })).getByRole("link", { name: "To check" })).toHaveAttribute("aria-current", "page");
+    await waitFor(() => expect(document.title).toBe("To check – Resumatic"));
+  });
+
   it("answers Page not found for Connected apps where the deployment has none", async () => {
     const state = fixtures();
     installFakeApi(state);

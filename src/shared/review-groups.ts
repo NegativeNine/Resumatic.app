@@ -60,6 +60,36 @@ export function proposedBySource(entries: ReviewEntries): Map<string | null, { r
   return bySource;
 }
 
+/**
+ * One question To check asks: a role, or a fact with the copies read from other files. A role's
+ * `proposedUnder` counts the facts still to check under it and its copies, which leaving it out
+ * leaves out too. A fact's `role` is the role it is shown under, null for a loose fact.
+ */
+export type ReviewQuestion =
+  | { kind: "role"; key: `role:${string}`; role: RoleView; duplicates: RoleView[]; proposedUnder: number }
+  | { kind: "fact"; key: `fact:${string}`; fact: FactView; duplicates: FactView[]; role: RoleView | null };
+
+/**
+ * What To check asks, one question at a time, in the order the groups are shown: a role still to
+ * check, then the facts grouped under it, with loose facts last. There is one question for each
+ * item `countByState(entries).proposed` counts, so the page and Today agree.
+ */
+export function reviewQuestions(entries: ReviewEntries): ReviewQuestion[] {
+  const questions: ReviewQuestion[] = [];
+  for (const group of groupByRole(entries, "proposed")) {
+    if (group.role?.state === "proposed") {
+      const duplicates = group.duplicates ?? [];
+      const ids = new Set([group.role.id, ...duplicates.map((role) => role.id)]);
+      const proposedUnder = entries.facts.filter((fact) => fact.state === "proposed" && fact.roleId !== null && ids.has(fact.roleId)).length;
+      questions.push({ kind: "role", key: `role:${group.role.id}`, role: group.role, duplicates, proposedUnder });
+    }
+    for (const [fact, ...duplicates] of groupFacts(group.facts, equivalentRoles(group))) {
+      questions.push({ kind: "fact", key: `fact:${fact!.id}`, fact: fact!, duplicates, role: group.role });
+    }
+  }
+  return questions;
+}
+
 /** A group's role and the copies of it, whose facts are grouped as one role's. */
 function equivalentRoles(group: Group): ReadonlySet<string> | undefined {
   return group.role ? new Set([group.role.id, ...(group.duplicates ?? []).map((role) => role.id)]) : undefined;

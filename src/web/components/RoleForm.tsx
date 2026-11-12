@@ -93,6 +93,14 @@ export function RoleForm({ role, reload, onClose, onAdded, action }: Props) {
         e.preventDefault();
         void save();
       }}
+      onKeyDown={(e) => {
+        // Escape cancels, as it does in a fact's editor; the caller returns focus.
+        if (e.key === "Escape" && !pending) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
+      }}
     >
       {!role && (
         <p className="meta">

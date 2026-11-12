@@ -36,7 +36,7 @@ function isTyping(target: EventTarget): boolean {
 }
 
 /**
- * A question an item asks before acting ("Leave out …?", "Unmark this fact") answers only to its own
+ * A question an item asks before acting ("Leave out …?", "Stop keeping this fact private") answers only to its own
  * buttons. Its Yes button takes focus, and a Y pressed there means yes to the question, never
  * "That's right" to the item.
  */
@@ -44,6 +44,28 @@ function inQuestion(target: EventTarget, queue: HTMLElement | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const question = target.closest(".rs-well");
   return question !== null && queue !== null && queue.contains(question);
+}
+
+/** An editor open inside the container keeps every key: what is typed there is a draft, never an answer. */
+function inForm(target: EventTarget, container: HTMLElement | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const form = target.closest("form");
+  return form !== null && container !== null && container.contains(form);
+}
+
+/** A review key: Y that's right, F fix it, L leave it out, J next and K back. */
+export type ReviewKey = "y" | "f" | "l" | "j" | "k";
+
+/**
+ * The review key a key press is, or null when it must be left alone: already handled, with Alt,
+ * Ctrl or Meta held, on key repeat, while typing, or with focus in a question or an editor inside
+ * the container. The review queue on All facts and the question on To check both use it.
+ */
+export function reviewKeyOf(e: KeyboardEvent<HTMLElement>, container: HTMLElement | null): ReviewKey | null {
+  if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.repeat || isTyping(e.target)) return null;
+  if (inQuestion(e.target, container) || inForm(e.target, container)) return null;
+  const key = e.key.toLowerCase();
+  return KEYS.has(key) ? (key as ReviewKey) : null;
 }
 
 /**
@@ -86,10 +108,8 @@ export function ReviewQueue({ children }: { children: ReactNode }) {
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.repeat || isTyping(e.target)) return;
-    if (inQuestion(e.target, container.current)) return;
-    const key = e.key.toLowerCase();
-    if (!KEYS.has(key)) return;
+    const key = reviewKeyOf(e, container.current);
+    if (!key) return;
     // The focused item is the active one, even if its focus hasn't re-rendered the queue yet.
     const focused = e.target instanceof HTMLElement ? e.target.closest<HTMLElement>("[data-queue-item]")?.dataset.queueItem : undefined;
     const current = focused ?? activeId;

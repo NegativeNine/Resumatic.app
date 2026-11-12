@@ -19,7 +19,7 @@ const PASTE_TOO_LONG = "Pasted text can be up to 60,000 characters.";
 const PASTE_TITLE_TOO_LONG = "Titles can be up to 120 characters.";
 const PASTED_TWICE = "You've already pasted this text.";
 const PASTE_EXPIRED = "This text wasn't added. Add it again.";
-const PASTE_QUEUE_FULL = "Resumatic is still reading your other sources. Wait for one to finish, then add this text.";
+const PASTE_QUEUE_FULL = "Resumatic is still reading your other files. Wait for one to finish, then add this text.";
 
 // Characters are written by code point: most of them are invisible in source.
 const ch = (...points: number[]) => String.fromCodePoint(...points);
@@ -316,7 +316,7 @@ describe("pasting text: retries and second copies", () => {
       await paste(user, { text: RESUME }),
       429,
       "quota",
-      "You can keep up to 50 sources during the beta. Email support@resumatic.app if you need more.",
+      "You can keep up to 50 files during the beta. Email support@resumatic.app if you need more.",
     );
   });
 });

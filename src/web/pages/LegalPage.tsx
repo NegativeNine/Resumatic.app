@@ -215,7 +215,7 @@ function Privacy() {
           A fit check gives the app each requirement read from a job’s posting and the confirmed facts matched to it.
           Connected apps together can start at most 20 fit checks a day.
           A connected app never receives your uploaded files, the words a fact came from, or your notes on a job. It
-          never receives a fact you have marked sensitive, or a resume that uses one. It never receives a coach’s
+          never receives a fact you keep private, or a resume that uses one. It never receives a coach’s
           comments or suggested wording either. Its
           access lasts an hour, or up to thirty days if you allow it to continue, and you can revoke it at any time
           under <a href={href.account}>Account</a>. What an app has already read is then held by the company that
@@ -229,12 +229,12 @@ function Privacy() {
             rejected or cleared under <a href={href.facts}>Facts</a> and <a href={href.account}>Account</a>.
           </li>
           <li>
-            <strong>Keep a fact to yourself:</strong> mark a fact sensitive under <a href={href.facts}>Facts</a> and it
-            is left out of every new resume, letter, interview preparation and fit preview, never put in a shared copy
-            and never shown to a connected app. A resume that already uses it can’t be downloaded, shared or read by an
-            app until you remove those lines. It stays in your search index, so the model that indexes your facts can
-            still receive its words when you edit it or the index is rebuilt. Marking cannot take back what a model, a
-            reader or an app received before.
+            <strong>Keep a fact to yourself:</strong> choose Keep private on a fact under <a href={href.factsAll}>Facts</a>{" "}
+            and it is left out of every new resume, letter, interview preparation and fit preview, never put in a shared
+            copy and never shown to a connected app. A resume that already uses it can’t be downloaded, shared or read
+            by an app until you remove those lines. It stays in your search index, so the model that indexes your facts
+            can still receive its words when you edit it or the index is rebuilt. Keeping it private cannot take back
+            what a model, a reader or an app received before.
           </li>
           <li>
             <strong>Take it with you:</strong> the data export under Account downloads everything in your account, with
