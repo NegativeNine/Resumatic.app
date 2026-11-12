@@ -1025,7 +1025,7 @@ describe("what a reading may ask of a vault", () => {
     expect(await both(sourceId, undefined)).toEqual(Array(3).fill("invalid: workflow identity is required"));
     expect(await both(sourceId, crypto.randomUUID())).toEqual(Array(3).fill("conflict: this attempt was superseded"));
     expect(await both(OTHER, runId)).toEqual(Array(3).fill("conflict: this attempt was superseded"));
-    expect(await both(crypto.randomUUID(), runId)).toEqual(Array(3).fill("not_found: no such source"));
+    expect(await both(crypto.randomUUID(), runId)).toEqual(Array(3).fill("not_found: This file can't be found. It may have been deleted."));
     expect(await inside((record) => record.export().conceptTags)).toEqual([]);
     // The run itself is answered.
     expect((await candidates()).facts).toHaveLength(3);

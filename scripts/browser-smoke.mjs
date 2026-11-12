@@ -49,6 +49,8 @@ if (!browser?.startsWith("/")) {
     if (path === "/api/me") return state.signedIn ? send(res, 200, me) : send(res, 401, { error: "unauthenticated", message: "sign in" });
     if (!state.signedIn) return send(res, 401, { error: "unauthenticated" });
     if (path === "/api/profile" && req.method === "GET") return send(res, 200, me.profile);
+    // The header's counts: nothing waits in this stand-in.
+    if (path === "/api/v2/today" && req.method === "GET") return send(res, 200, { waiting: [], working: [], recent: [], counts: { today: 0, facts: 0, jobs: 0, sharing: 0 }, since: 0, standing: { files: 0, confirmed: 0, leftOut: 0, jobs: { saved: 0, applied: 0, interview: 0, offer: 0, closed: 0 }, copies: 0, coachCopies: 0, apps: 0 } });
     if (path === "/api/v2/profile" && req.method === "PUT") {
       const body = JSON.parse((await read(req)).toString("utf8"));
       state.profileRequests ??= [];
@@ -70,6 +72,8 @@ if (!browser?.startsWith("/")) {
       if (path === "/api/v2/vault") return send(res, 200, { sources, roles: [...(state.source && !state.hideSourceRole ? [{ ...role, state: state.roleState }] : []), ...state.manualRoles], facts: [...(state.source && !state.hideSourceFact ? [{ ...fact, state: state.factState }] : []), ...(state.manualFact ? [state.manualFact] : [])] });
       return send(res, 200, { sources });
     }
+    // The text read from synthetic.pdf, shown beside To check's question.
+    if (path === "/api/sources/source-1/text" && req.method === "GET") return send(res, 200, { markdown: "Acme Example — Engineer\nBuilt 12 payment services\n", revisionId: "source-1:1", origin: "upload" });
     if (path === "/api/sources/source-1/cancel" && req.method === "POST") { state.sourceCancel = true; res.writeHead(202); res.end(); return; }
     if (path === "/api/runs/run-1/retry" && req.method === "POST") { const key = req.headers["idempotency-key"]; if (typeof key !== "string" || !key) return send(res, 400, { error: "invalid" }); state.sourceRetryKeys.push(key); if (state.sourceRetryKeys.length === 1) return send(res, 503, { error: "unavailable" }); state.sourceFailed = false; return send(res, 202, { runId: "run-2", targetId: "source-1" }); }
     if (path === "/api/roles" && req.method === "GET") return send(res, 200, { roles: [...(state.source && !state.hideSourceRole ? [{ ...role, state: state.roleState }] : []), ...state.manualRoles] });
@@ -158,6 +162,11 @@ if (!browser?.startsWith("/")) {
       if (key !== state.jobKeys[0] || body.jdText !== state.jobRequests[0].jdText) return send(res, 409, { error: "conflict" });
       return send(res, 201, { applicationId: "application-1" });
     }
+    // A job's own page reads the job with its whole description.
+    if (path === "/api/applications/application-1" && req.method === "GET") {
+      const application = state.applications[0];
+      return application ? send(res, 200, { ...application, jdText: "Synthetic platform engineer position requiring experience building reliable payment services and APIs.", canDelete: application.resumes.length === 0 }) : send(res, 404, { error: "not_found", message: "This job can't be found. It may have been deleted." });
+    }
     if (path === "/api/applications/application-1" && req.method === "PATCH") {
       const body = JSON.parse((await read(req)).toString("utf8"));
       state.trackingRequests ??= [];
@@ -174,7 +183,9 @@ if (!browser?.startsWith("/")) {
     }
     if (path === "/api/applications/application-1/resumes" && req.method === "POST") {
       if (state.roleState !== "confirmed" || state.factState !== "confirmed" || !req.headers["idempotency-key"]) return send(res, 400, { error: "invalid" });
-      state.tailored = true; return send(res, 202, { resumeId: "resume-1" });
+      state.tailored = true;
+      if (!state.applications[0].resumes.length) state.applications[0].resumes.push({ id: "resume-1", state: "ready", createdAt: 2 });
+      return send(res, 202, { resumeId: "resume-1" });
     }
     if (path === "/api/resumes/resume-1/cancel" && req.method === "POST") { state.resumeCancel = true; res.writeHead(202); res.end(); return; }
     if (path === "/api/resumes/resume-1" && req.method === "GET" && state.resumeRunning) return send(res, 200, { id: "resume-1", applicationId: "application-1", state: "running", step: null, error: null, version: 0, createdAt: 1, dispatchUncertain: true, cancellationPending: state.resumeCancel, body: null, report: null, facts: {} });
@@ -305,21 +316,24 @@ if (!browser?.startsWith("/")) {
     const wait = async (expression) => { for (let i = 0; i < 100; i++) { if (await evalPage(expression)) return; await delay(100); } throw new Error("BROWSER_WAIT_TIMEOUT"); };
     const waitForRelease = async (get) => { for (let i = 0; i < 100; i++) { const release = get(); if (release) return release; await delay(100); } throw new Error("API_GATE_TIMEOUT"); };
     const clickText = (selector, text) => evalPage(`(() => { const e = [...document.querySelectorAll(${JSON.stringify(selector)})].find(x => x.textContent.trim() === ${JSON.stringify(text)}); if (!e) return false; e.click(); return true; })()`);
-    // The synthetic.pdf row, and its status read as "Ready · 1 role to review": the mark, then the words beside it.
+    // The synthetic.pdf row, and its status read as "Ready · 1 role to check": the mark, then the words beside it.
     const sourceRow = `[...document.querySelectorAll('.rs-sources .rs-source')].find(e => e.querySelector('.rs-source__name')?.textContent.trim() === 'synthetic.pdf')`;
     const sourceStatus = `[...(${sourceRow}?.querySelector('.rs-source__meta')?.children ?? [])].map(e => e.textContent.trim()).join(' · ')`;
-    await call("Page.enable"); await call("Runtime.enable"); await call("Fetch.enable", { patterns: [{ urlPattern: "*" }] }); await call("Page.navigate", { url: origin });
-    stage = "sign_in"; await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Sign in with Google')`); await clickText("a", "Sign in with Google"); await wait(`document.querySelector('nav a[aria-current="page"]')?.textContent.trim() === 'Facts' && !!document.querySelector('input[type=file]')`);
+    // On To check, the status of the file beside the question: "2 to check", "1 to check" or "All checked".
+    const fileStatus = `document.querySelector('.facts-file .rs-mark')?.textContent.trim()`;
+    const go = (hash) => evalPage(`location.hash = ${JSON.stringify(hash)}`);
+    await call("Page.enable"); await call("Runtime.enable"); await call("Fetch.enable", { patterns: [{ urlPattern: "*" }] }); await call("Page.navigate", { url: `${origin}/#/sign-in` });
+    stage = "sign_in"; await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Sign in with Google')`); await clickText("a", "Sign in with Google"); await wait(`document.querySelector('h1')?.textContent.trim() === 'Today' && !![...document.querySelectorAll('h3')].find(x => x.textContent.trim() === '1. Add the resume you have')`); await evalPage(`location.hash = '#/facts/check'`); await wait(`document.querySelector('nav a[aria-current="page"]')?.textContent.trim() === 'Facts' && document.querySelector('.app-tabs a[aria-current="page"]')?.textContent.trim() === 'To check' && !!document.querySelector('input[type=file]')`);
     stage = "upload_retry"; const root = await call("DOM.getDocument"); const input = await call("DOM.querySelector", { nodeId: root.root.nodeId, selector: "input[type=file]" }); await call("DOM.setFileInputFiles", { nodeId: input.nodeId, files: [file] }); await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Retry upload')`); await clickText("button", "Retry upload"); await wait(`document.body?.innerText.includes('Built 12 payment services')`); if (state.uploadKeys.length !== 2 || state.uploadKeys[0] !== state.uploadKeys[1]) throw new Error("UPLOAD_RETRY_KEY_MISMATCH");
-    stage = "ocr_download_links"; await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download image inputs (JSON)' && x.getAttribute('href') === '/api/sources/source-ocr/file') && !![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download original PDF' && x.getAttribute('href') === '/api/sources/source-1/file')`);
+    stage = "ocr_download_links"; await go("#/facts/files"); await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download image inputs (JSON)' && x.getAttribute('href') === '/api/sources/source-ocr/file') && !![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download original PDF' && x.getAttribute('href') === '/api/sources/source-1/file')`);
     stage = "source_role_only";
     state.hideSourceFact = true; await call("Page.reload");
-    await wait(`${sourceStatus} === 'Ready · 1 role to review'`);
+    await wait(`${sourceStatus} === 'Ready · 1 role to check'`);
     stage = "source_empty";
     state.hideSourceRole = true; await call("Page.reload");
-    await wait(`${sourceStatus} === 'Ready · No items shown' && !!${sourceRow}?.textContent.includes('No roles or facts from this source are shown')`);
+    await wait(`${sourceStatus} === 'Ready · No items shown' && !!${sourceRow}?.textContent.includes('No roles or facts from this file are shown')`);
     state.hideSourceFact = false; state.hideSourceRole = false; await call("Page.reload");
-    await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to review'`);
+    await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to check'`);
     stage = "poll_recovery";
     state.sourceRunning = true; await call("Page.reload");
     await wait(`document.body?.innerText.includes("Resumatic can’t confirm that reading started")`);
@@ -329,7 +343,7 @@ if (!browser?.startsWith("/")) {
     if (!state.sourcePollFailureCount) throw new Error("POLL_FAILURE_NOT_OBSERVED");
     state.sourceRunning = false;
     // No push or manual retry: the running-state poll must recover itself.
-    await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to review'`);
+    await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to check'`);
     if (state.sourcePollFailureCount !== 2) throw new Error("POLL_RETRY_NOT_OBSERVED");
     if (await evalPage(`window.__syntheticVaultPushes !== 0`)) throw new Error("POLL_RECOVERY_USED_PUSH");
     const readsAfterReady = state.sourceReads;
@@ -348,7 +362,7 @@ if (!browser?.startsWith("/")) {
     await delay(2500);
     if (state.sourceReads !== readsAfterForbidden || await evalPage(`window.__syntheticVaultPushes !== 0`)) throw new Error("POLL_CONTINUED_AFTER_FORBIDDEN");
     await clickText('[role="alert"] button', "Try again");
-    await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to review'`);
+    await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to check'`);
     stage = "uncertain_source_cancellation";
     state.sourceRunning = true; await call("Page.reload");
     await wait(`document.body?.innerText.includes("Resumatic can’t confirm that reading started")`);
@@ -361,72 +375,78 @@ if (!browser?.startsWith("/")) {
     await clickText("button", "Retry reading");
     await wait(`!!${sourceRow}?.querySelector('[role="alert"]')`);
     await clickText("button", "Retry reading");
-    await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to review'`);
+    await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to check'`);
     if (state.sourceRetryKeys.length !== 2 || state.sourceRetryKeys[0] !== state.sourceRetryKeys[1]) throw new Error("SOURCE_RETRY_KEY_MISMATCH");
-    await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to review'`);
+    await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to check'`);
     stage = "role_draft_during_refresh";
-    await clickText("button", "Edit role");
-    await wait(`!!document.querySelector('.rs-role form input[id$="-title"]')`);
-    await evalPage(`(() => { const e = document.querySelector('.rs-role form input[id$="-title"]'); e.focus(); e.setSelectionRange(e.value.length, e.value.length); })()`);
+    await go("#/facts/check");
+    await wait(`${fileStatus} === '2 to check'`);
+    await clickText(".facts-ask button", "Fix it");
+    await wait(`!!document.querySelector('.facts-ask form input[id$="-title"]')`);
+    await evalPage(`(() => { const e = document.querySelector('.facts-ask form input[id$="-title"]'); e.focus(); e.setSelectionRange(e.value.length, e.value.length); })()`);
     await call("Input.insertText", { text: " draft" });
-    if (!await evalPage(`([...document.querySelectorAll('.rs-fact button')].find(b => b.textContent.trim() === 'Edit'))?.disabled`)) throw new Error("SECOND_REVIEW_EDITOR_NOT_LOCKED");
-    await clickText('.rs-fact button', 'Edit');
-    if (await evalPage(`!!document.querySelector('.rs-fact textarea')`)) throw new Error("SECOND_REVIEW_EDITOR_OPENED");
-    await clickText('.rs-sources button', 'Confirm all from this source');
-    await clickText('.rs-sources button', 'Yes, confirm 2');
-    await wait(`${sourceStatus} === 'Ready · Review complete'`);
-    if (!await evalPage(`document.querySelector('.rs-role form input[id$="-title"]')?.value === 'Engineer draft' && document.querySelector('fieldset.rs-filter')?.disabled && document.body.innerText.includes('review list is paused')`)) throw new Error("ROLE_DRAFT_LOST_DURING_REFRESH");
-    await clickText('.rs-role form button', 'Cancel');
+    await clickText('.facts-file button', 'Confirm all 2 from this file');
+    await clickText('.facts-file button', 'Yes, confirm 2');
+    await wait(`${fileStatus} === 'All checked'`);
+    if (!await evalPage(`document.querySelector('.facts-ask form input[id$="-title"]')?.value === 'Engineer draft' && document.querySelector('fieldset.rs-filter')?.disabled && document.body.innerText.includes('Checking is paused')`)) throw new Error("ROLE_DRAFT_LOST_DURING_REFRESH");
+    await clickText('.facts-ask form button', 'Cancel');
     await wait(`!document.querySelector('fieldset.rs-filter')?.disabled`);
     state.roleState = "proposed"; state.factState = "proposed";
     await evalPage(`window.dispatchEvent(new Event('resumatic:vault-change'))`);
-    await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to review'`);
+    await wait(`${fileStatus} === '2 to check'`);
     stage = "review_lock_released_on_navigation";
-    await clickText("button", "Edit role");
-    await wait(`!!document.querySelector('.rs-role form input[id$="-title"]')`);
-    await evalPage(`location.hash = '#/jobs'`);
+    await clickText(".facts-ask button", "Fix it");
+    await wait(`!!document.querySelector('.facts-ask form input[id$="-title"]')`);
+    await go("#/jobs");
     await wait(`!!document.getElementById('job-heading')`);
-    await evalPage(`location.hash = '#/facts'`);
-    await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to review'`);
-    if (await evalPage(`document.querySelector('fieldset.rs-filter')?.disabled || !!document.querySelector('.rs-role form input[id$="-title"]')`)) throw new Error("REVIEW_LOCK_SURVIVED_NAVIGATION");
+    await go("#/facts/check");
+    await wait(`${fileStatus} === '2 to check'`);
+    if (await evalPage(`document.querySelector('fieldset.rs-filter')?.disabled || !!document.querySelector('.facts-ask form input[id$="-title"]')`)) throw new Error("REVIEW_LOCK_SURVIVED_NAVIGATION");
     stage = "fact_draft_during_refresh";
-    await clickText('.rs-fact button', 'Edit');
-    await wait(`!!document.querySelector('.rs-fact textarea')`);
-    await evalPage(`(() => { const e = document.querySelector('.rs-fact textarea'); e.focus(); e.setSelectionRange(e.value.length, e.value.length); })()`);
+    await clickText('.facts-ask button', 'Skip for now');
+    await wait(`document.querySelector('.facts-ask__text')?.textContent.trim() === 'Built 12 payment services'`);
+    await clickText('.facts-ask button', 'Fix it');
+    await wait(`!!document.querySelector('.facts-ask textarea')`);
+    await evalPage(`(() => { const e = document.querySelector('.facts-ask textarea'); e.focus(); e.setSelectionRange(e.value.length, e.value.length); })()`);
     await call("Input.insertText", { text: " draft" });
     state.factState = "confirmed"; fact.roleId = null;
     await evalPage(`window.dispatchEvent(new Event('resumatic:vault-change'))`);
-    await wait(`${sourceStatus} === 'Ready · 1 role to review'`);
-    if (!await evalPage(`document.querySelector('.rs-fact textarea')?.value === 'Built 12 payment services draft' && document.querySelector('fieldset.rs-filter')?.disabled`)) throw new Error("FACT_DRAFT_LOST_DURING_REFRESH");
-    await clickText('.rs-fact form button', 'Cancel');
-    await wait(`!document.querySelector('.rs-fact textarea') && !document.querySelector('fieldset.rs-filter')?.disabled`);
+    await wait(`${fileStatus} === '1 to check'`);
+    if (!await evalPage(`document.querySelector('.facts-ask textarea')?.value === 'Built 12 payment services draft' && document.querySelector('fieldset.rs-filter')?.disabled`)) throw new Error("FACT_DRAFT_LOST_DURING_REFRESH");
+    await clickText('.facts-ask form button', 'Cancel');
+    await wait(`!document.querySelector('.facts-ask textarea') && !document.querySelector('fieldset.rs-filter')?.disabled`);
     state.factState = "proposed"; fact.roleId = "role-1";
     await evalPage(`window.dispatchEvent(new Event('resumatic:vault-change'))`);
-    await wait(`${sourceStatus} === 'Ready · 1 role and 1 fact to review'`);
+    await wait(`${fileStatus} === '2 to check'`);
     stage = "role_edit_lost_response";
-    await clickText("button", "Edit role");
-    await wait(`!!document.querySelector('.rs-role form input[id$="-title"]')`);
-    await evalPage(`(() => { const e = document.querySelector('.rs-role form input[id$="-title"]'); e.focus(); e.setSelectionRange(e.value.length, e.value.length); })()`);
+    // The fact left the queue while its editor was closed, so the role is the question again.
+    await wait(`document.querySelector('.facts-ask__text')?.textContent.trim() === 'Engineer at Acme Example'`);
+    await clickText(".facts-ask button", "Fix it");
+    await wait(`!!document.querySelector('.facts-ask form input[id$="-title"]')`);
+    await evalPage(`(() => { const e = document.querySelector('.facts-ask form input[id$="-title"]'); e.focus(); e.setSelectionRange(e.value.length, e.value.length); })()`);
     await call("Input.insertText", { text: " Senior" });
-    await clickText(".rs-role button", "Save role");
-    await wait(`!!document.querySelector('.rs-role [role="alert"]')`);
-    if (!await evalPage(`document.querySelector('.rs-role form input[id$="-title"]')?.value === 'Engineer Senior'`)) throw new Error('ROLE_EDIT_DRAFT_LOST');
-    await clickText(".rs-role button", "Save role");
-    await wait(`!document.querySelector('.rs-role form input[id$="-title"]')`);
+    await clickText(".facts-ask button", "Save role");
+    await wait(`!!document.querySelector('.facts-ask [role="alert"]')`);
+    if (!await evalPage(`document.querySelector('.facts-ask form input[id$="-title"]')?.value === 'Engineer Senior'`)) throw new Error('ROLE_EDIT_DRAFT_LOST');
+    await clickText(".facts-ask button", "Save role");
+    await wait(`!document.querySelector('.facts-ask form input[id$="-title"]')`);
     if (role.title !== "Engineer Senior" || state.roleEditAttempts !== 2 || await evalPage(`document.querySelector('fieldset.rs-filter')?.disabled || !document.body.innerText.includes('Engineer Senior')`)) throw new Error('ROLE_EDIT_NOT_RECONCILED');
-    stage = "review_role"; await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Confirm role')`); await clickText("button", "Confirm role"); await wait(`!([...document.querySelectorAll('button')].some(x => x.textContent.trim() === 'Confirm role'))`);
-    await wait(`${sourceStatus} === 'Ready · 1 fact to review'`);
-    stage = "fact_level_review"; await wait(`document.body?.innerText.includes('needs your confirmation before it is used')`); await clickText('.rs-fact button', 'Edit');
-    await wait(`!!document.querySelector('.rs-fact select[id$="-level"]')`);
-    await evalPage(`(() => { const e = document.querySelector('.rs-fact select[id$="-level"]'); e.value = 'led'; e.dispatchEvent(new Event('change', { bubbles: true })); })()`);
-    await clickText('.rs-fact button', 'Save fact');
-    await wait(`!!document.querySelector('.rs-fact [role="alert"]')`);
-    if (!await evalPage(`document.querySelector('.rs-fact select[id$="-level"]')?.value === 'led'`)) throw new Error('FACT_EDIT_DRAFT_LOST');
-    await clickText('.rs-fact button', 'Save fact'); await wait(`!document.querySelector('.rs-fact select[id$="-level"]')`);
+    stage = "review_role"; await wait(`!![...document.querySelectorAll('.facts-ask button')].find(x => x.textContent.trim() === 'That’s right')`); await clickText(".facts-ask button", "That’s right"); await wait(`document.querySelector('.facts-ask__text')?.textContent.trim() === 'Built 12 payment services'`);
+    await wait(`${fileStatus} === '1 to check'`);
+    stage = "fact_level_review"; await wait(`document.body?.innerText.includes('needs your confirmation before it is used')`); await clickText('.facts-ask button', 'Fix it');
+    await wait(`!!document.querySelector('.facts-ask select[id$="-level"]')`);
+    await evalPage(`(() => { const e = document.querySelector('.facts-ask select[id$="-level"]'); e.value = 'led'; e.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await clickText('.facts-ask button', 'Save fact');
+    await wait(`!!document.querySelector('.facts-ask [role="alert"]')`);
+    if (!await evalPage(`document.querySelector('.facts-ask select[id$="-level"]')?.value === 'led'`)) throw new Error('FACT_EDIT_DRAFT_LOST');
+    await clickText('.facts-ask button', 'Save fact'); await wait(`!document.querySelector('.facts-ask select[id$="-level"]')`);
     if (fact.level !== 'led' || fact.levelNeedsReview || state.factEditAttempts !== 2 || await evalPage(`document.querySelector('fieldset.rs-filter')?.disabled`)) throw new Error('FACT_LEVEL_NOT_REAFFIRMED');
-    stage = "review_fact"; await wait(`!![...document.querySelectorAll('.rs-fact button')].find(x => x.textContent.trim() === 'Confirm' && !x.disabled)`); await clickText(".rs-fact button", "Confirm"); await wait(`document.body?.innerText.includes('Nothing is waiting for review')`);
-    await wait(`${sourceStatus} === 'Ready · Review complete'`);
+    stage = "review_fact"; await wait(`!![...document.querySelectorAll('.facts-ask button')].find(x => x.textContent.trim() === 'That’s right' && !x.disabled)`); await clickText(".facts-ask button", "That’s right"); await wait(`document.body?.innerText.includes('Nothing is waiting for you to check')`);
+    await go("#/facts/files");
+    await wait(`${sourceStatus} === 'Ready · All checked'`);
     stage = "manual_fact_retry";
+    await go("#/facts/all");
+    await wait(`!![...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Add a fact yourself')`);
     await clickText("button", "Add a fact yourself");
     await wait(`!!document.querySelector('.add-fact-form textarea')`);
     await evalPage(`document.querySelector('.add-fact-form textarea').focus()`);
@@ -487,82 +507,87 @@ if (!browser?.startsWith("/")) {
     finishJob();
     await wait(`document.querySelector('form.card textarea')?.value === '' && !document.querySelector('form.card textarea')?.readOnly && document.body?.innerText.includes('Synthetic platform engineer job')`);
     if (state.jobRequests.length !== 2 || state.jobKeys.length !== 2 || state.jobKeys[0] !== state.jobKeys[1] || state.applications.length !== 1 || state.jobRequests.some((body) => body.jdText !== jobText) || !await evalPage(`document.querySelector('form.card textarea')?.value === '' && !document.querySelector('form.card textarea')?.readOnly && document.activeElement === document.querySelector('form.card textarea')`)) throw new Error("JOB_SAVE_RESULT_WRONG");
+    stage = "job_opened_from_row";
+    // A job is a row on Your jobs whose name opens its own page.
+    await clickText(".app-job-row h3 a", "Synthetic platform engineer job");
+    await wait(`location.hash === '#/jobs/application-1/fit' && !!document.querySelector('[aria-label="This job"] a[aria-current="page"]') && document.querySelector('[aria-label="This job"] a[aria-current="page"]').textContent.trim() === 'Fit'`);
     stage = "document_initial_read";
     state.deferDocumentRead = true;
-    await clickText("button", "Track and prepare");
+    await clickText('[aria-label="This job"] a', "Cover letter");
     const finishDocumentRead = await waitForRelease(() => releaseDocumentRead);
     await wait(`document.body?.innerText.includes('Loading your documents')`);
-    if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create cover letter')?.disabled`)) throw new Error("DOCUMENT_START_ENABLED_BEFORE_READ");
+    if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Write a cover letter')?.disabled`)) throw new Error("DOCUMENT_START_ENABLED_BEFORE_READ");
     finishDocumentRead();
-    stage = "tracking"; await wait(`!!document.querySelector('.application-workspace select')`); await evalPage(`(() => { const e = document.querySelector('.application-workspace select'); e.value = 'applied'; e.dispatchEvent(new Event('change', { bubbles: true })); })()`); await evalPage(`document.querySelector('.application-workspace textarea').focus()`); await call("Input.insertText", { text: "Synthetic follow-up note" }); await clickText("button", "Save tracking details");
-    await wait(`!!document.querySelector('.application-workspace [role="alert"]')`);
-    if (!await evalPage(`document.querySelector('.application-workspace textarea')?.value === 'Synthetic follow-up note'`)) throw new Error("TRACKING_DRAFT_LOST");
+    stage = "tracking";
+    await clickText('[aria-label="This job"] a', "Application");
+    await wait(`!!document.querySelector('.app-job-tracking select')`); await evalPage(`(() => { const e = document.querySelector('.app-job-tracking select'); e.value = 'applied'; e.dispatchEvent(new Event('change', { bubbles: true })); })()`); await evalPage(`document.querySelector('.app-job-tracking textarea').focus()`); await call("Input.insertText", { text: "Synthetic follow-up note" }); await clickText("button", "Save tracking details");
+    await wait(`!!document.querySelector('.app-job-tracking [role="alert"]')`);
+    if (!await evalPage(`document.querySelector('.app-job-tracking textarea')?.value === 'Synthetic follow-up note'`)) throw new Error("TRACKING_DRAFT_LOST");
     await clickText("button", "Save tracking details");
-    await wait(`document.querySelector('.application-workspace')?.innerText.includes('Saved.')`);
+    await wait(`document.querySelector('.app-job-tracking')?.innerText.includes('Saved.')`);
     if (state.trackingRequests.length !== 2 || state.trackingRequests.some((item) => item.expectedRevision !== 1) || state.applications[0]?.revision !== 2 || state.applications[0]?.status !== "applied" || state.applications[0]?.notes !== "Synthetic follow-up note") throw new Error("TRACKING_NOT_RECONCILED");
     // A concurrent edit with different content must remain a conflict and keep the local draft.
     state.applications[0].notes = "Remote note"; state.applications[0].revision++;
-    await evalPage(`(() => { const e = document.querySelector('.application-workspace textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(e, 'Local draft'); e.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await evalPage(`(() => { const e = document.querySelector('.app-job-tracking textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(e, 'Local draft'); e.dispatchEvent(new Event('input', { bubbles: true })); })()`);
     await clickText("button", "Save tracking details");
-    await wait(`!!document.querySelector('.application-workspace [role="alert"]')`);
-    if (!await evalPage(`document.querySelector('.application-workspace textarea')?.value === 'Local draft'`) || state.applications[0].notes !== "Remote note") throw new Error("TRACKING_CONFLICT_DRAFT_LOST");
-    // A board move and filter/view switches must not remount the open form.
-    // Keep a DOM reference and focus to detect loss of the editor itself.
+    await wait(`!!document.querySelector('.app-job-tracking [role="alert"]')`);
+    if (!await evalPage(`document.querySelector('.app-job-tracking textarea')?.value === 'Local draft'`) || state.applications[0].notes !== "Remote note") throw new Error("TRACKING_CONFLICT_DRAFT_LOST");
+    stage = "tracking_draft_on_refresh";
+    // The job is read again when the vault changes: the open form, its draft and its focus stay.
+    await evalPage(`(() => { const e = document.querySelector('.app-job-tracking textarea'); e.focus(); window.__trackerDraft = e; })()`);
+    state.applications[0].status = "interview"; state.applications[0].revision++;
+    await evalPage(`window.dispatchEvent(new Event('resumatic:vault-change'))`);
+    await wait(`document.querySelector('.app-job-page-head .rs-mark')?.textContent.includes('Interview')`);
+    if (!await evalPage(`(() => { const e = document.querySelector('.app-job-tracking textarea'); return e === window.__trackerDraft && document.activeElement === e && e.value === 'Local draft'; })()`)) throw new Error("TRACKING_DRAFT_LOST_ON_REFRESH");
+    await clickText("button", "Reload saved details");
+    await wait(`document.querySelector('.app-job-tracking textarea')?.value === 'Remote note'`);
+    stage = "board_keyboard_scroll";
+    await evalPage(`location.hash = '#/jobs'`);
+    await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Board')`);
     await clickText("button", "Board");
     await wait(`!!document.querySelector('.application-board-scroller')`);
     if (!await evalPage(`(() => { const region = document.querySelector('[aria-label="Jobs by status"]'); region.focus(); region.scrollLeft = 100; return document.activeElement === region && region.tabIndex === 0 && region.scrollWidth > region.clientWidth && region.scrollLeft > 0; })()`)) throw new Error("BOARD_NOT_KEYBOARD_SCROLLABLE");
-    await evalPage(`(() => { const s = document.querySelector('.application-filter select'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(s, 'applied'); s.dispatchEvent(new Event('change', { bubbles: true })); const e = document.querySelector('.application-workspace textarea'); e.focus(); window.__trackerDraft = e; })()`);
-    state.applications[0].status = "interview"; state.applications[0].revision++;
-    await evalPage(`window.dispatchEvent(new Event('resumatic:vault-change'))`);
-    await wait(`document.querySelector('.application .rs-mark')?.textContent.includes('Interview') && document.body.innerText.includes('Open workspaces stay visible')`);
-    if (!await evalPage(`(() => { const e = document.querySelector('.application-workspace textarea'); const card = e?.closest('.application'); const labels = card?.getAttribute('aria-labelledby')?.split(' ').map(id => document.getElementById(id)?.textContent.trim()); return e === window.__trackerDraft && document.activeElement === e && e.value === 'Local draft' && labels?.includes('Interview') && !card.hidden; })()`)) throw new Error("BOARD_MOVE_DRAFT_OR_FOCUS_LOST");
-    await evalPage(`(() => { const s = document.querySelector('.application-filter select'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(s, 'saved'); s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
-    await wait(`document.body.innerText.includes('Open workspaces stay visible')`);
-    if (!await evalPage(`document.querySelector('.application-workspace textarea') === window.__trackerDraft && window.__trackerDraft.value === 'Local draft'`)) throw new Error("FILTER_SWITCH_DRAFT_LOST");
     await clickText("button", "List");
-    if (!await evalPage(`document.querySelector('.application-workspace textarea') === window.__trackerDraft && window.__trackerDraft.value === 'Local draft'`)) throw new Error("VIEW_SWITCH_DRAFT_LOST");
-    await evalPage(`(() => { const s = document.querySelector('.application-filter select'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(s, 'all'); s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
-    await clickText("button", "Reload saved details");
-    await wait(`document.querySelector('.application-workspace textarea')?.value === 'Remote note'`);
     stage = "document_refresh_after_start";
     state.alwaysHideDocuments = true;
-    await clickText("button", "Create cover letter");
-    await wait(`(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create cover letter'); return b?.disabled && !!b.closest('section')?.querySelector('[role="alert"] button'); })()`);
+    await evalPage(`location.hash = '#/jobs/application-1/letter'`);
+    await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Write a cover letter' && !x.disabled)`);
+    await clickText("button", "Write a cover letter");
+    await wait(`(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Write a cover letter'); return b?.disabled && !!b.closest('section')?.querySelector('[role="alert"] button'); })()`);
     if (state.letterStarts !== 1) throw new Error("DOCUMENT_START_DUPLICATED");
-    await evalPage(`(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create cover letter'); b.closest('section').querySelector('[role="alert"] button').click(); })()`);
+    await evalPage(`(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Write a cover letter'); b.closest('section').querySelector('[role="alert"] button').click(); })()`);
     await wait(`document.body?.innerText.includes('Your document was started.')`);
-    if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create cover letter')?.disabled`)) throw new Error("DOCUMENT_START_ENABLED_BEFORE_OBSERVED");
-    stage = "document_reopen_guard";
-    await clickText("button", "Close workspace");
+    if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Write a cover letter')?.disabled`)) throw new Error("DOCUMENT_START_ENABLED_BEFORE_OBSERVED");
+    stage = "document_tab_return_guard";
+    // Another of the job's tabs, then back: the guard holds on both.
+    await clickText('[aria-label="This job"] a', "Interview");
+    await wait(`document.body?.innerText.includes('Your document was started.') && !![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Prepare for an interview')?.disabled`);
     state.hideDocumentRead = true;
-    await clickText("button", "Track and prepare");
+    await clickText('[aria-label="This job"] a', "Cover letter");
     await wait(`document.body?.innerText.includes('Your document was started.')`);
-    if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create cover letter')?.disabled`)) throw new Error("DOCUMENT_START_ENABLED_AFTER_REOPEN");
+    if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Write a cover letter')?.disabled`)) throw new Error("DOCUMENT_START_ENABLED_AFTER_TAB_RETURN");
     stage = "document_storage_before_reload";
     if (!await evalPage(`sessionStorage.getItem('resumatic:document-start:' + JSON.stringify(['synthetic-user', 'application-1'])) === 'document-1'`)) throw new Error("DOCUMENT_START_NOT_STORED");
     stage = "document_reload_guard";
     state.alwaysHideDocuments = true;
     await call("Page.reload");
-    await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Track and prepare')`);
+    await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Write a cover letter')`);
     stage = "document_storage_after_reload";
     if (!await evalPage(`sessionStorage.getItem('resumatic:document-start:' + JSON.stringify(['synthetic-user', 'application-1'])) === 'document-1'`)) throw new Error("DOCUMENT_START_NOT_RESTORED");
-    stage = "document_reload_open";
-    await clickText("button", "Track and prepare");
     stage = "document_reload_pending";
     await wait(`document.body?.innerText.includes('Your document was started.')`);
-    if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create cover letter')?.disabled`)) throw new Error("DOCUMENT_START_ENABLED_AFTER_RELOAD");
+    if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Write a cover letter')?.disabled`)) throw new Error("DOCUMENT_START_ENABLED_AFTER_RELOAD");
     state.alwaysHideDocuments = false;
     state.hideDocumentRead = false;
     await clickText("button", "Refresh its status");
-    stage = "cover_letter"; await wait(`!![...document.querySelectorAll('summary')].find(x => x.textContent.trim() === 'Read cover letter')`); await clickText("summary", "Read cover letter"); await wait(`document.body?.innerText.includes('I built 12 payment services.')`);
+    // The newest letter is open, with where each sentence came from.
+    stage = "cover_letter"; await wait(`document.body?.innerText.includes('I built 12 payment services.') && !!document.querySelector('details.evidence[open]')`);
     await wait(`(() => { const link = [...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download Word'); return link?.origin === location.origin && link.getAttribute('href') === '/api/documents/document-1/docx' && link.referrerPolicy === 'no-referrer'; })()`);
     stage = "saved_interview_answer";
     state.documents.push({ id: "question-doc", applicationId: "application-1", kind: "questions", state: "ready", version: 1, createdAt: 1, error: null, answeredQuestionIds: ["question-1"], result: { kind: "questions", units: [], questions: [{ id: "question-1", requirement: "Reliability", question: "How have you improved reliability?" }], report: { kept: 0, repaired: 0, replaced: 0, dropped: 0, gaps: [] } }, facts: {} });
+    // Experience questions are on Fit.
+    await evalPage(`location.hash = '#/jobs/application-1/fit'`);
     await call("Page.reload");
-    await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Track and prepare')`);
-    await clickText("button", "Track and prepare");
-    await wait(`!![...document.querySelectorAll('summary')].find(x => x.textContent.trim() === 'Read experience questions')`);
-    await clickText("summary", "Read experience questions");
     await wait(`document.body?.innerText.includes("You’ve already saved an answer to this question.")`);
     stage = "answer_submission_lock";
     await evalPage(`document.querySelector('.gap-answer textarea').focus()`);
@@ -575,55 +600,74 @@ if (!browser?.startsWith("/")) {
     await wait(`document.body?.innerText.includes('Saved to your facts')`);
     if (state.answer?.answer !== "Improved reliability with monitoring" || !await evalPage(`document.querySelector('.gap-answer textarea')?.value === 'Improved reliability with monitoring'`)) throw new Error("INTERVIEW_ANSWER_CHANGED_WHILE_SAVING");
     stage = "uncertain_document_cancellation";
+    // Interview preparation is cancelled and retried on Interview.
     state.documents.push({ id: "document-2", applicationId: "application-1", kind: "prep", state: "running", dispatchUncertain: true, createdAt: 2, result: null, facts: {} });
-    await clickText("button", "Close workspace"); await clickText("button", "Track and prepare");
+    await clickText('[aria-label="This job"] a', "Interview");
     await wait(`document.body?.innerText.includes("Resumatic can’t confirm that preparation started")`);
-    await clickText("button", "Cancel generation");
+    await clickText("button", "Cancel this document");
     await wait(`document.body?.innerText.includes("Cancellation is pending")`);
     if (!state.documents.find((d) => d.id === "document-2")?.cancellationPending) throw new Error("DOCUMENT_CANCEL_NOT_SENT");
     state.documents = state.documents.filter((d) => d.id !== "document-2");
     stage = "document_retry";
     state.documents.push({ id: "document-failed", applicationId: "application-1", kind: "prep", state: "failed", retryRunId: "document-failed", createdAt: 3, error: "unavailable", result: null, facts: {} });
-    await clickText("button", "Close workspace"); await clickText("button", "Track and prepare");
-    await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Retry interview preparation')`);
+    await clickText('[aria-label="This job"] a', "Cover letter"); await clickText('[aria-label="This job"] a', "Interview");
+    await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Retry interview preparation' && !x.disabled)`);
     await clickText("button", "Retry interview preparation");
     await wait(`document.body?.innerText.includes('Resumatic is busy right now')`);
     await clickText("button", "Retry interview preparation");
     await wait(`document.body?.innerText.includes('Preparing and checking your document')`);
     if (state.documentRetryKeys.length !== 2 || state.documentRetryKeys[0] !== state.documentRetryKeys[1]) throw new Error("DOCUMENT_RETRY_KEY_MISMATCH");
     state.documents = state.documents.filter((d) => d.id !== "document-retry");
-    stage = "resume"; await clickText("button", "Tailor a resume"); await wait(`document.body?.innerText.includes('Resume preview') || !!document.querySelector('[aria-label="Resume preview"]')`); if (!state.tailored) throw new Error("TAILOR_NOT_STARTED");
+    stage = "resume";
+    await clickText('[aria-label="This job"] a', "Resume");
+    await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Tailor a resume' && !x.disabled)`);
+    await clickText("button", "Tailor a resume"); await wait(`location.hash === '#/jobs/application-1/resume/resume-1' && !!document.querySelector('[aria-label="Resume preview"]')`); if (!state.tailored) throw new Error("TAILOR_NOT_STARTED");
     await wait(`document.querySelector('[aria-label="Resume preview"]')?.innerText.includes('Built 12 payment services')`);
     stage = "historic_level_guard"; state.resumeNeedsGroundingReview = true; await call("Page.reload");
-    await wait(`document.body?.innerText.includes('wording or headings without verified evidence')`);
+    await wait(`document.body?.innerText.includes('wording or headings that haven’t been checked against your record')`);
     if (await evalPage(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download PDF')`)) throw new Error('HISTORIC_LEVEL_DOWNLOAD_SHOWN');
     state.resumeNeedsGroundingReview = false; await call("Page.reload");
     await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download PDF')`);
+    // Each line's tools are in its card, which opens from its mark beside the page.
+    const openCard = (lineId) => evalPage(`(() => { const b = document.querySelector('[data-note-for="${lineId}"] button'); if (!b) return false; if (b.getAttribute('aria-expanded') !== 'true') b.click(); return true; })()`);
+    // No mark beside the page overlaps the open card.
+    const cardClear = `(() => { const c = document.querySelector('.app-line-card')?.getBoundingClientRect(); if (!c) return false; return [...document.querySelectorAll('.app-line-marks > li')].every((li) => { const m = li.getBoundingClientRect(); return m.bottom <= c.top + 0.5 || m.top >= c.bottom - 0.5 || m.right <= c.left || m.left >= c.right; }); })()`;
     stage = "resume_draft_during_refresh";
-    await clickText("button", "Edit line");
-    await evalPage(`(() => { const e = document.querySelector('.rs-note textarea'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(e, 'Unsaved wording stays here'); e.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+    await wait(`!!document.querySelector('[data-note-for="line-1"] button')`);
+    await openCard("line-1");
+    await wait(`!!document.querySelector('.app-line-card') && document.activeElement?.matches('.app-line-card h3')`);
+    if (!await evalPage(cardClear)) throw new Error("LINE_CARD_OVERLAPS_MARK");
+    await clickText(".app-line-card button", "Edit line");
+    await evalPage(`(() => { const e = document.querySelector('.app-line-card textarea'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(e, 'Unsaved wording stays here'); e.dispatchEvent(new Event('input', {bubbles:true})); })()`);
     state.resumeVersion++;
     await evalPage(`window.dispatchEvent(new Event('resumatic:vault-change'))`);
     await wait(`document.body?.innerText.includes('A newer resume version is available')`);
-    if (!await evalPage(`document.querySelector('.rs-note textarea')?.value === 'Unsaved wording stays here' && [...document.querySelectorAll('.rs-note button')].find(x => x.textContent.trim() === 'Check and save')?.disabled && document.querySelector('.version-picker select')?.disabled`)) throw new Error("RESUME_DRAFT_NOT_PRESERVED");
-    await clickText(".rs-note button", "Cancel");
+    if (!await evalPage(`document.querySelector('.app-line-card textarea')?.value === 'Unsaved wording stays here' && [...document.querySelectorAll('.app-line-card button')].find(x => x.textContent.trim() === 'Check and save')?.disabled && document.querySelector('.version-picker select')?.disabled`)) throw new Error("RESUME_DRAFT_NOT_PRESERVED");
+    await clickText(".app-line-card button", "Cancel");
     await wait(`!document.body?.innerText.includes('A newer resume version is available') && !document.querySelector('.version-picker select')?.disabled`);
     stage = "verified_manual_edit";
-    await clickText("button", "Edit line");
-    await evalPage(`(() => { const e = document.querySelector('.rs-note textarea'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(e, 'Built 12 reliable payment services'); e.dispatchEvent(new Event('input', {bubbles:true})); })()`);
-    await clickText("button", "Check and save");
-    await wait(`document.body?.innerText.includes("couldn’t be verified against its evidence")`);
-    if (!await evalPage(`document.querySelector('.rs-note textarea')?.value === 'Built 12 reliable payment services'`)) throw new Error("MANUAL_TEXT_LOST");
-    await clickText("button", "Check and save");
-    await wait(`document.querySelector('[aria-label="Resume preview"]')?.innerText.includes('Built 12 reliable payment services') && !document.querySelector('.rs-note textarea')`);
+    await openCard("line-1");
+    await wait(`!!document.querySelector('.app-line-card')`);
+    await clickText(".app-line-card button", "Edit line");
+    await evalPage(`(() => { const e = document.querySelector('.app-line-card textarea'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(e, 'Built 12 reliable payment services'); e.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+    await clickText(".app-line-card button", "Check and save");
+    await wait(`document.body?.innerText.includes("isn’t backed by the facts it cites")`);
+    if (!await evalPage(`document.querySelector('.app-line-card textarea')?.value === 'Built 12 reliable payment services'`)) throw new Error("MANUAL_TEXT_LOST");
+    await clickText(".app-line-card button", "Check and save");
+    await wait(`document.querySelector('[aria-label="Resume preview"]')?.innerText.includes('Built 12 reliable payment services') && !document.querySelector('.app-line-card textarea')`);
+    // After the check, the same line's card is open again, with focus on its heading.
+    await wait(`document.querySelector('.app-line-card')?.dataset.cardFor === 'line-1' && document.activeElement?.matches('.app-line-card h3')`);
+    if (!await evalPage(cardClear)) throw new Error("LINE_CARD_OVERLAPS_MARK_AFTER_CHECK");
     stage = "uncited_remediation";
     state.resumeUncited = true; await call("Page.reload");
-    await wait(`document.body?.innerText.includes('wording or headings without verified evidence')`);
+    await wait(`document.body?.innerText.includes('wording or headings that haven’t been checked against your record')`);
     if (await evalPage(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download PDF')`)) throw new Error("UNVERIFIED_DOWNLOAD_SHOWN");
-    await clickText("button", "Edit line");
-    await wait(`!!document.querySelector('.rs-note fieldset input[type="checkbox"]')`);
-    await evalPage(`document.querySelector('.rs-note fieldset input[type="checkbox"]').click()`);
-    await clickText("button", "Check and save");
+    await openCard("line-1");
+    await wait(`!!document.querySelector('.app-line-card')`);
+    await clickText(".app-line-card button", "Edit line");
+    await wait(`!!document.querySelector('.app-line-card fieldset input[type="checkbox"]')`);
+    await evalPage(`document.querySelector('.app-line-card fieldset input[type="checkbox"]').click()`);
+    await clickText(".app-line-card button", "Check and save");
     await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download PDF')`);
     if (JSON.stringify(state.manualEdits.at(-1)?.manualFactIds) !== '["fact-1"]') throw new Error("REMEDIATION_FACT_MISSING");
     stage = "legacy_resume_review";
@@ -631,8 +675,14 @@ if (!browser?.startsWith("/")) {
     await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Start review')`);
     await clickText("button", "Start review");
     await wait(`document.body?.innerText.includes('0 of 2 lines checked') && document.body?.innerText.includes("headings and skills don’t match")`);
-    await evalPage(`(() => { const line = [...document.querySelectorAll('.rs-note')].find(x => x.textContent.includes('Unsupported historical line')); const button = [...line.querySelectorAll('button')].find(x => x.textContent.trim() === 'Remove line (keeps earlier versions)'); button.click(); })()`);
-    await wait(`document.body?.innerText.includes('0 of 1 lines checked') && !document.body?.innerText.includes('Unsupported historical line')`);
+    // Two marks now: the card for the first line pushes the second down rather than covering it.
+    await openCard("line-1");
+    await wait(`!!document.querySelector('.app-line-card')`);
+    if (!await evalPage(cardClear)) throw new Error("LINE_CARD_OVERLAPS_SECOND_MARK");
+    await openCard("line-extra");
+    await wait(`document.querySelector('.app-line-card')?.dataset.cardFor === 'line-extra'`);
+    await clickText(".app-line-card button", "Remove line (keeps earlier versions)");
+    await wait(`document.body?.innerText.includes('0 of 1 lines checked') && !document.querySelector('[aria-label="Resume preview"]')?.innerText.includes('Unsupported historical line')`);
     if (state.legacyExtraLine) throw new Error("LEGACY_REMOVE_NOT_SENT");
     await wait(`!!document.querySelector('button[aria-label="Remove skill Unconfirmed skill"]')`);
     await evalPage(`document.querySelector('button[aria-label="Remove skill Unconfirmed skill"]').click()`);
@@ -640,10 +690,12 @@ if (!browser?.startsWith("/")) {
     if (state.legacySkill) throw new Error("LEGACY_SKILL_REMOVE_NOT_SENT");
     if (!state.resumeLegacy) throw new Error("SNAPSHOT_REVIEW_NOT_STARTED");
     if (!await evalPage(`[...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create checked version')?.disabled`)) throw new Error("LEGACY_FINALIZE_NOT_BLOCKED");
-    await clickText("button", "Review line");
-    await wait(`!!document.querySelector('.rs-note fieldset input[type="checkbox"]')`);
-    await evalPage(`document.querySelector('.rs-note fieldset input[type="checkbox"]').click()`);
-    await clickText("button", "Check and save");
+    await openCard("line-1");
+    await wait(`!!document.querySelector('.app-line-card')`);
+    await clickText(".app-line-card button", "Review line");
+    await wait(`!!document.querySelector('.app-line-card fieldset input[type="checkbox"]')`);
+    await evalPage(`document.querySelector('.app-line-card fieldset input[type="checkbox"]').click()`);
+    await clickText(".app-line-card button", "Check and save");
     await wait(`document.body?.innerText.includes('1 of 1 lines checked')`);
     if (!await evalPage(`[...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Create checked version')?.disabled`)) throw new Error("LEGACY_HEADER_NOT_BLOCKED");
     state.legacyHeadersReady = true; await call("Page.reload");
@@ -662,10 +714,23 @@ if (!browser?.startsWith("/")) {
     if (state.checkedSkill) throw new Error("CHECKED_SKILL_REMOVE_NOT_SENT");
     if (state.checkedSkillRequests.length !== 2 || JSON.stringify(state.checkedSkillRequests[0]) !== JSON.stringify(state.checkedSkillRequests[1])) throw new Error("CHECKED_SKILL_RETRY_CHANGED");
     stage = "remove_checked_line";
-    await clickText("button", "Remove line (keeps earlier versions)");
+    await openCard("line-1");
+    await wait(`!!document.querySelector('.app-line-card')`);
+    await clickText(".app-line-card button", "Remove line (keeps earlier versions)");
     await wait(`document.body?.innerText.includes('This resume has no lines')`);
     if (!state.resumeLineRemoved) throw new Error("CHECKED_LINE_REMOVE_NOT_SENT");
     state.resumeLineRemoved = false;
+    stage = "line_card_sheet";
+    // Below 860px a line's card is a sheet from the bottom of the screen, and Escape closes it.
+    await call("Emulation.setDeviceMetricsOverride", { width: 800, height: 900, deviceScaleFactor: 1, mobile: false });
+    await call("Page.reload");
+    await wait(`!!document.querySelector('[data-note-for="line-1"] button')`);
+    await openCard("line-1");
+    await wait(`(() => { const c = document.querySelector('.app-line-card'); return !!c && getComputedStyle(c).position === 'fixed' && c.dataset.presentation === 'sheet' && c.getAttribute('role') === 'dialog' && c.contains(document.activeElement); })()`);
+    await call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    await call("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    await wait(`!document.querySelector('.app-line-card') && document.activeElement === document.querySelector('[data-note-for="line-1"] button')`);
+    await call("Emulation.clearDeviceMetricsOverride");
     stage = "uncertain_resume_cancellation";
     state.resumeRunning = true; await call("Page.reload");
     await wait(`document.body?.innerText.includes("Resumatic can’t confirm that tailoring started")`);
@@ -673,8 +738,11 @@ if (!browser?.startsWith("/")) {
     await wait(`document.body?.innerText.includes("Cancellation is pending")`);
     if (!state.resumeCancel) throw new Error("RESUME_CANCEL_NOT_SENT");
     stage = "export_disclosure";
-    await clickText("nav a", "Account");
-    await wait(`document.body?.innerText.includes('up to 128 source files and 100 MiB')`);
+    // Account opens from the menu under the person's name.
+    await evalPage(`document.querySelector('button.rs-who').click()`);
+    await wait(`!!document.querySelector('.app-menu:not([hidden])')`);
+    await clickText(".app-menu a", "Your data");
+    await wait(`document.body?.innerText.includes('up to 128 files and 100 MiB')`);
     stage = "profile_submission_lock";
     await evalPage(`(() => { const e = document.querySelector('input[autocomplete="name"]'); e.focus(); e.setSelectionRange(e.value.length, e.value.length); })()`);
     await call("Input.insertText", { text: " Senior" });
@@ -711,10 +779,14 @@ if (!browser?.startsWith("/")) {
     finishProfile();
     await wait(`document.body?.innerText.includes('Profile saved.')`);
     if (me.profile.revision !== 4 || me.profile.name !== "Changed elsewhere Reconciled" || !await evalPage(`document.querySelector('input[autocomplete="name"]')?.value === 'Changed elsewhere Reconciled'`)) throw new Error("PROFILE_LOST_RESPONSE_NOT_RECONCILED");
+    // The copies shared with a coach are on Sharing › Coaches, and the downloads on Account.
+    await evalPage(`location.hash = '#/sharing/coaches'`);
     await wait(`document.body?.innerText.includes('This link is currently unavailable.')`);
     if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Revoke link')`)) throw new Error("SHARE_REVOKE_MISSING");
+    await evalPage(`location.hash = '#/account/data'`);
+    await wait(`!!document.querySelector('a[href="/api/export/archive"]')`);
     if (!await evalPage(`!!document.querySelector('a[href="/api/export/archive"]')`)) throw new Error("ARCHIVE_LINK_MISSING");
-    if (!await evalPage(`!!document.querySelector('a[href="/api/export"]') && [...document.querySelectorAll('a[href="#/facts"]')].some(x => x.textContent.includes('Facts'))`)) throw new Error("EXPORT_DOWNLOAD_LINKS_MISSING");
+    if (!await evalPage(`!!document.querySelector('a[href="/api/export"]') && [...document.querySelectorAll('a[href="#/facts/files"]')].some(x => x.textContent.includes('Your files'))`)) throw new Error("EXPORT_DOWNLOAD_LINKS_MISSING");
     stage = "resource_reload";
     if (!await evalPage(`import('/test/support/resource-browser.tsx').then(m => m.checkResourceReload())`)) throw new Error("RESOURCE_RELOAD_DID_NOT_SETTLE");
     stage = "share_retry";
@@ -726,15 +798,15 @@ if (!browser?.startsWith("/")) {
     await wait(`document.body?.innerText.includes("This copy couldn’t be opened")`);
     if (state.shareSessions !== 2 || state.shareReads !== 1) throw new Error("SHARE_EXCHANGE_RETRY");
     await clickText("button", "Try again");
-    await wait(`document.body?.innerText.includes('Shared career snapshot')`);
+    await wait(`document.querySelector('main h1')?.textContent.trim() === 'Avery Example'`);
     if (state.shareSessions !== 2 || state.shareReads !== 2 || await evalPage(`location.hash !== ''`)) throw new Error("SHARE_SNAPSHOT_RETRY");
     // The address names the copy, so a reload opens the same one, and the tab says whose it is.
-    if (!await evalPage(`location.pathname + location.search === '/share?g=${shareGrant}' && document.title.startsWith('Avery Example, shared copy') && document.body.innerText.includes('From Avery Example.')`)) throw new Error("SHARE_COPY_NOT_NAMED");
+    if (!await evalPage(`location.pathname + location.search === '/share?g=${shareGrant}' && document.title.startsWith('Avery Example, shared copy') && document.body.innerText.includes('Avery Example’s own record may have changed since.')`)) throw new Error("SHARE_COPY_NOT_NAMED");
     stage = "share_expired";
     await call("Page.navigate", { url: `${origin}/share?invalid=1#synthetic-invalid` });
-    await wait(`document.body?.innerText.includes('Share unavailable')`);
+    await wait(`document.body?.innerText.includes('This link isn’t available')`);
     if (await evalPage(`location.hash !== '' || location.search !== '' || !![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Try again')`)) throw new Error("EXPIRED_SHARE_NOT_TERMINAL");
-    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, sourceRoleOnly: true, sourceEmpty: true, pollRecovery: true, pollNonTransient: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, roleDraftDuringRefresh: true, factDraftDuringRefresh: true, sourceConfirmationDuringDraft: true, secondReviewEditorBlocked: true, reviewLockReleasedOnNavigation: true, roleEditLostResponse: true, factLevelReview: true, factEditLostResponse: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, jobRetryKey: true, profileSubmissionLock: true, profileConcurrentEdit: true, profileLostResponse: true, applicationTracking: true, applicationWorkspaceBoardMove: true, documentRefreshAfterStart: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, resumeDraftDuringRefresh: true, verifiedManualEdit: true, uncitedRemediation: true, legacyResumeReview: true, legacySkillRemoval: true, checkedSkillRemoval: true, checkedLineRemoval: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true, stableResourceReload: true, shareRetry: true, expiredShare: true } }));
+    console.log(JSON.stringify({ status: "passed", promotionEligible: false, mode: "synthetic-api-standin", checks: { signInNavigation: true, uploadRetryKey: true, ocrDownloadLinks: true, sourceRoleOnly: true, sourceEmpty: true, pollRecovery: true, pollNonTransient: true, uncertainSourceCancellation: true, sourceReadingRetry: true, roleAndFactReview: true, roleDraftDuringRefresh: true, factDraftDuringRefresh: true, sourceConfirmationDuringDraft: true, secondReviewEditorBlocked: true, reviewLockReleasedOnNavigation: true, roleEditLostResponse: true, factLevelReview: true, factEditLostResponse: true, manualFactRetryKey: true, manualFactSubmissionLock: true, manualRoleSubmissionLock: true, manualRoleRetryKey: true, editorFocusReturn: true, applicationCreation: true, jobSubmissionLock: true, jobRetryKey: true, profileSubmissionLock: true, profileConcurrentEdit: true, profileLostResponse: true, jobOpenedFromRow: true, applicationTracking: true, trackingDraftOnRefresh: true, boardKeyboardScroll: true, documentRefreshAfterStart: true, documentTabReturnGuard: true, coverLetterDisplay: true, documentWordDownloadLink: true, savedInterviewAnswer: true, interviewSubmissionLock: true, tailoredResumeDisplay: true, historicLevelGuard: true, resumeDraftDuringRefresh: true, verifiedManualEdit: true, uncitedRemediation: true, lineCardFocusAfterCheck: true, lineCardNoOverlap: true, lineCardSheet: true, legacyResumeReview: true, legacySkillRemoval: true, checkedSkillRemoval: true, checkedLineRemoval: true, uncertainDocumentCancellation: true, documentRetry: true, uncertainResumeCancellation: true, exportDisclosure: true, unavailableShareNotice: true, stableResourceReload: true, shareRetry: true, expiredShare: true } }));
   } catch {
     console.log(JSON.stringify({ status: "failed", reason: "BROWSER_SMOKE_FAILED", stage, promotionEligible: false })); process.exitCode = 1;
   } finally {

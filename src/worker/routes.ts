@@ -22,7 +22,7 @@ import {
 import { renderPdf } from "../render/pdf";
 import { PILOT_IDENTITY_PATHS, PILOT_MAX_CALLS, PILOT_MAX_MICROS } from "./pilot/ledger";
 import { stagingPilotBudget } from "./pilot/access";
-import { createArchive, MAX_ARCHIVE_BYTES, type ArchiveEntry } from "../render/archive";
+import { ARCHIVE_FILE_MISSING, ARCHIVE_TOO_LARGE, createArchive, MAX_ARCHIVE_BYTES, type ArchiveEntry } from "../render/archive";
 import { archivePreflight, readArchiveSnapshot } from "./archive-snapshot";
 import { guardedStream } from "./guarded-stream";
 import { cachedExport, snapshotCacheKey } from "./vault-export-cache";
@@ -63,6 +63,7 @@ import {
 import { AppError, errorCode, errorDetail, httpStatus } from "../shared/errors";
 import { MAX_SHARE_LABEL_CHARS, type CoachClient, type SharedView } from "../shared/sharing";
 import type { CommentThread, NewSuggestion, OwnerCommentThread } from "../shared/sharing";
+import { SHARE_LINK_GONE } from "../shared/sharing";
 import { MAX_VAULT_COMMENTS } from "../vault/share-comments";
 import { hintFor, type CfLocation } from "../shared/location";
 import { PREFERENCES_REFUSED, cleanPreferences } from "../shared/preferences";
@@ -455,7 +456,7 @@ const NewFactBody = z.object({
 });
 
 const JdText = z.string().trim().min(MIN_JD_CHARS, "paste the whole job description").max(MAX_JD_CHARS);
-const WebUrl = z.string().trim().max(MAX_URL_CHARS).refine(isWebUrl, "enter the posting's web address, starting with https://");
+const WebUrl = z.string().trim().max(MAX_URL_CHARS).refine(isWebUrl, "Enter the job's web address, starting with https://.");
 /** A title or company: one line of the person's own text. An empty line clears it. */
 const JobName = z.string().trim().max(MAX_JOB_NAME_CHARS).refine((value) => !/[\r\n]/.test(value), "use a single line")
   .transform((value) => value || null);
@@ -590,6 +591,9 @@ api.put("/preferences", JSON_LIMIT, async (c) => {
 api.get("/v2/card-preview", async (c) =>
   c.json(await cardPreviewFor(c.env, async () =>
     unwrapResult(await durableReadResult(() => myVault(c), (v) => v.cardMaterial(c.get("who")))), Date.now())));
+// What waits for the owner, from their own vault: the request names nothing.
+api.get("/v2/today", async (c) =>
+  c.json(unwrapResult(await durableReadResult(() => myVault(c), (v) => v.today(c.get("who"))))));
 // Email notices belong to the session's own vault. The kind comes from the path, and the address a
 // notice is turned on with only from the verified session, never from the request. Neither route
 // reaches the Directory: only the Vault's alarm asks it for the address a notice goes to.
@@ -1217,10 +1221,10 @@ api.get("/export/archive", async (c) => {
     let bytes = snapshot.manifest.jsonBytes;
     for (const file of snapshot.manifest.files) {
       const head = await archivePreflight(c.req.raw.signal, () => c.env.FILES.head(file.key));
-      if (!head) throw new AppError("conflict", "An original file is missing from your vault. Download the JSON and the available files one at a time.");
+      if (!head) throw new AppError("conflict", ARCHIVE_FILE_MISSING);
       const fileLimit = file.origin === "ocr" ? 12 * 1024 * 1024 + 1024 : MAX_UPLOAD_BYTES;
       if (!Number.isSafeInteger(head.size) || head.size < 0 || head.size > fileLimit || head.size > MAX_ARCHIVE_BYTES - bytes)
-        throw new AppError("too_large", "Your vault is too large for one archive. Download the JSON and the original files one at a time.");
+        throw new AppError("too_large", ARCHIVE_TOO_LARGE);
       bytes += head.size;
       const etag = head.etag;
       entries.push({
@@ -1764,6 +1768,15 @@ api.post("/coach/clients/:grantId/suggestions", JSON_LIMIT, async (c) => {
   const key = requestKey(c);
   return c.json(await unlessEnded(vault(c.env, entry.ownerVault).suggestOnShare(entry.grantId, account, input as NewSuggestion, key)), 201);
 });
+// The copy itself, read in the app from the coach's list. It is reached as the comments are, and
+// sets no cookie: every read is decided again from the current session, the coach's own list and
+// the owner's vault, so a sign-out everywhere or the copy ending stops it at once. A copy that has
+// ended is a 409; only the caller's own account being gone is a 410.
+api.get("/coach/clients/:grantId/copy", async (c) => {
+  const { entry, account } = await coachCopy(c);
+  const view: SharedView = await unlessEnded(vault(c.env, entry.ownerVault).readShareForCoach(entry.grantId, account));
+  return c.json(view);
+});
 app.post("/share/session", JSON_LIMIT, async (c) => {
   const { token } = await jsonBody(
     c,
@@ -1771,7 +1784,7 @@ app.post("/share/session", JSON_LIMIT, async (c) => {
   );
   const claims = await readShareToken(c.env.SESSION_KEY, token);
   if (!claims)
-    throw new AppError("gone", "this share link is unavailable or expired");
+    throw new AppError("gone", SHARE_LINK_GONE);
   await vault(c.env, claims.vid).readShare({
     grantId: claims.grantId,
     epoch: claims.epoch,
@@ -1802,7 +1815,7 @@ app.get("/share/snapshot", async (c) => {
     !claims ||
     (wanted !== undefined && claims.grantId.toLowerCase() !== wanted.toLowerCase())
   )
-    throw new AppError("gone", "this share link is unavailable or expired");
+    throw new AppError("gone", SHARE_LINK_GONE);
   // The owner looking at their own copy, signed in in the same browser, isn't the copy being opened.
   const own = await readSession(c.env.SESSION_KEY, getCookie(c, SESSION_COOKIE));
   const view = await vault(c.env, claims.vid).readShare(

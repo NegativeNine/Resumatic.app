@@ -12,7 +12,7 @@ export function mergeRefinementEvidence(
   captured: FactRecord[],
   roles: RoleRecord[],
 ): Pick<ResumeVersion, "facts" | "evidence"> {
-  const conflict = () => new AppError("conflict", "the resume or its supporting evidence changed; generate a new resume or choose different facts");
+  const conflict = () => new AppError("conflict", "The resume or the facts behind it changed. Tailor a new resume, or choose different facts.");
   const expected = structuredClone(base.render.body);
   if (!!expected.summary !== !!body.summary || expected.sections.length !== body.sections.length)
     throw conflict();

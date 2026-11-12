@@ -1,7 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import {
   MAX_FACT_CHARS,
-  type ResumeView,
   type RoleView,
 } from "../../shared/api";
 import type {
@@ -10,11 +9,12 @@ import type {
   NewDocument,
 } from "../../shared/documents";
 import { api } from "../api";
-import { count, formatDateTime } from "../format";
+import { formatDateTime } from "../format";
 import { forgetDocumentStart, readDocumentStart, rememberDocumentStart } from "../document-starts";
-import { useAction, useResource, type Reload } from "../hooks";
+import { useAction, useResource, type Action, type Reload, type Resource } from "../hooks";
 import { useSession } from "../session";
 import { roleLabel } from "../vault";
+import { FitPreview } from "./jobs/FitPreview";
 import {
   ActionError,
   Badge,
@@ -25,10 +25,15 @@ import {
   Loading,
   Message,
   Quote,
+  RUN_MARK,
   Success,
-  Tick,
 } from "./ui";
 import "./workspace.css";
+
+// A job's documents: fit checks and experience questions, cover letters, interview preparation, and
+// the wording checks that make a resume's new versions. One list is read for the job, and each of a
+// job's tabs shows its own kinds of it, with the start buttons that make them. Resumatic makes one
+// thing at a time, so a start is off while anything of the job's is running, wherever it shows.
 
 const LABELS: Record<DocumentKind, string> = {
   letter: "Cover letter",
@@ -38,28 +43,42 @@ const LABELS: Record<DocumentKind, string> = {
   fit: "Fit preview",
 };
 
-/** Kinds that use no output, so they stay available when the allowance is used up. */
-const FREE: readonly DocumentKind[] = ["questions", "fit"];
+/** Kinds that aren't counted as documents, so they stay available when the allowance is used up. */
+export const FREE: readonly DocumentKind[] = ["questions", "fit"];
 
-type ApplicationDocumentsProps = {
-  applicationId: string;
-  resume?: ResumeView;
-  onUpdated?: Reload;
-  /** On the resume page the section stands alone, so it gets its own panel. */
-  panel?: boolean;
+/** What a start that is off because of a run on another of the job's tabs says that run is, and where. */
+const RUNNING_ELSEWHERE: Readonly<Record<DocumentKind, string>> = {
+  fit: "A fit check is running on the Fit tab.",
+  questions: "Experience questions are being found on the Fit tab.",
+  refine: "A resume wording check is running on the Resume tab.",
+  letter: "A cover letter is being written on the Cover letter tab.",
+  prep: "Interview preparation is being written on the Interview tab.",
 };
+const ONE_AT_A_TIME = " Resumatic makes one thing at a time, so this can start when it finishes.";
 
-export function ApplicationDocuments(props: ApplicationDocumentsProps) {
-  const { me } = useSession();
-  return <ApplicationDocumentsForUser key={JSON.stringify([me.userId, props.applicationId])} {...props} />;
+/** A job's documents as one of its tabs reads and starts them. */
+export interface JobDocuments {
+  list: Resource<{ documents: DocumentView[] }>;
+  docs: DocumentView[];
+  action: Action;
+  /** True while a start must wait: the list is unknown or failed, a start isn't seen yet, or one is running. */
+  running: boolean;
+  /** Documents left in this period, after what is held for work in progress. */
+  available: number;
+  /** A start that was acknowledged but isn't in the list yet. */
+  unseenDocument: string | null;
+  start: (options: NewDocument) => Promise<void>;
+  retry: (runId: string) => Promise<void>;
 }
 
-function ApplicationDocumentsForUser({
-  applicationId,
-  resume,
-  onUpdated,
-  panel = false,
-}: ApplicationDocumentsProps) {
+/**
+ * Reads a job's documents, polling while any runs, and starts and retries them. A start is kept
+ * off until the document it acknowledged appears in the list: that guard is kept for this user and
+ * job in this tab's storage, so it holds across a job's tabs and a reload. `onUpdated` runs when a
+ * wording check this page watched finishes, since its result is a resume's new version. Give the
+ * component that calls it a key with the user's and the job's IDs.
+ */
+export function useJobDocuments(applicationId: string, onUpdated?: Reload): JobDocuments {
   const list = useResource(
     () => api.documents(applicationId),
     (data) => data.documents.some((doc) => doc.state === "running"),
@@ -70,11 +89,9 @@ function ApplicationDocumentsForUser({
   const seenStates = useRef(new Map<string, DocumentView["state"]>());
   const callbacks = useRef({ onUpdated, refreshMe });
   callbacks.current = { onUpdated, refreshMe };
-  const [instruction, setInstruction] = useState("");
   // A successful start can be followed by a failed or superseded list read.
   // Keep generation disabled until the acknowledged document appears.
   const [unseenDocument, setUnseenDocument] = useState<string | null>(() => readDocumentStart(me.userId, applicationId));
-  const id = useId();
   const docs = list.data?.documents ?? [];
   const running = !list.data || !!list.error || !!unseenDocument || docs.some((doc) => doc.state === "running");
   const available = Math.max(
@@ -128,93 +145,36 @@ function ApplicationDocumentsForUser({
     });
   }
 
+  return { list, docs, action, running, available, unseenDocument, start, retry };
+}
+
+/** The kind of a document running on another of the job's tabs than the one showing `kinds`, if any. */
+export function runningElsewhere(jobDocs: JobDocuments, kinds: readonly DocumentKind[]): DocumentKind | null {
+  return jobDocs.docs.find((doc) => doc.state === "running" && !kinds.includes(doc.kind))?.kind ?? null;
+}
+
+/**
+ * What a tab says under its start buttons: which run on another tab keeps them off (`id`, which a
+ * button that is off for it names with aria-describedby), that the allowance is used when the tab
+ * makes counted documents, why a start failed, and that the list is loading, failed or hasn't shown
+ * a start yet.
+ */
+export function StartNotes({ id, jobDocs, kinds, counted }: { id: string; jobDocs: JobDocuments; kinds: readonly DocumentKind[]; counted: boolean }) {
+  const elsewhere = runningElsewhere(jobDocs, kinds);
+  const { list, action, unseenDocument, available } = jobDocs;
   return (
-    <section className={panel ? "rs-panel app-documents" : "workspace-section app-documents"} aria-labelledby={`${id}-heading`}>
-      <h3 id={`${id}-heading`}>Prepare your application</h3>
-      <p className="rs-meta">
-        Letters and interview answers are written from your confirmed facts. Each finished document uses one
-        output. Checking your fit and experience questions are free.
-      </p>
-      <div className="actions app-documents__start">
-        <button
-          type="button"
-          onClick={() => void start({ kind: "fit" })}
-          disabled={action.pending || running}
-        >
-          Check your fit
-        </button>
-        <button
-          type="button"
-          onClick={() => void start({ kind: "letter" })}
-          disabled={action.pending || running || available === 0}
-        >
-          Create cover letter
-        </button>
-        <button
-          type="button"
-          onClick={() => void start({ kind: "prep" })}
-          disabled={action.pending || running || available === 0}
-        >
-          Prepare for an interview
-        </button>
-        <button
-          type="button"
-          onClick={() => void start({ kind: "questions" })}
-          disabled={action.pending || running}
-        >
-          Find missing experience
-        </button>
-      </div>
-      {available === 0 && (
+    <>
+      {elsewhere && (
+        <p className="rs-meta app-running-elsewhere" id={id}>
+          {RUNNING_ELSEWHERE[elsewhere]}
+          {ONE_AT_A_TIME}
+        </p>
+      )}
+      {counted && available === 0 && (
         <Message tone="info" live={false}>
-          Your outputs for this period are used or held for work in progress. You can still read your documents
+          Your documents for this period are used or held for work in progress. You can still read your documents
           and answer experience questions.
         </Message>
-      )}
-      {resume?.state === "ready" && (
-        <form
-          className="inline-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void start({
-              kind: "refine",
-              resumeId: resume.id,
-              expectedVersion: resume.version,
-              instruction: instruction.trim(),
-            });
-          }}
-        >
-          <Field
-            id={`${id}-instruction`}
-            label={`Refine resume version ${resume.version}`}
-            hint="Describe a change in wording or emphasis. A rewrite your facts don’t support keeps your current text, and an unchanged resume uses no output."
-          >
-            <textarea
-              id={`${id}-instruction`}
-              rows={2}
-              maxLength={1000}
-              value={instruction}
-              onChange={(event) => setInstruction(event.target.value)}
-              placeholder="Make the bullets shorter, or emphasize my leadership experience."
-              aria-describedby={`${id}-instruction-hint`}
-            />
-          </Field>
-          <div className="actions">
-            <button
-              type="submit"
-              className="primary"
-              disabled={
-                action.pending ||
-                running ||
-                available === 0 ||
-                !instruction.trim()
-              }
-            >
-              Refine wording
-            </button>
-            <span className="rs-meta">Your saved versions stay available.</span>
-          </div>
-        </form>
       )}
       <ActionError message={action.error} />
       {list.error && <ErrorNote message={list.error} onRetry={list.reload} />}
@@ -224,25 +184,43 @@ function ApplicationDocumentsForUser({
         </p>
       )}
       {!list.data && !list.error && <Loading>Loading your documents…</Loading>}
-      {docs.length > 0 && (
-        <ul className="plain-list document-list">
-          {docs.map((doc) => (
-            <DocumentCard
-              key={doc.id}
-              doc={doc}
-              reload={list.reload}
-              retry={retry}
-              retryDisabled={action.pending || running || (available === 0 && !FREE.includes(doc.kind))}
-            />
-          ))}
-        </ul>
-      )}
-    </section>
+    </>
   );
 }
 
-function DocumentCard({ doc, reload, retry, retryDisabled }: {
+/**
+ * One tab's documents: those running or failed first, with Cancel and Retry, then the newest ready
+ * one open and the earlier ones closed. With `open` "none" only running and failed ones are listed,
+ * as for wording checks, whose ready results are the resume's versions.
+ */
+export function DocumentList({ jobDocs, kinds, open }: { jobDocs: JobDocuments; kinds: readonly DocumentKind[]; open: "newest" | "none" }) {
+  const shown = jobDocs.docs.filter((doc) => kinds.includes(doc.kind));
+  const active = shown.filter((doc) => doc.state !== "ready");
+  const ready = open === "none" ? [] : shown.filter((doc) => doc.state === "ready").sort((a, b) => b.createdAt - a.createdAt);
+  if (active.length + ready.length === 0) return null;
+  const { action, running, available, list, retry } = jobDocs;
+  const card = (doc: DocumentView, opened: boolean) => (
+    <DocumentCard
+      key={doc.id}
+      doc={doc}
+      open={opened}
+      reload={list.reload}
+      retry={retry}
+      retryDisabled={action.pending || running || (available === 0 && !FREE.includes(doc.kind))}
+    />
+  );
+  return (
+    <ul className="plain-list document-list">
+      {active.map((doc) => card(doc, false))}
+      {ready.map((doc, index) => card(doc, index === 0))}
+    </ul>
+  );
+}
+
+function DocumentCard({ doc, open, reload, retry, retryDisabled }: {
   doc: DocumentView;
+  /** The newest ready one of its tab's kinds, shown whole rather than closed. */
+  open: boolean;
   reload: Reload;
   retry: (runId: string) => Promise<void>;
   retryDisabled: boolean;
@@ -252,10 +230,10 @@ function DocumentCard({ doc, reload, retry, retryDisabled }: {
     <li className="document-card">
       <div className="app-doc-head">
         <div>
-          <h4>{LABELS[doc.kind]}</h4>
+          <h3>{LABELS[doc.kind]}</h3>
           <p className="rs-meta">{formatDateTime(doc.createdAt)}</p>
         </div>
-        <Badge tone={doc.state}>
+        <Badge tone={RUN_MARK[doc.state]}>
           {doc.state === "ready" && <Glyph name="check" />}
           {doc.state === "failed" && <Glyph name="alert" />}
           {doc.state === "running"
@@ -290,7 +268,7 @@ function DocumentCard({ doc, reload, retry, retryDisabled }: {
               })
             }
           >
-            {cancel.pending ? "Stopping…" : "Cancel generation"}
+            {cancel.pending ? "Stopping…" : "Cancel this document"}
           </button>
           <ActionError message={cancel.error} />
         </div>
@@ -306,17 +284,19 @@ function DocumentCard({ doc, reload, retry, retryDisabled }: {
           )}
         </div>
       )}
-      {doc.state === "ready" && doc.result && (
+      {doc.state === "ready" && doc.result && (open ? (
+        <DocumentContent doc={doc} open />
+      ) : (
         <details className="document-detail">
           <summary>Read {LABELS[doc.kind].toLowerCase()}</summary>
-          <DocumentContent doc={doc} />
+          <DocumentContent doc={doc} open={false} />
         </details>
-      )}
+      ))}
     </li>
   );
 }
 
-function DocumentContent({ doc }: { doc: DocumentView }) {
+function DocumentContent({ doc, open }: { doc: DocumentView; open: boolean }) {
   const result = doc.result!;
   if (doc.kind === "questions")
     return <GapQuestions documentId={doc.id} questions={result.questions} answeredQuestionIds={doc.answeredQuestionIds ?? []} />;
@@ -364,8 +344,9 @@ function DocumentContent({ doc }: { doc: DocumentView }) {
             ))}
       </div>
       <DocumentDownload doc={doc} />
-      <details className="evidence">
-        <summary>Evidence behind these sentences</summary>
+      {/* An open document shows where each sentence came from with it. */}
+      <details className="evidence" open={open}>
+        <summary>Where these sentences came from</summary>
         <ul className="plain-list app-doc-evidence">
           {result.units.map((unit) => (
             <li className="evidence-item" key={unit.id}>
@@ -382,7 +363,7 @@ function DocumentContent({ doc }: { doc: DocumentView }) {
                     {fact.quote ? (
                       <Quote text={fact.quote} size="sm" />
                     ) : (
-                      <p className="rs-meta">Your own claim, with no source quote.</p>
+                      <p className="rs-meta">Added by you, with no quote from a file.</p>
                     )}
                   </div>
                 ) : null;
@@ -391,54 +372,6 @@ function DocumentContent({ doc }: { doc: DocumentView }) {
           ))}
         </ul>
       </details>
-    </div>
-  );
-}
-
-/**
- * How the posting's requirements stand against confirmed facts. Nothing here is written by a
- * model: the requirements are read from the posting, and the facts are the person's own.
- */
-function FitPreview({ doc }: { doc: DocumentView }) {
-  const requirements = doc.result?.fit?.requirements ?? [];
-  const covered = requirements.filter((requirement) => requirement.factIds.length > 0).length;
-  if (requirements.length === 0)
-    return (
-      <div className="document-content">
-        <p className="rs-meta">No requirements could be read from this posting. Check that the whole posting was pasted.</p>
-      </div>
-    );
-  return (
-    <div className="document-content">
-      <p className="app-fit__summary">
-        Your confirmed facts cover {covered} of {count(requirements.length, "requirement")}.
-      </p>
-      <ul className="plain-list app-fit">
-        {requirements.map((requirement, index) => {
-          const facts = requirement.factIds.map((id) => doc.facts[id]).filter((fact) => fact !== undefined);
-          return (
-            <li key={`${index}-${requirement.text}`}>
-              <Tick state={facts.length > 0 ? "confirmed" : "proposed"} />
-              <div>
-                <p className="app-fit__req">
-                  {requirement.text}
-                  {facts.length === 0 && <span className="rs-meta"> Not covered</span>}
-                </p>
-                {facts.map((fact, i) => (
-                  <p className="rs-meta app-fit__fact" key={i}>
-                    <Glyph name="follows" />
-                    {fact.text}
-                  </p>
-                ))}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-      <p className="rs-meta">
-        A gap is never filled for you. If you have the experience, add it with Find missing experience, or
-        under Facts.
-      </p>
     </div>
   );
 }
@@ -527,7 +460,7 @@ function GapQuestions({
   const roles = useResource(api.roles);
   if (!questions.length)
     return (
-      <Success>No gaps were found in the requirements that were checked.</Success>
+      <Success>Nothing missing was found in the requirements that were checked.</Success>
     );
   return (
     <div className="document-content stack">
@@ -641,8 +574,8 @@ function documentError(code: string | null): string {
   if (code === "conflict")
     return "The resume or facts changed while this document was being prepared. Review the current version, then try again.";
   if (code === "quota")
-    return "This document stopped at a usage limit, so it doesn’t count toward your outputs.";
+    return "This document stopped at a usage limit, so it isn’t counted toward your documents.";
   if (code === "invalid")
     return "Your confirmed facts aren’t enough to finish this document. Confirm the facts it needs, then try again.";
-  return "This document couldn’t be finished, so it doesn’t count toward your outputs. Try again with the buttons above.";
+  return "This document couldn’t be finished, so it isn’t counted toward your documents. Try again with the buttons above.";
 }

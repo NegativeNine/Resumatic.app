@@ -6,7 +6,7 @@ import { CURRENCIES, PREFERENCES_CHANGED, PREFERENCES_REFUSED, type Preferences 
 import { JobPreferences } from "../../src/web/components/Preferences";
 import { typeset } from "../../src/web/format";
 import { VAULT_CHANGED } from "../../src/web/live";
-import { AccountPage } from "../../src/web/pages/AccountPage";
+import { SharingRecruiters } from "../../src/web/pages/sharing/SharingRecruiters";
 import { ACCOUNT_DELETED_NOTE } from "../../src/web/session";
 import { installFakeApi, type FakeApi } from "./api-fake";
 import { fixtures, type Fixtures } from "./fixtures";
@@ -78,17 +78,20 @@ describe("job preferences", () => {
   it("says nothing here is shown to anyone or used yet", async () => {
     const state = fixtures();
     const api = installFakeApi(state);
-    renderWithSession(<AccountPage />, state.me);
-    const card = await screen.findByRole("region", { name: "Job preferences" });
+    renderWithSession(<SharingRecruiters />, state.me);
+    const card = await screen.findByRole("region", { name: "What you’re looking for" });
     await within(card).findByRole("button", { name: "Save preferences" });
-    expect(within(card).getByText("The work you’re looking for. Leave empty anything you’d rather not say.")).toBeInTheDocument();
+    expect(within(card).getByText("Leave empty anything you’d rather not say.")).toBeInTheDocument();
     expect(card.querySelector(".rs-msg")!.textContent!.replace(/\s+/g, " ")).toBe(
-      "Nothing here is shown to anyone or used yet. It stays in your vault: it isn’t put in a resume or a shared copy, and connected apps can’t read it.",
+      "Nothing here is shown to anyone or used yet. It stays in your record: it isn’t put in a resume or a shared copy, and connected apps can’t read it.",
     );
     // The note is part of the card, not an announcement each time the page opens.
     expect(card.querySelector(".rs-msg")).not.toHaveAttribute("role");
-    // On Account, directly after the profile.
-    expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent).slice(0, 2)).toEqual(["Profile", "Job preferences"]);
+    // On Recruiters, last in the side column, under requests to meet you.
+    const side = card.parentElement!;
+    expect(side).toHaveClass("app-side");
+    expect(side.lastElementChild).toBe(card);
+    expect([...side.querySelectorAll("h2")].map((heading) => heading.textContent)).toEqual(["Requests to meet you", "What you’re looking for"]);
     // Loaded by the card from its own route, once, and never with the session.
     expect(api.callsTo("GET", ROUTE)).toHaveLength(1);
     expect(JSON.stringify(state.me)).not.toMatch(/preferences|payFloor|jobTypes/);

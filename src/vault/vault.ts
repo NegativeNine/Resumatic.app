@@ -2,7 +2,7 @@ import { withoutFindings } from "../shared/sheet";
 import type { InterviewAnswer } from "../shared/interview";
 import { reviewViewStream } from "./review-stream";
 import { exportJsonChunks, exportJsonStream } from "./export-stream";
-import { MAX_ARCHIVE_BYTES } from "../render/archive";
+import { ARCHIVE_TOO_LARGE, ARCHIVE_TOO_MANY_FILES, MAX_ARCHIVE_BYTES } from "../render/archive";
 import {
   refinementCacheKey,
   cacheRefinement,
@@ -135,6 +135,9 @@ import { RunStore } from "./runs";
 import { RecordStore } from "./record";
 import { readCardMaterial } from "./card";
 import { CARD_PREVIEW_OFF, type CardMaterial } from "../shared/card";
+import { MAX_TODAY_LIST, MAX_TODAY_RECENT, TODAY_RECENT_MS, type Today } from "../shared/today";
+import { countByState, proposedBySource } from "../shared/review-groups";
+import { TodayStore, todayView, type KitCount } from "./today";
 import { IDENTICAL_ROLE_METHOD, IDENTICAL_WORDING_METHOD, MAX_OFFER_PAIRS, OFFERS_PER_FACT, OFFER_MIN_COSINE, identicalMatches, type JudgedOffer, type OfferPair } from "../pipeline/match";
 import { roleKey, sameWording, stampProblem } from "../shared/record";
 import { MAX_TAGS_PER_SAVE, MAX_TAG_FACTS, MAX_TAG_ROLES, TAG_JUDGE_METHOD, TAG_RULE_METHOD, TAG_VECTOR_METHOD, skillAsWritten, tagStamp, type HeldTag, type ProposedTag, type TagMade, type TagSubjects } from "../pipeline/tag";
@@ -157,6 +160,8 @@ import { cosine, packVector, toUnit, topMatches, unpackVector } from "./search";
 
 /** A running Tailor row older than this is checked against the Workflow before it blocks a new run. */
 const STALE_RUN_MS = 30 * 60 * 1000;
+/** What the owner is told when a job they name isn't in their vault. */
+const JOB_NOT_FOUND = "This job can't be found. It may have been deleted.";
 const DEFAULT_TAILOR_LIMIT = 20;
 /** Uploads being read at once, and uploads kept per vault: each upload costs model calls. */
 const MAX_QUEUED_SOURCES = 3;
@@ -1241,7 +1246,7 @@ export class Vault extends DurableObject<Env> {
     const job = this.sql
       .exec<{ title: string | null; company: string | null }>(`SELECT title, company FROM applications WHERE id = ?`, applicationId)
       .toArray()[0];
-    if (!job) throw new AppError("not_found", "no such application");
+    if (!job) throw new AppError("not_found", JOB_NOT_FOUND);
     return { title: job.title, company: job.company };
   }
 
@@ -1303,6 +1308,18 @@ export class Vault extends DurableObject<Env> {
     else if (!passes(() => this.kitResume(applicationId, resume))) problems.push({ code: "resume_refused" });
     if (letter && !passes(() => this.kitDocument(applicationId, letter, "letter"))) problems.push({ code: "letter_refused" });
     if (prep && !passes(() => this.kitDocument(applicationId, prep, "prep"))) problems.push({ code: "prep_refused" });
+    const { refused, unanswered } = this.kitQuestionProblems(applicationId);
+    if (refused.length) problems.push({ code: "refused_kind", questionIds: refused });
+    if (unanswered.length) problems.push({ code: "unanswered", questionIds: unanswered });
+    return problems;
+  }
+
+  /**
+   * Which of a kit's questions have an answer it can't use, and which have none it can, by ID. The
+   * kit's page and Today both count from this, so they agree. It reads the questions alone: no
+   * resume, letter or preparation is checked.
+   */
+  private kitQuestionProblems(applicationId: string): { refused: string[]; unanswered: string[] } {
     const refused: string[] = [];
     const unanswered: string[] = [];
     for (const question of this.kits.questions(applicationId)) {
@@ -1313,9 +1330,7 @@ export class Vault extends DurableObject<Env> {
         else if (!saved || question.confirmedRevision !== saved.revision) unanswered.push(question.id);
       } else if (question.typedAnswer === null) unanswered.push(question.id);
     }
-    if (refused.length) problems.push({ code: "refused_kind", questionIds: refused });
-    if (unanswered.length) problems.push({ code: "unanswered", questionIds: unanswered });
-    return problems;
+    return { refused, unanswered };
   }
 
   /**
@@ -1674,12 +1689,12 @@ export class Vault extends DurableObject<Env> {
     if (counts.queued >= MAX_QUEUED_SOURCES)
       throw new AppError(
         "conflict",
-        "Resumatic is still reading your other sources. Wait for one to finish, then upload this file.",
+        "Resumatic is still reading your other files. Wait for one to finish, then upload this file.",
       );
     if (counts.total >= MAX_SOURCES)
       throw new AppError(
         "quota",
-        `You can keep up to ${MAX_SOURCES} sources during the beta. Email support@resumatic.app if you need more.`,
+        `You can keep up to ${MAX_SOURCES} files during the beta. Email support@resumatic.app if you need more.`,
       );
     const id = crypto.randomUUID();
     const extractor = this.extractionStrategy(s.origin, s.filename);
@@ -1732,6 +1747,60 @@ export class Vault extends DurableObject<Env> {
       return { sources: this.readSources(), roles: this.readRoles(), facts: this.readFacts() };
     });
     return new Response(reviewViewStream(view), { headers: { "content-type": "application/json", "cache-control": "private, no-store" } });
+  }
+
+  // ---------------------------------------------------------------- today
+  // What waits for the owner in each room, worked out from their own vault on every request and
+  // stored nowhere. It is read after the same reconciliation as the review screen, in one
+  // transaction, and holds counts, IDs and names: no fact, comment, question, answer or stored
+  // error. It loads with every room, so it reads each file's name and state alone, and each kit's
+  // questions for two counts per job. Where each room stands is numbers only: files, roles and facts
+  // by review state, jobs by status, open copies and active connected apps.
+
+  private get todayStore(): TodayStore {
+    return new TodayStore(this.sql);
+  }
+
+  async today(who: Who): Promise<Today> {
+    this.requireOwner(who);
+    await this.rearmPendingRuns();
+    this.requireOwner(who);
+    await this.reconcileStaleSources();
+    this.requireOwner(who);
+    return this.ctx.storage.transactionSync(() => {
+      this.requireOwner(who);
+      const now = Date.now();
+      const since = now - TODAY_RECENT_MS;
+      const kits: KitCount[] = [];
+      for (const applicationId of this.kits.applicationsWithQuestions()) {
+        const { refused, unanswered } = this.kitQuestionProblems(applicationId);
+        if (refused.length || unanswered.length) kits.push({ applicationId, unanswered: unanswered.length, sensitive: refused.length });
+      }
+      // Roles and facts are read once: To check and where Facts stands are counted from the same rows.
+      const entries = { roles: this.readRoles(), facts: this.readFacts() };
+      const states = countByState(entries);
+      return todayView(
+        {
+          check: proposedBySource(entries),
+          sourceNames: this.todayStore.sourceNames(),
+          unreadable: this.todayStore.unreadable(),
+          comments: this.shareComments.unseenByCopy(),
+          suggestions: this.shareComments.waitingSuggestionsByCopy(),
+          kits,
+          jobNames: this.todayStore.jobNames(kits.slice(0, MAX_TODAY_LIST).map((kit) => kit.applicationId)),
+          working: this.todayStore.working(MAX_TODAY_LIST),
+          resumesReady: this.todayStore.resumesReady(since, MAX_TODAY_RECENT),
+          copiesOpened: this.shares.recentlyOpened(since, MAX_TODAY_RECENT),
+          coachComments: this.shareComments.recentByCopy(since, MAX_TODAY_RECENT),
+          confirmed: states.confirmed,
+          leftOut: states.rejected,
+          jobs: this.todayStore.jobsByStatus(),
+          copies: this.shares.openCounts(now),
+          apps: this.mcpGrants.activeCount(who, now),
+        },
+        now,
+      );
+    });
   }
 
   private readSources(): SourceView[] {
@@ -1853,7 +1922,7 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     const source = this.sourceRow(sourceId);
     if (source.markdown === null)
-      throw new AppError("conflict", "this source has not been read yet");
+      throw new AppError("conflict", "This file hasn't been read yet. Wait for it to finish, then try again.");
     return {
       markdown: source.markdown,
       revisionId: `${sourceId}:1`,
@@ -1865,7 +1934,7 @@ export class Vault extends DurableObject<Env> {
     this.requireOpen();
     const row = this.sourceRow(sourceId);
     if (row.markdown === null)
-      throw new AppError("invalid", "source has not been converted yet");
+      throw new AppError("invalid", "This file hasn't been read yet. Wait for it to finish, then try again.");
     return row.markdown;
   }
 
@@ -3092,7 +3161,7 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     if (!/^[a-zA-Z0-9_-]{1,100}$/.test(requestKey))
       throw new AppError("invalid", "invalid request key");
-    if (url !== null && !isWebUrl(url)) throw new AppError("invalid", "enter the posting's web address, starting with https://");
+    if (url !== null && !isWebUrl(url)) throw new AppError("invalid", "Enter the job's web address, starting with https://.");
     const title = name.title?.trim() || null;
     const company = name.company?.trim() || null;
     if ([title, company].some((value) => value !== null && (value.length > MAX_JOB_NAME_CHARS || /[\r\n]/.test(value))))
@@ -3144,7 +3213,7 @@ export class Vault extends DurableObject<Env> {
     const view = (await this.listApplications(who)).find((a) => a.id === id);
     this.requireOwner(who);
     const row = this.sql.exec<ApplicationRow>(`SELECT * FROM applications WHERE id = ?`, id).toArray()[0];
-    if (!view || !row) throw new AppError("not_found", "no such application");
+    if (!view || !row) throw new AppError("not_found", JOB_NOT_FOUND);
     return { ...view, jdText: row.jd_text, canDelete: !this.applicationHasWork(id) };
   }
 
@@ -3164,7 +3233,7 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     this.ctx.storage.transactionSync(() => {
       if (!this.sql.exec(`SELECT 1 FROM applications WHERE id = ?`, id).toArray().length)
-        throw new AppError("not_found", "no such application");
+        throw new AppError("not_found", JOB_NOT_FOUND);
       if (this.applicationHasWork(id))
         throw new AppError("conflict", "This job has resumes or documents, so it can't be deleted. Mark it Closed instead.");
       this.sql.exec(`DELETE FROM application_create_requests WHERE application_id = ?`, id);
@@ -3244,7 +3313,7 @@ export class Vault extends DurableObject<Env> {
         applicationId,
       )
       .toArray()[0];
-    if (!app) throw new AppError("not_found", "no such application");
+    if (!app) throw new AppError("not_found", JOB_NOT_FOUND);
     const key = `tailor:${requestKey}`;
     const replay = () => {
       const previous = this.runs.findRequest(key);
@@ -3388,11 +3457,11 @@ export class Vault extends DurableObject<Env> {
       if (this.runs.listPending().some((run) => GENERATION_RUN_KINDS.includes(run.kind)))
         throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
-      if (base.provenance !== "snapshot") throw new AppError("conflict", "this resume is already in review");
+      if (base.provenance !== "snapshot") throw new AppError("conflict", "This resume is already being checked line by line.");
       let blocked = false;
       try { assertGroundedResume(base.render, base.facts, base.provenance, base.evidence, base.roleEvidence); }
       catch { blocked = true; }
-      if (!blocked) throw new AppError("conflict", "this resume does not need grounding review");
+      if (!blocked) throw new AppError("conflict", "This resume doesn't need a line-by-line check.");
       const version = row.version + 1;
       const saved: ResumeVersion = {
         ...base,
@@ -3428,10 +3497,10 @@ export class Vault extends DurableObject<Env> {
       if (this.runs.listPending().some((run) => GENERATION_RUN_KINDS.includes(run.kind)))
         throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
-      if (base.provenance !== "legacy") throw new AppError("conflict", "only a review version can remove a line");
+      if (base.provenance !== "legacy") throw new AppError("conflict", "Only a version being checked line by line can remove a line.");
       const body = structuredClone(base.render.body);
       const matches = Number(body.summary?.id === lineId) + body.sections.reduce((n, section) => n + section.lines.filter((line) => line.id === lineId).length, 0);
-      if (matches !== 1) throw new AppError("conflict", "the review line is missing or ambiguous");
+      if (matches !== 1) throw new AppError("conflict", "That line can't be found in this version. Refresh the resume, then try again.");
       if (body.summary?.id === lineId) body.summary = null;
       body.sections = body.sections.flatMap((section) => {
         if (!section.lines.some((line) => line.id === lineId)) return [section];
@@ -3470,11 +3539,11 @@ export class Vault extends DurableObject<Env> {
       if (this.runs.listPending().some((run) => GENERATION_RUN_KINDS.includes(run.kind)))
         throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
-      if (base.provenance !== "legacy") throw new AppError("conflict", "only a review version can remove a section");
+      if (base.provenance !== "legacy") throw new AppError("conflict", "Only a version being checked line by line can remove a section.");
       const body = structuredClone(base.render.body);
       const section = body.sections[sectionIndex];
       if (!section || !Array.isArray(section.lines))
-        throw new AppError("conflict", "the review section is missing or invalid");
+        throw new AppError("conflict", "That section can't be found in this version. Refresh the resume, then try again.");
       const receipts = { ...base.legacyReceipts };
       for (const line of section.lines) if (line && typeof line.id === "string") delete receipts[line.id];
       body.sections.splice(sectionIndex, 1);
@@ -3508,10 +3577,10 @@ export class Vault extends DurableObject<Env> {
       if (this.runs.listPending().some((run) => GENERATION_RUN_KINDS.includes(run.kind)))
         throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
-      if (base.provenance !== "legacy") throw new AppError("conflict", "only a review version can remove a skill");
+      if (base.provenance !== "legacy") throw new AppError("conflict", "Only a version being checked line by line can remove a skill.");
       const body = structuredClone(base.render.body);
       if (!Array.isArray(body.skills) || skillIndex >= body.skills.length)
-        throw new AppError("conflict", "the review skill is missing");
+        throw new AppError("conflict", "That skill can't be found in this version. Refresh the resume, then try again.");
       body.skills.splice(skillIndex, 1);
       const version = row.version + 1;
       this.snapshots.save(resumeId, version, {
@@ -4169,7 +4238,7 @@ export class Vault extends DurableObject<Env> {
         selection.factIds.includes(f.id),
       );
       if (facts.length !== selection.factIds.length)
-        throw new AppError("invalid", "select confirmed facts from your vault");
+        throw new AppError("invalid", "Choose confirmed facts from your record.");
       const roles = this.readRoles();
       // The job a resume is for and the owner's name are left off unless the owner asks for them:
       // where someone is applying is theirs to tell, and a copy of facts alone names nobody.
@@ -4198,7 +4267,7 @@ export class Vault extends DurableObject<Env> {
           )
           .toArray()[0];
         if (!row || row.state !== "ready" || !row.data)
-          throw new AppError("invalid", "select finished cover letters or interview preparation from your vault");
+          throw new AppError("invalid", "Choose finished cover letters or interview preparation from your record.");
         const job = jobOf(row.application_id);
         if (job) documentJobs[id] = job;
         return { id, version, kind: row.kind, data: JSON.parse(row.data) as DocumentVersion };
@@ -4272,6 +4341,21 @@ export class Vault extends DurableObject<Env> {
 
   async openShareForCoach(grantId: string, coach: CoachAccount) {
     return this.shares.openForCoach(grantId, coach);
+  }
+
+  /**
+   * The copy itself, for the account that took it up, read in the app with no link and no cookie.
+   * One transaction with nothing awaited checks the open vault, the account against the grant, the
+   * live grant and its epoch, and that every part rebuilds exactly with nothing marked sensitive,
+   * then notes that the copy was opened, as a read through the link does. Every failure is the one
+   * `gone` a dead link gives.
+   */
+  async readShareForCoach(grantId: string, coach: CoachAccount) {
+    return this.ctx.storage.transactionSync(() => {
+      const { view } = this.shares.copyForCoach(grantId, coach);
+      this.shares.recordRead(grantId);
+      return { ...view, reviewer: "joined" as const };
+    });
   }
 
   async coachShareStatus(grantId: string, coach: CoachAccount) {
@@ -4409,7 +4493,7 @@ export class Vault extends DurableObject<Env> {
       const cannotCheck = () =>
         new AppError(
           "conflict",
-          "A fact this resume cites has changed or is no longer in use, or the version is still being reviewed, so this wording can't be checked. Tailor a new version or finish the review, then accept again.",
+          "A fact this resume uses has changed or is no longer in use, or the version is still being checked line by line, so this wording can't be checked. Tailor a new version or finish checking it, then accept again.",
         );
       // The checked path would refuse at its finish what isn't true now, after spending an output.
       // So the version has to pass the gate, cite only facts in use, sit under confirmed roles and
@@ -4558,17 +4642,17 @@ export class Vault extends DurableObject<Env> {
     const row = this.sql
       .exec<ApplicationRow>(`SELECT * FROM applications WHERE id = ?`, id)
       .toArray()[0];
-    if (!row) throw new AppError("not_found", "no such application");
+    if (!row) throw new AppError("not_found", JOB_NOT_FOUND);
     if (
       patch.expectedRevision !== undefined &&
       row.revision !== patch.expectedRevision
     )
       throw new AppError(
         "conflict",
-        "the application changed; refresh and try again",
+        "This job changed. Refresh the page, then try again.",
       );
     if (patch.url != null && !isWebUrl(patch.url))
-      throw new AppError("invalid", "enter the posting's web address, starting with https://");
+      throw new AppError("invalid", "Enter the job's web address, starting with https://.");
     const named = patch.title !== undefined || patch.company !== undefined;
     const posting = patch.jdText !== undefined && patch.jdText !== row.jd_text ? patch.jdText : null;
     if (posting !== null) {
@@ -4578,7 +4662,7 @@ export class Vault extends DurableObject<Env> {
         `SELECT 1 FROM resumes WHERE application_id = ? AND state = 'running' UNION ALL
          SELECT 1 FROM documents WHERE application_id = ? AND state = 'running' LIMIT 1`, id, id,
       ).toArray().length > 0;
-      if (running) throw new AppError("conflict", "Work on this job is still in progress. Wait for it to finish, then change the posting.");
+      if (running) throw new AppError("conflict", "Work on this job is still in progress. Wait for it to finish, then change the job description.");
     }
     // What was read from an earlier posting says nothing about a new one.
     const stale = posting !== null && row.details_edited !== 1;
@@ -4645,7 +4729,7 @@ export class Vault extends DurableObject<Env> {
         applicationId,
       )
       .toArray()[0];
-    if (!app) throw new AppError("not_found", "no such application");
+    if (!app) throw new AppError("not_found", JOB_NOT_FOUND);
     const key = `document:${requestKey}`;
     const existing = this.runs.findRequest(key);
     if (existing) {
@@ -4672,7 +4756,7 @@ export class Vault extends DurableObject<Env> {
       if (resume.application_id !== applicationId || resume.state !== "ready")
         throw new AppError(
           "invalid",
-          "the resume is not ready for this application",
+          "This resume isn't ready for this job yet.",
         );
       if (
         options.expectedVersion !== undefined &&
@@ -4693,11 +4777,11 @@ export class Vault extends DurableObject<Env> {
       // edit: the new version would carry those lines on. Its owner removes them first.
       const withheld = withheldFacts(this.sql);
       if (options.manualFactIds?.some((factId) => withheld.ids.has(factId)))
-        throw new AppError("invalid", "Choose facts that aren't marked sensitive.");
+        throw new AppError("invalid", "Choose facts you don't keep private.");
       if (base.provenance === "snapshot") {
         const used = sensitiveUse(base.render.body, base.facts, base.evidence, withheld);
         if (used.lineIds.length > 0 || used.skills.length > 0)
-          throw new AppError("conflict", "This version uses a fact you marked sensitive. Remove those lines or tailor a new version, then try again.");
+          throw new AppError("conflict", "This version uses a fact you keep private. Remove those lines or tailor a new version, then try again.");
       }
     }
     const id = crypto.randomUUID();
@@ -5168,7 +5252,7 @@ export class Vault extends DurableObject<Env> {
   async exportArchiveStream(who: Who): Promise<Response> {
     const { data, files } = this.ctx.storage.transactionSync(() => this.exportArchiveSnapshot(who));
     if (files.length > 128)
-      throw new AppError("too_large", "Your vault has too many files for one archive. Download the JSON and the original files one at a time.");
+      throw new AppError("too_large", ARCHIVE_TOO_MANY_FILES);
     const manifestFiles = files.map((file, index) => {
       if (!/^[A-Za-z0-9_-]{1,100}$/.test(file.id))
         throw new AppError("unavailable", "a source identifier cannot be exported");
@@ -5184,7 +5268,7 @@ export class Vault extends DurableObject<Env> {
     for (const chunk of exportJsonChunks(data)) {
       jsonBytes += encoder.encode(chunk).byteLength;
       if (jsonBytes > MAX_ARCHIVE_BYTES)
-        throw new AppError("too_large", "Your vault is too large for one archive. Download the JSON and the original files one at a time.");
+        throw new AppError("too_large", ARCHIVE_TOO_LARGE);
     }
     const manifest = encoder.encode(JSON.stringify({ exportedAt: data.exportedAt, jsonBytes, files: manifestFiles }));
     if (manifest.byteLength > 1024 * 1024) throw new AppError("too_large", "archive metadata is too large");
@@ -6083,7 +6167,9 @@ export class Vault extends DurableObject<Env> {
       facts: {},
       provenance: "legacy",
     };
-    this.snapshots.save(row.id, version, legacy);
+    // Saved the first time it is read, but made when the resume was: dated now, an old resume would
+    // look newly made to the version list, the kit's choices and Today's recent events.
+    this.snapshots.save(row.id, version, legacy, row.created_at);
     return legacy;
   }
 
@@ -6355,7 +6441,7 @@ export class Vault extends DurableObject<Env> {
     }
     const source = this.sourceRow(run.targetId);
     if (source.run_id !== id)
-      throw new AppError("conflict", "this source already has a newer run");
+      throw new AppError("conflict", "This file is already being read again.");
     if (reselect && this.sql.exec(
       `SELECT 1 FROM extraction_commits WHERE source_id=?
        UNION ALL SELECT 1 FROM roles WHERE source_id=?
@@ -6365,7 +6451,7 @@ export class Vault extends DurableObject<Env> {
     ).toArray().length)
       // Legacy extractions may predate extraction_commits; their rows still
       // bind the source to the old extractor and must not be replaced.
-      throw new AppError("conflict", "extraction is already committed for this source");
+      throw new AppError("conflict", "This file has already been read.");
     const extractor = reselect ? this.extractionStrategy(source.origin, source.filename) : source.extractor;
     if (reselect && extractor !== expectedExtractor)
       throw new AppError("unavailable", "extraction configuration is not consistent");
@@ -6376,7 +6462,7 @@ export class Vault extends DurableObject<Env> {
         )
         .one().n >= MAX_QUEUED_SOURCES
     )
-      throw new AppError("conflict", "wait for other uploads to finish");
+      throw new AppError("conflict", "Wait for your other files to finish reading, then try again.");
     const next = crypto.randomUUID();
     this.runs.begin(
       {
@@ -6911,7 +6997,7 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     const source = this.sourceRow(sourceId);
     if (source.state !== "queued" || !source.run_id)
-      throw new AppError("conflict", "this source is no longer being read");
+      throw new AppError("conflict", "This file is no longer being read.");
     // A retry can use a different run ID; only cancel the current reading run.
     this.workflowRun(source.run_id, "distill", sourceId);
     await this.cancelRun(who, source.run_id);
@@ -6946,7 +7032,7 @@ export class Vault extends DurableObject<Env> {
     const row = this.sql
       .exec<SourceRow>(`SELECT * FROM sources WHERE id = ?`, id)
       .toArray()[0];
-    if (!row) throw new AppError("not_found", "no such source");
+    if (!row) throw new AppError("not_found", "This file can't be found. It may have been deleted.");
     return row;
   }
 
@@ -7007,7 +7093,7 @@ export class Vault extends DurableObject<Env> {
       .toArray()[0];
     if (!role) throw new AppError("not_found", "no such role");
     if (role.state === "rejected")
-      throw new AppError("invalid", "That role was rejected. Choose another role for this fact.");
+      throw new AppError("invalid", "That role was left out. Choose another role for this fact.");
   }
 
   /**

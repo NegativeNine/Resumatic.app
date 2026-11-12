@@ -11,7 +11,7 @@ import { installFakeApi, type FakeApi } from "./api-fake";
 import { fullVault, type Fixtures } from "./fixtures";
 import { renderWithSession } from "./render";
 
-// The Application kit panel and the Saved answers card, over the fake API. An employer's questions
+// A job's kit and the Saved answers card, over the fake API. An employer's questions
 // are someone else's text and are shown in a quote; every state says what the person can do.
 
 afterEach(() => vi.unstubAllGlobals());
@@ -25,7 +25,7 @@ function openKit(change: (state: Fixtures) => void = () => {}) {
   const session = renderWithSession(<ApplicationKit applicationId={JOB} />, state.me);
   return { state, api, session };
 }
-const panel = () => screen.getByRole("region", { name: "Application kit" });
+const panel = () => screen.getByRole("region", { name: "Your kit" });
 /** The list item holding the question with these words, as its quote shows them. */
 const item = (words: string) => screen.getAllByText(words).find((node) => node.closest("blockquote"))!.closest("li")! as HTMLElement;
 /** Lets every request through to the fake API, after `before` has had its say about it. */
@@ -38,10 +38,15 @@ function intercept(api: FakeApi, before: (method: string, path: string, respond:
   );
 }
 
-describe("the application kit panel", () => {
+describe("a job's kit", () => {
   it("says what the kit is, that nothing is sent, and shows each question's state in its own words", async () => {
     openKit();
+    expect(screen.getByText("Loading your kit…")).toBeInTheDocument();
     await screen.findByRole("button", { name: "Approve kit" });
+    expect(screen.getByRole("heading", { level: 2, name: "Your kit" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 3, name: "The employer’s questions" })).toBeInTheDocument();
+    // Approving is the kit's one brand button; checking an answer and saving questions are plain.
+    expect(screen.getByRole("button", { name: "Approve kit" })).toHaveClass("primary");
     expect(
       within(panel()).getByText(
         "Put together what you’ll send for this job: a resume, a cover letter and interview preparation if you want them, and your answers to the employer’s questions. Nothing is sent from here. Once you approve the kit, download it and send it yourself.",
@@ -61,16 +66,19 @@ describe("the application kit panel", () => {
     for (const words of ["What is your notice period?", "Portfolio link", "Why do you want to work at Litware?", "Will you now or in the future require visa sponsorship?"])
       expect(item(words)).toBeInstanceOf(HTMLLIElement);
 
-    // Matched by the judge, not yet checked.
+    // Matched by the judge, not yet checked: waiting for you, as Today and Your jobs count it.
     const notice = item("What is your notice period?");
-    expect(within(notice).getByText("Saved answer")).toBeInTheDocument();
+    expect(within(notice).getByText("Check this answer")).toHaveClass("rs-mark--needs-you");
+    expect(within(notice).queryByText("Saved answer")).toBeNull();
     expect(within(notice).getByText("Matched to your saved answer “Notice period”.")).toBeInTheDocument();
     expect(within(notice).getByText("Four weeks, from the day I accept an offer.")).toBeInTheDocument();
     expect(within(notice).getByText("Suggested from your answers’ labels. Check that it fits.")).toBeInTheDocument();
     expect(within(notice).getByRole("button", { name: "Use this answer" })).toBeEnabled();
+    expect(within(notice).getByRole("button", { name: "Use this answer" })).not.toHaveClass("primary");
     expect(within(notice).getByRole("button", { name: "Not this one" })).toBeEnabled();
     // Matched by its label, and checked.
     const portfolio = item("Portfolio link");
+    expect(within(portfolio).getByText("Saved answer")).toHaveClass("rs-mark--backed");
     expect(within(portfolio).getByText("You’ve checked this answer.")).toBeInTheDocument();
     expect(within(portfolio).queryByText("Suggested from your answers’ labels. Check that it fits.")).toBeNull();
     expect(within(portfolio).queryByRole("button", { name: "Use this answer" })).toBeNull();
@@ -82,12 +90,12 @@ describe("the application kit panel", () => {
     // A saved answer the list now refuses is never offered.
     expect(within(within(why).getByRole("combobox", { name: "Use a saved answer" })).getAllByRole("option").map((option) => option.textContent)).toEqual(["None", "Notice period", "Portfolio link"]);
     expect(within(why).getByRole("checkbox", { name: "Also keep this as a saved answer" })).not.toBeChecked();
-    // Sensitive: asked every time, explained, and answered for this application only.
+    // Sensitive: asked every time, explained, and answered for this job only.
     const visa = item("Will you now or in the future require visa sponsorship?");
     expect(within(visa).getByText("Asked every time")).toBeInTheDocument();
     expect(
       within(visa).getByText(
-        "This question asks about work authorisation, visas, sponsorship or citizenship. Answers to questions like this are never saved or matched. Type your answer for this application only.",
+        "This question asks about work authorisation, visas, sponsorship or citizenship. Answers to questions like this are never saved or matched. Type your answer for this job only.",
       ),
     ).toBeInTheDocument();
     expect(within(visa).getByRole("textbox", { name: "Your answer" })).toHaveValue("No.");
@@ -108,9 +116,30 @@ describe("the application kit panel", () => {
     await screen.findByText("Asked every time");
     expect(
       screen.getByText(
-        "This question asks about something answers are never saved for: work authorisation, pay or personal details. Answers to questions like this are never saved or matched. Type your answer for this application only.",
+        "This question asks about something answers are never saved for: work authorisation, pay or personal details. Answers to questions like this are never saved or matched. Type your answer for this job only.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("shows a question matched to an answer the list now refuses as asked every time, never as a saved answer", async () => {
+    openKit((state) => {
+      const kit = state.kits![JOB]!;
+      const notice = kit.questions[0]!;
+      notice.savedAnswer = { ...notice.savedAnswer!, refusedKind: "pay" };
+      kit.problems = [{ code: "refused_kind", questionIds: [notice.id] }, { code: "unanswered", questionIds: ["kq-why"] }];
+    });
+    await screen.findByRole("button", { name: "Approve kit" });
+    const notice = item("What is your notice period?");
+    expect(within(notice).getByText("Asked every time")).toHaveClass("rs-mark--note");
+    expect(within(notice).queryByText("Saved answer")).toBeNull();
+    expect(within(notice).queryByText("Check this answer")).toBeNull();
+    expect(within(notice).queryByText(/^Matched to your saved answer/)).toBeNull();
+    expect(
+      within(notice).getByText("Answers to questions like this are never saved or matched. Choose “Not this one”, then type your answer for this job only."),
+    ).toBeInTheDocument();
+    // Using it would be refused, so it isn't offered; letting it go is.
+    expect(within(notice).queryByRole("button", { name: "Use this answer" })).toBeNull();
+    expect(within(notice).getByRole("button", { name: "Not this one" })).toBeEnabled();
   });
 
   it("enables approval once every question is answered, approves, and offers the download", async () => {
@@ -138,7 +167,7 @@ describe("the application kit panel", () => {
     });
     await screen.findByText("This kit needs attention before it can be downloaded.");
     expect(
-      screen.getByText(typeset("This resume version can't go in a kit: it uses a fact you've marked sensitive, or a line its facts don't back. Choose another version.")),
+      screen.getByText(typeset("This resume version can't go in a kit: it uses a fact you keep private, or a line its facts don't back. Choose another version.")),
     ).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Download kit (ZIP)" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Approve kit" })).toBeNull();
@@ -148,7 +177,7 @@ describe("the application kit panel", () => {
     openKit((state) => {
       Object.assign(state.kits![JOB]!, { resume: null, choices: { resumes: [], letters: [], preps: [] } });
     });
-    await screen.findByText("Make a resume for this job first. Only a version whose every line is backed by your facts can go in a kit.");
+    await screen.findByText("Tailor a resume for this job first. Only a version whose every line is backed by your record can go in a kit.");
     expect(screen.queryByRole("combobox", { name: "Resume" })).toBeNull();
   });
 
@@ -157,11 +186,12 @@ describe("the application kit panel", () => {
     await screen.findByRole("button", { name: "Approve kit" });
     await userEvent.type(screen.getByRole("textbox", { name: "Paste the employer’s questions, one per line" }), "Are you willing to travel?{enter}{enter}  Salary expectations  ");
     await userEvent.click(screen.getByRole("button", { name: "Add questions" }));
+    expect(screen.getByRole("button", { name: "Save questions" })).not.toHaveClass("primary");
     // Not yet saved, so not yet answered.
     expect(within(item("Are you willing to travel?")).getByText("Save the questions to answer this one.")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Remove question 2" }));
     await userEvent.click(screen.getByRole("button", { name: "Move up question 4" }));
-    await userEvent.click(screen.getByRole("button", { name: "Edit question 1" }));
+    await userEvent.click(screen.getByRole("button", { name: "Change question 1" }));
     const editing = screen.getByRole("textbox", { name: "Question 1" });
     await userEvent.clear(editing);
     await userEvent.type(editing, "What notice do you need to give?");
@@ -294,7 +324,7 @@ describe("the application kit panel", () => {
     await screen.findByRole("button", { name: "Approve kit" });
     // Everything but the employer's questions and the person's own answers, which are shown as written.
     const own = new Set(["What is your notice period?", "Portfolio link", "Why do you want to work at Litware?", "Will you now or in the future require visa sponsorship?"]);
-    const said = [...panel().querySelectorAll("p, label, button, option, h3, h4, span, li")].filter((node) => node.children.length === 0 && !own.has(node.textContent ?? ""));
+    const said = [...panel().querySelectorAll("p, label, button, option, h2, h3, span, li")].filter((node) => node.children.length === 0 && !own.has(node.textContent ?? ""));
     for (const node of said) expect(node.textContent, node.outerHTML).not.toContain("'");
   });
 });
@@ -314,7 +344,7 @@ describe("the saved answers card", () => {
     await screen.findByText("Portfolio link", { selector: "strong" });
     expect(
       within(card()).getByText(
-        "Short answers you give on many applications, in your own words. An application kit offers one when an employer’s question fits its label. Your answers stay in your vault, and their words are never sent to an AI model.",
+        "Short answers you give on many jobs, in your own words. A job’s kit offers one when an employer’s question fits its label. Your answers stay in your record, and their words are never sent to an AI model.",
       ),
     ).toBeInTheDocument();
     expect(card().querySelector(".rs-msg")!.textContent!.replace(/\s+/g, " ").trim()).toBe(
@@ -343,7 +373,7 @@ describe("the saved answers card", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save answer" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(typeset(SAVED_ANSWER_LABEL_TAKEN));
     // Edited at the revision it was read at.
-    await userEvent.click(screen.getByRole("button", { name: "Edit Notice period" }));
+    await userEvent.click(screen.getByRole("button", { name: "Change Notice period" }));
     const editing = screen.getByRole("form", { name: "Edit Notice period" });
     await userEvent.clear(within(editing).getByRole("textbox", { name: "Answer" }));
     await userEvent.type(within(editing).getByRole("textbox", { name: "Answer" }), "Two weeks.");
@@ -357,7 +387,7 @@ describe("the saved answers card", () => {
   it("loads the saved answers again after a stale edit, so the next save names the revision changed elsewhere", async () => {
     const { state, api } = openCard();
     await screen.findByText("Portfolio link", { selector: "strong" });
-    await userEvent.click(screen.getByRole("button", { name: "Edit Notice period" }));
+    await userEvent.click(screen.getByRole("button", { name: "Change Notice period" }));
     // Edited somewhere else since this page read it.
     Object.assign(state.savedAnswers![0]!, { revision: 3, answer: "Three weeks." });
     const editing = () => screen.getByRole("form", { name: "Edit Notice period" });

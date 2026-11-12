@@ -146,7 +146,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
             if (document.markdown !== markdown)
               throw new AppError(
                 "conflict",
-                "The import source changed. Upload it again.",
+                "The file changed while it was being read. Upload it again.",
               );
             result = await extractLinkedIn(
               document,

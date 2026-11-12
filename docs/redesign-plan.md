@@ -1,5 +1,359 @@
 # Resumatic v1: Redesign Plan
 
+## Second redesign: the plain identity (November 2026)
+
+The second redesign moves the app to the identity the design system now defines: a green check for what is backed, amber for what waits for the person, one legible typeface and everyday words. The record of the first redesign (#3 to #11) follows this section and still holds its ground rules: the design system is the source of truth, copies stay in sync, nothing new goes in the security policy, and copy follows voice and writing.
+
+**Sources.**
+
+- The design system Resumatic, version `1794444170-a305`, copied 2026-11-12T01:05:25Z from [the system](https://claude.ai/artifact/3KaBCkca28Q5HiXbhPdzDN). Section 12 of its "Changes to the app", "the plain identity", is what this redesign carries out.
+- The UX redesign: a canvas of 42 boards and its `redesign.css`. Each board marks each capability on it Built, In part, Next or Later. The boards are design, not code.
+- Atkinson Hyperlegible Next from `@fontsource-variable/atkinson-hyperlegible-next` 5.3.0, under the SIL Open Font License 1.1.
+
+**Stages.** Stage 1 merges alone and first. Stage 2 branches from it, and stages 3 to 7 are built at the same time from stage 2 and merged in order.
+
+| Stage | Branch | Owns |
+| --- | --- | --- |
+| 1 identity | `redesign/01-identity` | Tokens, type, the components bundle, fonts, logo and app icon, plain status class names, the label words in `format.ts`, review keys Y/F/L/J/K, the shared `app-*` layout classes, and the list of server text with earlier words (`docs/redesign-words.md`) |
+| 2 shell | `redesign/02-shell` | Router and nested routes, the header, tabs, footer, the phone bottom bar, `GET /api/v2/today` and the placeholder page |
+| 3 today | `redesign/03-today` | Today and its first run |
+| 4 facts | `redesign/04-facts` | Facts: To check, All facts, Skills, Your files |
+| 5 jobs | `redesign/05-jobs` | Jobs and a job's page |
+| 6 sharing | `redesign/06-sharing` | Sharing and Account |
+| 7 outside | `redesign/07-outside` | The coaching and hiring workspaces, `/share`, sign-in, the landing page, phone layouts and the invite email's lockup |
+
+### Stage 1: the plain identity
+
+Today's pages and routes keep their structure; only how they look and what they say changes. `tokens.css`, `type.css` and `components.css` are new copies of the system (custom properties only, the type classes, and the bundle without its `body` rule), and `fonts.css` loads Atkinson Hyperlegible Next, weights 200 to 800, from a latin and a latin-ext file. The main button is `brand`, links and quiet buttons are `link`, focus is `ink`, buttons are 44px (36 and 52), marks are 24px pills, and quotes are upright in the one face with the matched words on `backed-soft`. The lockup is the green tile with its check, then the outlined wordmark in `currentColor`, and `public/favicon.svg` is the tile at full bleed. The review queue answers with Y (that's right), F (fix it) and L (leave it out), and moves with J and K. `docs/redesign-words.md` lists what changed in the interface's words, the labels left for later stages, and every server message a person can reach that still uses an earlier word.
+
+Decisions, each with the alternative rejected:
+
+1. **`controls.css` stays, with new values.** About 70 plain `<button>`, input and select elements still carry v1 classes (finding 10 below), and rewriting their call sites is work for stages 2 to 7. Retiring it now was rejected.
+2. **The system's files are copied as the first redesign copied them.** `tokens.css` holds custom properties only, plus `color-scheme`; `type.css` holds the type classes; `fonts.css` is written for the app; `components.css` is `bundle.css` without its `body` rule. Loading the system's `tokens.css` whole was rejected: its `@font-face` has no latin-ext file, and finding 7 still holds.
+3. **`Badge` and `Tick` take plain tones only.** `MarkTone` and `TickState` are closed unions, and typed maps (`REVIEW_MARK`, `REVIEW_TICK`, `LINE_MARK`, `RUN_MARK`) translate stored states, so the types catch a missed call site. Free strings with an alias map inside `Badge` were rejected.
+4. **Review buttons lose the noun.** A role's buttons read as a fact's, and `aria-describedby` names the item. "That's right role" (not English) and "Is this role right?" headings (a layout change, stage 4) were rejected.
+5. **No "Put it back" yet.** The review API has only confirm and reject, and a left-out fact or role has no Fix it and no Leave it out, so it shows only That's right, and its key hints show only Y and J/K. Adding a review action in an identity stage was rejected.
+6. **"Sensitive" stays.** The rename to private and Keep private goes to stage 4 with the privacy notice, which `legal.test.tsx` pins.
+7. **The gaps heading keeps its qualifier:** "What may be missing, as found when this draft was made". The list is possible gaps at draft time, not a coverage check.
+8. **The copy rule covers sentences, but only for five nouns:** source (meaning the person's file), vault, evidence, gap and output, and sentences that name a control or state by its old label. A rail titled "Your files" beside "No roles or facts from this source" would be incoherent, and the five can be found with grep. Renaming labels only, and changing every earlier word in every sentence, were rejected.
+9. **Checks are not documents.** A line check or an accepted suggestion "counts toward your documents for this period", never "counts as one document", because a document is a finished resume, letter or interview preparation.
+10. **Stray custom properties are resolved, not exempted.** `--application-columns` is set inline by `JobsPage`, so it is on an explicit allow-list in `tokens.test.ts`. `--dur-1` and `--font-mono` became literal values, because the system defines neither. `.app-letter` lost its `box-shadow`, and with it the `rgb()` fallback, because only the resume page and the sign-in sheet cast shadows.
+11. **No server message changes in stage 1.** No screen stage 1 changes shows a server message only to itself, so there was nothing to take early. Changing them now was rejected: it churns integration tests that the room stages rewrite anyway.
+12. **The invite email's PNG is not redrawn here.** Its lockup belongs to stage 7.
+13. **`focus` is tested at 11:1**, the system README's figure, not only at 3:1.
+14. **A coach's unseen comment is `needs-you`**, because it waits for the person. The app's own `.rs-mark--new` rule is gone.
+15. **Fit's "not covered" tick is `todo`**, a neutral ring, not amber: something missing is not a request to the person.
+16. **No screenshots.** See below.
+
+The invite email's lockup (`public/email/resumatic-lockup.png`) still shows the turnstile; stage 7 redraws it. `sharp` 0.35.5 (a dev dependency through miniflare) can render the lockup SVG to PNG locally, at twice the 218 × 44 display size.
+
+No headless Chromium was available, so stage 1 has no screenshots. There is no chrome or chromium binary, `LOCAL_CHROME_BIN` is unset, `node_modules` has no playwright or puppeteer, and downloading a browser needs the network.
+
+Font bytes: 171,880 → 53,088. The four Schibsted Grotesk and Newsreader files go, and the two Atkinson Hyperlegible Next files (33,996 and 19,092 bytes) come in. The latin file is byte-identical to the design system's.
+
+### Stage 2: the shell, the rooms and the Today API
+
+Every address exists now. A room stage replaces one line of `SCREENS` per page and deletes its interim file. Today's pages keep serving their capabilities until then. Old links land: `#/resumes/:id` gains its job once the resume loads.
+
+Until stage 3 sets `TODAY_OPEN`, signing in lands on To check and the rooms carry their own counts. Then Today becomes the default and carries the one count.
+
+Until stage 6, the coach, comment, preference, card-preview and connected-app sections appear on Account and under Sharing. Until stage 5, saved answers appear on Account and on Rules and answers. The reach tests name both pages.
+
+`GET /api/v2/today` is derived and stored nowhere. It carries counts, names and IDs, and never the words of a fact, comment, question, answer or stored error.
+
+The phone bar is CSS only, and no test shows it.
+
+**The route table.** Each row is one entry in `ROUTES` (`src/web/router.ts`) and one line in `SCREENS` (`src/web/screens.tsx`).
+
+| Address | Name | Room › tab | Stage-2 screen | Replaced by |
+| --- | --- | --- | --- | --- |
+| `#/today` | today | Today | `PlaceholderPage name="today"` | 3 |
+| `#/facts/check` | factsCheck | Facts › To check | `SourcesPage` | 4, done: `FactsReview` |
+| `#/facts/all` | factsAll | Facts › All facts | `SourcesPage` | 4, done: `FactsRecord` |
+| `#/facts/all/ask` | attest | Facts › All facts | placeholder | 4 |
+| `#/facts/skills` | factsSkills | Facts › Skills | placeholder | 4, done: `FactsSkills` |
+| `#/facts/files` | factsFiles | Facts › Your files | `SourcesPage` | 4, done: `FactsSources` |
+| `#/jobs` | jobs | Jobs › Your jobs | `JobsPage` | 5 |
+| `#/jobs/find` | jobsFind | Jobs › Find jobs | placeholder | 5 |
+| `#/jobs/applications` | jobsApplications | Jobs › Applications | placeholder | 5 |
+| `#/jobs/rules` | jobsRules | Jobs › Applications | `RulesInterim` (rules `PlaceholderSection`, then `SavedAnswers`) | 5 |
+| `#/jobs/:id/:jobTab` (fit, resume, letter, interview, application) | job | Jobs › Your jobs | `JobsPage focus={id}` | 5 |
+| `#/jobs/:id/resume/:resumeId` | resume | Jobs › Your jobs | `ResumePage id={resumeId}` | 5 |
+| `#/sharing` | sharing | Sharing › Overview | `SharingInterim`: `OwnerComments` | 6 |
+| `#/sharing/coaches` | sharingCoaches | Sharing › Coaches | `CoachesInterim`: `CoachSharingTools`, `OwnerComments`, "Live access" section | 6 |
+| `#/sharing/recruiters` | sharingRecruiters | Sharing › Recruiters | `RecruitersInterim`: `JobPreferences`, `CardPreviewSection` (with `capabilities.cardPreview`), "Visibility, blocks and requests" section | 6 |
+| `#/sharing/recruiters/request/:id` | introRequest | Sharing › Recruiters | placeholder | 6 |
+| `#/sharing/apps` | sharingApps | Sharing › Connected apps | `AppsInterim`: `ConnectedApps` | 6 |
+| `#/account`, `#/account/:section` (profile, plan, notifications, appearance, data, signing-in) | account | none | `AccountPage`, whole, with the section scrolled into view and focused | 6 |
+| `#/coaching/clients`, `#/coaching/clients/:id` | coachingClients, coachingClient | Coaching › Clients | `ClientsPage` | 7 |
+| `#/coaching/organisation` | coachingOrganisation | Coaching › Organisation | placeholder | 7 |
+| `#/hiring/openings`, `/candidates`, `/introductions`, `/organisation` | hiring* | Hiring › each | placeholder | 7 |
+| `#/privacy`, `#/terms` | privacy, terms | none | `LegalPage` | none |
+
+**Old addresses.** `canonicalHash` rewrites these with `history.replaceState`:
+
+- `""` and `#/` become `DEFAULT_HASH`, which is `TODAY_OPEN ? "#/today" : "#/facts/check"`.
+- `#/sources` and `#/facts` become `#/facts/check`.
+- `#/applications` becomes `#/jobs`.
+- `#/clients` and `#/coaching` become `#/coaching/clients`.
+- `#/hiring` becomes `#/hiring/openings`.
+- `#/jobs/:id` becomes `#/jobs/:id/fit`, except when `:id` is `find`, `applications` or `rules`.
+
+`#/resumes/:id` parses to the resume route with no job, and `useCanonicalResumeAddress` puts the job in the address once the resume has loaded, as it corrects an address that names the wrong job. The resume's route key is `resume/<resumeId>` and a job's is `job/<id>`, so neither the correction nor moving between a job's tabs remounts the page or moves focus.
+
+Decisions, each with the alternative rejected:
+
+1. **Two tables in two files.** `ROUTES` in `router.ts` is pure: pattern, name, room, tab and workspace, with no React component, so `router.test.ts` stays a pure test. `SCREENS` in `screens.tsx` is typed over every route name, so the compiler asks for a screen for each; its rows are grouped by owning stage in marked blocks. Components inside `router.ts` were rejected: pages import `href` from the router, so it would be an import cycle.
+2. **`TODAY_OPEN` gates the default and the first-row count.** Stage 2 merges and deploys alone, and landing on a placeholder would replace today's landing page with an empty one. Coach-comment emails link to `/`, and the header's count leads to where comments are read; with the flag off, each room's count leads to a page that shows what it counts, and Sharing › Overview shows `OwnerComments`. Today as the default now (a dead landing), a Today-only count now (it would lead to a page that can't show it) and two separate edits in stage 3 (one constant keeps it to one line) were rejected.
+3. **After stage 3, only Today carries a first-row count**, as the board says: "Nothing else is counted". Room numbers stay in the second row, on To check and Coaches. Room counts kept permanently were rejected; the owner can still ask for them (question 1 below).
+4. **Old resume links are corrected after the resume loads.** A synchronous job lookup (an extra request on every old link) and a resolver component (the same resume loaded twice) were rejected.
+5. **Account sections are sub-routes.** Anchors in the hash (a hash router can't hold them) and every menu link at `#/account` (the person loses their place) were rejected.
+6. **Interim pages are built from existing components** (`src/web/pages/interim/{jobs,sharing}.tsx`), and the two reach tests are widened by one path each. Pointing Sharing tabs at `AccountPage` (the tab and the page heading would disagree) and placeholders for capabilities that are built (the owner's placeholder rule forbids them) were rejected.
+7. **Counts are attributed to the source each review entry is shown under.** `proposedBySource` sums to `countByState(...).proposed`, and both live in `src/shared/review-groups.ts`, so the Vault and the web app count with one function. Raw per-source counts were rejected: a duplicate would be counted twice.
+8. **Today reads files lightly.** The Vault reads only `id, filename`, state and time from `sources`. `readSources()` was rejected: it works out conversion quality over every PDF's and OCR file's text and looks up runs, on a request made on every room change.
+9. **Comments and suggestions are separate kinds.** A comment is an unseen coach's row with no suggestion state; a suggestion is an open row whose owner standing is waiting, seen or not. `unseen()` was rejected: it counts suggestions as comments and misses a suggestion seen but not answered.
+10. **No words.** The answer carries counts, IDs, file names, job titles and companies, coach names and addresses, and link labels. An unreadable file carries no error: its reason is shown on Your files. An employer's question text and the stored error were rejected.
+11. **Counts refresh after a write.** `request()` in `api.ts` sends `COUNTS_CHANGED` 150 ms after any 2xx change to `/api/`, never after `/auth/*`, so a sign-out note stays. Today also reloads when the room or workspace changes, not the tab. Reloading on every route change was rejected: a vault read per tab click.
+12. **The phone bar is the same `nav`, restyled below 600px.** A second nav was rejected: a duplicate landmark.
+13. **The account menu is a disclosure:** a button with `aria-expanded` and `aria-controls`, and the panel next in DOM order. `role="menu"` was rejected: the panel holds headings.
+14. **Shared files carry one marked, empty block per stage**, `// stage 3: today` to `// stage 7: outside` (`/* … */` in CSS), in `api.ts`, `api-fake.ts`, `test/web/fixtures.ts`, `app.css`, `placeholders.ts` and `screens.tsx`. Stages 3 to 7 are built at the same time and add only inside their own block. Appending at the end was rejected: it conflicts at every merge after the first.
+
+Open questions for the owner, each built as stated; the answer changes only a later stage:
+
+1. Once Today opens, only Today carries a first-row count, as the board shows. If room counts should stay after stage 3, stage 3 leaves them on.
+2. Kits for jobs whose status is Closed still count as waiting, as the kit page reports them. Should they?
+3. Kit question text and stored read errors are left out of Today. If stage 3's board needs either, stage 3 adds it, an error only through `sourceErrorMessage`.
+4. The phone bottom bar holds the four rooms (the shell board), while the phone boards add Account as a fifth. Stage 7 settles it; stage 2 ships four.
+
+### Stage 3: Today
+
+Today is the signed-in default. It opens with the one next step, chosen in a fixed order: a file that couldn’t be read, a coach’s suggestion, facts to check, a kit’s questions, then comments. When nothing waits, it says so with no button.
+
+Its counts are the header’s. A kind this version doesn’t know is counted but never shown or chosen.
+
+If a refresh fails, the page keeps what it last showed, with Try again above it.
+
+`GET /api/v2/today` gains `standing`: counts of files, of confirmed and left-out roles and facts, of jobs by status, of shared copies and of active connected apps. It is derived and holds numbers only.
+
+`TODAY_OPEN` is now true, so an empty address and `href.home` are `#/today`, and only Today carries a count in the first row; To check and Coaches keep theirs in the second. The page reads the shell's Today (`useToday()`, which now carries `last` and `error` too) and never asks for its own. Before anything is added, it shows three steps, the first with the Facts page's own `AddSource`; adding the first file or text opens the full page with that sentence focused.
+
+Decisions, each with the alternative rejected:
+
+1. **Today gains `standing`.** First run needs the totals of files, roles and facts, which `waiting` can't give. Reading the review view, the jobs, the shares and the connected apps on the landing page was rejected: four requests, and the heavy read stage 2 rejected.
+2. **Priority: unreadable, suggestions, check, kit, comments.** A file that can't be read blocks part of the record and only the person can fix it; a suggestion has a coach waiting for an answer; facts unlock every resume; a kit blocks one job; comments are only to read. `NEXT_PRIORITY` is a `Record` over every kind, so the compiler ranks a new one. Kits before facts (the NextStep component's rule) was rejected: its examples are placeholder kinds.
+3. **Counts are in the header's units.** The next step's things plus the list's count equal `counts.today`. Counting rows was rejected: the header would say 12 and the page 6.
+4. **Unknown kinds are filtered, not counted out.** The lede and the list's count keep `counts.today`, so they agree with the header, and the closing line names Facts, Jobs and Sharing, so it is true whichever kind is hidden. The quiet line depends on `counts.today === 0`, never on no known item. Counting only known kinds (the page would disagree with the header) and a closing line naming only Jobs and Sharing (false for a hidden kind outside them) were rejected.
+5. **Caught up is a quiet line with no button**, as the brief says. `rs-next--clear` with "Add a job" was rejected.
+6. **The page reads the shell's Today.** Its own `useResource(api.today)` (a doubled read, and the page and header could disagree) and drawing the error in place of the page (the shell polls every 2 s while work runs, so one dropped request would wipe the next step and the focused sentence) were rejected.
+7. **The header keeps stage 2's rule:** no count from a failed Today. The first-row count falls back to the session's `newFromCoach`. Zero (a coach's comment left uncounted) and counting from the last good Today (a stale number shown as current) were rejected. *Changed where the stages meet:* the header and tabs now count from the last good Today, as this page does; see below.
+8. **First run reuses `AddSource`.** The uploader alone with a link to paste on Facts was rejected: it leaves the page.
+9. **Comments and suggestions link to Coaches**, where the owner's comments and the tab count are. The job's resume page was rejected: suggestions aren't answered there. (Since stage 5, a resume's line card also shows a coach's suggestion with Accept and check; Coaches is still where all of them are.)
+10. **Copies count as shared when neither revoked nor expired.** Running the delivery check on every refresh was rejected: the words claim nothing about whether a copy can be read.
+11. **The board's words are corrected.** "By email" names its three kinds, because "when something joins this list" is false for kits and unreadable files; "for marketing" matches the privacy notice; "every line checked" replaces "every line backed".
+12. **"from {coach}", not a possessive**, because a coach may be shown by an address.
+13. **The phone layout is CSS only:** the columns wrap, with the next step first in the DOM. The board's "2 more" collapse was rejected.
+14. **Export, don't copy:** `STEPS` from `TailorProgress.tsx` and `chosenName` from `ShareComments.tsx`.
+15. **The web fake works out `standing` from its own record** when a test sets no `today`. Upload and paste routes writing a Today were rejected: they cover only those two paths and duplicate state.
+16. **A connected app counts only while its grant can still reach the vault:** active, not revoked or expired, and made in the vault's current security epoch and session generation, which is what the grant check itself requires. Signing out everywhere changes no grant row, so counting every active row was rejected: Today would name apps that can no longer read anything. The Connected apps list on Account still shows such a grant as active; that is older than this stage and is left to stage 6. *Done where the stages meet:* the list now applies the same rule; see below.
+
+Open questions for the owner, each built as stated:
+
+1. Is unreadable, suggestions, check, kit, comments the right order, or should kits come before facts, as the NextStep component's rule suggests?
+2. Should "Since" events link to what they name? The board has none.
+3. Should a copy that can no longer be delivered (it uses a fact since kept private) still count as shared?
+4. Should the phone board's "2 more: …" collapse be built?
+5. When nothing waits, should Today offer something to start, such as "Add a job"? The brief said no button, so none is shown.
+6. Is it right that a person with jobs but no files, roles or facts still sees first run?
+
+### Stage 4: Facts
+
+The Facts room's four tabs are built, and `SourcesPage` is gone. Asking a colleague (`#/facts/all/ask`) stays a placeholder: it opens later.
+
+To check asks one question at a time from `reviewQuestions`, the same groups Today counts. Its keys only click enabled buttons.
+
+- **To check** shows a role or a fact with every quote it rests on, the answers, and More choices (Keep private, and Split it in two as a placeholder). The file it came from sits beside it, with the words behind this item highlighted and the words behind the file's other roles and facts underlined: amber still to check, green confirmed, each with its word. Up next lists the next four. Before the first upload the page opens on the big dropzone and keeps it for the visit, so a file read in that visit is asked about under it. On a phone the file is hidden until “See where this came from” opens it under the question.
+- **All facts** is the list it was, showing Confirmed and Left out, with one link to ask a colleague.
+- **Skills** lists the confirmed skills a fact names, where each came from, and Years per skill as a placeholder.
+- **Your files** lists what was added beside adding another, and says what to do about a file that couldn't be read.
+- **Private.** A fact the person keeps to themselves is private in every label and sentence; stored and API names stay `sensitive`. The privacy notice says so.
+- **Server sentences.** The Facts room's refusals speak of files. The old import sentence stays in `SAFE_DETAILS` for one release, and `EARLIER` rewords it.
+
+The room's styles are in `src/web/styles/rooms/facts.css`, as section 1 of the cross-stage decisions and `styles/README.md` place a room's own rules, with its own `@media (max-width: 600px)`. The dead `.facts-layout`, `.facts-rail` and `.facts-main` rules are left for the stage that next owns that part of app.css.
+
+Decisions, each with the alternative rejected:
+
+1. **One question at a time, built from today's parts.** `ReviewButtons`, `useReview`, `useSensitive`, `FactEditor` and `RoleForm` are reused, and `FactMeta`, `FactHints`, `FactEvidence` and `RoleRejectWell` are extracted from `FactItem` and `RoleGroup`, so the list and the question share code. A new review component, a second copy of the ask-first and confirm rules, was rejected.
+2. **Keys click their own enabled buttons.** The shared guard `reviewKeyOf` is used by `ReviewQueue` and the question. An action registry with its own busy checks was rejected: the design's first draft let Y confirm the old wording while Fix it was open.
+3. **Questions is left out of the filter.** Experience questions live only in each job's kit or documents, and no route lists them across jobs. N+1 requests, and a new endpoint the brief doesn't name, were rejected.
+4. **`reviewQuestions` lives in `src/shared/review-groups.ts`,** so the page and Today count from one module. A web-only builder, which could drift from the count, was rejected.
+5. **The file panel reads the live vault; the question reads the held one.** Confirm all is a background change, and the smoke test relies on it. Holding the panel was rejected.
+6. **File counts are raw records,** the IDs Confirm all sends. Grouped counts, which would not match what is sent, were rejected.
+7. **Highlights are placed only on verified spans** (`validSpan`). Searching for the quote text (it can match the wrong line), and colour alone, were rejected.
+8. **The phone toggle is CSS only.** A `matchMedia` hook (a second render path) and a sticky bar (a second fixed bar above stage 2's) were rejected.
+9. **First run stays on To check, with the queue under the dropzone.** The smoke test uploads and checks there. (Sign-in lands on Today once stage 3 merges, since `TODAY_OPEN` is true; Today's first run links on to Facts.) Sending a new person to Your files was rejected.
+10. **All facts changes `Review` in place, and the add controls stay inside it.** AddFact and AddRole in the page head, which would need a hook into Review's filter, and a `filters` prop with one caller, were rejected.
+11. **One Attest link per page.** A link per fact was rejected, because the route takes no fact.
+12. **Skills shows only usable facts.** Taxonomy tags, which owners haven't confirmed, were rejected.
+13. **Private everywhere in `src/web`**, including stage 5 and 6 files. Mixed names between merges were rejected.
+14. **Split it in two is a `PlaceholderSection` inside `details`**, styled smaller. The reach test opens More choices. A heading-level prop on stage 2's component was rejected.
+15. **Titles are the tab names.**
+16. **The room's CSS is its own file,** `rooms/facts.css`, imported by its pages. Up next uses `.facts-upnext`, because `.facts-next` styles What happens next. The design's block in app.css was rejected: the cross-stage decisions and the styles README keep app.css's stage blocks for shared rules.
+17. **A fact under a left-out role stays in the queue but can't be confirmed there.** The hint points to All facts › Left out. Dropping it from the queue, which would make the count disagree with Today, was rejected.
+18. **Every copy's quote is shown with its file.** Rewording the note to name files only, which would let a person confirm quotes they never saw, was rejected.
+19. **The old distill sentence stays in `SAFE_DETAILS` for one release**, beside the new one, so a failure from a run in flight keeps its words. Falling back to `GENERIC_DETAIL` was rejected.
+20. **The Keep private row states only what the privacy notice promises.** “Never used in anything Resumatic writes / never shared” was rejected: the search index still receives the words, and existing resumes remain.
+
+Open questions for the owner, each built as stated; an answer changes only later work:
+
+1. “Everything” and “Roles and facts” hold the same questions until another kind is built. Should both stay, or only one?
+2. Experience questions stay on each job's page, with a placeholder here. Is a list across jobs (a new read route) wanted later?
+3. All facts leaves out the board's Private and Added by you filters and its search. Should they be added?
+4. Is one page-level “Ask a colleague” link right, rather than one per fact?
+5. The file panel and Your files count records (a copy counts twice), while To check counts questions. Is that acceptable?
+6. Should the phone layout get a sticky action bar above the rooms bar?
+
+### Stage 5: Jobs and a job's page
+
+A job has its own page with five tabs, from the routes stage 2 registered: Fit, Resume, Cover letter, Interview and Application. Your jobs lists each job as a row that opens its page, with no fit on it; the workspace that opened inside the list is gone. A resume opens on its job's Resume tab, and saved answers moved from Account to Jobs › Rules and answers. There is no migration, no new route and no model call: the work is the web app, the server's wording for the Jobs room (`docs/redesign-words.md`), tests and docs.
+
+Decisions, each with the alternative rejected:
+
+1. **Documents are split by tab over one hook, `useJobDocuments`.** Fit checks and experience questions are on Fit, wording checks (Refine wording, every line check and every accepted suggestion) on Resume, letters on Cover letter and preparation on Interview, so Cancel and Retry are on the tab that owns each kind. Starting stays one at a time across all kinds, and a start that waits on another tab's run names that run and its tab. The combined "Prepare your application" panel on every tab (several brand buttons on a page) and listing only letters and preparation (stranding Cancel and Retry for the other kinds) were rejected.
+2. **The check sentence counts the displayed version's lines, and "left out" appears only on version 1**, tailoring's own, from its report. Every later version comes from a line check, a refine or a removal. The report's own counts (a line check resets them), an "edited by you" clause (never true of a checked version) and carrying the left-out count forward in the Vault (a pipeline change for one clause) were rejected.
+3. **A line's card is a sibling of the marks' list, not a member.** `useMarginLayout` takes the stack and the card's selector and places the card as one more item right after its line's mark, so the marks below move down to clear it and nothing hides a focused mark. A `<div>` or role-bearing item inside the list (which fails axe's `list` and `aria-allowed-role` rules) and floating the card over the marks were rejected. Below 860px the card is a non-modal sheet from the bottom.
+4. **One brand button per tab outside forms, with named demotions:** Check your fit or Check again; on Resume one of Download PDF, Tailor again or Tailor a resume; Write a cover letter; Prepare for an interview; Approve kit. Tailor a new version, Create checked version, Save tracking details, the kit's Save questions and Use this answer, and the line card's Accept and check are plain (`OwnerSuggestion` takes `emphasis`, so Account is unchanged). Exceptions written into the test were rejected.
+
+The room's rules are in `src/web/styles/rooms/jobs.css` under new class names, and `app.css` is untouched. These `app.css` rules are no longer used: `.app-notes*`, `.app-check-strip*` and `.app-legend`. They are still in `app.css` after stage 7 merged, with stage 4's unused `.facts-layout`, `.facts-rail` and `.facts-main`, and go in a later clean-up.
+
+Open questions for the owner, each built as stated:
+
+1. The board copy (the header link, the tab sentences and the placeholder notes) was not checked against the boards. It ships as written; the roadmap row says so.
+2. Marks beyond the brief's four kinds (a fact kept private, a line waiting for a fresh check, a waiting suggestion) are kept.
+3. Opening a line's card doesn't mark its coach's comments seen; Sharing does.
+4. Experience questions sit on Fit.
+5. The unused `app.css` rules go after stage 7 merges.
+
+### Stage 6: Sharing and Account
+
+Stage 6 changes the client and the words only. It adds no table, endpoint, Vault method, switch or model call, and no migration. Sharing gets its four pages, Account its own layout, and `src/web/pages/interim/sharing.tsx` is gone. The server's sharing and account messages use the plain words (section 3 of `docs/redesign-words.md` lists what changed).
+
+**The screens, and what each reads.** Every read is the owner's own session route; no identity comes from the client.
+
+| Address | Screen | Reads |
+| --- | --- | --- |
+| `#/sharing` | `SharingOverview`: three ways (Coaches, Recruiters, Connected apps) with what each holds now, then what never leaves the record | `/api/shares`; `/api/mcp/grants` only where connected apps are on; Today from `TodayContext` (the shell's own read). Never preferences, the preview or a comment thread, and it never posts `/seen` |
+| `#/sharing/coaches` | `SharingCoaches`: the copies shared, the comments and live access (a placeholder), beside the form for a new copy | `/api/shares`, `/api/shares/comments`; the form, once opened, reads facts, jobs, roles and the shareable documents |
+| `#/sharing/recruiters` | `SharingRecruiters`: "Can recruiters find you?" (a placeholder) and what a recruiter would see (where the preview is on), beside "Requests to meet you" (a placeholder) and what you're looking for | `/api/v2/card-preview` where it is on, `/api/preferences` |
+| `#/sharing/recruiters/request/:id` | the `introRequest` placeholder, now with a way back to Recruiters | nothing |
+| `#/sharing/apps` | `SharingApps`: `ConnectedApps` as before, its heading "Your apps"; not found where apps are off | `/api/mcp/grants` |
+| `#/account`, `#/account/:section` | `AccountPage`: the sections listed beside them, then Profile, Plan, Notifications (where email is on, with More choices), Appearance, Your data, where the record is kept (a placeholder), Signing in, and Delete account last | `/api/billing`, `/api/email-notices` where email is on |
+
+Overview counts what waits on Coaches exactly as the Coaches tab does: Today's `counts.sharing` once Today has loaded, otherwise the session's `newFromCoach`. Its words come from Today's `comments` and `suggestions` items. A copy is open when it isn't revoked, hasn't expired and can be delivered; an app is connected, waiting or ended by `ConnectedApps`' own rules. Stage 2's shell test that reached a comment from the header in one click now reaches it in two: Sharing says it waits, and its Coaches tab shows it.
+
+Decisions, each with the alternative rejected:
+
+1. **Overview summarises; it doesn't embed `OwnerComments`.** `OwnerComments` marks comments seen on render, which would clear the count while the person sees only a summary.
+2. **Overview reads only routes that already exist** (`/api/shares`, `/api/mcp/grants`, and Today from `TodayContext`). Reading `api.facts` for one number on every visit was rejected, and so was `api.preferences`, which the reach test forbids.
+3. **`api.mcpGrants` is added, and `ConnectedApps` keeps its raw `fetch`.** Rewriting it was rejected: its list is shown as today, and it is a listed older exception. Overview reuses its active, pending and inactive rules, so the two never disagree.
+4. **The share tools move to `components/sharing/Copies.tsx`, split into `CopyList` and `NewCopy`, with their state on the page.** Keeping `CoachSharingTools` whole was rejected: the board puts the list and the form in different columns.
+5. **The share form stays behind "Choose what to share".** Opening it at once, as the board shows, was rejected because it fires four requests on every visit. The control names the tests and the smoke check pin are kept.
+6. **The recruiter placeholders are two sections in view, not `MoreChoices`.** A disclosure hiding only "Not available yet" adds a control for nothing, and the MoreChoices rule keeps protections (blocks, caps) in view.
+7. **Notifications' More choices holds a placeholder.** Every notice that works stays in view. Dropping the row was rejected because the board has it; inventing frequency selects was rejected because none is built.
+8. **Where the record is kept is a placeholder whose words match the privacy notice** ("created … near where you first sign in"). A present-tense "is kept near" was rejected: a fenced vault replacement creates the new vault without the location hint.
+9. **Signing in keeps its own section, before Delete account.** Putting it under Your data was rejected because the `signing-in` anchor exists; putting it last was rejected because Delete sits last.
+10. **The card preview's noun is "anonymous profile", and its heading "What a recruiter would see".** `docs/redesign-words.md` assigned this rename to stage 6.
+11. **The archive messages are constants in `src/render/archive.ts`**, so the route, the Vault and the tests share one sentence.
+12. **The consent page points to "Sharing › Connected apps"**, because apps no longer live on Account.
+13. **Moved copy uses stage 4's word "private".**
+14. **The router and stage 2's anchors are untouched. `AccountPage` learns its section from a prop given in `screens.tsx`.** Reading `location.hash` inside the page was rejected: it duplicates the router's parsing.
+15. **Room styles go in `styles/rooms/sharing.css` and `rooms/account.css`, and the raw-colour test reads `styles/rooms/*.css`.** Moving them into `app.css`'s stage 6 block was rejected: that block is for shared rules.
+16. **Overview marks follow the shell: no count at zero.** "{n} connected" is `backed`, as `ConnectedApps`' "Connected" is; `status` is reserved to a job's tracking.
+17. **"Suggested wording" stays uncountable.** It is counted in lines of suggested wording, because `count` would print "wordings".
+18. **Notices and the link hint name places, not "here" or "below".** Both moved, and the old words now point the wrong way.
+
+Also settled here, where the design left it open: Account says in one line, beside its list of sections, that saved answers are under Jobs › Rules and answers; Plan keeps its renewal date after the plan words; and Overview names a copy that names nobody "A link".
+
+Open questions for the owner, each built as stated; only the answer would change it:
+
+1. Account shows "Where your record is kept" as a placeholder because the board marks EU residency Later. Keep it or drop it?
+2. Notifications' More choices holds only a placeholder. Is a row with nothing to choose acceptable?
+3. Blocks, the weekly cap and pausing are in view under "Can recruiters find you?", not inside More choices as the board draws them. Is that right?
+4. Sign out everywhere stays in its own "Signing in" section, before Delete account. Is that right?
+5. Overview doesn't count private facts, which would cost a facts read per visit. Should it?
+6. Is "anonymous profile" the right word before anything is published?
+7. The placeholder for more email notices names no reason for waiting. What does it wait for?
+
+### Stage 7: outside the rooms
+
+Coaching, hiring, the shared copy, sign-in, the landing page and the states. A coach's clients are listed under Coaching › Clients, and each live copy opens on a page of its own in the app (`#/coaching/clients/:id`) through a new session-only route, `GET /api/coach/clients/:grantId/copy`. The shared copy at `/share` is headed by whose copy it is and its job, and its failures are framed cards chosen by the step that failed. Signed out, the site's root is a landing page, `#/sign-in` and every deep link show sign-in, and the privacy notice and terms stay readable. The coaching organisation and the four hiring pages are placeholders that say what each waits for, reached only from the account menu's Workspaces entry "Hiring · Not open yet". The invite email's lockup and the connect sign-in page draw the plain identity. There is no migration, no new switch and no model call.
+
+Decisions, each with the alternative rejected:
+
+1. **A new session-only route reads the in-app copy,** `GET /api/coach/clients/:grantId/copy`, with a Vault method (`readShareForCoach`) that checks and reads in one transaction. `POST …/open` followed by `/share/snapshot?g=` was rejected: a dead copy answers 410 there and `useResource` would sign the coach out, the cookie outlives "sign out everywhere", and it takes two requests.
+2. **Open becomes a link.** `POST …/open` and `api.openCoachClient` stay for pages from before, during a mixed rollout. Removing them was rejected.
+3. **`SharedCopy` is extracted and reused, and `CoachComments` is reused unchanged.** Rendering `ShareSnapshotContent` in the shell (two `main`s and two headers) and editing `ShareComments.tsx`, which stage 6 owns, were rejected.
+4. **The parts are stacked, with no "In this copy" tabs.** Fragment links (`/share` reads a fragment as a link token) and a tablist (it hides parts from print and from find-in-page) were rejected.
+5. **No new fields go on the client list.** Adding job or reply counts, which is Vault work the brief doesn't ask for, was rejected.
+6. **Unknown-session rows keep today's silence.** Branching on `active` alone was rejected: `/api/coach/clients` returns `active: false` for every row when the session has no email, so the row would say a live copy had ended.
+7. **`CoachCopy` classifies errors inside its loader.** It matches 404 by the route's message "no such client" (as `CoachComments` does) and 409 by status, and rethrows the rest. A plain `useResource(() => api.coachCopy(id))` was rejected: it keeps only `describeError`'s string, so a 409 would become a retryable error and a "no such route" 404 during a rollout would say the copy isn't listed.
+8. **A comment refusal in the app is re-decided by reading the copy again.** Matching `CoachComments`' sentences to infer the status was rejected: it ties this stage to stage 6's wording, and `onEnded` carries no status. The reload goes through `useResource`, which ends the session on 401 and 410.
+9. **The landing page lives outside `ROUTES` and `SCREENS`.** A landing route was rejected: both are signed-in screens, and `canonicalHash` rewrites the empty address.
+10. **What the landing page leaves out, and why:** the invitation form (no waitlist exists, and the form would collect addresses); plans (there are no prices and no 30-day pass); testimonials (no quote has consent); the "general assistant" row (`MCP_ENABLED` can't be read signed out); and the "For coaches" anchor (a fragment is a route).
+11. **Unknown sign-in codes are not echoed.** Keeping the filtered echo was rejected.
+12. **Share cards are chosen by the failing step, never by parsing the message.** An expired link usually fails `readShareToken` as gone, not as expired.
+13. **States go in a new `src/web/components/States.tsx`** (`StateCard`, `Stopped`). Editing `ui.tsx`, which stages 3 to 6 may change at the same time, and a `Working` component (`Loading` and the run marks cover it) were rejected.
+14. **The email lockup is drawn by a committed script** (`scripts/draw-email-lockup.mjs`) from `Lockup.tsx`'s wordmark path, `tokens.css` and `favicon.svg`. Copying `resumatic-lockup.svg`, which isn't on disk, was rejected.
+15. **The connect sign-in page gets an inline SVG lockup with fill attributes and no styles.** Changing its policy, `default-src 'none'`, was rejected.
+16. **The phone bar keeps four rooms, and Account stays in the name menu.** Five items were rejected. This settles stage 2's open question 4.
+
+**States.** One pattern for each, across every room:
+
+| State | Pattern |
+| --- | --- |
+| Working | `Loading` for a read, and a run's `rs-mark--working` with its status line |
+| Failing | `ErrorNote` with "Try again" for a failed load, and `ActionError` under the control |
+| Stopping | `Stopped`, for a limit or a refusal, with at most one action |
+| Ended or unavailable | `StateCard` |
+| Empty | `EmptyState` with a title and the next step's link |
+
+Room stages replace their own framed and refused states with these at integration.
+
+**The landing page's copy needs the owner's review before production.** Every claim on it was checked against the code at this branch; prices, plans, testimonials and an invitation request are left out.
+
+Where the build departs from the stage's design:
+
+- **`share.css` is imported by the pages that show a copy** (`SharePage` and `CoachCopy`), not by `ShareSnapshotContent`, which a Node unit test (`test/unit/share-dates.test.ts`) renders and whose type check has no CSS imports. The file is `src/web/components/share.css`.
+- **In the app, a copy that is not in the list or has ended is the page itself,** so its `StateCard` is `level={1}`, as on `/share`.
+- **After a refused comment, a copy that still opens keeps the refusal in place of the threads.** `useCoachCommenting` starts over when the copy is read again, so `CoachCopy` keeps the sentence itself.
+- **The connect sign-in page's lockup is a constant in `mcp.ts`.** The Worker can't import `Lockup.tsx`, so `scripts/email-lockup.test.mjs` holds the two drawings together.
+- **A live copy whose owner gave no name is opened with "Open their copy",** described by the row's heading ("A client who didn’t give their name"), because "Open {name}’s copy" can't be made from that heading.
+- **`CoachCopy` reads the copy only when asked:** when the page opens, on Try again and after a refused comment. `useResource` also reloads when the coach's own vault reports a change, but those changes say nothing about a copy kept in the client's vault, and reading it then would tell the owner of a read nobody made and start the comments over. Every other reload answers with the last read asked for.
+- **The old `.app-clients` rules stay in `app.css`, unused,** so this stage changes that file only in its block. They can go after the merge.
+- **The empty client list closes its address with a comma** ("names your sign-in address, dana@example.test, on a copy"), so the sentence reads as English.
+
+Open questions for the owner, each built as stated:
+
+1. The landing page's copy needs your review before production, including the labelled example line.
+2. Should the landing page name support@resumatic.app as the way to ask for an invitation? It names nothing today.
+3. If production turns on `MCP_ENABLED`, should the "general assistant" comparison row return?
+4. Coach-comment and review emails link to `/`, so a signed-out reader lands on the landing page. Should stage 6 link them to `/#/sign-in`?
+5. Plans and testimonials stay off the landing page until prices, the 30-day pass and a consented quote exist. Is that right?
+
+### Where the stages meet
+
+A review of the merged branch found places where one stage's work contradicted another's. Each is fixed in the code, with a test:
+
+- **Sign-in lands on Today**, not To check: `TODAY_OPEN` is true, and `#/sign-in` is an alias of `href.home`.
+- **Links to Facts open the tab their words name.** `href.facts` is To check. Files go to Your files (`href.files`), and confirmed facts, a coach's comment on a shared fact and adding a fact go to All facts (`href.factsAll`).
+- **The header and tabs count from the last good Today.** After a failed read the Today page keeps its last counts with Try again, so the header, the second-row tabs and Your jobs' kit marks keep them too. This replaces stage 3's decision 7.
+- **Connected apps follow the access check.** `McpGrantStore.list` reports a grant from an earlier security epoch or session generation as revoked, so after Sign out everywhere Sharing says no app is connected, as Today does. The row itself is unchanged.
+- **Today names the copy, not its reader.** Anyone with the link may open a copy, and the copy promises that the owner can't see who did, so the event reads "The copy you shared with {coach} was opened."
+- **A kit answer waiting for you is amber.** A matched answer not yet checked reads "Check this answer" (`needs-you`); only a checked one is a green "Saved answer"; a match the list now refuses reads "Asked every time" (`note`).
+- **The shared copy's "Fixed copy" mark is a neutral note**, as the coach copy page marks the same state.
+- **Suggestions can also be answered on a resume's line card** (stage 5), beside Coaches.
+
+---
+
 Nov 7, 2026. Revised after PR #2 (the job seeker roadmap) merged, which changed 42 of the web app's files. The redesign is rebuilt on that `main` (`215a3e3`).
 
 This plan brings the Resumatic design system into the web app (`src/web`), along with the few server changes the design needs.

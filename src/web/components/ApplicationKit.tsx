@@ -18,7 +18,7 @@ import { useAction, useResource, type Action } from "../hooks";
 import { kitWriteObserved, type KitWrite } from "../kit-save";
 import { ActionError, Badge, ErrorNote, Field, Glyph, Loading, Quote } from "./ui";
 
-// The Application kit panel in a job's workspace: a resume version, a letter and preparation if
+// A job's kit, on its Application tab: a resume version, a letter and preparation if
 // wanted, and the person's answers to the employer's questions, put together and approved here and
 // downloaded to be sent by the person themselves. Nothing is sent from here.
 //
@@ -89,7 +89,7 @@ export function ApplicationKit({ applicationId }: { applicationId: string }) {
 
   return (
     <section className="workspace-section app-kit" aria-labelledby={`${id}-heading`}>
-      <h3 id={`${id}-heading`}>Application kit</h3>
+      <h2 id={`${id}-heading`} className="rs-h3">Your kit</h2>
       <p className="rs-meta">
         Put together what you’ll send for this job: a resume, a cover letter and interview preparation if you want them, and
         your answers to the employer’s questions. Nothing is sent from here. Once you approve the kit, download it and send it
@@ -112,7 +112,7 @@ export function ApplicationKit({ applicationId }: { applicationId: string }) {
       ) : kit.error ? (
         <ErrorNote message={kit.error} onRetry={kit.reload} />
       ) : (
-        <Loading>Loading the application kit…</Loading>
+        <Loading>Loading your kit…</Loading>
       )}
     </section>
   );
@@ -156,7 +156,7 @@ function KitParts({ view, action, write }: PartProps) {
       }}
     >
       {resumes.length === 0 ? (
-        <p className="rs-meta">Make a resume for this job first. Only a version whose every line is backed by your facts can go in a kit.</p>
+        <p className="rs-meta">Tailor a resume for this job first. Only a version whose every line is backed by your record can go in a kit.</p>
       ) : (
         <Field id={`${id}-resume`} label="Resume">
           <select id={`${id}-resume`} value={draft.resume} disabled={action.pending} onChange={(event) => setDraft({ ...draft, resume: event.target.value })}>
@@ -246,7 +246,7 @@ function KitQuestions({ view, action, write, saved }: PartProps & { saved: Saved
 
   return (
     <div className="app-kit__questions">
-      <h4>The employer’s questions</h4>
+      <h3>The employer’s questions</h3>
       {draft.length > 0 && (
         <ol className="app-kit__list">
           {draft.map((item, index) => {
@@ -284,9 +284,9 @@ function KitQuestions({ view, action, write, saved }: PartProps & { saved: Saved
                         setEditing(item.key);
                         setEditText(item.text);
                       }}
-                      aria-label={`Edit question ${index + 1}`}
+                      aria-label={`Change question ${index + 1}`}
                     >
-                      Edit
+                      Change
                     </button>
                   )}
                   <button type="button" className="small" disabled={action.pending} onClick={() => setDraft(draft.filter((question) => question.key !== item.key))} aria-label={`Remove question ${index + 1}`}>
@@ -316,7 +316,7 @@ function KitQuestions({ view, action, write, saved }: PartProps & { saved: Saved
         <button type="button" className="small" disabled={action.pending || !pasted.trim()} onClick={add}>
           Add questions
         </button>
-        <button type="button" className="small primary" disabled={action.pending || !dirty || draft.length > MAX_KIT_QUESTIONS} onClick={() => void save()}>
+        <button type="button" className="small" disabled={action.pending || !dirty || draft.length > MAX_KIT_QUESTIONS} onClick={() => void save()}>
           Save questions
         </button>
       </div>
@@ -342,9 +342,24 @@ function QuestionAnswer({ question, view, action, write, saved }: PartProps & { 
 
   if (question.state === "matched") {
     const match = question.savedAnswer;
+    // The vault counts a match it now refuses, and one not yet checked, as waiting: Today and Your
+    // jobs mark them so, and only a checked answer is marked as backed.
+    const refused = !!match?.refusedKind || view.problems.some((problem) => problem.code === "refused_kind" && problem.questionIds?.includes(question.id));
+    if (refused)
+      return (
+        <div className="app-kit__answer">
+          <Badge tone="note">Asked every time</Badge>
+          <p>Answers to questions like this are never saved or matched. Choose “Not this one”, then type your answer for this job only.</p>
+          <div className="actions">
+            <button type="button" className="small" disabled={action.pending} onClick={() => void send({ kind: "reject" })}>
+              Not this one
+            </button>
+          </div>
+        </div>
+      );
     return (
       <div className="app-kit__answer">
-        <Badge tone="confirmed">Saved answer</Badge>
+        {question.confirmed ? <Badge tone="backed">Saved answer</Badge> : <Badge tone="needs-you">Check this answer</Badge>}
         {match && (
           <>
             <p>Matched to your saved answer “{match.label}”.</p>
@@ -360,7 +375,7 @@ function QuestionAnswer({ question, view, action, write, saved }: PartProps & { 
         ) : null}
         <div className="actions">
           {!question.confirmed && (
-            <button type="button" className="small primary" disabled={action.pending} onClick={() => void send({ kind: "confirm" })}>
+            <button type="button" className="small" disabled={action.pending} onClick={() => void send({ kind: "confirm" })}>
               Use this answer
             </button>
           )}
@@ -390,15 +405,15 @@ function QuestionAnswer({ question, view, action, write, saved }: PartProps & { 
     >
       {sensitive ? (
         <>
-          <Badge tone="sensitive">Asked every time</Badge>
+          <Badge tone="note">Asked every time</Badge>
           <p>
             This question asks about {SENSITIVE_KIND_WORDS[question.sensitiveKind ?? "judge"]}. Answers to questions like this are never
-            saved or matched. Type your answer for this application only.
+            saved or matched. Type your answer for this job only.
           </p>
         </>
       ) : (
         <>
-          <Badge tone="proposed">Needs your answer</Badge>
+          <Badge tone="needs-you">Needs your answer</Badge>
           <p>None of your saved answers fits this question. Type your answer, or choose a saved answer.</p>
         </>
       )}

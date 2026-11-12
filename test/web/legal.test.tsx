@@ -53,17 +53,21 @@ describe("the privacy notice", () => {
     expect(apps).toContain("never receives your uploaded files, the words a fact came from, or your notes on a job");
     expect(apps).toContain("revoking access does not remove it from there");
     // A fact the person keeps to themselves: what the mark does, and the two things it doesn't.
-    expect(apps).toContain("or your notes on a job. It never receives a fact you have marked sensitive, or a resume that uses one. It never receives a coach’s comments or suggested wording either. Its access lasts");
+    expect(apps).toContain("or your notes on a job. It never receives a fact you keep private, or a resume that uses one. It never receives a coach’s comments or suggested wording either. Its access lasts");
     const choices = section("Your choices");
     expect(choices).toContain(
-      "Keep a fact to yourself: mark a fact sensitive under Facts and it is left out of every new resume, letter, interview preparation and fit preview, never put in a shared copy and never shown to a connected app.",
+      "Keep a fact to yourself: choose Keep private on a fact under Facts and it is left out of every new resume, letter, interview preparation and fit preview, never put in a shared copy and never shown to a connected app.",
     );
     expect(choices).toContain("A resume that already uses it can’t be downloaded, shared or read by an app until you remove those lines.");
     expect(choices).toContain("It stays in your search index, so the model that indexes your facts can still receive its words when you edit it or the index is rebuilt.");
-    expect(choices).toContain("Marking cannot take back what a model, a reader or an app received before.");
+    expect(choices).toContain("Keeping it private cannot take back what a model, a reader or an app received before.");
+    // The way to keep a fact private leads to the list where it is done.
+    const keep = screen.getByText("Keep a fact to yourself:").closest("li")!;
+    expect(within(keep).getByRole("link", { name: "Facts" })).toHaveAttribute("href", "#/facts/all");
     const items = [...screen.getByRole("heading", { level: 2, name: "Your choices" }).closest("section")!.querySelectorAll("li > strong")].map((item) => item.textContent);
     expect(items).toEqual(["See and correct it:", "Keep a fact to yourself:", "Take it with you:", "Delete it:"]);
-    expect(within(screen.getByRole("heading", { name: "Connecting an app" }).closest("section")!).getByRole("link", { name: "Account" })).toHaveAttribute("href", "#/account");
+    expect(within(screen.getByRole("heading", { name: "Connecting an app" }).closest("section")!).getByRole("link", { name: "Sharing › Connected apps" })).toHaveAttribute("href", "#/sharing/apps");
+    expect(section("Connecting an app")).toContain("you can revoke it at any time under Sharing › Connected apps.");
     expect(section("Your choices")).toContain("cancels a paid plan, ends every shared copy and app connection");
   });
 
@@ -94,7 +98,7 @@ describe("the privacy notice", () => {
     expect(ai.endsWith("a line those facts do not support is never shown to you. Comments on a shared copy are never sent to a language model or used to write or check a resume.")).toBe(true);
     // Who can comment, who can't, where the owner answers, and that email is sent only if they ask for it.
     expect(items("Sharing a copy").at(-2)).toBe(
-      "The coach you name can comment on a line or a fact in the copy once they have added it to their client list. Nobody else with the link can read or write comments. You answer and delete them under Account, where they stay after the copy ends until you delete them. " +
+      "The coach you name can comment on a line or a fact in the copy once they have added it to their client list. Nobody else with the link can read or write comments. You answer and delete them under Sharing › Coaches, where they stay after the copy ends until you delete them. " +
         EMAIL_SENTENCES,
     );
     // The coach is told, where they will look, that their words are kept in someone else's account.
@@ -194,7 +198,11 @@ describe("the privacy notice", () => {
     for (const stored of ["a place", "job types", "when you’re available", "a pay floor"]) expect(items[item], stored).toContain(stored);
     expect(items[item]).not.toMatch(/remote|authori[sz]|visa|citizen|permit|salary history/i);
     expect(document.querySelector("article")!.textContent).not.toMatch(/remote work|work authori[sz]ation|right to work/i);
-    expect(section("Your choices")).toContain("every fact, role, profile detail and job preference can be edited, rejected or cleared under Facts and Account.");
+    expect(section("Your choices")).toContain(
+      "every fact, role, profile detail and job preference can be edited, rejected or cleared under Facts, Account and Sharing › Recruiters.",
+    );
+    const choices = screen.getByRole("heading", { level: 2, name: "Your choices" }).closest("section")!;
+    expect(within(choices).getByRole("link", { name: "Sharing › Recruiters" })).toHaveAttribute("href", "#/sharing/recruiters");
     // No app is given them, so what an app may do says nothing about them.
     expect(section("Connecting an app")).not.toMatch(/preference/i);
   });

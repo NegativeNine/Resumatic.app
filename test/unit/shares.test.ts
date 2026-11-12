@@ -21,6 +21,7 @@ import {
   shareLink,
   SHARE_COOKIE,
 } from "../../src/worker/shares";
+import { SHARE_LINK_EXPIRED, SHARE_LINK_GONE } from "../../src/shared/sharing";
 import { signToken } from "../../src/worker/crypto";
 import type { FactRecord } from "../../src/shared/types";
 import type { Withheld } from "../../src/vault/sensitive";
@@ -28,6 +29,8 @@ import type { Withheld } from "../../src/vault/sensitive";
 const now = 1_800_000_000_000;
 const who = { userId: "owner", gen: 1 };
 const secret = "share-secret-that-is-at-least-32-bytes-long";
+/** What the owner is told when a copy is over the size limit, wherever the limit is met. */
+const TOO_LARGE = "This shared copy is too large. Choose fewer facts, resumes or documents, then try again.";
 const claims = {
   vid: "a".repeat(64),
   grantId: "0653389a-0d6d-4e90-94eb-23cc98b95c19",
@@ -200,7 +203,7 @@ describe("coach share snapshots", () => {
     expect(() => snapshotSelection(bad)).toThrow("confirm");
     const large = selection();
     large.facts[0]!.text = "x".repeat(1024 * 1024);
-    expect(() => snapshotSelection(large)).toThrow("too large");
+    expect(() => snapshotSelection(large)).toThrow(TOO_LARGE);
     expect(() =>
       snapshotSelection({
         ...selection(),
@@ -236,7 +239,7 @@ describe("coach share snapshots", () => {
       old.resumes[0].summary = { id: "line1", text: "Unverified historical edit", verification: "user-authored" };
       old.resumes[0].verification = "user-authored";
       db.prepare(`UPDATE share_grants SET snapshot = ? WHERE id = ?`).run(JSON.stringify(old), grant.id);
-      expect(() => shares.read({ grantId: grant.id, epoch: grant.epoch }, now)).toThrow("unavailable");
+      expect(() => shares.read({ grantId: grant.id, epoch: grant.epoch }, now)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       expect(shares.export(who)[0]!.snapshot!.resumes[0]!.summary!.text).toBe("Unverified historical edit");
       expect(shares.list(who, now)[0]).toMatchObject({ revokedAt: null, available: false });
     } finally { db.close(); }
@@ -260,13 +263,13 @@ describe("coach share snapshots", () => {
       security.epoch = "epoch-two";
       expect(() =>
         shares.read({ grantId: grant.id, epoch: grant.epoch }, now),
-      ).toThrow("unavailable");
+      ).toThrow(`gone: ${SHARE_LINK_GONE}`);
       security.epoch = grant.epoch;
       shares.revoke(who, grant.id, now);
       shares.revoke(who, grant.id, now + 1);
       expect(() =>
         shares.read({ grantId: grant.id, epoch: grant.epoch }, now),
-      ).toThrow("unavailable");
+      ).toThrow(`gone: ${SHARE_LINK_GONE}`);
       expect(
         db
           .prepare("SELECT snapshot FROM share_grants WHERE id = ?")
@@ -293,6 +296,30 @@ describe("coach share snapshots", () => {
       security.open = true;
       shares.purgeExpired(now + 1000);
       expect(shares.list(who)).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("how many copies are shared", () => {
+  it("counts copies neither revoked nor expired, and those naming a coach", () => {
+    const { shares, db } = store();
+    try {
+      expect(shares.openCounts(now)).toEqual({ copies: 0, coachCopies: 0 });
+      shares.create(who, selection(), now + 10_000, now);
+      const named = shares.create(who, selection(), now + 10_000, now, { coachEmail: "dana@example.test" });
+      shares.create(who, selection(), now + 20_000, now, { coachEmail: "lee@example.test" });
+      const soon = shares.create(who, selection(), now + 1_000, now, { coachEmail: "kim@example.test" });
+      expect(shares.openCounts(now)).toEqual({ copies: 4, coachCopies: 3 });
+      // Revoked: no longer shared.
+      shares.revoke(who, named.id, now);
+      expect(shares.openCounts(now)).toEqual({ copies: 3, coachCopies: 2 });
+      // Expired at the exact moment, before the alarm erases it.
+      expect(shares.openCounts(now + 999)).toEqual({ copies: 3, coachCopies: 2 });
+      expect(shares.openCounts(now + 1_000)).toEqual({ copies: 2, coachCopies: 1 });
+      expect(soon.coach?.email).toBe("kim@example.test");
+      expect(shares.openCounts(now + 20_000)).toEqual({ copies: 0, coachCopies: 0 });
     } finally {
       db.close();
     }
@@ -362,7 +389,7 @@ describe("what a copy says about its owner and its jobs", () => {
       // An earlier copy never carried a job, so one that claims to is not what was saved.
       const forged = { ...earlier, resumes: [{ ...earlier.resumes[0]!, job: { title: "Added later", company: null } }] };
       db.prepare(`UPDATE share_grants SET snapshot = ? WHERE id = ?`).run(JSON.stringify(forged), grant.id);
-      expect(() => read(shares, grant)).toThrow("unavailable");
+      expect(() => read(shares, grant)).toThrow(`gone: ${SHARE_LINK_GONE}`);
     } finally { db.close(); }
   });
 
@@ -377,14 +404,14 @@ describe("what a copy says about its owner and its jobs", () => {
       const changed = saved();
       changed.resumes[0].summary.text = "Ran the whole company";
       store_(changed);
-      expect(() => read(shares, grant)).toThrow("unavailable");
+      expect(() => read(shares, grant)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       for (const job of [{ title: "Staff Engineer", company: "Litware", notes: "private" }, { title: 7, company: null }, "Litware", { title: "x".repeat(201), company: null }]) {
         store_({ ...original, resumes: [{ ...original.resumes[0], job }] });
-        expect(() => read(shares, grant)).toThrow("unavailable");
+        expect(() => read(shares, grant)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       }
       for (const owner of [undefined, { name: "" }, { name: 7 }, { name: "x".repeat(201) }, "Avery"]) {
         store_({ ...original, owner });
-        expect(() => read(shares, grant)).toThrow("unavailable");
+        expect(() => read(shares, grant)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       }
       store_(original);
       expect(read(shares, grant).snapshot).toEqual(original);
@@ -401,10 +428,10 @@ describe("what a copy says about its owner and its jobs", () => {
       // The selection alone fits exactly. What a copy adds around it has to fit as well.
       large.facts[0]!.text = "x".repeat(room);
       expect(size(snapshotSelection(large, now))).toBe(MAX_SHARE_BYTES);
-      expect(() => shares.create(who, large, now + 10_000, now)).toThrow("too large");
+      expect(() => shares.create(who, large, now + 10_000, now)).toThrow(TOO_LARGE);
       // A name is cut to 200 characters. With 100 bytes to spare it doesn't fit, and the copy without it does.
       large.facts[0]!.text = "x".repeat(room - 100);
-      expect(() => shares.create(who, large, now + 10_000, now, { owner: { name: "n".repeat(500) } })).toThrow("too large");
+      expect(() => shares.create(who, large, now + 10_000, now, { owner: { name: "n".repeat(500) } })).toThrow(TOO_LARGE);
       const grant = shares.create(who, large, now + 10_000, now);
       expect(read(shares, grant).snapshot.owner).toBeNull();
       large.facts[0]!.text = "x".repeat(room - 300);
@@ -525,7 +552,7 @@ describe("cover letters and interview preparation in a copy", () => {
       long.data.result.units = Array.from({ length: 400 }, (_, i) => ({ id: `u${i}`, roleId: "r1", text: SENTENCE, factIds: ["f1"], group: 0, status: "kept" }));
       const large = selection();
       large.facts[0]!.text = "x".repeat(MAX_SHARE_BYTES - 5_000);
-      expect(() => shares.create(who, { ...large, documents: [long] }, now + 10_000, now)).toThrow("too large");
+      expect(() => shares.create(who, { ...large, documents: [long] }, now + 10_000, now)).toThrow(TOO_LARGE);
       expect(shares.list(who, now)).toHaveLength(1);
     } finally { db.close(); }
   });
@@ -559,7 +586,7 @@ describe("cover letters and interview preparation in a copy", () => {
         const copy = structuredClone(original);
         change(copy);
         rewrite(grant.id, copy);
-        expect(read, JSON.stringify(copy).slice(0, 120)).toThrow("unavailable");
+        expect(read, JSON.stringify(copy).slice(0, 120)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       }
       rewrite(grant.id, original);
       expect(read().snapshot).toEqual(original);
@@ -569,20 +596,20 @@ describe("cover letters and interview preparation in a copy", () => {
       const letter = saved("letter");
       letter.result.units[0]!.text = "Built the API and the billing system";
       db.prepare(`UPDATE document_versions SET data = ? WHERE document_id = 'letter1'`).run(JSON.stringify(letter));
-      expect(read).toThrow("unavailable");
+      expect(read).toThrow(`gone: ${SHARE_LINK_GONE}`);
       expect(shares.list(who, now)[0]!.available).toBe(false);
       db.prepare(`UPDATE document_versions SET data = ? WHERE document_id = 'letter1'`).run(JSON.stringify(saved("letter")));
       expect(read().snapshot).toEqual(original);
       const withoutEvidence = saved("prep") as { evidence?: unknown };
       delete withoutEvidence.evidence;
       db.prepare(`UPDATE document_versions SET data = ? WHERE document_id = 'prep1'`).run(JSON.stringify(withoutEvidence));
-      expect(read).toThrow("unavailable");
+      expect(read).toThrow(`gone: ${SHARE_LINK_GONE}`);
       db.prepare(`UPDATE document_versions SET data = ? WHERE document_id = 'prep1'`).run(JSON.stringify(saved("prep")));
       db.prepare(`UPDATE documents SET state = 'failed' WHERE id = 'prep1'`).run();
-      expect(read).toThrow("unavailable");
+      expect(read).toThrow(`gone: ${SHARE_LINK_GONE}`);
       db.prepare(`UPDATE documents SET state = 'ready' WHERE id = 'prep1'`).run();
       db.prepare(`DELETE FROM document_versions WHERE document_id = 'letter1'`).run();
-      expect(read).toThrow("unavailable");
+      expect(read).toThrow(`gone: ${SHARE_LINK_GONE}`);
       // The owner's stored copy is untouched by any of this.
       expect(shares.export(who)[0]!.snapshot).toEqual(original);
     } finally { db.close(); }
@@ -595,12 +622,12 @@ describe("cover letters and interview preparation in a copy", () => {
       const copy = snapshotOf(grant.id);
       copy.documents = [{ id: "letter1", version: 1, kind: "letter", paragraphs: [SENTENCE], questions: [], job: null }];
       rewrite(grant.id, copy);
-      expect(() => shares.read({ grantId: grant.id, epoch: grant.epoch }, now)).toThrow("unavailable");
+      expect(() => shares.read({ grantId: grant.id, epoch: grant.epoch }, now)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       // Nor a copy from before names and jobs.
       const earlier = snapshotSelection(selection(), now) as unknown as Record<string, unknown>;
       earlier.documents = copy.documents;
       rewrite(grant.id, earlier);
-      expect(() => shares.read({ grantId: grant.id, epoch: grant.epoch }, now)).toThrow("unavailable");
+      expect(() => shares.read({ grantId: grant.id, epoch: grant.epoch }, now)).toThrow(`gone: ${SHARE_LINK_GONE}`);
     } finally { db.close(); }
   });
 });
@@ -634,7 +661,7 @@ describe("the coach a copy names", () => {
       expect(shares.reviewer(claims, { userId: "u-x", email: "someone@example.test" }, now)).toBe("other");
       expect(shares.reviewer(claims, dana, now)).toBe("you");
       expect(() => shares.join(claims, { userId: "u-x", email: "someone@example.test" }, now)).toThrow("names a different address");
-      expect(() => shares.openForCoach(grant.id, dana, now)).toThrow("unavailable");
+      expect(() => shares.openForCoach(grant.id, dana, now)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       expect(shares.coachStatus(grant.id, dana, now)).toBeNull();
 
       expect(shares.join(claims, dana, now + 5)).toEqual({ ownerName: "Sam Rivera", expiresAt: now + 10_000 });
@@ -648,14 +675,14 @@ describe("the coach a copy names", () => {
 
       // The same address under another account, or the same account under another address, is not the coach.
       for (const other of [{ userId: "u-other", email: dana.email }, { userId: dana.userId, email: "dana@elsewhere.test" }]) {
-        expect(() => shares.openForCoach(grant.id, other, now)).toThrow("unavailable");
+        expect(() => shares.openForCoach(grant.id, other, now)).toThrow(`gone: ${SHARE_LINK_GONE}`);
         expect(shares.coachStatus(grant.id, other, now)).toBeNull();
       }
       expect(shares.reviewer(claims, { userId: "u-other", email: dana.email }, now)).toBe("you");
       // An account made again under the address takes the copy up afresh.
       shares.join(claims, { userId: "u-other", email: dana.email, name: "Dana O." }, now + 90);
       expect(shares.list(who, now)[0]!.coach).toEqual({ email: "dana@example.test", name: "Dana O.", joinedAt: now + 90 });
-      expect(() => shares.openForCoach(grant.id, dana, now)).toThrow("unavailable");
+      expect(() => shares.openForCoach(grant.id, dana, now)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       expect(shares.export(who)[0]!.coach).toMatchObject({ email: "dana@example.test", joinedAt: now + 90 });
     } finally { db.close(); }
   });
@@ -665,28 +692,28 @@ describe("the coach a copy names", () => {
     try {
       // Ending every session on the owner's account closes its copies, to a coach as to a link.
       security.epoch = "epoch-two";
-      expect(() => shares.join(claims, dana, now)).toThrow("unavailable");
-      expect(() => shares.reviewer(claims, dana, now)).toThrow("unavailable");
+      expect(() => shares.join(claims, dana, now)).toThrow(`gone: ${SHARE_LINK_GONE}`);
+      expect(() => shares.reviewer(claims, dana, now)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       security.epoch = "epoch-one";
       shares.join(claims, dana, now);
       security.epoch = "epoch-two";
       expect(shares.coachStatus(grant.id, dana, now)).toBeNull();
-      expect(() => shares.openForCoach(grant.id, dana, now)).toThrow("unavailable");
+      expect(() => shares.openForCoach(grant.id, dana, now)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       security.epoch = "epoch-one";
       expect(shares.coachStatus(grant.id, dana, now)).toMatchObject({ active: true });
-      expect(() => shares.openForCoach(grant.id, dana, now + 10_000)).toThrow("unavailable");
+      expect(() => shares.openForCoach(grant.id, dana, now + 10_000)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       expect(shares.coachStatus(grant.id, dana, now + 10_000)).toBeNull();
-      expect(() => shares.reviewer(claims, dana, now + 10_000)).toThrow("unavailable");
-      expect(() => shares.join(claims, dana, now + 10_000)).toThrow("unavailable");
-      expect(() => shares.join({ ...claims, epoch: "another" }, dana, now)).toThrow("unavailable");
+      expect(() => shares.reviewer(claims, dana, now + 10_000)).toThrow(`gone: ${SHARE_LINK_GONE}`);
+      expect(() => shares.join(claims, dana, now + 10_000)).toThrow(`gone: ${SHARE_LINK_GONE}`);
+      expect(() => shares.join({ ...claims, epoch: "another" }, dana, now)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       // The saved resume no longer matches the copy, so there is nothing to open.
       db.prepare(`UPDATE resume_versions SET data = ? WHERE resume_id = 'resume1'`).run(JSON.stringify({ render: { profile: {}, body: { summary: null, sections: [], skills: [] } }, facts: {} }));
-      expect(() => shares.openForCoach(grant.id, dana, now)).toThrow("unavailable");
+      expect(() => shares.openForCoach(grant.id, dana, now)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       // The coach's list says no more of it than of a link that has ended, and it can't be taken up again.
       expect(shares.coachStatus(grant.id, dana, now)).toBeNull();
-      expect(() => shares.join(claims, dana, now + 1)).toThrow("gone: this share link is unavailable or expired");
+      expect(() => shares.join(claims, dana, now + 1)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       shares.revoke(who, grant.id, now + 1);
-      expect(() => shares.openForCoach(grant.id, dana, now + 2)).toThrow("unavailable");
+      expect(() => shares.openForCoach(grant.id, dana, now + 2)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       expect(shares.coachStatus(grant.id, dana, now + 2)).toBeNull();
       // The owner's record of who took it up stays with the revoked link.
       expect(shares.list(who, now + 2)[0]).toMatchObject({ revokedAt: now + 1, coach: { email: "dana@example.test", name: "Dana Okafor", joinedAt: now } });
@@ -723,13 +750,13 @@ describe("a fact its owner has marked sensitive", () => {
     const { shares, security, db, chosen } = copies();
     try {
       security.withheld = marked(["f1"], [QUOTE]);
-      expect(() => shares.create(who, { ...selection(), resumes: [] }, now + 10_000, now)).toThrow("A fact marked sensitive can't be shared. Unmark it, or leave it out.");
-      expect(() => shares.create(who, { ...selection(), facts: [] }, now + 10_000, now)).toThrow("This version uses a fact you marked sensitive");
+      expect(() => shares.create(who, { ...selection(), resumes: [] }, now + 10_000, now)).toThrow("A fact you keep private can't be shared. Leave it out, or stop keeping it private.");
+      expect(() => shares.create(who, { ...selection(), facts: [] }, now + 10_000, now)).toThrow("This version uses a fact you keep private");
       expect(() => shares.create(who, { ...none, documents: [chosen] }, now + 10_000, now)).toThrow("can't be shared as it is");
       expect(() => shares.create(who, { ...selection(), documents: [chosen] }, now + 10_000, now)).toThrow();
       // The gate itself, given the marks, refuses in the same words. Given none, it is as it was.
-      expect(() => snapshotSelection(selection(), now, marked(["f1"]))).toThrow("A fact marked sensitive can't be shared");
-      expect(() => snapshotSelection({ ...selection(), facts: [] }, now, marked(["f1"]))).toThrow("marked sensitive");
+      expect(() => snapshotSelection(selection(), now, marked(["f1"]))).toThrow("A fact you keep private can't be shared. Leave it out, or stop keeping it private.");
+      expect(() => snapshotSelection({ ...selection(), facts: [] }, now, marked(["f1"]))).toThrow("you keep private");
       expect(() => snapshotSelection(selection(), now, unmarked)).not.toThrow();
       // Nothing was made beyond the three copies from before the mark.
       expect(db.prepare(`SELECT COUNT(*) AS n FROM share_grants`).get()).toEqual({ n: 3 });
@@ -747,13 +774,13 @@ describe("a fact its owner has marked sensitive", () => {
       security.withheld = marked(["f1"], [QUOTE]);
       for (const grant of [fact, resume, document])
         // The words a reader gets for any link that has ended. Nothing says a fact exists or is marked.
-        expect(() => read(grant), grant.id).toThrow("gone: this share link is unavailable or expired");
+        expect(() => read(grant), grant.id).toThrow(`gone: ${SHARE_LINK_GONE}`);
       // The owner's list says the links are closed, and the copies themselves are kept as they were.
       expect(shares.list(who, now + 3).map((grant) => [grant.revokedAt, grant.available])).toEqual([[null, false], [null, false], [null, false]]);
       expect(shares.export(who).map((grant) => grant.snapshot)).toEqual([before.document.snapshot, before.resume.snapshot, before.fact.snapshot]);
       // Passing the marks in closes a copy just as asking for them does.
       security.withheld = unmarked;
-      expect(() => shares.read({ grantId: fact.id, epoch: fact.epoch }, now + 3, marked(["f1"]))).toThrow("unavailable");
+      expect(() => shares.read({ grantId: fact.id, epoch: fact.epoch }, now + 3, marked(["f1"]))).toThrow(`gone: ${SHARE_LINK_GONE}`);
 
       // Unmarked, each copy is delivered exactly as it was.
       expect({ fact: read(fact), resume: read(resume), document: read(document) }).toEqual(before);
@@ -762,7 +789,7 @@ describe("a fact its owner has marked sensitive", () => {
       security.withheld = marked(["f1"], [QUOTE]);
       shares.revoke(who, fact.id, now + 4);
       security.withheld = unmarked;
-      expect(() => read(fact)).toThrow("unavailable");
+      expect(() => read(fact)).toThrow(`gone: ${SHARE_LINK_GONE}`);
     } finally { db.close(); }
   });
 
@@ -773,8 +800,8 @@ describe("a fact its owner has marked sensitive", () => {
       security.withheld = marked(["another"], [QUOTE]);
       // A copied fact is its text and never its quote, so the copy that holds only that stays open.
       expect(read(fact).snapshot.facts.map((copied) => copied.text)).toEqual(["Built the API"]);
-      expect(() => read(resume)).toThrow("unavailable");
-      expect(() => read(document)).toThrow("unavailable");
+      expect(() => read(resume)).toThrow(`gone: ${SHARE_LINK_GONE}`);
+      expect(() => read(document)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       // Newest first: the letter, the resume, the fact.
       expect(shares.list(who, now + 3).map((grant) => grant.available)).toEqual([false, false, true]);
     } finally { db.close(); }
@@ -790,8 +817,8 @@ describe("a fact its owner has marked sensitive", () => {
       expect(shares.openForCoach(fact.id, dana, now)).toEqual({ epoch: fact.epoch, expiresAt: now + 10_000 });
       expect(shares.coachStatus(fact.id, dana, now)).toEqual(listed);
       security.withheld = marked(["f1"], [QUOTE]);
-      expect(() => shares.openForCoach(fact.id, dana, now)).toThrow("gone: this share link is unavailable or expired");
-      expect(() => shares.read(claims, now)).toThrow("unavailable");
+      expect(() => shares.openForCoach(fact.id, dana, now)).toThrow(`gone: ${SHARE_LINK_GONE}`);
+      expect(() => shares.read(claims, now)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       // Their list says of it what it says of a link that has ended: nothing, not even how much it holds.
       expect(shares.coachStatus(fact.id, dana, now)).toBeNull();
       security.withheld = unmarked;
@@ -810,8 +837,8 @@ describe("a fact its owner has marked sensitive", () => {
       expect(shares.reviewer(claims, dana, now)).toBe("you");
       security.withheld = marked(["f1"], [QUOTE]);
       // The same words as for a link that has ended, for the named coach and for anyone else.
-      expect(() => shares.join(claims, dana, now)).toThrow("gone: this share link is unavailable or expired");
-      expect(() => shares.join(claims, { userId: "u-x", email: "someone@example.test" }, now)).toThrow("gone: this share link is unavailable or expired");
+      expect(() => shares.join(claims, dana, now)).toThrow(`gone: ${SHARE_LINK_GONE}`);
+      expect(() => shares.join(claims, { userId: "u-x", email: "someone@example.test" }, now)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       expect(named()).toEqual({ email: dana.email, name: null, joinedAt: null });
       expect(shares.coachStatus(fact.id, dana, now)).toBeNull();
       // Unmarked, the copy is taken up as it always could be.
@@ -820,7 +847,7 @@ describe("a fact its owner has marked sensitive", () => {
       expect(named()).toEqual({ email: dana.email, name: "Dana Okafor", joinedAt: now + 5 });
       // Marked again once taken up, a repeat of the take-up is refused too and changes nothing.
       security.withheld = marked(["f1"], [QUOTE]);
-      expect(() => shares.join(claims, { ...dana, name: "Someone Else" }, now + 9)).toThrow("gone: this share link is unavailable or expired");
+      expect(() => shares.join(claims, { ...dana, name: "Someone Else" }, now + 9)).toThrow(`gone: ${SHARE_LINK_GONE}`);
       expect(named()).toEqual({ email: dana.email, name: "Dana Okafor", joinedAt: now + 5 });
     } finally { db.close(); }
   });
@@ -875,6 +902,10 @@ describe("share credential isolation", () => {
     expect(session).toMatchObject({ grantId: claims.grantId, kind: "coach-session" });
     // Anything else would let a request choose a cookie name, or break the header.
     for (const bad of ["", "legacy", `${claims.grantId}; Domain=example.com`, `${claims.grantId}=x`, "../../etc", `${claims.grantId} `])
-      expect(() => shareCookieName(bad)).toThrow("unavailable");
+      expect(() => shareCookieName(bad)).toThrow(`gone: ${SHARE_LINK_GONE}`);
+  });
+  it("says a link whose last moment has passed has expired, in the fixed sentence", async () => {
+    await expect(createShareSession(secret, { ...claims, exp: now, kind: "coach-link" }, now)).rejects.toThrow(`gone: ${SHARE_LINK_EXPIRED}`);
+    await expect(createShareSession(secret, { ...claims, kind: "coach-session" }, now)).rejects.toThrow(`gone: ${SHARE_LINK_EXPIRED}`);
   });
 });

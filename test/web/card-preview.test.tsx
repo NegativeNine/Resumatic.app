@@ -4,18 +4,23 @@ import { describe, expect, it } from "vitest";
 import type { CardPreview, PrivateCard } from "../../src/shared/card";
 import { isCardPreview } from "../../src/web/card-preview";
 import { CardPreviewSection } from "../../src/web/components/CardPreview";
-import { AccountPage } from "../../src/web/pages/AccountPage";
+import { SharingRecruiters } from "../../src/web/pages/sharing/SharingRecruiters";
 import { installFakeApi } from "./api-fake";
 import { fixtures, fullVault, type Fixtures } from "./fixtures";
 import { renderWithSession } from "./render";
 
 const ROUTE = /^\/api\/v2\/card-preview$/;
-const ALWAYS = "Only you can see this. Nothing is published: there’s no way to make a card visible to anyone, and this preview doesn’t change that.";
+const ALWAYS =
+  "Only you can see this. Nothing is published: there’s no way to make an anonymous profile visible to anyone, and this preview doesn’t change that.";
 const INTRO =
-  "If you ever chose to be found, recruiters would see a card like this instead of your resume. It’s built only from tags you’ve confirmed on your jobs and facts. It never holds your name, employers, dates or your own words, or anything from a fact you’ve marked sensitive.";
-const EMPTY = "Your card is empty. It uses only confirmed tags, and none of yours are confirmed: tags are still being tested, and nobody can confirm one in Resumatic yet.";
-const UNAVAILABLE = "The card preview isn’t available here yet. It needs the list of occupations and skills that tags come from, and that isn’t connected.";
-const LEFT_OUT = "A card would also say where you’d work, the kinds of job you want and when you could start. Those come from your job preferences, which this preview doesn’t read.";
+  "If you ever chose to be found, recruiters would see an anonymous profile like this instead of your resume. It’s built only from tags you’ve confirmed on your jobs and facts. It never holds your name, employers, dates or your own words, or anything from a fact you keep private.";
+const EMPTY =
+  "Your anonymous profile is empty. It uses only confirmed tags, and none of yours are confirmed: tags are still being tested, and nobody can confirm one in Resumatic yet.";
+const UNAVAILABLE = "This preview isn’t available here yet. It needs the list of occupations and skills that tags come from, and that isn’t connected.";
+const LEFT_OUT =
+  "An anonymous profile would also say where you’d work, the kinds of job you want and when you could start. Those come from what you’re looking for, which this preview doesn’t read.";
+const TITLE = "What a recruiter would see";
+const LOADING = "Loading the preview…";
 const CREDITS = "Occupations and skills come from ESCO and O*NET. See the credits";
 const EXPERIENCE_HINT = "Counted from your confirmed jobs’ dates, with overlaps counted once.";
 const SKILLS_HINT = "Each is shown as the broader group it belongs to, and only if a confirmed fact shows it.";
@@ -33,8 +38,8 @@ async function open(change: (state: Fixtures) => void = () => {}) {
   change(state);
   const api = installFakeApi(state);
   const page = renderWithSession(<CardPreviewSection />, state.me);
-  const section = await screen.findByRole("region", { name: "Card preview" });
-  await waitFor(() => expect(within(section).queryByText("Loading your card…")).toBeNull());
+  const section = await screen.findByRole("region", { name: TITLE });
+  await waitFor(() => expect(within(section).queryByText(LOADING)).toBeNull());
   return { state, api, page, section, text: () => section.textContent!.replace(/\s+/g, " ") };
 }
 /** Each element's words, and a list's items, one after another with a space between. */
@@ -43,25 +48,30 @@ const words = (element: Element): string =>
 /** The fields of the card, each as its term and what it reads. */
 const fields = (section: HTMLElement) => [...section.querySelectorAll("dl > div")].map((entry) => [words(entry.querySelector("dt")!), words(entry.querySelector("dd")!)]);
 
-describe("the card preview on Account", () => {
-  it("is absent from Account when the preview is off", async () => {
+describe("the card preview on Recruiters", () => {
+  it("is absent from Recruiters when the preview is off", async () => {
     for (const capabilities of [undefined, { ocr: false, connectedApps: true }, { ocr: false, connectedApps: true, cardPreview: false }]) {
       const state = fullVault();
       state.me.capabilities = capabilities;
       const api = installFakeApi(state);
-      const page = renderWithSession(<AccountPage />, state.me);
+      const page = renderWithSession(<SharingRecruiters />, state.me);
       await screen.findByRole("button", { name: "Save preferences" });
-      expect(screen.queryByRole("heading", { name: "Card preview" })).toBeNull();
+      expect(screen.queryByRole("heading", { name: TITLE })).toBeNull();
       // Nothing asked for it either.
       expect(api.callsTo("GET", ROUTE)).toEqual([]);
       page.unmount();
     }
-    // Switched on, it sits directly after Job preferences.
+    // Switched on, it sits in the main column, under whether recruiters can find you.
     const state = fullVault();
     const api = installFakeApi(state);
-    renderWithSession(<AccountPage />, state.me);
+    renderWithSession(<SharingRecruiters />, state.me);
     await screen.findByText("Web platform development software");
-    expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent).slice(0, 4)).toEqual(["Profile", "Job preferences", "Card preview", "Saved answers"]);
+    expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent)).toEqual([
+      "Can recruiters find you?",
+      TITLE,
+      "Requests to meet you",
+      "What you’re looking for",
+    ]);
     expect(api.callsTo("GET", ROUTE)).toHaveLength(1);
   });
 
@@ -81,7 +91,7 @@ describe("the card preview on Account", () => {
     state.me.capabilities = { ocr: false, connectedApps: false, cardPreview: true };
     installFakeApi(state).fail("GET", ROUTE, 500, "internal", "boom");
     renderWithSession(<CardPreviewSection />, state.me);
-    expect(screen.getByText("Loading your card…")).toBeInTheDocument();
+    expect(screen.getByText(LOADING)).toBeInTheDocument();
     expect(screen.getByText(ALWAYS)).toBeInTheDocument();
     await screen.findByRole("alert");
     expect(screen.getByText(ALWAYS)).toBeInTheDocument();

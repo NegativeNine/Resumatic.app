@@ -1,5 +1,7 @@
 import { useEffect } from "react";
 export const VAULT_CHANGED = "resumatic:vault-change";
+/** Sent shortly after this tab changes something through the API, so the header's counts are read again. */
+export { COUNTS_CHANGED } from "./api";
 /** Push accelerates refresh. Existing polling remains the recovery path for missed events. */
 export function useLiveProgress(): void {
   useEffect(() => {

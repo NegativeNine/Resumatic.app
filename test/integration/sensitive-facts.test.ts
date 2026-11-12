@@ -6,7 +6,7 @@ import { extractFacts } from "../../src/pipeline/distill";
 import { setPdfRenderer } from "../../src/render/pdf";
 import { MAX_SENSITIVE_IDS, type FactView, type Me, type ResumeLine, type ResumeView } from "../../src/shared/api";
 import type { DocumentView, NewDocument } from "../../src/shared/documents";
-import type { CoachClient, ShareableDocument, ShareGrant, SharedView } from "../../src/shared/sharing";
+import { SHARE_LINK_GONE, type CoachClient, type ShareableDocument, type ShareGrant, type SharedView } from "../../src/shared/sharing";
 import { directory, vault } from "../../src/shared/stubs";
 import type { FactRecord } from "../../src/shared/types";
 import { MIGRATIONS, SCHEMA_VERSION, migrate } from "../../src/vault/schema";
@@ -25,7 +25,7 @@ const REACT = "Implemented React dashboards for the sales team";
 const SKILLS = "Go, TypeScript, Kubernetes, PostgreSQL";
 /** What a run that captured a marked fact is told, and what a version that uses one is told. */
 const FACTS_CHANGED = "Your facts changed while this draft was being made. Create it again.";
-const USES_SENSITIVE = "This version uses a fact you marked sensitive. Remove those lines or tailor a new version, then try again.";
+const USES_SENSITIVE = "This version uses a fact you keep private. Remove those lines or tailor a new version, then try again.";
 /** Workflows are slower while other suites share the machine. */
 const WAIT = 60_000;
 
@@ -829,11 +829,11 @@ describe("a resume version that uses a marked fact", () => {
     const line = lineOf(clean, GO_SERVICE).id;
     expect(await refusal(await refine({ lineIds: [line], manualText: "Mentored 2 junior engineers", manualFactIds: [mentored!.id] }, clean.version))).toEqual([
       422,
-      { error: "invalid", message: "Choose facts that aren't marked sensitive." },
+      { error: "invalid", message: "Choose facts you don't keep private." },
     ]);
     expect(await refusal(await refine({ lineIds: [line], manualText: "Built a Go service", manualFactIds: [go.id, mentored!.id] }, clean.version))).toEqual([
       422,
-      { error: "invalid", message: "Choose facts that aren't marked sensitive." },
+      { error: "invalid", message: "Choose facts you don't keep private." },
     ]);
     // Nothing was started by any of that.
     expect({ documents: await count(user, "documents"), runs: await count(user, "runs"), write: options.calls.write }).toEqual(before);
@@ -891,7 +891,7 @@ describe("an older version under review", () => {
     expect(held.sensitiveUse).toEqual({ lineIds: [line.id], skills: [] });
     // Nor can the line be checked against the marked fact again.
     const again = await check(line, [mentored!.id]);
-    expect([again.status, await again.json()]).toEqual([422, { error: "invalid", message: "Choose facts that aren't marked sensitive." }]);
+    expect([again.status, await again.json()]).toEqual([422, { error: "invalid", message: "Choose facts you don't keep private." }]);
     expect((await resumeOf(user, resume.id)).version).toBe(reviewed.version);
 
     // Unmarked, the check counts again, because nothing was rewritten, and the version can be finished.
@@ -1085,7 +1085,7 @@ describe("shared copies and a marked fact", () => {
     // A new copy that would hold the fact, or a resume that uses it, is refused. Nothing is made.
     const refusedFact = await user.send("POST", "/api/shares", { factIds: [led.id, mentored.id], resumes: [] });
     expect(refusedFact.status).toBe(422);
-    expect(await refusedFact.json()).toEqual({ error: "invalid", message: "A fact marked sensitive can't be shared. Unmark it, or leave it out." });
+    expect(await refusedFact.json()).toEqual({ error: "invalid", message: "A fact you keep private can't be shared. Leave it out, or stop keeping it private." });
     const refusedResume = await user.send("POST", "/api/shares", { factIds: [], resumes: [{ id: resume.id, version: resume.version }] });
     expect(refusedResume.status).toBe(409);
     expect(await refusedResume.json()).toEqual({ error: "conflict", message: USES_SENSITIVE });
@@ -1096,13 +1096,13 @@ describe("shared copies and a marked fact", () => {
     for (const copy of [withFact, withResume]) {
       const gone = await exchange(copy);
       expect(gone.status).toBe(410);
-      expect(await gone.json()).toEqual({ error: "gone", message: "this share link is unavailable or expired" });
+      expect(await gone.json()).toEqual({ error: "gone", message: SHARE_LINK_GONE });
       expect(gone.headers.getSetCookie()).toEqual([]);
     }
     // A reader who opened the link before the mark holds a session still. It reads nothing now.
     const late = await call(`/share/snapshot?g=${withFact.grant.id}`, { cookie: link });
     expect(late.status).toBe(410);
-    expect(await late.json()).toEqual({ error: "gone", message: "this share link is unavailable or expired" });
+    expect(await late.json()).toEqual({ error: "gone", message: SHARE_LINK_GONE });
     // The coach is told the copy has ended, as for any copy that has. Their own account is untouched.
     const ended = await fromList();
     expect(ended.status).toBe(409);

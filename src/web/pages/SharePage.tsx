@@ -1,13 +1,17 @@
 import { useEffect, useState } from "react";
 import { ApiError } from "../api";
-import { CoachComments } from "../components/ShareComments";
-import { ShareFrame, ShareSnapshotContent, sameTarget } from "../components/ShareSnapshotContent";
-import { Badge, ErrorNote, Loading, Message } from "../components/ui";
+import { useCoachCommenting } from "../components/outside/coach-commenting";
+import { ShareFrame, ShareSnapshotContent } from "../components/ShareSnapshotContent";
+import { StateCard } from "../components/States";
+import { Badge, Loading, Message } from "../components/ui";
 import { describeError } from "../errors";
 import { formatDate } from "../format";
+import { href } from "../router";
+import { SIGN_IN_HASH } from "./outside/signed-out";
+// The copy's own styles are imported by the pages that show it: ShareSnapshotContent is also rendered in Node.
 import "../components/share.css";
 import type { ApiErrorBody } from "../../shared/api";
-import type { SharedView, ShareTarget } from "../../shared/sharing";
+import type { SharedView } from "../../shared/sharing";
 
 // Capture once before React effects/router/telemetry, then remove the bearer from browser history.
 let initialToken: string | null = null;
@@ -28,14 +32,23 @@ if (typeof window !== "undefined" && window.location.pathname === "/share") {
   grantId = new URLSearchParams(window.location.search).get("g") || null;
   showAddress();
 }
-class ShareUnavailable extends Error {}
+/**
+ * Which step refused for good: the link, when it can't be exchanged for a session, or the copy, when
+ * the session the link gave can't read it any more. The step decides what the page says, never the
+ * server's message: an expired link is usually refused as gone, not as expired.
+ */
+class ShareUnavailable extends Error {
+  constructor(readonly step: "link" | "copy") {
+    super(`Share ${step} unavailable`);
+  }
+}
 
-function checkResponse(response: Response): void {
+function checkResponse(response: Response, step: "link" | "copy"): void {
   if (response.ok) return;
   // A temporary failure should be retryable without exposing the bearer in
-  // the URL again. Invalid or expired links get the unavailable message.
+  // the URL again. Invalid or expired links and copies say so, with nothing to retry.
   if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429)
-    throw new ShareUnavailable();
+    throw new ShareUnavailable(step);
   throw new Error("Share temporarily unavailable");
 }
 
@@ -53,7 +66,7 @@ function exchangeLink(): Promise<void> {
       body: JSON.stringify({ token }),
     });
     try {
-      checkResponse(response);
+      checkResponse(response, "link");
     } catch (error) {
       if (error instanceof ShareUnavailable) initialToken = null;
       throw error;
@@ -70,19 +83,15 @@ function exchangeLink(): Promise<void> {
 
 export function SharePage() {
   const [view, setView] = useState<SharedView | null>(null);
-  const [failed, setFailed] = useState<"unavailable" | "temporary" | null>(null);
+  const [failed, setFailed] = useState<"link" | "copy" | "temporary" | null>(null);
   const [attempt, setAttempt] = useState(0);
-  /** The line or fact the coach has chosen to comment on. One at a time. */
-  const [selected, setSelected] = useState<ShareTarget | null>(null);
   /** The copy turned out not to be in the reader's client list after all, as when another tab took it off. */
   const [unlisted, setUnlisted] = useState(false);
-  /** Why commenting is over for this reader, as the comments were refused: the copy ended, or they must sign in again. */
-  const [ended, setEnded] = useState<string | null>(null);
   // Each reading of the copy starts over: once the copy is added again, it can be commented on again.
   useEffect(() => {
     setUnlisted(false);
-    setEnded(null);
   }, [view]);
+  const coaching = useCoachCommenting(view, { onUnlisted: () => setUnlisted(true) });
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -92,11 +101,11 @@ export function SharePage() {
           credentials: "same-origin",
           cache: "no-store",
         });
-        checkResponse(response);
+        checkResponse(response, "copy");
         const data = (await response.json()) as SharedView;
         if (active) setView(data);
       } catch (error) {
-        if (active) setFailed(error instanceof ShareUnavailable ? "unavailable" : "temporary");
+        if (active) setFailed(error instanceof ShareUnavailable ? error.step : "temporary");
       }
     })();
     return () => {
@@ -108,77 +117,61 @@ export function SharePage() {
   useEffect(() => {
     if (view) document.title = `${owner ? `${owner}, shared copy` : "Shared copy"} – Resumatic`;
   }, [view, owner]);
-  if (failed === "unavailable")
+  if (failed === "link")
     return (
       <ShareFrame>
-        <div className="app-share__card">
-          <h1>Share unavailable</h1>
-          <p>
-            If you had this copy open before, open the link from your message again. A copy stays open for an hour
-            at a time. If the link doesn’t work either, it has expired or been revoked, and the person who sent it
-            can make a new one.
-          </p>
-        </div>
+        <StateCard level={1} title="This link isn’t available">
+          It has expired, or the person who shared it turned it off. Ask them for a new one.
+        </StateCard>
+      </ShareFrame>
+    );
+  if (failed === "copy")
+    return (
+      <ShareFrame>
+        <StateCard level={1} title="This copy isn’t open any more">
+          A copy stays open for an hour at a time. Open the link from your message again. If the link doesn’t work
+          either, it has expired or been turned off, and the person who shared it can share a new copy.
+        </StateCard>
       </ShareFrame>
     );
   if (failed === "temporary")
     return (
       <ShareFrame>
-        <div className="app-share__card">
-          <h1>This copy couldn’t be opened</h1>
-          <p>Check your connection, then try again.</p>
-          <button type="button" className="rs-btn rs-btn--primary" onClick={() => { setFailed(null); setAttempt((value) => value + 1); }}>
-            Try again
-          </button>
-        </div>
+        <StateCard
+          level={1}
+          title="This copy couldn’t be opened"
+          action={
+            <button type="button" className="rs-btn rs-btn--primary" onClick={() => { setFailed(null); setAttempt((value) => value + 1); }}>
+              Try again
+            </button>
+          }
+        >
+          Check your connection, then try again.
+        </StateCard>
       </ShareFrame>
     );
   if (!view)
     return (
       <ShareFrame>
-        <Loading>Opening the shared copy…</Loading>
+        <div className="rs-panel app-state-card">
+          <Loading>Opening the shared copy…</Loading>
+        </div>
       </ShareFrame>
     );
   // A copy that has left the reader's own list is read as not added: the page offers to add it.
   const reviewer = unlisted && view.reviewer === "joined" ? "you" : view.reviewer;
-  // Comments are for the coach the copy names, once it is in their list, on a line or a fact.
-  // Letters and preparation have neither, so a copy of those alone has nothing to comment on.
+  // Letters and preparation have no line or fact to comment on, so a copy of those alone has nothing to choose.
   const commentable = view.snapshot.facts.length > 0 || view.snapshot.resumes.length > 0;
-  const commenting = reviewer === "joined" && commentable;
   return (
     <ShareSnapshotContent
       view={view}
       notice={
         reviewer && (
-          <CoachNotice view={view} reviewer={reviewer} commentable={commentable && ended === null} onChanged={() => setAttempt((value) => value + 1)} />
+          <CoachNotice view={view} reviewer={reviewer} commentable={commentable && coaching.ended === null} onChanged={() => setAttempt((value) => value + 1)} />
         )
       }
-      comments={
-        !commenting
-          ? undefined
-          : ended !== null
-            ? // Commenting is over: its one sentence stands in place of the threads, and nothing on the copy can be chosen.
-              { selected: null, aside: <ErrorNote message={ended} /> }
-            : {
-                selected,
-                // Choosing the chosen one again lets go of it.
-                onSelect: (target) => setSelected((current) => (sameTarget(current, target) ? null : target)),
-                aside: (
-                  <CoachComments
-                    view={view}
-                    selected={selected}
-                    onUnlisted={() => {
-                      setSelected(null);
-                      setUnlisted(true);
-                    }}
-                    onEnded={(sentence) => {
-                      setSelected(null);
-                      setEnded(sentence);
-                    }}
-                  />
-                ),
-              }
-      }
+      // Comments are for the coach the copy names, once it is in their list, on a line or a fact.
+      comments={unlisted ? undefined : coaching.comments}
     />
   );
 }
@@ -241,9 +234,9 @@ function CoachNotice({
     case "joined":
       return (
         <Message tone="info">
-          <Badge tone="ready">Fixed copy</Badge> Shared with you until {formatDate(view.expiresAt)}.
+          <Badge tone="note">Fixed copy</Badge> Shared with you until {formatDate(view.expiresAt)}.
           {commentable ? " You can comment." : ""} Only {view.snapshot.owner?.name ?? "its owner"} can change it.{" "}
-          <a className="rs-link" href="/#/clients">
+          <a className="rs-link" href={`/${href.clients}`}>
             Open your clients
           </a>
         </Message>
@@ -281,7 +274,7 @@ function CoachNotice({
       return (
         <Message tone="info" live={false}>
           This copy names a coach. If that’s you,{" "}
-          <a className="rs-link" href="/" target="_blank" rel="noopener">
+          <a className="rs-link" href={`/${SIGN_IN_HASH}`} target="_blank" rel="noopener">
             sign in to Resumatic
           </a>{" "}
           with that address, then reload this page to keep the copy in your client list.

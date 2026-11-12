@@ -1,0 +1,28 @@
+/*
+ * Today: the next step, the lists under it and where each room stands. The shared app- layout
+ * classes do the columns, rows and stacks; these rules are Today's own, with tokens only. On a
+ * phone the columns wrap into one, with the next step first.
+ */
+
+/* Caught up: a quiet line, with no button and no green. */
+.app-today-clear { margin: 0; font-size: 16px; line-height: 24px; color: var(--ink-muted); }
+
+/* The sentence for the file or text that ended first run, above the next step. */
+.app-today-added { margin: 0 0 var(--space-4); }
+
+/* The rows of a list are app-q rows; the list itself has no marker or indent. */
+.app-today-rows { margin: var(--space-2) 0 0; padding: 0; list-style: none; }
+.app-today-rows + .rs-meta { margin: var(--space-3) 0 0; }
+
+/* The three first steps. */
+.app-today-steps { margin: 0; padding: 0; list-style: none; }
+.app-today-steps .app-add-source { margin-top: var(--space-4); }
+.app-today-steps .app-drop--first-run { padding: var(--space-8) var(--space-6); }
+.app-today-steps .app-add-source + .rs-meta { margin-top: var(--space-3); }
+
+/* Each room's name in Where things stand leads its line. */
+.app-today-stand a { font-weight: 600; }
+.app-today-stand .rs-meta { margin: 2px 0 0; }
+.app-today-recent > li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-1) var(--space-4); }
+
+.app-today-action { margin: var(--space-3) 0 0; }

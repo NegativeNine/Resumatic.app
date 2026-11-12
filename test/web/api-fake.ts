@@ -28,6 +28,8 @@ import {
 } from "../../src/shared/kit";
 import { wording } from "../../src/shared/record";
 import { targetText, type NewShareComment, type NewSuggestion, type ShareComment } from "../../src/shared/sharing";
+import { countByState } from "../../src/shared/review-groups";
+import { emptyStanding, emptyToday, type Today, type TodayStanding } from "../../src/shared/today";
 import { sharedView, type Fixtures } from "./fixtures";
 
 export interface Call {
@@ -81,6 +83,11 @@ export class FakeApi {
   /** Answers the next matching request (or every one, with once: false) with an error. */
   fail(method: string, path: RegExp, status: number, error: string, message: string, once = true): void {
     this.failures.push({ method, path, reply: { status, body: { error, message } }, once });
+  }
+
+  /** Ends every failure set for this method and path, so the next call is answered as usual. */
+  recover(method: string, path: RegExp): void {
+    this.failures = this.failures.filter((f) => !(f.method === method && f.path.source === path.source));
   }
 
   /** Calls made with this method to paths that match. */
@@ -514,7 +521,7 @@ export class FakeApi {
       /^\/api\/sources\/([^/]+)\/text$/,
       (_call, [sourceId]) => {
         const markdown = this.state.sourceTexts?.[sourceId];
-        if (markdown === undefined) return conflict("this source has not been read yet");
+        if (markdown === undefined) return conflict("This file hasn't been read yet. Wait for it to finish, then try again.");
         const origin = this.state.sources.find((s) => s.id === sourceId)?.origin ?? "upload";
         return ok({ markdown, revisionId: `${sourceId}:1`, origin });
       },
@@ -652,7 +659,7 @@ export class FakeApi {
       /^\/api\/applications\/([^/]+)$/,
       (_call, [id]) => {
         const application = this.state.applications.find((a) => a.id === id);
-        if (!application) return notFound("no such application");
+        if (!application) return notFound("This job can't be found. It may have been deleted.");
         return ok({ ...application, jdText: this.posting(id), canDelete: application.resumes.length === 0 });
       },
     ],
@@ -661,7 +668,7 @@ export class FakeApi {
       /^\/api\/applications\/([^/]+)$/,
       (_call, [id]) => {
         const application = this.state.applications.find((a) => a.id === id);
-        if (!application) return notFound("no such application");
+        if (!application) return notFound("This job can't be found. It may have been deleted.");
         if (application.resumes.length > 0)
           return { status: 409, body: { error: "conflict", message: "This job has resumes or documents, so it can’t be deleted. Mark it Closed instead." } };
         this.state.applications.splice(this.state.applications.indexOf(application), 1);
@@ -673,7 +680,7 @@ export class FakeApi {
       /^\/api\/applications\/([^/]+)$/,
       (call, [id]) => {
         const application = this.state.applications.find((a) => a.id === id);
-        if (!application) return notFound("no such application");
+        if (!application) return notFound("This job can't be found. It may have been deleted.");
         const { expectedRevision: _revision, jdText, ...patch } = call.body as { expectedRevision?: number; jdText?: string; title?: string; company?: string; url?: string };
         if (jdText !== undefined) this.postings.set(id, jdText);
         // As the server does: an empty name or link clears it.
@@ -687,7 +694,7 @@ export class FakeApi {
       /^\/api\/applications\/([^/]+)\/resumes$/,
       (_call, [applicationId]) => {
         const application = this.state.applications.find((a) => a.id === applicationId);
-        if (!application) return notFound("no such application");
+        if (!application) return notFound("This job can't be found. It may have been deleted.");
         const quota = this.state.me.quota;
         if (quota.used >= quota.limit) {
           return { status: 429, body: { error: "quota", message: `You’ve used all ${quota.limit} tailored resumes for Nov 2026. You can tailor more from 1 Dec 2026.` } };
@@ -759,7 +766,144 @@ export class FakeApi {
         return { status: 204 };
       },
     ],
+
+    // The redesign's stages add their routes here, each inside its own block.
+
+    // stage 2: the shell
+    // What waits for the owner, as the fixtures give it: nothing at all unless a test says.
+    ["GET", /^\/api\/v2\/today$/, () => ok(this.todayReply())],
+
+    // stage 3: today
+
+    // stage 4: facts
+    // Your files: stopping a file being read, and reading a stopped one again, as the vault does.
+    [
+      "POST",
+      /^\/api\/sources\/([^/]+)\/cancel$/,
+      (_call, [id]) => {
+        const source = this.state.sources.find((s) => s.id === id);
+        if (!source || source.state !== "queued") return conflict("This file is no longer being read.");
+        source.cancellationPending = true;
+        return { status: 202 };
+      },
+    ],
+    // One route retries a file's reading and a job's document, as the Worker's one route does: the
+    // first match answers, so a second handler for the same path would never run.
+    [
+      "POST",
+      /^\/api\/runs\/([^/]+)\/retry$/,
+      (_call, [runId]) => {
+        const source = this.state.sources.find((s) => s.retryRunId === runId);
+        if (source) {
+          Object.assign(source, { state: "queued", error: null });
+          delete source.retryRunId;
+          return { status: 202, body: { runId: this.id("run"), targetId: source.id } };
+        }
+        const failed = (this.state.documents ?? []).find((held) => held.retryRunId === runId && held.state === "failed");
+        if (!failed) return notFound("no such run");
+        const id = this.id("doc");
+        (this.state.documents ??= []).unshift({ ...failed, id, state: "running", error: null, retryRunId: undefined, createdAt: Date.now(), result: null });
+        return { status: 202, body: { runId: id, targetId: id } };
+      },
+    ],
+
+    // stage 5: jobs
+    // A document's own status, as a line check reads it. With `lineChecks` set, a running line check
+    // ends when its status is read: passed, with the line saved as checked in a new version, or failed.
+    [
+      "GET",
+      /^\/api\/documents\/([^/]+)$/,
+      (_call, [id]) => {
+        const doc = (this.state.documents ?? []).find((held) => held.id === id);
+        if (!doc) return notFound("no such document");
+        const check = [...this.calls].reverse().find((call) => call.method === "POST" && /\/documents$/.test(call.path) && (call.body as { manualText?: string })?.manualText !== undefined);
+        const asked = check?.body as { resumeId: string; lineIds: string[]; manualText: string; manualFactIds?: string[] } | undefined;
+        if (doc.state === "running" && doc.kind === "refine" && this.state.lineChecks && asked) {
+          doc.state = this.state.lineChecks === "pass" ? "ready" : "failed";
+          doc.error = this.state.lineChecks === "pass" ? null : "invalid";
+          const resume = this.state.resumes[asked.resumeId];
+          const line = resume?.body && [...(resume.body.summary ? [resume.body.summary] : []), ...resume.body.sections.flatMap((s) => s.lines)].find((l) => l.id === asked.lineIds[0]);
+          if (this.state.lineChecks === "pass" && resume && line) {
+            // As the vault does: the owner's checked wording is saved as backed, with no finding.
+            line.text = asked.manualText;
+            line.status = "kept";
+            if (asked.manualFactIds) line.factIds = asked.manualFactIds;
+            delete line.finding;
+            resume.version += 1;
+          }
+        }
+        return ok(doc);
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/runs\/([^/]+)\/cancel$/,
+      (_call, [id]) => {
+        const doc = (this.state.documents ?? []).find((held) => held.id === id);
+        if (!doc || doc.state !== "running") return conflict("This run has already finished.");
+        doc.cancellationPending = true;
+        return { status: 202 };
+      },
+    ],
+    // A document's retry is answered by the one runs/retry route under stage 4.
+    [
+      "POST",
+      /^\/api\/resumes\/([^/]+)\/cancel$/,
+      (_call, [id]) => {
+        const resume = this.state.resumes[id!];
+        if (!resume || resume.state !== "running") return conflict("This resume has already finished.");
+        resume.cancellationPending = true;
+        return { status: 202 };
+      },
+    ],
+
+    // stage 6: sharing and account
+    // Revoking a copy or an app ends it at once and keeps it in the list, as the Worker does.
+    [
+      "DELETE",
+      /^\/api\/shares\/([^/]+)$/,
+      (_call, [id]) => {
+        const grant = (this.state.shares ?? []).find((share) => share.id === id);
+        if (!grant) return { status: 404, body: { error: "not_found", message: "no such share" } };
+        grant.revokedAt ??= Date.now();
+        return { status: 204 };
+      },
+    ],
+    [
+      "DELETE",
+      /^\/api\/mcp\/grants\/([^/]+)$/,
+      (_call, [id]) => {
+        const grant = (this.state.mcpGrants ?? []).find((app) => app.id === id);
+        if (!grant) return { status: 404, body: { error: "not_found", message: "no such grant" } };
+        grant.revokedAt ??= Date.now();
+        grant.state = "revoked";
+        return { status: 204 };
+      },
+    ],
+
+    // stage 7: outside
+    // A client's copy, read in the app: sharedView() for a copy in the list that is live, as the Worker answers.
+    [
+      "GET",
+      /^\/api\/coach\/clients\/([^/]+)\/copy$/,
+      (_call, [grantId]) => {
+        const client = (this.state.clients ?? []).find((held) => held.grantId === grantId);
+        if (!client) return notFound("no such client");
+        if (!client.active) return conflict("this copy has ended; the person who shared it can share again");
+        return ok({ ...sharedView(), grantId, reviewer: "joined" });
+      },
+    ],
   ];
+
+  // stage 3: today
+  /**
+   * Today as a test set it, with or without `standing`. Otherwise nothing waits, works or happened,
+   * and where things stand is worked out from the record, so adding the first file ends first run.
+   */
+  private todayReply(): Today {
+    if (this.state.today) return this.state.today;
+    return { ...emptyToday(0), standing: standingOf(this.state, Date.now()) };
+  }
 
   /** The email notice settings as saved, or every kind off, to the session's address. */
   private notices(): EmailNotices {
@@ -824,6 +968,28 @@ export class FakeApi {
       source.proposed = this.state.facts.filter((f) => f.sourceId === source.id && f.state === "proposed").length;
     }
   }
+}
+
+// stage 3: today
+/**
+ * Where things stand in a record, as the Vault counts it: every file, roles and facts as the review
+ * groups them, jobs by status, copies neither revoked nor expired at `now`, and active apps. The
+ * fake has one security epoch and session generation, so it skips the Vault's match on them.
+ */
+export function standingOf(state: Fixtures, now: number): TodayStanding {
+  const states = countByState({ roles: state.roles, facts: state.facts });
+  const jobs = emptyStanding().jobs;
+  for (const application of state.applications) jobs[application.status ?? "saved"] += 1;
+  const copies = (state.shares ?? []).filter((share) => share.revokedAt === null && share.expiresAt > now);
+  return {
+    files: state.sources.length,
+    confirmed: states.confirmed,
+    leftOut: states.rejected,
+    jobs,
+    copies: copies.length,
+    coachCopies: copies.filter((share) => share.coach).length,
+    apps: (state.mcpGrants ?? []).filter((grant) => grant.state === "active" && grant.revokedAt === null && grant.expiresAt > now).length,
+  };
 }
 
 /** Installs a fake API over the given fixtures as the global fetch, and returns it. */

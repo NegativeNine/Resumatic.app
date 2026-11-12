@@ -1,6 +1,7 @@
 import { Tick } from "./ui";
 
-const STEPS = [
+/** Tailoring's five steps, in order. Today names the one in progress as this page does. */
+export const STEPS = [
   { id: "analyze", label: "Read the job description" },
   { id: "select", label: "Choose your most relevant confirmed facts" },
   { id: "write", label: "Write lines from those facts" },
@@ -46,7 +47,7 @@ export function TailorProgress({ step, dispatchUncertain, cancellationPending }:
           const state = i < done ? "done" : i === current ? "current" : "todo";
           return (
             <li key={s.id} className={`rs-step is-${state}`} aria-current={state === "current" ? "step" : undefined}>
-              <Tick state={state === "done" ? "done" : state === "current" ? "running" : "todo"} />
+              <Tick state={state === "done" ? "backed" : state === "current" ? "working" : "todo"} />
               <span>
                 {s.label}
                 {state === "done" && <span className="rs-visually-hidden"> (done)</span>}

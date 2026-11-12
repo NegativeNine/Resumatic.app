@@ -13,10 +13,7 @@ import {
 } from "../../shared/api";
 import type { PostingRead } from "../../shared/postings";
 import { api } from "../api";
-import {
-  APPLICATION_LABELS,
-  ApplicationWorkspace,
-} from "../components/ApplicationWorkspace";
+import { APPLICATION_LABELS } from "../components/jobs/JobTracking";
 import {
   ActionError,
   Badge,
@@ -27,14 +24,17 @@ import {
   Loading,
   Message,
   PageHeader,
+  RUN_MARK,
   type GlyphName,
 } from "../components/ui";
-import { formatDate, formatDateTime, RESUME_STATE_LABEL } from "../format";
+import { formatDate, RESUME_STATE_LABEL } from "../format";
 import { useAction, useResource, type Reload } from "../hooks";
 import { QuotaMeter } from "../components/QuotaMeter";
 import { href } from "../router";
 import { useSession } from "../session";
 import { quotaMessage, useTailor } from "../tailor";
+import { useToday } from "../today";
+import "../styles/rooms/jobs.css";
 
 /** A finished resume's mark carries a glyph, so its state never rests on color. */
 const STATE_GLYPH: Partial<Record<ResumeState, GlyphName>> = {
@@ -45,6 +45,11 @@ const STATE_GLYPH: Partial<Record<ResumeState, GlyphName>> = {
 const isTailoring = (data: { applications: ApplicationView[] }) =>
   data.applications.some((a) => a.resumes.some((r) => r.state === "running"));
 
+/**
+ * Your jobs: adding one, and every job as a row that opens its own page, as a list or a board by
+ * status. Jobs are listed newest first. Fit is never shown here, and never sorts, filters or hides
+ * a job.
+ */
 export function JobsPage() {
   const list = useResource(api.applications, isTailoring);
   const { quota } = useSession().me;
@@ -53,31 +58,19 @@ export function JobsPage() {
   );
   const [status, setStatus] = useState<ApplicationStatus | "all">("all");
   const [view, setView] = useState<"list" | "board">("list");
-  const [openWorkspaces, setOpenWorkspaces] = useState<ReadonlySet<string>>(() => new Set());
   const filterId = useId();
   const statusOf = (application: ApplicationView) => application.status ?? "saved";
   const visible =
     status === "all"
       ? applications
-      : applications.filter(
-          (application) => statusOf(application) === status || openWorkspaces.has(application.id),
-        );
+      : applications.filter((application) => statusOf(application) === status);
   const visibleIds = new Set(visible.map((application) => application.id));
-  const extraWorkspace = status !== "all" && visible.some((application) => statusOf(application) !== status);
   const columns = APPLICATION_STATUSES.filter(
     (value) => status === "all" || status === value || visible.some((application) => statusOf(application) === value),
   );
-  function toggleWorkspace(id: string) {
-    setOpenWorkspaces((previous) => {
-      const next = new Set(previous);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }
   // Column headings and empty slots are list items too: a list may only hold list items, and a
   // heading inside one still reads as a heading.
-  // Keep one keyed parent for cards in both views. Moving a card to a new
-  // board column or changing the filter must not unmount an open workspace.
+  // Keep one keyed parent for rows in both views, so changing the view or the filter keeps them.
   const content: ReactNode[] = [];
   if (view === "board") for (const [index, value] of columns.entries()) {
     const count = visible.filter((application) => statusOf(application) === value).length;
@@ -92,14 +85,11 @@ export function JobsPage() {
   }
   for (const application of applications) {
     const appStatus = statusOf(application);
-    content.push(<ApplicationCard
+    content.push(<JobCard
       key={`application:${application.id}`}
       application={application}
-      onSaved={list.reload}
       compact={view === "board"}
       hidden={!visibleIds.has(application.id)}
-      open={openWorkspaces.has(application.id)}
-      onToggleWorkspace={() => toggleWorkspace(application.id)}
       columnLabel={view === "board" && visibleIds.has(application.id) ? `${filterId}-column-${appStatus}` : undefined}
       style={view === "board" && visibleIds.has(application.id) ? { gridColumn: columns.indexOf(appStatus) + 1 } : undefined}
     />);
@@ -110,7 +100,7 @@ export function JobsPage() {
       <PageHeader title="Jobs">
         Paste a job description, then tailor a resume to it. Every line comes
         from facts you’ve confirmed under{" "}
-        <a href={href.facts}>Facts</a>.
+        <a href={href.factsAll}>Facts</a>.
       </PageHeader>
       {/* On small screens the quota leaves the header for the top of Jobs. */}
       <QuotaMeter className="app-quota-small" />
@@ -177,7 +167,6 @@ export function JobsPage() {
         {!list.data && !list.error && (
           <Loading>Loading your jobs…</Loading>
         )}
-        {extraWorkspace && <p className="hint" role="status">Open workspaces stay visible even when their status doesn’t match the filter.</p>}
         {list.data &&
           (applications.length === 0 ? (
             <p className="empty">
@@ -189,7 +178,7 @@ export function JobsPage() {
               {visible.length === 0 && <p className="empty">No jobs have this status yet.</p>}
               <div hidden={visible.length === 0} className={view === "board" ? "application-board-scroller" : undefined} role={view === "board" ? "region" : undefined}
                 aria-label={view === "board" ? "Jobs by status" : undefined} tabIndex={view === "board" ? 0 : undefined}>
-                <ul className={`plain-list${view === "board" ? " application-board" : ""}`}
+                <ul className={`plain-list${view === "board" ? " application-board" : " app-job-rows"}`}
                   style={view === "board" ? { "--application-columns": columns.length } as CSSProperties : undefined}>
                   {content}
                 </ul>
@@ -202,25 +191,26 @@ export function JobsPage() {
   );
 }
 
-/** Why a link gave no posting, and what to do instead. */
+/** Why a link gave no job description, and what to do instead. */
 const UNREAD: Readonly<Record<Exclude<PostingRead, { posting: object }>["reason"], string>> = {
-  unreachable: "That page couldn’t be reached. Some job sites block automated reading. Paste the posting’s text instead.",
-  not_a_page: "That link isn’t a web page. Paste the posting’s text instead.",
+  unreachable: "That page couldn’t be reached. Some job sites block automated reading. Paste the job description instead.",
+  not_a_page: "That link isn’t a web page. Paste the job description instead.",
   no_posting:
-    "No job posting was found on that page. Some sites only show the posting in a browser. Paste its text instead.",
+    "No job description was found on that page. Some sites only show it in a browser. Paste its text instead.",
 };
 
 function JobForm({ onSaved }: { onSaved: Reload }) {
   const [text, setText] = useState("");
   const [link, setLink] = useState("");
-  const [saved, setSaved] = useState(false);
-  /** The saved job with this same posting, once the person has been asked about it. */
+  /** The job just saved, for the link to its page. */
+  const [saved, setSaved] = useState<string | null>(null);
+  /** The saved job with this same job description, once the person has been asked about it. */
   const [duplicate, setDuplicate] = useState<ApplicationRef | null>(null);
-  /** The posting last sent to be saved. A retry of it isn't a second copy, so it isn't checked again. */
+  /** The job description last sent to be saved. A retry of it isn't a second copy, so it isn't checked again. */
   const attempted = useRef<string | null>(null);
   const { run, pending, error } = useAction();
   const reader = useAction();
-  /** What the last read of a link came to: the posting it found, or why it found none. */
+  /** What the last read of a link came to: the job description it found, or why it found none. */
   const [read, setRead] = useState<{ url: string; result: PostingRead } | null>(null);
   const canRead = useSession().me.capabilities?.postingReader === true;
   const id = useId();
@@ -235,7 +225,7 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
   const wouldReplace = length > 0 && url !== "" && !badLink && !found;
 
   async function readLink() {
-    setSaved(false);
+    setSaved(null);
     setRead(null);
     await reader.run(
       async () => {
@@ -247,16 +237,16 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
         }
       },
       {
-        invalid: "Use the posting’s public web address, starting with https://.",
-        unavailable: "Reading a posting from a link isn’t available right now. Paste its text instead.",
+        invalid: "Use the job’s public web address, starting with https://.",
+        unavailable: "Reading a job from its link isn’t available right now. Paste the job description instead.",
       },
     );
   }
 
   async function save(anyway = false) {
-    setSaved(false);
+    setSaved(null);
     const posting = text.trim();
-    let added = false;
+    let added: string | null = null;
     await run(async () => {
       if (!anyway && attempted.current !== posting) {
         const found = (await api.duplicateApplication(posting)).duplicate;
@@ -267,8 +257,7 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
       }
       setDuplicate(null);
       attempted.current = posting;
-      await api.addApplication(posting, url || undefined, found ? { title: found.title, company: found.company } : undefined);
-      added = true;
+      added = (await api.addApplication(posting, url || undefined, found ? { title: found.title, company: found.company } : undefined)).applicationId;
       await onSaved();
     });
     if (added) {
@@ -276,7 +265,7 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
       setText("");
       setLink("");
       setRead(null);
-      setSaved(true);
+      setSaved(added);
     }
   }
 
@@ -292,8 +281,8 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
       <label htmlFor={id}>Job description</label>
       <p className="hint" id={`${id}-hint`}>
         {canRead
-          ? "Paste the whole posting, including the requirements. Or add its link below and read it from there."
-          : "Paste the whole posting, including the requirements."}
+          ? "Paste the whole job description, including what it asks for. Or add its link below and read it from there."
+          : "Paste the whole job description, including what it asks for."}
       </p>
       <textarea
         id={id}
@@ -302,7 +291,7 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
         readOnly={busy}
         onChange={(e) => {
           setText(e.target.value);
-          setSaved(false);
+          setSaved(null);
           setDuplicate(null);
         }}
         aria-describedby={`${id}-hint ${id}-count`}
@@ -311,7 +300,7 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
       <CharCount id={`${id}-count`} length={length} max={MAX_JD_CHARS} />
       <Field
         id={`${id}-link`}
-        label="Link to the posting"
+        label="Link to the job"
         optional
         error={badLink ? "Enter a web address that starts with https://" : undefined}
       >
@@ -339,7 +328,7 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
             onClick={() => void readLink()}
             aria-describedby={wouldReplace ? `${id}-read-hint` : undefined}
           >
-            {reader.pending ? "Reading…" : "Read the posting from this link"}
+            {reader.pending ? "Reading…" : "Read the job from this link"}
           </button>
           {wouldReplace && (
             <p className="rs-hint" id={`${id}-read-hint`}>
@@ -350,7 +339,7 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
             (found ? (
               <Message tone="success">
                 Read from {found.host}. Check the text above against the page before saving.
-                {found.truncated ? " The posting was longer than Resumatic keeps, so the end is cut off." : ""}
+                {found.truncated ? " The job description was longer than Resumatic keeps, so the end is cut off." : ""}
               </Message>
             ) : (
               <Message tone="info">{UNREAD[read.result.posting === null ? read.result.reason : "no_posting"]}</Message>
@@ -362,9 +351,9 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
         <div className="rs-msg rs-msg--info app-msg-block" role="status">
           <Glyph name="info" />
           <p className="rs-msg__text">
-            You’ve already saved this posting{duplicate.title || duplicate.company
+            You’ve already saved this job{duplicate.title || duplicate.company
               ? ` as ${[duplicate.title, duplicate.company].filter(Boolean).join(" at ")}`
-              : ""}, on {formatDate(duplicate.createdAt)}.
+              : ""}, on {formatDate(duplicate.createdAt)}. <a href={href.job(duplicate.id)}>Open it</a>
           </p>
           <button type="button" className="rs-btn rs-btn--sm" disabled={busy} onClick={() => void save(true)}>
             Save it again
@@ -382,7 +371,7 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
       </div>
       {saved && (
         <p className="success" role="status">
-          Saved. Tailor a resume to it from the list below.
+          Saved. <a href={href.job(saved)}>Open the job</a>
         </p>
       )}
       <ActionError message={error} />
@@ -390,58 +379,78 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
   );
 }
 
-function jobName({ title, company, excerpt }: ApplicationView): string {
-  if (title && company) return `${title} at ${company}`;
-  return title ?? company ?? (excerpt || "Untitled job");
+/** A job's name in its row: its title, else the start of its job description. */
+function rowName({ title, excerpt }: ApplicationView): string {
+  return title ?? (excerpt || "Untitled job");
 }
 
-function ApplicationCard({
+/** How many of a kit's questions wait for the person, in words. */
+const questionsToAnswer = (n: number) => (n === 1 ? "1 question to answer" : `${n} questions to answer`);
+
+/**
+ * One job in Your jobs: its name, which opens its page, its company, its status as the person's own
+ * neutral mark, when it was added, where its latest resume stands, a way to tailor another, and a
+ * mark when its kit has questions waiting. The kit's count is Today's, the same sum the room counts.
+ */
+function JobCard({
   application,
-  onSaved,
   compact = false,
   hidden,
-  open,
-  onToggleWorkspace,
   columnLabel,
   style,
 }: {
   application: ApplicationView;
-  onSaved: Reload;
   compact?: boolean;
   hidden: boolean;
-  open: boolean;
-  onToggleWorkspace: () => void;
   columnLabel?: string;
   style?: CSSProperties;
 }) {
   const { tailor, pending, error } = useTailor();
+  const { today } = useToday();
   const headingId = useId();
-  const resumes = [...application.resumes].sort(
-    (a, b) => b.createdAt - a.createdAt,
-  );
+  const latest = [...application.resumes].sort((a, b) => b.createdAt - a.createdAt)[0];
   const unnamed = !application.title && !application.company;
   const Heading = compact ? "h4" : "h3";
+  // Today lists at most MAX_TODAY_LIST kits. A job past that cap shows no mark here, though the
+  // room's count still includes it; its page says what its kit waits for.
+  const kit = today?.waiting.find((item) => item.kind === "kit" && item.applicationId === application.id);
+  const waiting = kit?.kind === "kit" ? kit.unanswered + kit.sensitive : 0;
 
   return (
-    <li className="card application rs-job" hidden={hidden} style={style}
+    <li className="card application rs-job app-job-row" hidden={hidden} style={style}
       aria-labelledby={columnLabel ? `${columnLabel} ${headingId}` : headingId}>
       <div className="row-between">
         <div className="app-job-head">
-          <Heading id={headingId}>{jobName(application)}</Heading>
+          <Heading id={headingId}>
+            <a href={href.job(application.id)}>{rowName(application)}</a>
+          </Heading>
           <p className="rs-meta app-meta-row app-job-meta">
+            {application.company && <span>{application.company}</span>}
             <Badge tone="status">{APPLICATION_LABELS[application.status ?? "saved"]}</Badge>
             <span>Added {formatDate(application.createdAt)}</span>
-            {application.url && (
-              <a href={application.url} target="_blank" rel="noreferrer noopener">
-                Original posting
+            {latest && (
+              <a className="app-job-resume" href={href.jobResume(application.id, latest.id)}>
+                <span className="rs-visually-hidden">Latest resume:</span>{" "}
+                <Badge tone={RUN_MARK[latest.state]}>
+                  {STATE_GLYPH[latest.state] && <Glyph name={STATE_GLYPH[latest.state]!} />}
+                  {latest.state === "running" && latest.cancellationPending
+                    ? "Cancellation pending"
+                    : latest.state === "running" && latest.dispatchUncertain
+                    ? "Start unconfirmed"
+                    : RESUME_STATE_LABEL[latest.state]}
+                </Badge>
               </a>
             )}
-            {unnamed && <span>Name it under Track and prepare, or it’s read from the posting when a resume is tailored.</span>}
+            {waiting > 0 && (
+              <a className="app-job-kit" href={href.job(application.id, "application")}>
+                <Badge tone="needs-you">{questionsToAnswer(waiting)}</Badge>
+              </a>
+            )}
+            {unnamed && <span>It’s named from its job description when a resume is tailored, or name it under Edit details.</span>}
           </p>
         </div>
         <button
           type="button"
-          className="primary"
           onClick={() => void tailor(application.id)}
           disabled={pending}
           aria-describedby={headingId}
@@ -450,44 +459,6 @@ function ApplicationCard({
         </button>
       </div>
       <ActionError message={error} />
-      {resumes.length === 0 ? (
-        <p className="meta resume-list-empty">No resumes yet.</p>
-      ) : (
-        <ul className="plain-list resume-list">
-          {resumes.map((resume, index) => (
-            <li key={resume.id}>
-              <a href={href.resume(resume.id)}>Resume tailored {formatDateTime(resume.createdAt)}</a>
-              <span className="app-resume-state">
-                {index === 0 && resumes.length > 1 && <span className="app-latest">Latest</span>}
-                <Badge tone={resume.state}>
-                  {STATE_GLYPH[resume.state] && <Glyph name={STATE_GLYPH[resume.state]!} />}
-                  {resume.state === "running" && resume.cancellationPending
-                    ? "Cancellation pending"
-                    : resume.state === "running" && resume.dispatchUncertain
-                    ? "Start unconfirmed"
-                    : RESUME_STATE_LABEL[resume.state]}
-                </Badge>
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-      <div className="actions">
-        <button
-          type="button"
-          className="small"
-          aria-expanded={open}
-          aria-controls={`${headingId}-workspace`}
-          onClick={onToggleWorkspace}
-        >
-          {open ? "Close workspace" : "Track and prepare"}
-        </button>
-      </div>
-      {open && (
-        <div id={`${headingId}-workspace`}>
-          <ApplicationWorkspace application={application} onSaved={onSaved} />
-        </div>
-      )}
     </li>
   );
 }

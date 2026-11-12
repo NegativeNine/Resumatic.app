@@ -2,7 +2,7 @@ import type { Quota } from "../../shared/api";
 import { formatDayMonth, formatDayMonthAfter } from "../format";
 import { useSession } from "../session";
 
-/** Above this many outputs a month, each tick stands for a tenth of the allowance. */
+/** Above this many documents a month, each tick stands for a tenth of the allowance. */
 const MAX_TICKS = 40;
 
 /** The words beside the tally, which carry its meaning; the ticks are decoration. */
@@ -10,9 +10,9 @@ export function quotaWords({ used, limit, reserved = 0, month, periodEnd }: Quot
   const full = used + reserved >= limit;
   const resets = periodEnd ? formatDayMonth(periodEnd) : formatDayMonthAfter(month);
   const inProgress = reserved > 0 ? `, ${reserved} in progress` : "";
-  if (full) return { full, text: `${used} of ${limit} used${inProgress}.${resets ? ` More from ${resets}` : ""}` };
+  if (full) return { full, text: `${used} of ${limit} used${inProgress}.${resets ? ` More on ${resets}` : ""}` };
   const period = periodEnd ? ` until ${formatDayMonth(periodEnd)}` : " this month";
-  return { full, text: `${used} of ${limit} outputs used${period}${inProgress}` };
+  return { full, text: `${used} of ${limit} documents used${period}${inProgress}` };
 }
 
 type TickState = "used" | "reserved" | "free";
@@ -26,7 +26,7 @@ export function quotaTicks({ used, limit, reserved = 0 }: Quota): TickState[] {
   return Array.from({ length: count }, (_, i): TickState => (i < usedTicks ? "used" : i < usedTicks + reservedTicks ? "reserved" : "free"));
 }
 
-/** The month's allowance as a tally: a tick per output, filled as they're used (QuotaMeter). */
+/** The month's allowance as a tally: a tick per document, filled as they're used (QuotaMeter). */
 export function QuotaMeter({ className }: { className?: string }) {
   const { quota } = useSession().me;
   const { text, full } = quotaWords(quota);

@@ -1,22 +1,21 @@
 import { SharePage } from "./pages/SharePage";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Me } from "../shared/api";
 import { api, ApiError } from "./api";
 import { Shell } from "./components/Shell";
-import { EmptyState, ErrorNote, Loading, PageHeader } from "./components/ui";
+import { ErrorNote, Loading } from "./components/ui";
 import { describeError, signInErrorMessage } from "./errors";
-import { AccountPage } from "./pages/AccountPage";
-import { ClientsPage } from "./pages/ClientsPage";
-import { JobsPage } from "./pages/JobsPage";
-import { LEGAL_TITLES, LegalPage } from "./pages/LegalPage";
-import { ResumePage } from "./pages/ResumePage";
+import { LegalPage } from "./pages/LegalPage";
+import { Landing } from "./pages/outside/Landing";
+import { useSignedOutPage } from "./pages/outside/signed-out";
 import { SignedOut, SignInFrame } from "./pages/SignedOut";
-import { SourcesPage } from "./pages/SourcesPage";
-import { href, useRoute, type Route } from "./router";
+import { useRoute } from "./router";
+import { SCREENS, shownRoute } from "./screens";
 import {
   ACCOUNT_DELETED_NOTE,
   SessionContext,
   sessionEndNote,
+  useSession,
 } from "./session";
 import "./styles/tokens.css";
 import "./styles/fonts.css";
@@ -118,18 +117,11 @@ function OwnerApp() {
   }
 }
 
-const TITLES: Record<Route["page"], string> = {
-  facts: "Facts",
-  jobs: "Jobs",
-  resume: "Tailored resume",
-  account: "Account",
-  clients: "Clients",
-  privacy: LEGAL_TITLES.privacy,
-  terms: LEGAL_TITLES.terms,
-  notFound: "Page not found",
-};
-
-/** Signed out, the privacy notice and terms are still readable; everything else is the sign-in page. */
+/**
+ * Signed out, the site's root is the landing page, the privacy notice and terms are still readable,
+ * and everything else is the sign-in page (signed-out.ts). Moving between them moves focus to the
+ * new page, as a change of page does signed in.
+ */
 function SignedOutApp({
   note,
   error,
@@ -137,54 +129,41 @@ function SignedOutApp({
   note: string | null;
   error: string | null;
 }) {
-  const route = useRoute();
-  if (route.page === "privacy" || route.page === "terms") {
-    return (
-      <main className="page legal-page" id="main">
-        <p>
-          <a href="#/">← Back to sign in</a>
-        </p>
-        <LegalPage doc={route.page} />
-      </main>
-    );
+  const page = useSignedOutPage(note !== null || error !== null);
+  const shown = useRef(page);
+  useEffect(() => {
+    if (shown.current === page) return;
+    shown.current = page;
+    window.scrollTo(0, 0);
+    document.getElementById("main")?.focus({ preventScroll: true });
+  }, [page]);
+  switch (page) {
+    case "privacy":
+    case "terms":
+      return (
+        <main className="page legal-page" id="main" tabIndex={-1}>
+          <p>
+            <a href="#/">← Back to Resumatic</a>
+          </p>
+          <LegalPage doc={page} />
+        </main>
+      );
+    case "landing":
+      return <Landing />;
+    case "sign-in":
+      return <SignedOut note={note} error={error} />;
   }
-  return <SignedOut note={note} error={error} />;
 }
 
 function SignedInApp() {
-  const route = useRoute();
+  const { me } = useSession();
+  const route = shownRoute(useRoute(), me);
+  const screen = SCREENS[route.name];
   return (
-    <Shell route={route} title={TITLES[route.page]}>
-      <Page route={route} />
+    <Shell route={route} title={screen.title}>
+      {screen.render(route)}
     </Shell>
   );
-}
-
-function Page({ route }: { route: Route }) {
-  switch (route.page) {
-    case "facts":
-      return <SourcesPage />;
-    case "jobs":
-      return <JobsPage />;
-    case "resume":
-      return <ResumePage key={route.id} id={route.id} />;
-    case "account":
-      return <AccountPage />;
-    case "clients":
-      return <ClientsPage />;
-    case "privacy":
-    case "terms":
-      return <LegalPage doc={route.page} />;
-    case "notFound":
-      return (
-        <>
-          <PageHeader title="Page not found">There’s nothing at this address.</PageHeader>
-          <EmptyState title="Looking for something?">
-            Your <a href={href.facts}>facts</a> and <a href={href.jobs}>jobs</a> are where you left them.
-          </EmptyState>
-        </>
-      );
-  }
 }
 
 /** Reads the sign-in callback's `?error=` code once, and removes it from the address bar. */

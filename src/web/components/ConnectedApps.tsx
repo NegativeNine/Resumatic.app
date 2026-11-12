@@ -55,7 +55,7 @@ export function ConnectedApps() {
   const address = typeof window === "undefined" ? "/mcp" : `${window.location.origin}/mcp`;
   return (
     <section className="card" aria-labelledby={`${id}-title`}>
-      <h2 id={`${id}-title`}>Connected apps</h2>
+      <h2 id={`${id}-title`}>Your apps</h2>
       <p className="card-text">
         Connect an AI tool with the address below. Each app asks for its permissions, and its access ends after
         30 days.
@@ -73,7 +73,8 @@ export function ConnectedApps() {
       {grants && grants.length > 0 && (
         <ul className="plain-list app-share-links">
           {grants.map((grant) => {
-            const inactive = grant.revokedAt !== null || grant.expiresAt <= Date.now();
+            // A grant signing out everywhere ended is listed as revoked, with no time of its own.
+            const inactive = grant.revokedAt !== null || grant.state === "revoked" || grant.expiresAt <= Date.now();
             const pending = !inactive && grant.state === "pending";
             return (
               <li className="rs-setting" key={grant.id}>
@@ -81,11 +82,11 @@ export function ConnectedApps() {
                   <strong>
                     {grant.clientName}{" "}
                     {inactive ? (
-                      <Badge tone="rejected">Access ended</Badge>
+                      <Badge tone="note">Access ended</Badge>
                     ) : pending ? (
-                      <Badge tone="proposed">Waiting to connect</Badge>
+                      <Badge tone="needs-you">Waiting to connect</Badge>
                     ) : (
-                      <Badge tone="ready">
+                      <Badge tone="backed">
                         <Glyph name="check" />
                         Connected
                       </Badge>

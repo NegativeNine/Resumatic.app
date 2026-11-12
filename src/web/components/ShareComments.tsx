@@ -19,7 +19,7 @@ import { CoachSuggestion, OwnerSuggestion, SuggestWording } from "./SuggestedWor
 import { ActionError, Badge, CharCount, ErrorNote, Field, Loading, Success } from "./ui";
 
 // Comments on a shared copy: the coach's side, beside the copy they are reading, and the owner's
-// side, on Account. A comment is another person's words. It is shown as text and nothing else:
+// side, on Sharing › Coaches. A comment is another person's words. It is shown as text and nothing else:
 // no markup, no links, and nothing a comment says changes what the page does.
 
 /**
@@ -77,7 +77,7 @@ export function ThreadCard({
                 {comment.seen === false && (
                   <>
                     {" "}
-                    <Badge tone="new">New</Badge>
+                    <Badge tone="needs-you">New</Badge>
                   </>
                 )}
               </p>
@@ -121,7 +121,7 @@ const SEND_FAILED = "That didn’t go through. Check your connection, then try a
  * would read as the reader's own (“You”) or as the product's are no name at all, so the caller
  * falls back to what it says without one.
  */
-function chosenName(name: string | null | undefined): string | null {
+export function chosenName(name: string | null | undefined): string | null {
   const trimmed = name?.trim() ?? "";
   return trimmed && !["you", "resumatic"].includes(trimmed.toLowerCase()) ? trimmed : null;
 }
@@ -377,9 +377,9 @@ export function CoachComments({
 }
 
 /**
- * What a coach wrote on the copies this person shared, on Account. Nothing is shown until there is
- * a thread. The comments are marked seen once they are on the page, which clears the count beside
- * Account in the menu.
+ * What a coach wrote on the copies this person shared, on Sharing › Coaches. Nothing is shown until
+ * there is a thread. The comments are marked seen once they are on the page, which clears the count
+ * on Sharing and its Coaches tab. Sharing › Overview never shows it, so it never clears that count.
  */
 export function OwnerComments() {
   const { refreshMe } = useSession();
@@ -521,8 +521,8 @@ function OwnerThread({
         ) : (
           <>
             From {thread.coachEmail}, on a fact you shared.{" "}
-            <a className="rs-link" href={href.facts}>
-              Open Facts
+            <a className="rs-link" href={href.factsAll}>
+              Open All facts
             </a>
           </>
         )}

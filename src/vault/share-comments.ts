@@ -12,6 +12,7 @@ import {
 } from "../shared/sharing";
 import type { Who } from "../shared/types";
 import type { CoachAccount, ShareStore } from "./shares";
+import type { CopyComment, CopyCount } from "./today";
 
 // Comments on a shared copy, kept in the vault of the person who shared it. The coach a copy names
 // writes them on a line or a fact of the copy, and the owner answers. A comment is another person's
@@ -351,6 +352,46 @@ export class ShareCommentStore {
   /** How many of a coach's comments the owner hasn't seen. It checks nobody: call it only for the owner. */
   unseen(): number {
     return this.one(this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM share_comments WHERE author = 'coach' AND seen_at IS NULL`));
+  }
+
+  // Today's three reads. Each gives a copy's coach, a count and a time, never a comment's words,
+  // its quote or a suggested wording, and each checks nobody: call them only for the owner.
+
+  /** A coach's comments the owner hasn't seen, by copy, the copy written on latest first. A suggestion is no comment here. */
+  unseenByCopy(): CopyCount[] {
+    return this.sql
+      .exec<{ grant_id: string; coach_name: string | null; coach_email: string; n: number; latest: number }>(
+        `SELECT grant_id, coach_name, coach_email, COUNT(*) AS n, MAX(created_at) AS latest FROM share_comments WHERE author = 'coach' AND suggestion_state IS NULL AND seen_at IS NULL GROUP BY grant_id ORDER BY latest DESC`,
+      )
+      .toArray()
+      .map((row) => ({ grantId: row.grant_id, coachName: row.coach_name ?? null, coachEmail: row.coach_email, count: row.n, latest: row.latest }));
+  }
+
+  /** A coach's suggestions that wait for the owner's answer, seen or not, by copy, the latest first. */
+  waitingSuggestionsByCopy(): CopyCount[] {
+    const rows = this.sql
+      .exec<Row>(`SELECT * FROM share_comments WHERE author = 'coach' AND suggestion_state = 'open' ORDER BY created_at DESC, rowid DESC`)
+      .toArray();
+    const copies = new Map<string, CopyCount>();
+    for (const row of rows) {
+      if (this.suggestion(row, "owner")?.state !== "waiting") continue;
+      const copy = copies.get(row.grant_id);
+      if (copy) copy.count++;
+      else copies.set(row.grant_id, { grantId: row.grant_id, coachName: row.coach_name ?? null, coachEmail: row.coach_email, count: 1, latest: row.created_at });
+    }
+    return [...copies.values()];
+  }
+
+  /** When a coach last wrote on each copy, since `since`: the latest first, at most `limit` copies. */
+  recentByCopy(since: number, limit: number): CopyComment[] {
+    return this.sql
+      .exec<{ grant_id: string; coach_name: string | null; coach_email: string; at: number }>(
+        `SELECT grant_id, coach_name, coach_email, MAX(created_at) AS at FROM share_comments WHERE author = 'coach' AND created_at >= ? GROUP BY grant_id ORDER BY at DESC LIMIT ?`,
+        since,
+        limit,
+      )
+      .toArray()
+      .map((row) => ({ grantId: row.grant_id, coachName: row.coach_name ?? null, coachEmail: row.coach_email, at: row.at }));
   }
 
   /** A coach deletes only what their own account wrote, and only while the copy is open to them. */

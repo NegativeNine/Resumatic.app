@@ -15,7 +15,7 @@ import { useAction, useResource } from "../hooks";
 import { availabilityOptions, isPreferencesSnapshot, preferencesWriteObserved, retiredChoices } from "../preferences-save";
 import { ActionError, ErrorNote, Field, Loading, Message } from "./ui";
 
-// The Job preferences card on Account. It loads from its own route and never from the session, and
+// What you're looking for, on Sharing › Recruiters. It loads from its own route and never from the session, and
 // nothing else in the app reads what it saves: not Jobs, not a fit preview, not tailoring.
 
 const JOB_TYPE_LABEL: Record<JobType, string> = {
@@ -57,10 +57,10 @@ export function JobPreferences() {
   const id = useId();
   return (
     <section className="card app-preferences" aria-labelledby={`${id}-title`}>
-      <h2 id={`${id}-title`}>Job preferences</h2>
-      <p className="card-text meta">The work you’re looking for. Leave empty anything you’d rather not say.</p>
+      <h2 id={`${id}-title`}>What you’re looking for</h2>
+      <p className="card-text meta">Leave empty anything you’d rather not say.</p>
       <Message tone="info" live={false}>
-        Nothing here is shown to anyone or used yet. It stays in your vault: it isn’t put in a resume or a shared
+        Nothing here is shown to anyone or used yet. It stays in your record: it isn’t put in a resume or a shared
         copy, and connected apps can’t read it.
       </Message>
       {/* Once the form is up it stays up: a later reload that fails changes nothing the person sees. */}

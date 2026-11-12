@@ -135,6 +135,61 @@ describe("MCP grant gate", () => {
       db.close();
     }
   });
+  it("counts only active grants, not pending, revoked or expired ones", () => {
+    const { db, store, claims } = fixture();
+    try {
+      // The fixture's grant is pending until its token callback binds it.
+      expect(store.activeCount(who, now)).toBe(0);
+      store.bind(claims, "remote_grant_1", now);
+      expect(store.activeCount(who, now)).toBe(1);
+      // At the moment it expires it is no longer counted, before any cleanup.
+      expect(store.activeCount(who, claims.expiresAt - 1)).toBe(1);
+      expect(store.activeCount(who, claims.expiresAt)).toBe(0);
+      const second = { ...input, id: "1653389a-0d6d-4e90-94eb-23cc98b95c19" };
+      store.create(who, second, now);
+      store.bind({ ...claims, grantId: second.id }, "remote_grant_2", now);
+      expect(store.activeCount(who, now)).toBe(2);
+      store.revoke(who, id, now);
+      expect(store.activeCount(who, now)).toBe(1);
+      // A grant marked active but revoked is not counted either.
+      db.prepare(`UPDATE mcp_grants SET state = 'active' WHERE id = ?`).run(id);
+      expect(store.activeCount(who, now)).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+  it("counts no grant that signing out everywhere or a new security epoch has ended", () => {
+    const { db, store, security, claims } = fixture();
+    try {
+      store.bind(claims, "remote_grant_1", now);
+      expect(store.activeCount(who, now)).toBe(1);
+      // Signing out everywhere moves the session generation on; the grant can no longer authorize.
+      security.gen = 3;
+      const signedIn = { ...who, gen: 3 };
+      expect(() => store.authorize(claims, "vault:read", now)).toThrow();
+      expect(store.activeCount(signedIn, now)).toBe(0);
+      // A grant made in the new generation counts; once the security epoch changes, it does not.
+      const second = { ...input, id: "1653389a-0d6d-4e90-94eb-23cc98b95c19" };
+      store.create(signedIn, second, now);
+      store.bind({ ...claims, gen: 3, grantId: second.id }, "remote_grant_2", now);
+      expect(store.activeCount(signedIn, now)).toBe(1);
+      security.epoch = "epoch-two";
+      expect(store.activeCount({ ...signedIn, epoch: "epoch-two" }, now)).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+  it("counts grants for the owner only", () => {
+    const { db, store, security } = fixture();
+    try {
+      expect(() => store.activeCount({ ...who, userId: "shard:01:someone-else" }, now)).toThrow("owner required");
+      expect(() => store.activeCount({ ...who, gen: 1 }, now)).toThrow("owner required");
+      security.open = false;
+      expect(() => store.activeCount(who, now)).toThrow();
+    } finally {
+      db.close();
+    }
+  });
   it("says when its next grant is due to be erased, which is the moment erasing takes it", () => {
     const { db, store, claims } = fixture();
     try {

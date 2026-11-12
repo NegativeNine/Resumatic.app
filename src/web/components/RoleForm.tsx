@@ -93,11 +93,19 @@ export function RoleForm({ role, reload, onClose, onAdded, action }: Props) {
         e.preventDefault();
         void save();
       }}
+      onKeyDown={(e) => {
+        // Escape cancels, as it does in a fact's editor; the caller returns focus.
+        if (e.key === "Escape" && !pending) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
+      }}
     >
       {!role && (
         <p className="meta">
-          Add a job, degree, project or volunteer role your uploads missed. It’s
-          your own claim, so it has no source quote, and it’s confirmed straight
+          Add a job, degree, project or volunteer role your files missed. It’s
+          marked Added by you, so no file backs it, and it’s confirmed straight
           away.
         </p>
       )}

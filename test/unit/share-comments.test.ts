@@ -11,6 +11,7 @@ import {
   ShareCommentStore,
   cleanComment,
 } from "../../src/vault/share-comments";
+import { SHARE_SUGGESTION_MIGRATIONS } from "../../src/vault/share-suggestions";
 import {
   SHARE_COACH_MIGRATIONS,
   SHARE_DETAIL_MIGRATIONS,
@@ -693,6 +694,77 @@ describe("the owner's side of a thread", () => {
       ]);
       const text = JSON.stringify(exported);
       for (const kept of [dana.userId, "key-1", "reply-1", "request_key", "coach_user_id"]) expect(text, kept).not.toContain(kept);
+    } finally { db.close(); }
+  });
+});
+
+describe("what Today is told of comments", () => {
+  /**
+   * The store with suggested wording in its table, and a stand-in for the Vault's answer about
+   * each suggestion: waiting, unless the row names a check that is under way.
+   */
+  function withSuggestions() {
+    const made = taken();
+    for (const migration of SHARE_SUGGESTION_MIGRATIONS) made.db.exec(migration);
+    const sql = {
+      exec(statement: string, ...bindings: (string | number | null)[]) {
+        const values = made.db.prepare(statement).all(...bindings);
+        return { toArray: () => values };
+      },
+    } as unknown as SqlStorage;
+    const comments = new ShareCommentStore(sql, made.shares, () => undefined, (row) => ({ state: row.document_id ? "checking" : "waiting" }));
+    return { ...made, comments };
+  }
+  const second = { coach_email: "lee@example.test", coach_name: null };
+
+  it("counts unseen comments and waiting suggestions per copy, apart", () => {
+    const { comments, seed, db } = withSuggestions();
+    try {
+      expect(comments.unseenByCopy()).toEqual([]);
+      expect(comments.waitingSuggestionsByCopy()).toEqual([]);
+      seed("copy-a", { body: "PRIVATE COMMENT", created_at: now - 3 * HOUR });
+      seed("copy-a", { created_at: now - 2 * HOUR });
+      seed("copy-b", { ...second, created_at: now - HOUR });
+      // Seen, the owner's own reply, and a suggestion are no unseen comment.
+      seed("copy-a", { seen_at: now, created_at: now });
+      seed("copy-a", { author: "owner", created_at: now });
+      seed("copy-a", { suggestion_state: "open", body: "PRIVATE WORDING", created_at: now - 30 * MINUTE });
+      seed("copy-a", { suggestion_state: "open", seen_at: now, created_at: now - 20 * MINUTE });
+      seed("copy-b", { ...second, suggestion_state: "open", created_at: now - 4 * HOUR });
+      // Declined, being checked, or the owner's: not waiting for an answer.
+      seed("copy-a", { suggestion_state: "declined", created_at: now });
+      seed("copy-a", { suggestion_state: "open", document_id: "doc-1", created_at: now });
+
+      expect(comments.unseenByCopy()).toEqual([
+        { grantId: "copy-b", coachName: null, coachEmail: "lee@example.test", count: 1, latest: now - HOUR },
+        { grantId: "copy-a", coachName: "Dana Okafor", coachEmail: dana.email, count: 2, latest: now - 2 * HOUR },
+      ]);
+      // A suggestion waits whether or not it has been seen.
+      expect(comments.waitingSuggestionsByCopy()).toEqual([
+        { grantId: "copy-a", coachName: "Dana Okafor", coachEmail: dana.email, count: 2, latest: now - 20 * MINUTE },
+        { grantId: "copy-b", coachName: null, coachEmail: "lee@example.test", count: 1, latest: now - 4 * HOUR },
+      ]);
+      const told = JSON.stringify([comments.unseenByCopy(), comments.waitingSuggestionsByCopy(), comments.recentByCopy(0, 10)]);
+      for (const words of ["PRIVATE", FACT, "Seeded"]) expect(told, words).not.toContain(words);
+    } finally { db.close(); }
+  });
+
+  it("gives each copy's latest comment inside the window", () => {
+    const { comments, seed, db } = withSuggestions();
+    try {
+      const since = now - 14 * 24 * HOUR;
+      seed("copy-a", { created_at: since - 1 });
+      seed("copy-a", { created_at: since + HOUR, seen_at: now });
+      seed("copy-a", { created_at: since + 2 * HOUR, suggestion_state: "open" });
+      seed("copy-b", { ...second, created_at: since - HOUR });
+      seed("copy-c", { ...second, created_at: now });
+      // The owner's own reply is not a coach writing.
+      seed("copy-c", { author: "owner", created_at: now + 1 });
+      expect(comments.recentByCopy(since, 10)).toEqual([
+        { grantId: "copy-c", coachName: null, coachEmail: "lee@example.test", at: now },
+        { grantId: "copy-a", coachName: "Dana Okafor", coachEmail: dana.email, at: since + 2 * HOUR },
+      ]);
+      expect(comments.recentByCopy(since, 1)).toEqual([{ grantId: "copy-c", coachName: null, coachEmail: "lee@example.test", at: now }]);
     } finally { db.close(); }
   });
 });

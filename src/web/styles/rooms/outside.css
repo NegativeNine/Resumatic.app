@@ -1,0 +1,88 @@
+/*
+ * Stage 7, outside the rooms: the landing page, sign-in, Coaching › Clients and a client's copy.
+ * Imported by those pages. Tokens only, never a raw colour. Below 600px every pair of columns stacks.
+ */
+
+/* The landing page: the opening beside its example, then one section after another. */
+.app-landing { display: block; max-width: var(--layout-app); margin: 0 auto; padding: 72px var(--space-6) var(--space-16, 64px); }
+.app-landing__open { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-10); }
+.app-landing__open > * { flex: 1 1 420px; min-width: 0; }
+.app-landing__display { margin: 0; font: 800 56px/60px var(--font-sans); letter-spacing: -0.03em; text-wrap: balance; }
+.app-landing__lead > .rs-lede { margin-top: var(--space-5); }
+.app-landing__cta { margin: var(--space-6) 0 var(--space-3); }
+.app-landing__lead > .rs-meta { margin: 0; max-width: var(--layout-reading); }
+.app-landing__example { display: grid; gap: var(--space-4); margin: 0; }
+.app-landing__example > figcaption { margin: 0; }
+.app-landing__sheet { padding: 24px 28px; font-size: 13.5px; }
+.app-landing__sheet > p { margin: 0; }
+.app-landing__source { display: grid; gap: var(--space-2); }
+.app-landing__source > .rs-note__label { margin: 0; }
+.app-landing__section { margin-top: 88px; }
+.app-landing__section > .rs-lede { margin-top: var(--space-2); }
+.app-landing__pair { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-6) var(--space-10); }
+.app-landing__pair > * { flex: 1 1 420px; min-width: 0; }
+.app-landing__pair p { margin: 0; }
+.app-landing__pair p + p { margin-top: var(--space-4); }
+.app-landing__steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space-6); margin-top: var(--space-6); }
+.app-landing__steps h3 { margin: 0 0 var(--space-2); }
+.app-landing__steps p { margin: 0; }
+.app-landing__n { color: var(--ink-muted); }
+.app-landing__wont > li { padding: var(--space-4) 0; border-top: 1px solid var(--rule); }
+.app-landing__wont > li:first-child { padding-top: 0; border-top: 0; }
+.app-landing__wont > li:last-child { padding-bottom: 0; }
+.app-landing__wont p { margin: 0; }
+.app-landing__wont-title { font-weight: 600; }
+.app-landing__table { margin-top: var(--space-6); overflow-x: auto; }
+.app-landing__table table { width: 100%; border-collapse: collapse; font-size: 16px; line-height: 24px; }
+.app-landing__table thead th { padding: 0 var(--space-6) var(--space-3) 0; font: 600 14px/20px var(--font-sans); text-align: left; color: var(--ink-muted); }
+.app-landing__table tbody th, .app-landing__table td { padding: var(--space-4) var(--space-6) var(--space-4) 0; text-align: left; vertical-align: top; border-top: 1px solid var(--rule); }
+.app-landing__table tbody th { width: 15rem; font-weight: 600; }
+.app-landing__kicker { margin: 0 0 var(--space-2); font-weight: 600; }
+.app-landing__later { margin: var(--space-4) 0 0; padding-left: 1.25em; max-width: var(--layout-reading); }
+.app-landing__later > li + li { margin-top: var(--space-2); }
+.app-landing__close { padding: 48px var(--space-6); text-align: center; }
+.app-landing__close > p { margin: var(--space-3) 0 0; }
+.app-landing__close > p:last-child { margin-top: var(--space-6); }
+@media (max-width: 760px) {
+  .app-landing__display { font-size: 38px; line-height: 42px; }
+  .app-landing__section { margin-top: 56px; }
+}
+@media (max-width: 600px) {
+  .app-landing { padding: var(--space-10) var(--space-4) var(--space-12); }
+  .app-landing__open > *, .app-landing__pair > * { flex-basis: 100%; }
+  .app-landing__table tbody th { width: auto; }
+}
+
+/* Coaching › Clients: the list beside how a client is added and what a coach can do. */
+.app-coach { display: grid; grid-template-columns: minmax(0, 1fr) var(--layout-rail); gap: var(--space-6); align-items: start; }
+.app-coach__main, .app-coach__aside { display: grid; gap: var(--space-6); min-width: 0; }
+.app-coach__clients { margin-top: var(--space-4); }
+.app-coach__client { display: grid; gap: var(--space-2); padding: var(--space-4) 0; border-top: 1px solid var(--rule); }
+.app-coach__client:first-child { border-top: 0; padding-top: 0; }
+.app-coach__client:last-child { padding-bottom: 0; }
+.app-coach__client p { margin: 0; }
+.app-coach__client-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
+.app-coach__client-head h3 { margin: 0; overflow-wrap: anywhere; }
+.app-coach__client-head .rs-mark { flex: none; }
+.app-coach__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-1); }
+/* A quiet button has no edge of its own, so when it comes first its words line up with the name above. */
+.app-coach__actions > .rs-btn--quiet:first-child { margin-inline-start: calc(-1 * var(--space-3)); }
+.app-coach__steps { margin: var(--space-3) 0 0; padding-left: 1.25em; font-size: 14px; line-height: 20px; }
+.app-coach__steps > li + li { margin-top: var(--space-2); }
+.app-coach__aside .rs-panel > .rs-meta:last-child { margin: var(--space-3) 0 0; }
+.app-coach__aside .rs-panel > .rs-meta:first-of-type { margin-top: var(--space-2); }
+@media (max-width: 900px) {
+  .app-coach { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* A client's copy: where it sits among the clients, then whose it is, then the copy itself. */
+.app-crumbs { margin: 0 0 var(--space-2); font-size: 14px; line-height: 20px; color: var(--ink-muted); }
+.app-crumbs ol { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.app-crumbs li { overflow-wrap: anywhere; }
+.app-crumbs li + li::before { content: "›"; margin-right: var(--space-1); }
+.app-coach__copy-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--space-3) var(--space-6); }
+.app-coach__copy-head h1 { overflow-wrap: anywhere; }
+.app-coach__copy-head .rs-meta { margin: var(--space-1) 0 0; }
+@media print {
+  .app-crumbs { display: none; }
+}

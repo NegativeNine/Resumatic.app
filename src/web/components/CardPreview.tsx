@@ -5,8 +5,8 @@ import { useResource } from "../hooks";
 import { href } from "../router";
 import { ErrorNote, Loading, Message } from "./ui";
 
-// The Card preview section on Account: the card a recruiter would see if its owner ever chose to be
-// found. It loads from its own route, is shown to its owner alone, and changes nothing: there is no
+// What a recruiter would see, on Sharing › Recruiters: the anonymous profile (the card) a recruiter
+// would see if its owner ever chose to be found. It loads from its own route, is shown to its owner alone, and changes nothing: there is no
 // way to make a card visible to anyone. docs/visibility-design.md says what a card holds.
 
 const EXPERIENCE: Record<ExperienceBand | "unknown", string> = {
@@ -22,26 +22,26 @@ export function CardPreviewSection() {
   const id = useId();
   return (
     <section className="card app-card-preview" aria-labelledby={`${id}-title`}>
-      <h2 id={`${id}-title`}>Card preview</h2>
+      <h2 id={`${id}-title`}>What a recruiter would see</h2>
       <p className="card-text meta">
-        If you ever chose to be found, recruiters would see a card like this instead of your resume. It’s built only from
-        tags you’ve confirmed on your jobs and facts. It never holds your name, employers, dates or your own words, or
-        anything from a fact you’ve marked sensitive.
+        If you ever chose to be found, recruiters would see an anonymous profile like this instead of your resume. It’s
+        built only from tags you’ve confirmed on your jobs and facts. It never holds your name, employers, dates or your
+        own words, or anything from a fact you keep private.
       </p>
       <Message tone="info" live={false}>
-        Only you can see this. Nothing is published: there’s no way to make a card visible to anyone, and this preview
-        doesn’t change that.
+        Only you can see this. Nothing is published: there’s no way to make an anonymous profile visible to anyone, and
+        this preview doesn’t change that.
       </Message>
       {preview.error ? (
         <ErrorNote message={preview.error} onRetry={preview.reload} />
       ) : !preview.data ? (
-        <Loading>Loading your card…</Loading>
+        <Loading>Loading the preview…</Loading>
       ) : (
         <PreviewBody preview={preview.data} />
       )}
       <p className="card-text meta">
-        A card would also say where you’d work, the kinds of job you want and when you could start. Those come from your
-        job preferences, which this preview doesn’t read.
+        An anonymous profile would also say where you’d work, the kinds of job you want and when you could start. Those
+        come from what you’re looking for, which this preview doesn’t read.
       </p>
       <p className="card-text meta">
         Occupations and skills come from ESCO and O*NET. <a href={href.privacy}>See the credits</a>
@@ -54,8 +54,8 @@ function PreviewBody({ preview }: { preview: CardPreview }) {
   if (preview.state === "unavailable")
     return (
       <p className="card-text">
-        The card preview isn’t available here yet. It needs the list of occupations and skills that tags come from, and
-        that isn’t connected.
+        This preview isn’t available here yet. It needs the list of occupations and skills that tags come from, and that
+        isn’t connected.
       </p>
     );
   const { card } = preview;
@@ -63,8 +63,8 @@ function PreviewBody({ preview }: { preview: CardPreview }) {
     <>
       {!card.occupation && !card.skills.length && (
         <p className="card-text">
-          Your card is empty. It uses only confirmed tags, and none of yours are confirmed: tags are still being tested,
-          and nobody can confirm one in Resumatic yet.
+          Your anonymous profile is empty. It uses only confirmed tags, and none of yours are confirmed: tags are still
+          being tested, and nobody can confirm one in Resumatic yet.
         </p>
       )}
       <CardFields card={card} />

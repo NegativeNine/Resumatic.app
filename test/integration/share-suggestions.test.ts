@@ -30,7 +30,7 @@ const WAITING = "You already have a suggestion waiting on this line. Delete it t
 const DELETED = "That suggestion has been deleted. Reload to see the thread as it stands.";
 const CHANGED = "This line has changed since the copy was made, so this suggestion can't be applied.";
 const CANNOT_CHECK =
-  "A fact this resume cites has changed or is no longer in use, or the version is still being reviewed, so this wording can't be checked. Tailor a new version or finish the review, then accept again.";
+  "A fact this resume uses has changed or is no longer in use, or the version is still being checked line by line, so this wording can't be checked. Tailor a new version or finish checking it, then accept again.";
 const ANSWERED = "You've already answered this suggestion.";
 const CHECKING = "This suggestion is being checked. Wait for the check to finish, then try again.";
 const REUSED = "the request key was already used with different input";

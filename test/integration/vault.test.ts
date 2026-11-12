@@ -134,7 +134,7 @@ describe("uploads", () => {
     for (let i = 0; i < 3; i++) ids.push(await uploadResume(user, `${RESUME}\nVersion ${i + 1}`));
     const fourth = await user.upload("one-more.pdf", RESUME);
     expect(fourth.status).toBe(409);
-    expect(((await fourth.json()) as { message: string }).message).toMatch(/^Resumatic is still reading your other sources\./);
+    expect(((await fourth.json()) as { message: string }).message).toBe("Resumatic is still reading your other files. Wait for one to finish, then upload this file.");
     expect(
       (await env.FILES.list({ prefix: vaultPrefix(await vaultIdOf(user)) }))
         .objects,

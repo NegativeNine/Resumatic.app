@@ -2,6 +2,7 @@ import type { FactView, ResumeLine, RoleView } from "../shared/api";
 import { AppError } from "../shared/errors";
 import {
   MAX_SHARE_LABEL_CHARS,
+  SHARE_LINK_GONE,
   SHARE_READ_INTERVAL_MS,
   SHARE_TTL_MS,
   type CoachClient,
@@ -17,6 +18,7 @@ import type { RenderData, Who } from "../shared/types";
 import { sharedDocument, type DocumentVersion } from "./document-shares";
 import type { Withheld } from "./sensitive";
 import { assertGroundedResume, type ResumeVersion } from "./snapshots";
+import type { CopyOpened } from "./today";
 
 export { SHARE_READ_INTERVAL_MS, SHARE_TTL_MS };
 export const MAX_SHARE_FACTS = 100;
@@ -130,7 +132,7 @@ export function snapshotSelection(
     if (fact.state !== "confirmed")
       throw new AppError("invalid", "only confirmed facts can be shared");
     if (withheld?.ids.has(fact.id))
-      throw new AppError("invalid", "A fact marked sensitive can't be shared. Unmark it, or leave it out.");
+      throw new AppError("invalid", "A fact you keep private can't be shared. Leave it out, or stop keeping it private.");
     const role = fact.roleId ? roles.get(fact.roleId) : null;
     if (fact.roleId && (!role || role.state !== "confirmed"))
       throw new AppError(
@@ -216,7 +218,7 @@ export function snapshotSelection(
     new TextEncoder().encode(JSON.stringify(snapshot)).byteLength >
     MAX_SHARE_BYTES
   )
-    throw new AppError("too_large", "share snapshot is too large");
+    throw new AppError("too_large", "This shared copy is too large. Choose fewer facts, resumes or documents, then try again.");
   return snapshot;
 }
 
@@ -340,7 +342,7 @@ export class ShareStore {
         : {}),
     };
     if (new TextEncoder().encode(JSON.stringify(snapshot)).byteLength > MAX_SHARE_BYTES)
-      throw new AppError("too_large", "share snapshot is too large");
+      throw new AppError("too_large", "This shared copy is too large. Choose fewer facts, resumes or documents, then try again.");
     const grant: ShareGrant = {
       id: crypto.randomUUID(),
       epoch: this.auth.currentEpoch(),
@@ -437,7 +439,7 @@ export class ShareStore {
       row.epoch !== this.auth.currentEpoch() ||
       !row.snapshot
     )
-      throw new AppError("gone", "this share link is unavailable or expired");
+      throw new AppError("gone", SHARE_LINK_GONE);
     let snapshot: ShareSnapshot;
     try {
       snapshot = JSON.parse(row.snapshot) as ShareSnapshot;
@@ -483,7 +485,7 @@ export class ShareStore {
         if (owner !== null && (typeof owner?.name !== "string" || !owner.name || owner.name.length > 200)) throw new Error();
       }
     } catch {
-      throw new AppError("gone", "this share link is unavailable or expired");
+      throw new AppError("gone", SHARE_LINK_GONE);
     }
     return {
       grantId: row.id,
@@ -498,7 +500,7 @@ export class ShareStore {
       .exec<GrantRow>(`SELECT * FROM share_grants WHERE id = ? AND epoch = ? AND revoked_at IS NULL AND expires_at > ? LIMIT 1`, claims.grantId, claims.epoch, now)
       .toArray()[0];
     // A copy from before the account's sessions were last ended is closed to everyone, as it is to its link.
-    if (!row || row.snapshot === null || row.epoch !== this.auth.currentEpoch()) throw new AppError("gone", "this share link is unavailable or expired");
+    if (!row || row.snapshot === null || row.epoch !== this.auth.currentEpoch()) throw new AppError("gone", SHARE_LINK_GONE);
     return row;
   }
 
@@ -566,7 +568,7 @@ export class ShareStore {
   copyForCoach(grantId: string, coach: CoachAccount, now = Date.now()): { view: SharedView; coach: { email: string; name: string | null } } {
     this.auth.requireOpen();
     const row = this.joined(grantId, coach, now);
-    if (!row || !row.coach_email) throw new AppError("gone", "this share link is unavailable or expired");
+    if (!row || !row.coach_email) throw new AppError("gone", SHARE_LINK_GONE);
     // The copy has to be one that can be delivered, as when a link is exchanged.
     const view = this.read({ grantId: row.id, epoch: row.epoch }, now);
     return { view, coach: { email: row.coach_email, name: row.coach_name ?? null } };
@@ -639,6 +641,36 @@ export class ShareStore {
       now,
       now - SHARE_READ_INTERVAL_MS,
     );
+  }
+
+  /**
+   * The copies opened since `since`, the latest first, at most `limit`, for Today: who each was for
+   * and when, and nothing a copy holds. It checks nobody, so call it only for the owner.
+   */
+  recentlyOpened(since: number, limit: number): CopyOpened[] {
+    return this.sql
+      .exec<{ id: string; label: string | null; coach_name: string | null; coach_email: string | null; last_read_at: number }>(
+        `SELECT id, label, coach_name, coach_email, last_read_at FROM share_grants WHERE last_read_at >= ? ORDER BY last_read_at DESC LIMIT ?`,
+        since,
+        limit,
+      )
+      .toArray()
+      .map((row) => ({ grantId: row.id, label: row.label ?? null, coachName: row.coach_name ?? null, coachEmail: row.coach_email ?? null, at: row.last_read_at }));
+  }
+
+  /**
+   * How many copies are shared now, neither revoked nor expired, and how many of them name a coach.
+   * It counts rows and runs no delivery check: Today says only that a copy is shared, never that it
+   * can be read. It checks nobody, so the Vault calls it for the owner only.
+   */
+  openCounts(now: number): { copies: number; coachCopies: number } {
+    const row = this.sql
+      .exec<{ copies: number; coach_copies: number }>(
+        `SELECT COUNT(*) AS copies, COUNT(coach_email) AS coach_copies FROM share_grants WHERE revoked_at IS NULL AND expires_at > ?`,
+        now,
+      )
+      .toArray()[0];
+    return { copies: row?.copies ?? 0, coachCopies: row?.coach_copies ?? 0 };
   }
 
   /** Call from the Vault alarm; access expiry is enforced even if alarm cleanup is delayed. */

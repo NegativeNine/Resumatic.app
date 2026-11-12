@@ -1,0 +1,22 @@
+/*
+ * Account's own rules: the list of its sections beside them, which stacks above them on a narrow
+ * screen. Tokens only: no raw colour (test/web/tokens.test.ts).
+ */
+
+.app-account { display: grid; grid-template-columns: 184px minmax(0, 1fr); gap: var(--space-6); align-items: start; }
+.app-account-side { position: sticky; top: var(--space-6); }
+.app-account-nav ul { margin: 0; padding: 0; list-style: none; }
+.app-account-nav a { display: flex; align-items: center; min-height: 44px; padding: 0 var(--space-3); font: 600 14px/20px var(--font-sans); color: var(--ink-muted); text-decoration: none; border-radius: var(--radius-md); }
+.app-account-nav a:hover { color: var(--ink); }
+.app-account-nav a[aria-current="location"] { color: var(--ink); background: var(--paper); box-shadow: inset 0 0 0 1px var(--rule); }
+
+.app-account-moved { margin: var(--space-4) var(--space-3) 0; }
+.app-account-signed-in { margin: 0 0 var(--space-2); }
+.app-account .rs-danger-zone .rs-h2 { margin: 0; }
+.app-account .rs-danger-zone .card-text { margin: var(--space-2) 0 var(--space-4); max-width: 44rem; }
+
+@media (max-width: 900px) {
+  .app-account { grid-template-columns: minmax(0, 1fr); }
+  .app-account-side { position: static; }
+  .app-account-nav ul { display: flex; flex-wrap: wrap; gap: 0 var(--space-1); }
+}

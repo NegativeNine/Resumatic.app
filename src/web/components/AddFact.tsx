@@ -63,7 +63,7 @@ function AddFactForm({ id, roles, onAdded, onClose, action }: Props & { id: stri
       }}
     >
       <p className="meta">
-        Add something true that your sources missed. A fact you add is your own claim, so it has no source quote.
+        Add something true that your files missed. A fact you add is marked Added by you, so no file backs it.
       </p>
       <div className="field-grid">
         <Field id={`${id}-role`} label="Role">

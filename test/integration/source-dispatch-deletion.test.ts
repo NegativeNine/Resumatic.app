@@ -207,7 +207,7 @@ it("defers expiry cleanup until a late put settles, including if its Worker then
     await instance.alarm();
     expect(state.storage.sql.exec<{ state: string; cleaned_at: number | null }>(`SELECT state,cleaned_at FROM upload_intents WHERE request_key=?`, input.requestKey).one()).toEqual({ state: "expired", cleaned_at: null });
     expect(await state.storage.getAlarm()).toBeGreaterThan(Date.now() + 30_000);
-    expect(() => instance.beginSourceWrite(who, input, crypto.randomUUID(), "b".repeat(64))).toThrow(/expired/);
+    expect(() => instance.beginSourceWrite(who, input, crypto.randomUUID(), "b".repeat(64))).toThrow("This file wasn't added. Upload it again.");
     // The put starts before expiry, but its acknowledgement arrives afterward.
     await env.FILES.put(input.r2Key, "late");
     state.storage.sql.exec(`DELETE FROM r2_cache_dispatches WHERE attempt_id=?`, attempt);

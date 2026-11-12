@@ -355,7 +355,10 @@ describe("a connected app and a fact marked sensitive", () => {
     try {
       const f = await fixture();
       // The person is told, on the page where they decide, what the app will never be given.
-      expect(f.html).toContain("Original uploads, evidence quotes, private application notes and facts you've marked sensitive are excluded.");
+      expect(f.html).toContain(
+        "The app can read your confirmed facts and finished resumes. Your files, the words your facts came from, your notes on jobs and the facts you keep private are left out. You can end its access at any time under Sharing › Connected apps.",
+      );
+      expect(f.html).toContain('value="vault:read" checked required> Read your confirmed facts and finished resumes</label>');
       const who = { userId: f.userId, gen: 1 };
       const { roleId } = await f.stub.addRole(who, { kind: "job", org: "Acme", title: "Engineer", startDate: "2021", endDate: null });
       const kept = (await f.stub.addFact(who, { roleId, kind: "accomplishment", text: GO_SERVICE, level: "implemented" })).factId;
@@ -425,7 +428,7 @@ describe("a connected app's fit preview", () => {
 
   it("is named on the consent page with the permission to generate", async () => {
     const f = await fixture("vault:read vault:jobs vault:generate");
-    expect(f.html).toContain('value="vault:generate"> Generate resumes using my plan quota, and check my fit for the saved jobs it can see</label>');
+    expect(f.html).toContain('value="vault:generate"> Tailor resumes, counted as documents in my plan, and check my fit for the saved jobs it can see</label>');
     expect(f.html).toContain('value="vault:jobs"> See my saved jobs and add new ones</label>');
     await waitOnExecutionContext(f.ctx);
   });
@@ -454,6 +457,42 @@ describe("a connected app's fit preview", () => {
     // The tool takes two UUIDs and nothing else.
     expect((await app.tool("preview_fit", { applicationId, requestKey: "not a uuid" })).failed).toBe(true);
     expect((await app.tool("preview_fit", { applicationId: "not a uuid", requestKey: crypto.randomUUID() })).failed).toBe(true);
+    await waitOnExecutionContext(f.ctx);
+  });
+});
+
+describe("connecting an app while signed out", () => {
+  it("asks a signed-out person to sign in to connect an app, with the lockup inline and no style, script or image, under the same CSP", async () => {
+    const f = await fixture();
+    const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(f.verifier)));
+    const challenge = btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+    const parameters = new URLSearchParams({
+      client_id: f.client.client_id,
+      redirect_uri: "https://client.example.test/callback",
+      response_type: "code",
+      scope: "vault:read",
+      state: "client-state",
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+      resource: "https://resumatic.test/mcp",
+    });
+    // No session cookie: the page asks them to sign in, and comes back here after.
+    const page = await f.call(`/oauth/authorize?${parameters}`);
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-security-policy")).toBe("default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+    expect(page.headers.get("cache-control")).toBe("no-store");
+    expect(page.headers.getSetCookie()).toEqual([]);
+    const html = await page.text();
+    expect(html).toContain("<h1>Sign in to connect an app</h1>");
+    const link = html.match(/<a href="([^"]+)">([^<]+)<\/a>/)!;
+    expect(link[2]).toBe("Sign in with Google");
+    expect(new URL(link[1]!, "https://resumatic.test").searchParams.get("returnTo")).toBe(`/oauth/authorize?${parameters}`);
+    // The lockup is drawn inline, named once, by attributes the policy needs nothing for.
+    const lockup = html.match(/<svg [^>]*>[\s\S]*?<\/svg>/)![0];
+    expect(lockup).toMatch(/^<svg role="img" aria-label="Resumatic" /);
+    expect(lockup).toContain('fill="#0c7a49"');
+    expect(lockup).toContain('d="M6.6 12.7l3.5 3.6 7.3-8.5"');
+    expect(html).not.toMatch(/<style|style=|<script|<img|<image|<link|url\(|https?:\/\/(?!resumatic\.test)/i);
     await waitOnExecutionContext(f.ctx);
   });
 });

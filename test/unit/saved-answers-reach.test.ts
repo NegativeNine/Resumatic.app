@@ -63,7 +63,7 @@ const EXPORTS = ["exportSnapshot", "exportAll", "exportJson", "exportArchiveSnap
  * Every way to the store from inside the Vault or the Worker: its getter and its class, the owner's
  * calls, the two helpers that read a kit, and the owner's export, which holds every row.
  */
-const WAYS = ["this.kits", "ApplicationKitStore", ...PUBLIC, "kitView", "kitProblems", "askKitJudge", ...EXPORTS];
+const WAYS = ["this.kits", "ApplicationKitStore", ...PUBLIC, "kitView", "kitProblems", "kitQuestionProblems", "askKitJudge", ...EXPORTS];
 /** Where a member of the Vault's class begins: its name, after any modifiers. */
 const MEMBER = /^  (?:(?:private|protected|public|static|async|get|set) )*([A-Za-z_]\w*)\(/;
 /** Where a route begins: its router, its verb and its path, which may be on the line below. */
@@ -162,7 +162,7 @@ describe("what can reach saved answers and application kits", () => {
     const store = vault["this.kits"]!;
     // The getter is reached only from the owner's calls, the two helpers, the export and the deletion of a job.
     expect([...new Set(store)].sort()).toEqual(
-      ["addSavedAnswer", "answerKitQuestion", "approveKit", "chooseKitParts", "deleteApplication", "deleteSavedAnswer", "editSavedAnswer", "exportSnapshot", "kitArchiveData", "kitProblems", "kitView", "listSavedAnswers", "saveKitQuestions"].sort(),
+      ["addSavedAnswer", "answerKitQuestion", "approveKit", "chooseKitParts", "deleteApplication", "deleteSavedAnswer", "editSavedAnswer", "exportSnapshot", "kitArchiveData", "kitProblems", "kitQuestionProblems", "kitView", "listSavedAnswers", "saveKitQuestions", "today"].sort(),
     );
     // Once each from the export and the deletion of a job.
     expect(store.filter((place) => place === "exportSnapshot")).toHaveLength(1);
@@ -178,6 +178,8 @@ describe("what can reach saved answers and application kits", () => {
       kitView: ["answerKitQuestion", "approveKit", "chooseKitParts", "getKit", "kitView", "saveKitQuestions"],
       // Its problems are worked out for the view, for approval and for the download.
       kitProblems: ["approveKit", "kitArchiveData", "kitProblems", "kitView"],
+      // Their questions alone are worked out for those problems, and for Today's two counts per job.
+      kitQuestionProblems: ["kitProblems", "kitQuestionProblems", "today"],
       // The judge is asked from the save of a kit's questions alone.
       askKitJudge: ["askKitJudge", "saveKitQuestions"],
       exportSnapshot: ["exportAll", "exportArchiveSnapshot", "exportJson", "exportSnapshot"],
@@ -186,7 +188,8 @@ describe("what can reach saved answers and application kits", () => {
       exportArchiveSnapshot: ["exportArchiveSnapshot", "exportArchiveStream"],
       exportArchiveStream: ["exportArchiveStream"],
     });
-    // So not in what loads with every page, nor in anything a copy, a connected app or a run is given.
+    // So not in `me`, nor in anything a copy, a connected app or a run is given. Today, which loads
+    // with every room, reads it for two counts per job and gives out no question's or answer's words.
     for (const place of Object.values(vault).flat()) expect(place).not.toMatch(/^(me|mcp\w*|createShare|readShare|tailor\w*|startDocument|beginDocument|usableFacts)$/);
     // The Worker asks for each from one route.
     expect(worker).toEqual({
@@ -252,14 +255,45 @@ describe("what can reach saved answers and application kits", () => {
     expect(naming(/\bapi\.kitArchiveUrl\b/)).toEqual(["src/web/components/ApplicationKit.tsx"]);
     expect(naming("/api/saved-answers")).toEqual(["src/shared/api.ts", "src/web/api.ts"]);
     expect(naming('"/saved-answers')).toEqual([ROUTES]);
-    expect(naming(/\bSavedAnswers\b/)).toEqual(["src/web/components/SavedAnswers.tsx", "src/web/pages/AccountPage.tsx"]);
-    expect(naming(/\bApplicationKit\b/)).toEqual(["src/web/components/ApplicationKit.tsx", "src/web/components/ApplicationWorkspace.tsx"]);
+    // On Jobs › Rules and answers alone, and the kit on a job's Application tab.
+    expect(naming(/\bSavedAnswers\b/)).toEqual(["src/web/components/SavedAnswers.tsx", "src/web/pages/jobs/RulesPage.tsx"]);
+    expect(naming(/\bApplicationKit\b/)).toEqual(["src/web/components/ApplicationKit.tsx", "src/web/pages/jobs/JobApplication.tsx"]);
     expect(naming("kit-save")).toEqual(["src/web/components/ApplicationKit.tsx"]);
     // Nothing under the pipelines, the Workflows, the copies' store or the connected apps' server names any of it.
     const elsewhere = [...sources.keys()].filter((path) => /^src\/(pipeline|workflows)\//.test(path) || path === "src/vault/shares.ts" || path === "src/worker/mcp.ts");
     expect(elsewhere.length).toBeGreaterThan(10);
     for (const path of elsewhere)
       expect(sources.get(path), path).not.toMatch(/shared\/kit|application-kit|ApplicationKitStore|saved_answers|application_kits|kit_questions|SavedAnswer|KitView|kitView|kitProblems|kitArchiveData|getKit\b|matchQuestion|this\.kits\b/);
+  });
+
+  it("Today's kit item holds only a job's ID and names and two counts", () => {
+    /** The fields a type or an object literal written in this text names, in order. */
+    const fields = (text: string) => [...text.matchAll(/(\w+)\??:/g)].map((field) => field[1]);
+    const between = (text: string, start: string, end: string) => {
+      const from = text.indexOf(start);
+      expect(from, start).toBeGreaterThan(-1);
+      return text.slice(from, text.indexOf(end, from + start.length));
+    };
+    // The kit item is the job's ID and names, and two counts.
+    const contract = sources.get("src/shared/today.ts")!;
+    expect(fields(between(contract, '| ({ kind: "kit";', "\n"))).toEqual(["kind", "unanswered", "sensitive"]);
+    expect(between(contract, '| ({ kind: "kit";', "\n")).toContain("} & TodayJob)");
+    expect(fields(between(contract, "export interface TodayJob {", "\n}"))).toEqual(["applicationId", "title", "company"]);
+    // The Vault counts each job's questions and keeps the counts alone; the job's names come from the job.
+    const vault = sources.get(VAULT)!;
+    const today = between(vault, "  async today(who: Who): Promise<Today> {", "\n  }\n");
+    expect(today).toContain("kits.push({ applicationId, unanswered: unanswered.length, sensitive: refused.length });");
+    expect(today).toContain("jobNames: this.todayStore.jobNames(");
+    const store = sources.get("src/vault/today.ts")!;
+    expect(fields(between(store, "export interface KitCount {", "\n}"))).toEqual(["applicationId", "unanswered", "sensitive"]);
+    expect(between(store, "const kits: TodayWaiting[] =", "});\n")).toContain(
+      'return { kind: "kit", applicationId: kit.applicationId, title: name?.title ?? null, company: name?.company ?? null, unanswered: kit.unanswered, sensitive: kit.sensitive };',
+    );
+    // Neither the contract nor Today's store knows anything else of a kit.
+    for (const path of ["src/shared/today.ts", "src/vault/today.ts"]) {
+      expect(takers(sources, "src/shared/kit.ts")[path], path).toBeUndefined();
+      expect(sources.get(path), path).not.toMatch(/answer_|savedAnswer|typedAnswer|KitView|kitView|kit_questions|application_kits|saved_answers/);
+    }
   });
 
   it("gains no reader in the Vault or the Worker unseen, whichever way one reaches for the store", () => {

@@ -1,77 +1,32 @@
 import { useId, useState } from "react";
-import { FACT_KINDS, MAX_FACT_CHARS, type FactKind, type ResumeReport } from "../../shared/api";
+import { FACT_KINDS, MAX_FACT_CHARS, type FactKind } from "../../shared/api";
 import { api } from "../api";
-import { count, FACT_KIND_LABEL, LINE_STATUS_HINT, LINE_STATUS_LABEL } from "../format";
+import { FACT_KIND_LABEL } from "../format";
 import { useAction } from "../hooks";
 import { href } from "../router";
 import { useTailor } from "../tailor";
-import { ActionError, Badge, CharCount, Success } from "./ui";
+import { ActionError, CharCount, Success } from "./ui";
 
-/** How each line was checked (CheckReport): a strip of counts above the sheet, and what the marks mean. */
-export function ReportCard({ report }: { report: ResumeReport }) {
-  const stats = [
-    ["kept", LINE_STATUS_LABEL.kept, report.kept],
-    ["repaired", LINE_STATUS_LABEL.repaired, report.repaired],
-    ["replaced", LINE_STATUS_LABEL.replaced, report.replaced],
-    ["dropped", "Dropped", report.dropped],
-  ] as const;
-
-  return (
-    <section className="rs-panel app-check-strip" aria-labelledby="report-heading">
-      <div className="app-check-strip__head">
-        <h2 id="report-heading" className="rs-h3">
-          How each line was checked
-        </h2>
-        {report.gaps.length > 0 && (
-          <a className="rs-link" href="#gaps-heading">
-            {count(report.gaps.length, "possible gap")} noted when this draft was made
-          </a>
-        )}
-      </div>
-      <dl className="rs-report__stats rs-report__stats--wide">
-        {stats.map(([tone, label, value]) => (
-          <div key={tone} className={`rs-report__stat rs-report__stat--${tone}`}>
-            <dt>{label}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
-      </dl>
-      <details className="app-legend">
-        <summary>What the marks mean</summary>
-        <ul className="rs-legend">
-          <li>
-            <Badge tone="kept">Kept</Badge> <span>passed every check as written.</span>
-          </li>
-          <li>
-            <Badge tone="repaired">Repaired</Badge> <span>was fixed once so that it matches its facts.</span>
-          </li>
-          <li>
-            <Badge tone="replaced">{LINE_STATUS_LABEL.replaced}</Badge> <span>{LINE_STATUS_HINT.replaced}.</span>
-          </li>
-          <li>
-            <Badge tone="dropped">Dropped</Badge> <span>was left out, because no fact could back it.</span>
-          </li>
-          <li>
-            <Badge tone="edited">Edited</Badge> <span>was changed by you.</span>
-          </li>
-        </ul>
-      </details>
-    </section>
-  );
-}
-
-/** The job's requirements no confirmed fact covered when this draft was made (GapList). */
+/**
+ * Not in your record (GapList): what the job asks for that this version's confirmed facts didn't
+ * cover when its lines were last checked. A line check works it out again and finishing an older
+ * version's review empties it, so it speaks of the version, not of when the draft was made.
+ */
 export function GapsCard({ gaps, applicationId, readOnly = false }: { gaps: string[]; applicationId?: string; readOnly?: boolean }) {
   const [answering, setAnswering] = useState<number | null>(null);
   return (
     <section className="rs-panel" aria-labelledby="gaps-heading">
       <h2 id="gaps-heading" className="rs-h3" tabIndex={-1}>
-        Possible gaps identified when this draft was created
+        Not in your record
       </h2>
+      <p className="rs-meta app-gaps-note">
+        What this job asks for that your confirmed facts didn’t cover when this version’s lines were last checked. Facts
+        you’ve added since aren’t counted here.
+      </p>
       {gaps.length === 0 ? (
         <p className="rs-meta app-gaps-note">
-          The initial matching found no potential gaps. Check the resume against the job description; matching does
-          not guarantee every requirement appears in the resume.
+          Nothing is listed as missing for this version. That isn’t a check against the whole job description, so read
+          the two side by side.
         </p>
       ) : (
         <>
@@ -99,9 +54,8 @@ export function GapsCard({ gaps, applicationId, readOnly = false }: { gaps: stri
             ))}
           </ul>
           <p className="rs-meta app-gaps-note">
-            These are possible gaps in the confirmed facts used when this draft was made, not a coverage check on the
-            current resume. Resumatic never fills a gap by itself. If you have this experience, add it as a fact, then
-            tailor a new version. You can also <a href={href.facts}>add it under Facts</a>.
+            Resumatic never fills in what’s missing by itself. If you have this experience, add it as a fact, then
+            tailor a new version. You can also <a href={href.factsAll}>add it under Facts › All facts</a>.
           </p>
         </>
       )}
@@ -118,7 +72,7 @@ export function isWrittenAnswer(text: string): boolean {
   return !BARE_ANSWER.test(trimmed) && trimmed.split(/\s+/).filter(Boolean).length >= 3;
 }
 
-/** Closing a gap: the person's own words, saved as their own claim (Close a gap). */
+/** Adding what's missing: the person's own words, saved as a fact marked Added by you (Close a gap). */
 function GapAnswer({ requirement, applicationId, onClose }: { requirement: string; applicationId: string; onClose: () => void }) {
   const id = useId();
   const [text, setText] = useState("");
@@ -140,9 +94,9 @@ function GapAnswer({ requirement, applicationId, onClose }: { requirement: strin
     return (
       <div className="rs-well app-gap-answer">
         <Success>Fact added.</Success>
-        <p className="rs-meta">It’s your own claim, and the next version can use it.</p>
+        <p className="rs-meta">It’s marked Added by you, and the next version can use it.</p>
         <div className="rs-actions">
-          <button type="button" className="rs-btn rs-btn--primary rs-btn--sm" disabled={tailor.pending} onClick={() => void tailor.tailor(applicationId)}>
+          <button type="button" className="rs-btn rs-btn--sm" disabled={tailor.pending} onClick={() => void tailor.tailor(applicationId)}>
             {tailor.pending ? "Starting…" : "Tailor a new version"}
           </button>
           <button type="button" className="rs-btn rs-btn--sm" onClick={onClose}>

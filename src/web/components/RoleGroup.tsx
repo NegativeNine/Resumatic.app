@@ -8,7 +8,13 @@ import { ReviewButtons, useReview } from "./ReviewButtons";
 import { useQueueItem } from "./ReviewQueue";
 import { RoleForm } from "./RoleForm";
 import { SourceEvidence } from "./SourceEvidence";
-import { ActionError, Badge, Quote, Tick, type TickState } from "./ui";
+import { ActionError, Badge, Quote, REVIEW_MARK, REVIEW_TICK, Tick, type TickState } from "./ui";
+
+const EMPTY_UNDER_ROLE: Record<ReviewState, string> = {
+  proposed: "No facts to check under this role.",
+  confirmed: "No confirmed facts under this role.",
+  rejected: "No facts left out under this role.",
+};
 
 interface Props {
   role: RoleView;
@@ -21,7 +27,7 @@ interface Props {
   reload: Reload;
   reviewLocked: boolean;
   onEditingChange: (id: string, active: boolean) => void;
-  /** Facts still proposed under this role and its copies, across every filter: rejecting the role rejects them too. */
+  /** Facts still to check under this role and its copies, across every filter: leaving out the role leaves them out too. */
   proposedUnder: number;
 }
 
@@ -55,7 +61,7 @@ export function RoleGroup({
     setEditing(true);
   }
 
-  // Rejecting a role also rejects every fact still proposed under it, so it asks first.
+  // Leaving out a role also leaves out every fact still to check under it, so it asks first.
   const askFirst = role.state !== "rejected" && proposedUnder > 0;
 
   function cancelReject() {
@@ -75,7 +81,7 @@ export function RoleGroup({
     reject: role.state !== "rejected" && !busy ? () => (askFirst ? setAskingReject(true) : void review.decide("reject")) : undefined,
   });
   const tick: TickState =
-    review.deciding === "confirm" ? "confirmed" : review.deciding === "reject" ? "rejected" : role.state;
+    review.deciding === "confirm" ? "backed" : review.deciding === "reject" ? "left-out" : REVIEW_TICK[role.state];
 
   function closeEditor() {
     setEditing(false);
@@ -106,7 +112,7 @@ export function RoleGroup({
             </p>
           )}
         </div>
-        <Badge tone={role.state}>{STATE_LABEL[role.state]} role</Badge>
+        <Badge tone={REVIEW_MARK[role.state]}>{STATE_LABEL[role.state]}</Badge>
         <div className="rs-role__more">
           {role.quote && (
             <Quote text={role.quote} size="sm" caption={`From ${sourceLabel(filenames, role.sourceId)}`} />
@@ -122,7 +128,7 @@ export function RoleGroup({
           {duplicates.length > 0 && (
             <p className="rs-meta">
               This role also appears in {duplicates.length} other {duplicates.length === 1 ? "record" : "records"}.
-              Review applies to all shown copies; editing changes this copy only.
+              Your answer applies to every copy shown; Fix it changes this copy only.
             </p>
           )}
           {duplicates.map(
@@ -141,7 +147,6 @@ export function RoleGroup({
           ) : (
             <ReviewButtons
               state={role.state}
-              noun="role"
               describedBy={headingId}
               review={review}
               disabled={reviewLocked}
@@ -152,20 +157,7 @@ export function RoleGroup({
             />
           )}
           {askingReject && !editing && (
-            <div className="rs-well" role="group" aria-label={`Reject ${role.org}`}>
-              <p className="rs-p app-well-text">
-                Reject {role.org} and its {count(proposedUnder, "proposed fact")}? Rejected items are kept here and
-                never used.
-              </p>
-              <div className="rs-actions app-well-actions">
-                <button type="button" className="rs-btn rs-btn--primary rs-btn--sm" autoFocus disabled={busy} onClick={reject}>
-                  Yes, reject {rejecting}
-                </button>
-                <button type="button" className="rs-btn rs-btn--sm" onClick={cancelReject}>
-                  Cancel
-                </button>
-              </div>
-            </div>
+            <RoleRejectWell org={role.org} proposedUnder={proposedUnder} rejecting={rejecting} disabled={busy} onYes={reject} onCancel={cancelReject} />
           )}
           <ActionError message={review.error} />
         </div>
@@ -182,8 +174,47 @@ export function RoleGroup({
           equivalentRoles={new Set([role.id, ...duplicates.map((copy) => copy.id)])}
         />
       ) : (
-        <p className="rs-role__empty">No {STATE_LABEL[filter].toLowerCase()} facts under this role.</p>
+        <p className="rs-role__empty">{EMPTY_UNDER_ROLE[filter]}</p>
       )}
     </section>
+  );
+}
+
+/**
+ * The question asked before a role with facts still to check is left out: those facts go with it.
+ * Its Yes button takes focus, and the review keys leave it to its own buttons.
+ */
+export function RoleRejectWell({
+  org,
+  proposedUnder,
+  rejecting,
+  disabled,
+  onYes,
+  onCancel,
+}: {
+  org: string;
+  /** Facts still to check under the role and its copies. */
+  proposedUnder: number;
+  /** Everything the answer leaves out: the role, its copies and those facts. */
+  rejecting: number;
+  disabled: boolean;
+  onYes: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="rs-well" role="group" aria-label={`Leave out ${org}`}>
+      <p className="rs-p app-well-text">
+        Leave out {org} and its {count(proposedUnder, "fact")} still to check? They’re kept under Left out and never
+        used.
+      </p>
+      <div className="rs-actions app-well-actions">
+        <button type="button" className="rs-btn rs-btn--primary rs-btn--sm" autoFocus disabled={disabled} onClick={onYes}>
+          Yes, leave out {rejecting}
+        </button>
+        <button type="button" className="rs-btn rs-btn--sm" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }

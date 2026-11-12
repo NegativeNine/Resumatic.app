@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { CheckoutCoordinator } from "../../src/vault/checkout";
+import { AppError } from "../../src/shared/errors";
 import type {
   BillingCheckoutSession,
   stripeClient,
@@ -116,6 +117,20 @@ describe("durable checkout intent", () => {
     f.state.intent = JSON.stringify(intent);
     await expect(f.coordinator.open("pro")).rejects.toThrow("association requires review");
     expect(f.checkout).toHaveBeenCalledTimes(1);
+  });
+  it("refuses a new checkout while a cancellation is unfinished, in the interface's words", async () => {
+    const f = fixture();
+    await f.coordinator.open("pro");
+    const intent = JSON.parse(f.state.intent!);
+    intent.canceling = true;
+    f.state.intent = JSON.stringify(intent);
+    const refused = await f.coordinator.open("pro").then(() => null, (error: unknown) => error);
+    expect(refused).toBeInstanceOf(AppError);
+    expect((refused as AppError).code).toBe("conflict");
+    expect((refused as AppError).message).toBe("conflict: Cancel the checkout you started first, then try again.");
+    // Nothing more was asked of the payment provider.
+    expect(f.checkout).toHaveBeenCalledTimes(1);
+    expect(f.stripe.subscriptions).toHaveBeenCalledTimes(1);
   });
   it("does not expire a different session belonging to the same customer", async () => {
     const f = fixture();

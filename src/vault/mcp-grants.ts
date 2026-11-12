@@ -166,14 +166,21 @@ export class McpGrantStore {
     return { userId: claims.uid, gen: claims.gen, epoch: claims.epoch } as Who;
   }
 
+  /**
+   * The owner's grants. One made in an earlier security epoch or session generation is listed as
+   * revoked: `checked` refuses it, and `activeCount` doesn't count it, so the list says the same as
+   * Today. Its row is unchanged, and revoking it still clears its credentials.
+   * `authorizeOwner` has just confirmed that `who.gen` is the current generation.
+   */
   list(who: Who): McpGrant[] {
     this.auth.authorizeOwner(who);
+    const epoch = this.auth.currentEpoch();
     return this.sql
       .exec<GrantRow>(
         `SELECT * FROM mcp_grants ORDER BY created_at DESC LIMIT 200`,
       )
       .toArray()
-      .map(view);
+      .map((row): McpGrant => (row.epoch === epoch && row.gen === who.gen ? view(row) : { ...view(row), state: "revoked" }));
   }
 
   revoke(
@@ -191,6 +198,26 @@ export class McpGrantStore {
       id,
     );
     return { oauthGrantId: row?.oauth_grant_id ?? null };
+  }
+
+  /**
+   * How many connected apps have access now, for the owner: active, not revoked, not expired, and
+   * made in the vault's current security epoch and session generation. `checked` refuses a grant
+   * from any other, so one that signing out everywhere or a vault move has ended is not counted.
+   * `authorizeOwner` has just confirmed that `who.gen` is the current generation.
+   */
+  activeCount(who: Who, now: number): number {
+    this.auth.authorizeOwner(who);
+    return (
+      this.sql
+        .exec<{ n: number }>(
+          `SELECT COUNT(*) AS n FROM mcp_grants WHERE state = 'active' AND revoked_at IS NULL AND expires_at > ? AND epoch = ? AND gen = ?`,
+          now,
+          this.auth.currentEpoch(),
+          who.gen,
+        )
+        .toArray()[0]?.n ?? 0
+    );
   }
 
   purgeExpired(now = Date.now()): void {

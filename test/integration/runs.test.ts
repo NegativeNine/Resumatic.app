@@ -202,10 +202,10 @@ describe("quota periods", () => {
     await withStore((store) => {
       expect(() =>
         store.begin(run("zero", { quota: freeQuotaBucket(NOVEMBER, 0) })),
-      ).toThrow("exhausted");
+      ).toThrow("used all your documents");
       store.begin(run());
       store.begin(run("run-2"));
-      expect(() => store.begin(run("run-3"))).toThrow("exhausted");
+      expect(() => store.begin(run("run-3"))).toThrow("used all your documents");
     });
   });
 

@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import { api } from "../api";
 import { useAction } from "../hooks";
+import { validSpan } from "./facts/source-runs";
 import { ActionError } from "./ui";
 import "./source-evidence.css";
 
@@ -32,14 +33,7 @@ export function SourceEvidence({
         setSource(await api.sourceText(sourceId));
       });
   }
-  const valid =
-    source &&
-    Number.isInteger(span[0]) &&
-    Number.isInteger(span[1]) &&
-    span[0] >= 0 &&
-    span[1] > span[0] &&
-    span[1] <= source.markdown.length &&
-    source.markdown.slice(...span) === quote;
+  const valid = source !== null && validSpan(source.markdown, span, quote);
   const before = source?.markdown.slice(Math.max(0, span[0] - 600), span[0]);
   const after = source?.markdown.slice(
     span[1],
@@ -56,15 +50,15 @@ export function SourceEvidence({
         onClick={() => void toggle()}
       >
         {pending
-          ? "Opening source…"
+          ? "Opening file…"
           : open
-            ? "Hide source context"
-            : "See this quote in its source"}
+            ? "Hide where this came from"
+            : "See where this came from"}
       </button>
       {open && (
         <div id={panelId} className="source-context" aria-live="polite">
           {valid ? (
-            <pre aria-label="Source text with the evidence highlighted">
+            <pre aria-label="The file’s text, with the quoted words highlighted">
               {span[0] > 600 ? "…" : ""}
               {before}
               <mark>{quote}</mark>
@@ -74,8 +68,8 @@ export function SourceEvidence({
           ) : (
             source && (
               <p className="hint">
-                The saved quote is shown above. Its source position could not be
-                matched, so no passage has been highlighted.
+                The saved quote is shown above. Its place in the file couldn’t be
+                found, so nothing is highlighted.
               </p>
             )
           )}

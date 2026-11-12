@@ -437,19 +437,19 @@ export const SENSITIVE_KIND_WORDS: Readonly<Record<SensitiveKind, string>> = {
   judge: "something answers are never saved for: work authorisation, pay or personal details",
 };
 
-export const KIT_CHANGED = "This application kit was changed somewhere else. Load it again, check it, then try again.";
+export const KIT_CHANGED = "This job's kit was changed somewhere else. Load it again, check it, then try again.";
 export const KIT_QUESTIONS_REFUSED =
   "These questions couldn't be saved as written. Keep to 30 questions of up to 1,000 characters each, then save again.";
 export const KIT_ANSWER_REFUSED = "This answer couldn't be saved as written. Keep it to 4,000 characters, then save again.";
 export const KIT_CHOICE_REFUSED = "Choose a finished resume, cover letter or interview preparation made for this job.";
 export const KIT_RESUME_REFUSED =
-  "This resume version can't go in a kit: it uses a fact you've marked sensitive, or a line its facts don't back. Choose another version.";
+  "This resume version can't go in a kit: it uses a fact you keep private, or a line its facts don't back. Choose another version.";
 export const KIT_DOCUMENT_REFUSED = "This document can't go in a kit as it is. Make it again, then choose the new one.";
 export const KIT_NO_RESUME = "Choose a resume for this kit before approving it.";
 export const KIT_UNANSWERED = "Every question needs an answer you've typed or checked before the kit can be approved.";
-export const KIT_SENSITIVE_NEVER_SAVED = "This question asks about something whose answer is never saved. Type your answer for this application only.";
-export const KIT_NOT_APPROVED = "Approve this application kit before downloading it.";
-export const KIT_CHANGED_WHILE_PREPARING = "This application kit changed while it was being prepared. Check it, then download it again.";
+export const KIT_SENSITIVE_NEVER_SAVED = "This question asks about something whose answer is never saved. Type your answer for this job only.";
+export const KIT_NOT_APPROVED = "Approve this kit before downloading it.";
+export const KIT_CHANGED_WHILE_PREPARING = "This kit changed while it was being prepared. Check it, then download it again.";
 
 /** Each problem's sentence, and the code it is refused with at approval and download. */
 export const KIT_PROBLEMS: Readonly<Record<KitProblemCode, { code: "invalid" | "conflict"; sentence: string }>> = {

@@ -4,7 +4,7 @@ import axe from "axe-core";
 import { describe, expect, it, vi } from "vitest";
 import type { CommentThread, OwnerCommentThread, ShareComment, ShareSuggestion, SharedView, ShareTarget } from "../../src/shared/sharing";
 import { VAULT_CHANGED } from "../../src/web/live";
-import { AccountPage } from "../../src/web/pages/AccountPage";
+import { SharingCoaches } from "../../src/web/pages/sharing/SharingCoaches";
 import { SharePage } from "../../src/web/pages/SharePage";
 import { quotaMessage } from "../../src/web/tailor";
 import { FakeApi, installFakeApi } from "./api-fake";
@@ -210,11 +210,11 @@ describe("an owner answering suggested wording", () => {
       ]),
     ];
     installFakeApi(state);
-    renderWithSession(<AccountPage />, state.me);
+    renderWithSession(<SharingCoaches />, state.me);
     await screen.findByRole("region", { name: "Comments from your coach" });
     expect(told("Waiting wording")).toEqual([
       "Waiting for you",
-      "If you accept, this wording is checked against the facts this line cites before it replaces the line. A completed check uses one output.",
+      "If you accept, this wording is checked against the facts this line cites before it replaces the line. A completed check counts toward your documents for this period.",
     ]);
     expect(told("Checking wording")).toEqual(["Checking", "Checking this wording against the cited facts…"]);
     expect(told("Applied wording")).toEqual(["Accepted", "This wording passed the check. It’s in version 4 of your resume."]);
@@ -228,6 +228,8 @@ describe("an owner answering suggested wording", () => {
     expect(itemOf("Waiting wording").getByRole("deletion")).toHaveTextContent(`Line in the copy: ${LED_LINE}`);
     // Waiting: accept or decline, and Accept is off while another check runs. Out of date: decline only.
     expect(itemOf("Waiting wording").getByRole("button", { name: "Accept and check" })).toBeDisabled();
+    // On Account it is the card's brand button; on a resume's line card it is plain.
+    expect(itemOf("Waiting wording").getByRole("button", { name: "Accept and check" })).toHaveClass("rs-btn--primary");
     expect(itemOf("Waiting wording").getByRole("button", { name: "Decline" })).toBeEnabled();
     expect(itemOf("Stale wording").queryByRole("button", { name: "Accept and check" })).toBeNull();
     expect(itemOf("Stale wording").getByRole("button", { name: "Decline" })).toBeEnabled();
@@ -246,7 +248,7 @@ describe("an owner answering suggested wording", () => {
     const state = fullVault();
     state.shareComments = [thread([named("w", { state: "waiting" }, "Waiting wording"), named("x", { state: "waiting" }, "Another wording")])];
     const api = installFakeApi(state);
-    renderWithSession(<AccountPage />, state.me);
+    renderWithSession(<SharingCoaches />, state.me);
     await screen.findByRole("region", { name: "Comments from your coach" });
     await userEvent.click(itemOf("Waiting wording").getByRole("button", { name: "Accept and check" }));
     expect(await itemOf("Waiting wording").findByText("Checking this wording against the cited facts…")).toBeInTheDocument();
@@ -272,12 +274,12 @@ describe("an owner answering suggested wording", () => {
       ]),
     ];
     installFakeApi(state);
-    renderWithSession(<AccountPage />, state.me);
+    renderWithSession(<SharingCoaches />, state.me);
     await screen.findByRole("region", { name: "Comments from your coach" });
     expect(told("Changed wording")).toEqual([
       "Waiting for you",
       "The resume or its facts changed, so this wording wasn’t applied. You can accept again.",
-      "If you accept, this wording is checked against the facts this line cites before it replaces the line. A completed check uses one output.",
+      "If you accept, this wording is checked against the facts this line cites before it replaces the line. A completed check counts toward your documents for this period.",
     ]);
     expect(told("Unfinished wording")[1]).toBe("The check couldn’t be finished, so nothing changed. You can accept again.");
     expect(told("Unconfirmed wording")).toEqual(["Checking", "Your check was requested, but Resumatic can’t confirm yet that it started. Keep this page open."]);
@@ -289,7 +291,7 @@ describe("an owner answering suggested wording", () => {
     state.shareComments = [thread([named("w", { state: "waiting" }, "Waiting wording")], { coachEmail: "coach@example.test" })];
     state.shareComments[0]!.comments[0]!.name = null;
     const api = installFakeApi(state);
-    renderWithSession(<AccountPage />, state.me);
+    renderWithSession(<SharingCoaches />, state.me);
     await screen.findByRole("region", { name: "Comments from your coach" });
     // A coach without a name is “your coach”.
     expect(itemOf("Waiting wording").getByText("From your coach")).toBeInTheDocument();

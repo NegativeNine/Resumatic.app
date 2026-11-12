@@ -1,13 +1,12 @@
 /* The shared copy: what a coach sees at /share. No account, no navigation, only the copy. */
 .app-share { min-height: 100vh; background: var(--desk); }
 .app-share__bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); padding: var(--space-4) var(--space-6); background: var(--paper); border-bottom: 1px solid var(--rule); }
-.app-share__lockup { display: block; height: 20px; width: auto; fill: var(--ink); }
-.app-share__bar .rs-meta { margin: 0; }
+/* The lockup is a little larger here than in the app's header. This sheet loads before components.css, so the extra class keeps it ahead of .rs-brand svg. */
+.rs-brand.app-share__brand svg { height: 20px; }
 .app-share__main { width: 100%; max-width: 864px; margin: 0 auto; padding: var(--space-10) var(--space-6) var(--space-16, 64px); }
-.app-share__main > h1 { margin: 0; }
-.app-share__main > .rs-lede { margin: var(--space-3) 0 0; max-width: 60ch; }
-.app-share__main > .rs-lede strong { font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
-.app-share__main > .app-share__opened { margin: var(--space-3) 0 var(--space-8); max-width: 80ch; }
+.app-share__main > h1 { margin: 0; overflow-wrap: anywhere; }
+.app-share__main > .app-share__made { margin: var(--space-3) 0 0; max-width: 80ch; }
+.app-share__main > .app-share__opened { margin: var(--space-1) 0 var(--space-8); max-width: 80ch; }
 .app-share__resume-head .app-share__job { margin: 2px 0 0; overflow-wrap: anywhere; }
 /* What a named coach can do with the copy. It sits between the heading and the copy, never in print. */
 .app-share__notice { margin: calc(-1 * var(--space-4)) 0 var(--space-8); max-width: 80ch; }
@@ -32,10 +31,8 @@
 .app-share__question ul { margin: 0 0 0 1.3em; padding: 0; }
 .app-share__question li { margin: 0 0 0.2em; }
 .app-share__question p { margin: 0; }
-.app-share__card { max-width: 30rem; margin: var(--space-10) auto 0; padding: var(--space-8); background: var(--paper); border-radius: var(--radius-paper); box-shadow: var(--shadow-paper); }
-.app-share__card h1 { margin: 0 0 var(--space-3); font-size: 24px; line-height: 30px; }
-.app-share__card p { margin: 0; color: var(--ink-muted); }
-.app-share__card .rs-btn { margin-top: var(--space-5); }
+/* A copy that can't be opened, or isn't open any more: one card where the copy would be. */
+.app-share__main > .app-state-card { max-width: 30rem; margin: var(--space-10) auto 0; padding: var(--space-8); }
 @media (max-width: 560px) {
   .app-share__bar, .app-share__main { padding-left: var(--space-4); padding-right: var(--space-4); }
   .app-share__main { padding-top: var(--space-6); }
@@ -60,11 +57,13 @@
 .app-share button.app-share__pick { display: block; width: calc(100% + 0.6em); min-height: 0; margin: -0.07em -0.3em; padding: 0.07em 0.3em; font: inherit; letter-spacing: inherit; color: inherit; text-align: start; text-decoration: none; cursor: pointer; background: none; border: 0; border-radius: var(--radius-sm); transition: none; -webkit-user-select: text; user-select: text; }
 /* On the resume's paper the sheet's own tint marks the chosen line (.rs-sheet .rs-line). A bar in the sheet's ink marks it without relying on the tint. */
 .app-share .rs-sheet button.app-share__pick[aria-pressed="true"] { box-shadow: inset 2px 0 0 var(--sheet-ink); }
-.app-share__facts button.app-share__pick:hover { background: var(--ballpoint-soft); }
-.app-share__facts button.app-share__pick[aria-pressed="true"] { background: var(--ballpoint-soft); box-shadow: inset 2px 0 0 var(--ballpoint); }
+.app-share__facts button.app-share__pick:hover { background: var(--paper-hover); }
+.app-share__facts button.app-share__pick[aria-pressed="true"] { background: var(--paper-sunken); box-shadow: inset 2px 0 0 var(--ink); }
 @media print {
   .app-share__aside { display: none; }
   /* Paper shows the copy and nothing of what was chosen on screen. */
   .app-share .rs-sheet button.app-share__pick, .app-share .rs-sheet button.app-share__pick[aria-pressed="true"],
   .app-share__facts button.app-share__pick, .app-share__facts button.app-share__pick[aria-pressed="true"] { background: none; box-shadow: none; }
 }
+/* The same copy inside the app, for a coach reading a client's copy: the app's page is its frame. */
+.app-share--in-app { min-height: 0; background: none; }

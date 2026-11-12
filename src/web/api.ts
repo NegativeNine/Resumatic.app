@@ -28,6 +28,8 @@ import type { EmailNotices, NoticeKind } from "../shared/email-notices";
 import type { PostingRead } from "../shared/postings";
 import type { CoachClient, ShareableDocument, ShareGrant } from "../shared/sharing";
 import type { CommentThread, NewShareComment, NewSuggestion, OwnerCommentThread, ShareComment } from "../shared/sharing";
+import type { Today } from "../shared/today";
+import type { McpGrant } from "../shared/mcp";
 
 export interface BillingView {
   enabled: boolean;
@@ -60,6 +62,30 @@ function fetchError(error: unknown): unknown {
       (error.name === "AbortError" || error.name === "TimeoutError"))
     ? new ApiNetworkError(error.message)
     : error;
+}
+
+/**
+ * The event sent shortly after this tab changes something, so the header's counts are read again.
+ * Pages listen for it through live.ts, beside VAULT_CHANGED; it is written here because this module
+ * also runs where there is no window.
+ */
+export const COUNTS_CHANGED = "resumatic:counts-change";
+
+/** True while a change this tab made waits to be told: several changes together are told once. */
+let countsPending = false;
+
+/**
+ * Tells the header that something this tab changed may have changed its counts. Only a change to
+ * the API counts: signing out is not one, and its note on the signed-out page stays.
+ */
+function countsChanged(method: string, path: string): void {
+  const target = globalThis as unknown as { dispatchEvent?: (event: Event) => boolean };
+  if (method === "GET" || !path.startsWith("/api/") || countsPending || typeof target.dispatchEvent !== "function") return;
+  countsPending = true;
+  setTimeout(() => {
+    countsPending = false;
+    target.dispatchEvent?.(new Event(COUNTS_CHANGED));
+  }, 150);
 }
 
 async function request<T>(
@@ -102,6 +128,7 @@ async function request<T>(
       payload.message ?? res.statusText,
     );
   }
+  countsChanged(method, path);
   if (res.status === 204) return undefined as T;
   const type = res.headers.get("content-type") ?? "";
   if (!type.includes("application/json")) return undefined as T;
@@ -176,7 +203,7 @@ export const api = {
   profile: () => request<Profile>("GET", "/api/profile"),
   updateProfile: (patch: Partial<Profile>, expectedRevision: number) =>
     request<Profile>("PUT", "/api/v2/profile", { ...patch, expectedRevision }),
-  /** The person's job preferences. Loaded by their own card on Account, never with the session. */
+  /** The person's job preferences. Loaded by their own card on Sharing › Recruiters, never with the session. */
   preferences: () => request<Preferences>("GET", "/api/preferences"),
   /** Replaces all four values, if `expectedRevision` is still the saved revision. */
   updatePreferences: (values: PreferenceValues, expectedRevision: number) =>
@@ -190,7 +217,7 @@ export const api = {
     request<EmailNotices>("PUT", `/api/email-notices/${kind}`, { on }),
   signOutEverywhere: () =>
     request<void>("POST", "/api/account/sign-out-everywhere"),
-  /** The person's saved answers. Loaded by their own card on Account. */
+  /** The person's saved answers. Loaded by their own card on Jobs › Rules and answers, and by a job's kit. */
   savedAnswers: () => request<{ savedAnswers: SavedAnswer[] }>("GET", "/api/saved-answers"),
   /** Adds a saved answer. The same label and answer sent again returns the one already kept. */
   addSavedAnswer: (input: SavedAnswerInput) => request<SavedAnswer>("POST", "/api/saved-answers", input),
@@ -428,4 +455,28 @@ export const api = {
     request<void>("POST", `/api/shares/suggestions/${encodeURIComponent(id)}/decline`),
   exportUrl: "/api/export",
   exportArchiveUrl: "/api/export/archive",
+
+  // The redesign's stages add their calls here, each inside its own block.
+
+  // stage 2: the shell
+  /** What waits for the owner in each room. Loaded by the shell on a change of room. */
+  today: () => request<Today>("GET", "/api/v2/today"),
+
+  // stage 3: today
+
+  // stage 4: facts
+
+  // stage 5: jobs
+
+  // stage 6: sharing and account
+  /** The apps this person connected, for Sharing › Overview. ConnectedApps reads the same route itself. */
+  mcpGrants: () => request<{ grants: McpGrant[] }>("GET", "/api/mcp/grants"),
+
+  // stage 7: outside
+  /**
+   * A client's copy, read in the app from this account's client list. A copy that has ended is a
+   * 409 and one not in the list a 404 ("no such client"); only this account being gone is a 410.
+   * The type is imported in place so that this stage changes nothing outside its block.
+   */
+  coachCopy: (grantId: string) => request<import("../shared/sharing").SharedView>("GET", `/api/coach/clients/${encodeURIComponent(grantId)}/copy`),
 };
