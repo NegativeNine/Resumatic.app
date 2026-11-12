@@ -76,6 +76,10 @@ Enable it in staging first by adding the variable to `env.staging.vars`. Before 
 
 Before the production guard is lifted, all of these must hold: the precision of each method's tags, measured on lines given with consent; the privacy notice naming the tags as data held and the lookup in the taxonomy's database; the ESCO and O\*NET credits on the legal pages ([taxonomy.md](taxonomy.md), "Credits"); what D1 keeps of the values bound to a query, established for the taxonomy's database; and the stage's D1 statements at its caps (about 400 for the words of an upload, 120 for the rule and eight occupation profiles) run against a deployed Worker.
 
+### Card preview
+
+`CARD_PREVIEW_ENABLED=true` shows each signed-in person, under Account, the card a recruiter would see if they were ever found: built from their confirmed tags, shown to nobody else and stored nowhere ([visibility-design.md](visibility-design.md)). Both the Worker and the Vault must have it, so a mixed rollout never offers the section. It is absent from every environment, and `scripts/validate-config.mjs` refuses it in production configuration (`CARD_PREVIEW_ROLLOUT_UNVERIFIED`) until tags are measured, owner review exists and the sharing rules are decided. Without a wholly loaded taxonomy bound as `TAXONOMY`, the route answers that the preview is unavailable and reads nothing from the vault. With one, a load makes at most 37 D1 statements, by construction and not yet measured: one read of the taxonomy's version, one batch of occupations, one of skills, and at most 17 `fromAny` and 17 `concepts` statements for the walk up the skill groups. It calls no model and spends nothing. A 500 from `/api/v2/card-preview` where the switch is on is a fault in the taxonomy's D1 database, or a Vault without `cardMaterial` in a mixed rollout; it is not a fault in the person's vault, whose own refusals carry their usual codes.
+
 ## Billing configuration
 
 Billing stays disabled unless `BILLING_ENABLED=true` and all required values are valid. Provide `APP_ORIGIN`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, an explicit `STRIPE_API_VERSION`, and `BILLING_PLANS_JSON`:

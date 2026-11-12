@@ -242,8 +242,9 @@ describe("account tools", () => {
     installFakeApi(state);
     renderWithSession(<AccountPage />, state.me);
     await userEvent.click(await screen.findByRole("button", { name: "Choose what to share" }));
-    await screen.findByRole("group", { name: /^Confirmed facts/ });
-    expect(screen.queryByText(/marked sensitive/)).toBeNull();
+    const facts = await screen.findByRole("group", { name: /^Confirmed facts/ });
+    // The form, not the page: the card preview says, of every card, that a marked fact never reaches it.
+    expect(within(facts.closest("section")!).queryByText(/marked sensitive/)).toBeNull();
   });
 
   it("won’t offer a document that uses a fact marked sensitive, and says to create a new one", async () => {

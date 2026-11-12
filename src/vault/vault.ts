@@ -94,6 +94,8 @@ import { validateTailorCheckpoint, validateTailorPublication } from "./tailor-pu
 import { finalLegacyEvidence, legacyReceipt, legacyReview } from "./legacy-remediation";
 import { RunStore } from "./runs";
 import { RecordStore } from "./record";
+import { readCardMaterial } from "./card";
+import { CARD_PREVIEW_OFF, type CardMaterial } from "../shared/card";
 import { IDENTICAL_ROLE_METHOD, IDENTICAL_WORDING_METHOD, MAX_OFFER_PAIRS, OFFERS_PER_FACT, OFFER_MIN_COSINE, identicalMatches, type JudgedOffer, type OfferPair } from "../pipeline/match";
 import { roleKey, sameWording, stampProblem } from "../shared/record";
 import { MAX_TAGS_PER_SAVE, MAX_TAG_FACTS, MAX_TAG_ROLES, TAG_JUDGE_METHOD, TAG_RULE_METHOD, TAG_VECTOR_METHOD, skillAsWritten, tagStamp, type HeldTag, type ProposedTag, type TagMade, type TagSubjects } from "../pipeline/tag";
@@ -695,6 +697,7 @@ export class Vault extends DurableObject<Env> {
         connectedApps: this.env.MCP_ENABLED === "true",
         roleDateUnknownEnd: this.env.ROLE_UNKNOWN_END_ENABLED === "true",
         postingReader: this.env.POSTING_READER_ENABLED === "true",
+        cardPreview: this.env.CARD_PREVIEW_ENABLED === "true",
       },
     };
   }
@@ -749,6 +752,18 @@ export class Vault extends DurableObject<Env> {
     // The store reads the revision and writes in one synchronous turn: nothing is awaited
     // between the owner check above and the write.
     return this.preferences.save(values, expectedRevision);
+  }
+
+  // ---------------------------------------------------------------- card preview
+  // The owner's own card, as a recruiter would see it if they were ever found. This reads the
+  // material only: concept IDs, how many facts show each, and job dates. The Worker turns them
+  // into taxonomy groups, so nothing here awaits the taxonomy. Nothing is stored or sent anywhere.
+
+  async cardMaterial(who: Who): Promise<CardMaterial> {
+    this.requireOwner(who);
+    if (this.env.CARD_PREVIEW_ENABLED !== "true") throw new AppError("unavailable", CARD_PREVIEW_OFF);
+    // One synchronous turn with no await and no write, so it needs no transaction.
+    return readCardMaterial(this.record, this.usableFacts(), withheldFacts(this.sql).ids, this.confirmedRoles().filter((role) => role.kind === "job"));
   }
 
   // ---------------------------------------------------------------- sources (user)

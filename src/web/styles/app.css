@@ -305,6 +305,24 @@ main:focus {
   margin: 0;
 }
 
+/* Account: the owner's card preview */
+
+.app-card-preview__fields {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.app-card-preview__fields dt {
+  font: 600 14px/20px var(--font-sans);
+  color: var(--ink);
+}
+
+.app-card-preview__fields ul {
+  margin: var(--space-1) 0 0;
+  padding-left: 1.25rem;
+}
+
 /* The beta's privacy notice and terms */
 
 .legal {
@@ -336,6 +354,11 @@ main:focus {
 
 .legal li + li {
   margin-top: 0.4rem;
+}
+
+.legal blockquote {
+  padding-left: var(--space-4);
+  border-left: 3px solid var(--rule);
 }
 
 .legal .draft-note {

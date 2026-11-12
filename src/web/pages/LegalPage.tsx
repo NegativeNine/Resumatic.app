@@ -32,6 +32,16 @@ export function LegalPage({ doc }: { doc: LegalDoc }) {
   );
 }
 
+/**
+ * The notices ESCO and O*NET ask a product that shows their data to carry, word for word as the
+ * latest build's manifest has them (docs/taxonomy-build-2026-11-11.json, `notices`).
+ * test/web/legal.test.tsx holds them to it.
+ */
+export const TAXONOMY_NOTICES = [
+  "This service uses the ESCO classification of the European Commission.",
+  "This service includes information from the O*NET 31.0 Database by the U.S. Department of Labor, Employment and Training Administration (USDOL/ETA). Used under the CC BY 4.0 license. O*NET® is a trademark of USDOL/ETA. Resumatic has modified all or some of this information. USDOL/ETA has not approved, endorsed, or tested these modifications.",
+] as const;
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section>
@@ -223,6 +233,7 @@ function Privacy() {
         </ul>
         <p>We keep your data until you delete it, or until the beta ends and we tell you how to export it first.</p>
       </Section>
+      <Credits />
     </>
   );
 }
@@ -276,6 +287,28 @@ function Terms() {
           We’d like to hear what works and what doesn’t: <a href={feedbackHref}>send feedback</a>.
         </p>
       </Section>
+      <Credits />
     </>
+  );
+}
+
+/** The last section of both pages: the two classifications Resumatic describes work in, credited as their licences ask. */
+function Credits() {
+  return (
+    <Section title="Credits">
+      <p>Resumatic describes work in the terms of two public classifications.</p>
+      {TAXONOMY_NOTICES.map((notice) => (
+        <blockquote key={notice}>
+          <p>{notice}</p>
+        </blockquote>
+      ))}
+      <p>
+        We reuse ESCO under{" "}
+        <a href="https://esco.ec.europa.eu/en/use-esco/download">Commission Decision 2011/833/EU</a> and O*NET under the{" "}
+        <a href="https://creativecommons.org/licenses/by/4.0/">Creative Commons Attribution 4.0 International licence</a>.
+        We hold the two in one set and add labels and links of our own, each marked as ours; we reword nothing in
+        either.
+      </p>
+    </Section>
   );
 }

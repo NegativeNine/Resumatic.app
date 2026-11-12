@@ -21,6 +21,7 @@ import type {
 } from "../shared/api";
 import type { DocumentView, NewDocument } from "../shared/documents";
 import type { PreferenceValues, Preferences } from "../shared/preferences";
+import type { CardPreview } from "../shared/card";
 import type { PostingRead } from "../shared/postings";
 import type { CoachClient, ShareableDocument, ShareGrant } from "../shared/sharing";
 import type { CommentThread, NewShareComment, NewSuggestion, OwnerCommentThread, ShareComment } from "../shared/sharing";
@@ -171,6 +172,8 @@ export const api = {
   /** Replaces all four values, if `expectedRevision` is still the saved revision. */
   updatePreferences: (values: PreferenceValues, expectedRevision: number) =>
     request<Preferences>("PUT", "/api/preferences", { ...values, expectedRevision }),
+  /** The owner's own card, as a recruiter would see it. Shown to its owner alone, and stored nowhere. */
+  cardPreview: () => request<CardPreview>("GET", "/api/v2/card-preview"),
   signOutEverywhere: () =>
     request<void>("POST", "/api/account/sign-out-everywhere"),
 

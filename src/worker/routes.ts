@@ -29,6 +29,7 @@ import {
   shareCookieName,
 } from "./shares";
 import { readPosting } from "./postings";
+import { cardPreviewFor } from "../pipeline/card";
 import { renderDocx, textDocx } from "../render/docx";
 import { renderResumeHtml } from "../render/template";
 import {
@@ -502,6 +503,8 @@ api.get("/me", async (c) => {
     roleDateUnknownEnd: c.env.ROLE_UNKNOWN_END_ENABLED === "true" && me.capabilities?.roleDateUnknownEnd === true,
     // The Worker does the reading, so its own setting decides.
     postingReader: c.env.POSTING_READER_ENABLED === "true",
+    // Both this Worker and the Vault must understand the card preview.
+    cardPreview: c.env.CARD_PREVIEW_ENABLED === "true" && me.capabilities?.cardPreview === true,
   } });
 });
 
@@ -563,6 +566,13 @@ api.put("/preferences", JSON_LIMIT, async (c) => {
   if (!clean) throw new AppError("invalid", PREFERENCES_REFUSED);
   return c.json(await myVault(c).updatePreferences(c.get("who"), clean, expectedRevision));
 });
+
+// The card preview belongs to the session's own vault and is shown only to its owner: the request
+// names no account, vault or row. The switch is checked first, then the taxonomy, and only then is
+// the vault read. Nothing is stored or sent anywhere.
+api.get("/v2/card-preview", async (c) =>
+  c.json(await cardPreviewFor(c.env, async () =>
+    unwrapResult(await durableReadResult(() => myVault(c), (v) => v.cardMaterial(c.get("who")))), Date.now())));
 
 api.post("/account/sign-out-everywhere", async (c) => {
   await myVault(c).signOutEverywhere(c.get("who"));

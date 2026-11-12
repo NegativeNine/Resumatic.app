@@ -1,6 +1,7 @@
 import type { ApplicationView, FactView, Me, ResumeView, RoleView, SourceView } from "../../src/shared/api";
 import type { DocumentView } from "../../src/shared/documents";
 import type { Preferences } from "../../src/shared/preferences";
+import type { CardPreview } from "../../src/shared/card";
 import type { McpGrant } from "../../src/shared/mcp";
 import type { CoachClient, CommentThread, OwnerCommentThread, ShareGrant, SharedView } from "../../src/shared/sharing";
 import type { BillingView } from "../../src/web/api";
@@ -12,6 +13,8 @@ export interface Fixtures {
   me: Me;
   /** The person's job preferences as saved. Absent until they first save: nothing said, at revision 0. */
   preferences?: Preferences;
+  /** The owner's card preview. Absent: a ready card with nothing on it, as every vault has today. */
+  cardPreview?: CardPreview;
   sources: SourceView[];
   roles: RoleView[];
   facts: FactView[];
@@ -40,11 +43,11 @@ export function emptyVault(): Fixtures {
   return { ...fixtures(), sources: [], roles: [], facts: [], applications: [], resumes: {} };
 }
 
-/** Sam’s vault with every optional screen filled in: documents in each state, share links, apps, plans. */
+/** Sam’s vault with every optional screen filled in: documents in each state, share links, apps, plans, a card. */
 export function fullVault(): Fixtures {
-  const { shared: _shared, ...extras } = structuredClone(full) as unknown as Required<Pick<Fixtures, "documents" | "shares" | "mcpGrants" | "billing">> & { shared: SharedView };
+  const { shared: _shared, ...extras } = structuredClone(full) as unknown as Required<Pick<Fixtures, "documents" | "shares" | "mcpGrants" | "billing" | "cardPreview">> & { shared: SharedView };
   const state = { ...fixtures(), ...extras };
-  state.me.capabilities = { ocr: false, ...state.me.capabilities, connectedApps: true };
+  state.me.capabilities = { ocr: false, ...state.me.capabilities, connectedApps: true, cardPreview: true };
   return state;
 }
 

@@ -51,6 +51,12 @@ interface ResumaticSecrets {
    * up. It adds judge calls to an upload, and a failure in it leaves the upload as it is read today.
    */
   TAG_SHADOW_ENABLED?: string;
+  /**
+   * "true" shows the owner, under Account, the card a recruiter would see if they were ever found:
+   * built from confirmed tags only, shown to nobody else, published nowhere. Off everywhere by
+   * default. It does nothing useful without a wholly loaded taxonomy bound as TAXONOMY.
+   */
+  CARD_PREVIEW_ENABLED?: string;
   /** The combined ESCO and O*NET taxonomy, in a D1 database of its own. Optional: nothing reads it where it isn't bound. */
   TAXONOMY?: D1Database;
   /** The taxonomy's concepts as vectors, in a Vectorize index of their own. Optional: nothing reads it where it isn't bound. */

@@ -68,7 +68,7 @@ describe("accessibility", () => {
     expect(await violations()).toEqual([]);
   });
 
-  it("Account, with plans, share links and connected apps", async () => {
+  it("Account, with plans, share links, connected apps and the card preview", async () => {
     const state = fullVault();
     installFakeApi(state);
     renderWithSession(<AccountPage />, state.me);
@@ -77,6 +77,8 @@ describe("accessibility", () => {
     await screen.findByRole("combobox", { name: "Choose a plan" });
     // The job preferences card loads by itself, so its form is waited for too.
     await screen.findByRole("button", { name: "Save preferences" });
+    // So does the card preview, with an occupation, a band and two skill groups.
+    await screen.findByText("Web platform development software");
     expect(await violations()).toEqual([]);
     // The form for a new link: what to share, who it’s for and what the copy should say.
     await userEvent.click(screen.getByRole("button", { name: "Choose what to share" }));

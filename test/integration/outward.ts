@@ -28,7 +28,7 @@ export interface OutwardCopy {
 
 /** One thing sent out, and where it went. */
 export interface OutwardPart {
-  surface: "copy by its link" | "copy as its coach" | "coach's client list" | "coach's comments" | "list_facts" | "search_facts" | "list_jobs" | "get_resume" | "preview_fit" | "PDF" | "Word" | "print preview" | "model input";
+  surface: "copy by its link" | "copy as its coach" | "coach's client list" | "coach's comments" | "list_facts" | "search_facts" | "list_jobs" | "get_resume" | "preview_fit" | "PDF" | "Word" | "print preview" | "model input" | "card preview";
   text: string;
 }
 
@@ -151,6 +151,11 @@ export async function outwardParts({ owner, copies, inputs }: { owner: User; cop
     const preview = await owner.fetch(`/api/resumes/${resume.id}/preview?version=${resume.version}`);
     if (preview.status === 200) add("print preview", await preview.text());
   }
+
+  // The owner's private card. Only its owner reads it today, but it is what a recruiter would see
+  // if its owner were ever found, so it counts as a way out. It answers only where switched on.
+  const card = await owner.fetch("/api/v2/card-preview");
+  if (card.status === 200) add("card preview", await card.text());
 
   for (const input of inputs) add("model input", input);
   return parts;

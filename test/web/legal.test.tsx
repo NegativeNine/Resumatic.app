@@ -1,9 +1,10 @@
+import { readFileSync } from "node:fs";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MAX_APP_FIT_STARTS_PER_DAY, MCP_GRANT_TTL_MS } from "../../src/shared/mcp";
 import { SESSION_TTL_MS } from "../../src/shared/session";
 import { COACH_CLIENT_KEPT_MS, SHARE_READ_INTERVAL_MS, SHARE_SESSION_TTL_MS, SHARE_TTL_MS } from "../../src/shared/sharing";
-import { LegalPage } from "../../src/web/pages/LegalPage";
+import { LegalPage, TAXONOMY_NOTICES } from "../../src/web/pages/LegalPage";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -25,6 +26,7 @@ describe("the privacy notice", () => {
       "Sharing a copy",
       "Connecting an app",
       "Your choices",
+      "Credits",
     ]);
     const kept = section("What we keep");
     expect(kept).toContain("The job site sees a request from Resumatic, not from you, and nothing about you is sent with it.");
@@ -150,5 +152,40 @@ describe("the privacy notice", () => {
     expect(section("Your choices")).toContain("every fact, role, profile detail and job preference can be edited, rejected or cleared under Facts and Account.");
     // No app is given them, so what an app may do says nothing about them.
     expect(section("Connecting an app")).not.toMatch(/preference/i);
+  });
+});
+
+describe("the credits", () => {
+  // The latest build's manifest is the record of what the sources ask to be said. A rebuild that
+  // changes a notice changes the manifest, and this test then fails until the pages say it too.
+  const manifest = JSON.parse(readFileSync("docs/taxonomy-build-2026-11-11.json", "utf8")) as {
+    notices: string[];
+    licences: { source: string; terms: string; url: string }[];
+  };
+
+  it("credits ESCO and O*NET on both pages, word for word as the latest manifest has them", () => {
+    expect(TAXONOMY_NOTICES).toEqual(manifest.notices);
+    const [esco, onet] = manifest.licences;
+    expect(esco).toMatchObject({ source: "ESCO", url: "https://esco.ec.europa.eu/en/use-esco/download" });
+    expect(onet).toMatchObject({ source: "O*NET 31.0 Database", url: "https://creativecommons.org/licenses/by/4.0/" });
+    for (const doc of ["privacy", "terms"] as const) {
+      const page = render(<LegalPage doc={doc} />);
+      const headings = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
+      // The last section of each page.
+      expect(headings.at(-1), doc).toBe("Credits");
+      const credits = screen.getByRole("heading", { level: 2, name: "Credits" }).closest("section")!;
+      // Each notice in a quotation of its own, exactly.
+      expect([...credits.querySelectorAll("blockquote")].map((quote) => quote.textContent), doc).toEqual(manifest.notices);
+      // Each licence linked where the manifest says, under the name of its terms.
+      const ec = within(credits).getByRole("link", { name: "Commission Decision 2011/833/EU" });
+      expect(ec).toHaveAttribute("href", esco!.url);
+      expect(esco!.terms.startsWith(ec.textContent!)).toBe(true);
+      const cc = within(credits).getByRole("link", { name: `${onet!.terms} licence` });
+      expect(cc).toHaveAttribute("href", onet!.url);
+      const text = credits.textContent!.replace(/\s+/g, " ");
+      expect(text).toContain("Resumatic describes work in the terms of two public classifications.");
+      expect(text).toContain("We hold the two in one set and add labels and links of our own, each marked as ours; we reword nothing in either.");
+      page.unmount();
+    }
   });
 });
