@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import type { ChatMessage } from "../../src/ai/llm";
 import type { Models, Route } from "../../src/ai/models";
+import type { KitMatchAnswer, KitMatchItem } from "../../src/ai/question-match";
 import { AppError } from "../../src/shared/errors";
 
 // A fixture resume, what an imperfect model extracts from it, and deterministic stand-ins for
@@ -152,9 +153,15 @@ export interface FakeModelOptions {
   holdConvert?: Promise<void>;
   toMarkdownError?: string;
   /** Each route's call count. */
-  calls?: Partial<Record<Route | "embed" | "rerank" | "toMarkdown", number>>;
-  /** When given, the text of every complete, embed and rerank call is added to it, in order. */
+  calls?: Partial<Record<Route | "embed" | "rerank" | "toMarkdown" | "match", number>>;
+  /** When given, the text of every complete, embed, rerank and match call is added to it, in order. */
   inputs?: string[];
+  /**
+   * The judge of an application kit's questions. Only when this is given is there one: what it
+   * returns is the answer, and an Error it returns is thrown. A promise is waited for, so a test can
+   * hold a question open. Each item is recorded in `inputs`.
+   */
+  match?: (item: KitMatchItem) => KitMatchAnswer | Error | Promise<KitMatchAnswer | Error>;
 }
 
 const TOPICS = ["kubernetes", "deploy", "\\bgo\\b", "events?", "\\bapis?\\b", "billing", "mentor", "react", "dashboards?", "sales", "rust", "postgres"];
@@ -174,6 +181,17 @@ export function fakeModels(o: FakeModelOptions = {}): Models {
     if (o.calls) o.calls[k] = (o.calls[k] ?? 0) + 1;
   };
   return {
+    ...(o.match
+      ? {
+          async matchQuestion(item: KitMatchItem): Promise<KitMatchAnswer> {
+            count("match");
+            o.inputs?.push(JSON.stringify(item));
+            const answer = await o.match!(item);
+            if (answer instanceof Error) throw answer;
+            return answer;
+          },
+        }
+      : {}),
     async complete<T>(route: Route, messages: ChatMessage[], schema: z.ZodType<T>): Promise<T> {
       count(route);
       o.inputs?.push(JSON.stringify(messages));

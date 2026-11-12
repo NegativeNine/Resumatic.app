@@ -67,6 +67,9 @@ import { MAX_VAULT_COMMENTS } from "../vault/share-comments";
 import { hintFor, type CfLocation } from "../shared/location";
 import { PREFERENCES_REFUSED, cleanPreferences } from "../shared/preferences";
 import { EMAIL_OFF, NOTICE_KINDS, emailConfigured, type EmailNotices } from "../shared/email-notices";
+import { KIT_CHANGED_WHILE_PREPARING, MAX_KIT_BODY_BYTES, type KitAnswerChange, type KitArchiveData, type KitPartsUpdate, type KitQuestionsUpdate, type SavedAnswerInput } from "../shared/kit";
+import { kitAnswersText } from "../render/kit";
+import { contentDigest } from "../shared/operations";
 import { docxKey, pdfKey, sourceKey } from "../shared/r2";
 import { directoryForSignIn, settleRoutedPlacement } from "../directory/routing";
 import { validShardInviteClaim, type ShardInviteClaim } from "../directory/shard-invite-binding";
@@ -77,7 +80,7 @@ import {
   allDirectories,
   vault,
 } from "../shared/stubs";
-import type { SignInInput, Who } from "../shared/types";
+import type { RenderData, SignInInput, Who } from "../shared/types";
 import { verifyAccess } from "./access";
 import { sameSecret } from "./crypto";
 import { beginLogin, clearOidcCookie, finishLogin, OIDC_COOKIE } from "./oidc";
@@ -100,6 +103,8 @@ export const app = new Hono<AppEnv>();
 
 const tooLarge = (message: string) => (c: Context) => c.json({ error: "too_large", message }, 413);
 const JSON_LIMIT = bodyLimit({ maxSize: 64 * 1024, onError: tooLarge("This request is too large to process.") });
+/** A save of a kit's questions: 30 questions of 1,000 characters can be more than 64 KiB. */
+const KIT_JSON_LIMIT = bodyLimit({ maxSize: MAX_KIT_BODY_BYTES, onError: tooLarge("This request is too large to process.") });
 const UPLOAD_LIMIT = bodyLimit({
   maxSize: MAX_UPLOAD_BYTES + 64 * 1024,
   onError: tooLarge("Files can be up to 10 MB."),
@@ -608,6 +613,38 @@ api.put("/email-notices/:kind", JSON_LIMIT, async (c) => {
   return c.json({ ...settings, address: session.email ?? null } satisfies EmailNotices);
 });
 
+// Saved answers belong to the session's own vault. The label and the answer are taken as they
+// come and judged by the Vault, which cleans, caps and checks them against the refused list, so
+// the sentence the person sees is the one the rule chose.
+const SavedAnswerBody = z.object({ label: z.unknown(), answer: z.unknown() }).strict();
+const KitRevision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 1);
+
+api.get("/saved-answers", async (c) =>
+  c.json({
+    savedAnswers: unwrapResult(
+      await durableReadResult(
+        () => myVault(c),
+        (v) => v.listSavedAnswers(c.get("who")),
+      ),
+    ),
+  }),
+);
+
+api.post("/saved-answers", JSON_LIMIT, async (c) => {
+  const input = await jsonBody(c, SavedAnswerBody);
+  return c.json(await myVault(c).addSavedAnswer(c.get("who"), input as SavedAnswerInput), 201);
+});
+
+api.put("/saved-answers/:id", JSON_LIMIT, async (c) => {
+  const { expectedRevision, ...input } = await jsonBody(c, SavedAnswerBody.extend({ expectedRevision: KitRevision.min(1) }));
+  return c.json(await myVault(c).editSavedAnswer(c.get("who"), c.req.param("id"), input as SavedAnswerInput, expectedRevision));
+});
+
+api.delete("/saved-answers/:id", async (c) => {
+  await myVault(c).deleteSavedAnswer(c.get("who"), c.req.param("id"));
+  return c.body(null, 204);
+});
+
 api.post("/account/sign-out-everywhere", async (c) => {
   await myVault(c).signOutEverywhere(c.get("who"));
   c.header("set-cookie", clearSessionCookie());
@@ -1084,6 +1121,34 @@ api.post("/resumes/:id/grounding-review", JSON_LIMIT, async (c) => {
   return c.json(await myVault(c).beginResumeReview(c.get("who"), c.req.param("id"), expectedVersion));
 });
 
+/** A checked resume version's PDF: rendered once per version, and served from the cache after that. */
+async function resumePdf(c: C, resumeId: string, data: RenderData): Promise<ArrayBuffer | Uint8Array> {
+  // Legacy renderers ignore unknown-end starts. Isolate their cached output
+  // from new output for this same immutable version; old versions keep keys.
+  const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
+  const key = await snapshotCacheKey(pdfKey(c.get("session").vid, resumeId, data.version, hasUnknownEndDates), data);
+  return cachedExport(() => myVault(c), c.get("who"), key,
+    () => renderPdf(c.env, renderResumeHtml(data)));
+}
+
+/** A checked resume version's Word file, cached as its PDF is. */
+async function resumeDocx(c: C, resumeId: string, data: RenderData): Promise<ArrayBuffer | Uint8Array> {
+  const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
+  const key = await snapshotCacheKey(docxKey(c.get("session").vid, resumeId, data.version, hasUnknownEndDates), data);
+  return cachedExport(() => myVault(c), c.get("who"), key,
+    async () => renderDocx(data));
+}
+
+/** One archive member from bytes already made. */
+function bytesEntry(name: string, bytes: ArrayBuffer | Uint8Array): ArchiveEntry {
+  const body = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  return {
+    name,
+    size: body.byteLength,
+    open: async () => new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(body); controller.close(); } }),
+  };
+}
+
 /** Renders once per resume version and serves the cached PDF after that. */
 api.get("/resumes/:id/pdf", async (c) => {
   const resumeId = c.req.param("id");
@@ -1092,12 +1157,7 @@ api.get("/resumes/:id/pdf", async (c) => {
     resumeId,
     versionQuery(c),
   );
-  // Legacy renderers ignore unknown-end starts. Isolate their cached output
-  // from new output for this same immutable version; old versions keep keys.
-  const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
-  const key = await snapshotCacheKey(pdfKey(c.get("session").vid, resumeId, data.version, hasUnknownEndDates), data);
-  const pdf = await cachedExport(() => myVault(c), c.get("who"), key,
-    () => renderPdf(c.env, renderResumeHtml(data)));
+  const pdf = await resumePdf(c, resumeId, data);
   const name = fileName(
     [data.profile.name, data.company].filter(Boolean).join(" ") || "resume",
   );
@@ -1239,10 +1299,7 @@ api.get("/resumes/:id/docx", async (c) => {
     c.req.param("id"),
     versionQuery(c),
   );
-  const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
-  const key = await snapshotCacheKey(docxKey(c.get("session").vid, c.req.param("id"), data.version, hasUnknownEndDates), data);
-  const bytes = await cachedExport(() => myVault(c), c.get("who"), key,
-    async () => renderDocx(data));
+  const bytes = await resumeDocx(c, c.req.param("id"), data);
   return new Response(bytes, {
     headers: {
       "content-type":
@@ -1393,6 +1450,76 @@ api.post(
     );
   },
 );
+// A job's application kit, the owner's alone. Each write names the revision it was read at, and
+// the Vault judges what it carries: the routes only take it as it comes.
+api.get("/applications/:id/kit", async (c) =>
+  c.json(
+    unwrapResult(
+      await durableReadResult(
+        () => myVault(c),
+        (v) => v.getKit(c.get("who"), c.req.param("id")),
+      ),
+    ),
+  ),
+);
+
+api.put("/applications/:id/kit/questions", KIT_JSON_LIMIT, async (c) => {
+  const body = await jsonBody(c, z.object({ questions: z.unknown(), expectedRevision: KitRevision }).strict());
+  return c.json(await myVault(c).saveKitQuestions(c.get("who"), c.req.param("id"), body as KitQuestionsUpdate));
+});
+
+api.put("/applications/:id/kit/parts", JSON_LIMIT, async (c) => {
+  const body = await jsonBody(c, z.object({ resume: z.unknown(), letter: z.unknown(), prep: z.unknown(), expectedRevision: KitRevision }).strict());
+  return c.json(await myVault(c).chooseKitParts(c.get("who"), c.req.param("id"), body as KitPartsUpdate));
+});
+
+api.post("/applications/:id/kit/questions/:qid", JSON_LIMIT, async (c) => {
+  const { change, expectedRevision } = await jsonBody(c, z.object({ change: z.unknown(), expectedRevision: KitRevision }).strict());
+  return c.json(
+    await myVault(c).answerKitQuestion(
+      c.get("who"),
+      c.req.param("id"),
+      c.req.param("qid"),
+      change as KitAnswerChange,
+      expectedRevision,
+    ),
+  );
+});
+
+api.post("/applications/:id/kit/approve", JSON_LIMIT, async (c) => {
+  const { expectedRevision } = await jsonBody(c, z.object({ expectedRevision: KitRevision }).strict());
+  return c.json(await myVault(c).approveKit(c.get("who"), c.req.param("id"), expectedRevision));
+});
+
+/**
+ * An approved kit as one ZIP, for its owner to send themselves: nothing is sent anywhere. Read
+ * twice, before and after the files are made, so a kit that changed in between is refused rather
+ * than given out half old and half new.
+ */
+api.get("/applications/:id/kit/archive", async (c) => {
+  const who = c.get("who");
+  const id = c.req.param("id");
+  const data = await myVault(c).kitArchiveData(who, id);
+  const entries: ArchiveEntry[] = [
+    bytesEntry("resume.pdf", await resumePdf(c, data.resume.id, data.resume.render)),
+    bytesEntry("resume.docx", await resumeDocx(c, data.resume.id, data.resume.render)),
+  ];
+  if (data.letter) entries.push(bytesEntry("cover-letter.docx", textDocx("Cover letter", data.letter.paragraphs)));
+  if (data.prep)
+    entries.push(bytesEntry("interview-preparation.docx", textDocx("Interview preparation", data.prep.questions.flatMap((q) => [q.question, ...q.points]))));
+  entries.push(bytesEntry("answers.txt", new TextEncoder().encode(kitAnswersText(data))));
+  const again: KitArchiveData<RenderData> = await myVault(c).kitArchiveData(who, id);
+  if ((await contentDigest(again)) !== (await contentDigest(data))) throw new AppError("conflict", KIT_CHANGED_WHILE_PREPARING);
+  const name = fileName([data.job.company, data.job.title].filter(Boolean).join(" ") || "job");
+  return new Response(createArchive(entries, { signal: c.req.raw.signal, maxEntries: 5 }), {
+    headers: {
+      "content-type": "application/zip",
+      "content-disposition": `attachment; filename="application-kit-${name}.zip"`,
+      "cache-control": "private, no-store",
+    },
+  });
+});
+
 // The finished letters and preparation a copy can be made from, without their text.
 api.get("/documents", async (c) =>
   c.json({ documents: await myVault(c).listShareableDocuments(c.get("who")) }),

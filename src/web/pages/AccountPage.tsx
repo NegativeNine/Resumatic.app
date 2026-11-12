@@ -7,6 +7,7 @@ import { ConnectedApps } from "../components/ConnectedApps";
 import { EmailNotices } from "../components/EmailNotices";
 import { JobPreferences } from "../components/Preferences";
 import { CardPreviewSection } from "../components/CardPreview";
+import { SavedAnswers } from "../components/SavedAnswers";
 import { OwnerComments } from "../components/ShareComments";
 import { useAction } from "../hooks";
 import { href } from "../router";
@@ -27,6 +28,7 @@ export function AccountPage() {
         <ProfileForm />
         <JobPreferences />
         {me.capabilities?.cardPreview && <CardPreviewSection />}
+        <SavedAnswers />
         <Appearance />
         <BillingTools />
         <CoachSharingTools />

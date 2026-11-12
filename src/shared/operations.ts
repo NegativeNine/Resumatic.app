@@ -45,6 +45,11 @@ export const TRANSFER_TABLES = [
   // `document_id` names the owner's check, and documents move with their IDs, so it needs no
   // rewrite; runs don't move, so a check that was running arrives without a verdict.
   "share_comments",
+  // Saved answers and application kits: the owner's own words and choices. Resume and document IDs
+  // move unchanged, and no row holds a vault ID, storage key or run ID.
+  "saved_answers",
+  "application_kits",
+  "kit_questions",
   // Which email notices are on and when each was last sent. Holds no address and no vault ID, so
   // no row needs rewriting; a notice in retry arrives in retry and the replacement's alarm sends it.
   "email_notices",

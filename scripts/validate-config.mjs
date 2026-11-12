@@ -154,6 +154,10 @@ export async function validate({
     // both are settled.
     if (environment === "production" && config.vars?.EMAIL_ENABLED === "true")
       missing.push("EMAIL_ROLLOUT_UNVERIFIED");
+    // An application kit's judge is new model spend, and no eval measures it yet. The existing
+    // questions document asks about posting gaps and never judges an employer's questions.
+    if (environment === "production" && config.vars?.APPLICATION_KIT_ENABLED === "true")
+      missing.push("APPLICATION_KIT_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.R2_CACHE_FENCE_ENABLED && config.vars.R2_CACHE_FENCE_ENABLED !== "false")
       missing.push("R2_CACHE_FENCE_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.PLACEMENT_FENCE_ENABLED && config.vars.PLACEMENT_FENCE_ENABLED !== "false")

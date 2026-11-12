@@ -47,6 +47,10 @@ describe("accessibility", () => {
     const job = (await screen.findByRole("heading", { name: "Platform Engineer at Litware" })).closest("li")!;
     await userEvent.click(job.querySelector<HTMLButtonElement>("button[aria-expanded]")!);
     await screen.findByText("Read cover letter");
+    // The application kit loads by itself, with a question in each state.
+    await screen.findByRole("heading", { name: "Application kit" });
+    await screen.findByRole("button", { name: "Approve kit" });
+    await screen.findByText("Asked every time");
     for (const details of document.querySelectorAll("details")) details.open = true;
     expect(await violations()).toEqual([]);
   });
@@ -81,6 +85,9 @@ describe("accessibility", () => {
     await screen.findByText("Web platform development software");
     // So does the email notices card.
     await screen.findByRole("checkbox", { name: "A coach comments on a copy you shared" });
+    // So is the saved answers card, with an answer the list now refuses.
+    await screen.findByText("Portfolio link", { selector: "strong" });
+    await screen.findByText(/can’t be offered any more/);
     expect(await violations()).toEqual([]);
     // The form for a new link: what to share, who it’s for and what the copy should say.
     await userEvent.click(screen.getByRole("button", { name: "Choose what to share" }));

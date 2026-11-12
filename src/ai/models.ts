@@ -7,6 +7,7 @@ import { transcribePages, type TranscriptionInput } from "./transcribe";
 import { CLEF_MODEL, decisionJudge } from "./decision-judge";
 import type { JudgeItem, JudgeOut } from "./prompts";
 import type { EmbeddingPurpose } from "./embedding-input";
+import { kitMatch, type KitMatchAnswer, type KitMatchItem } from "./question-match";
 export type { Usage } from "./usage";
 export type { ModelAttempt, ModelObservers } from "./usage";
 
@@ -39,6 +40,8 @@ export function modelFor(env: Env, route: Route): string {
 /** Everything the pipelines need from models. Tests and the eval runner supply their own. */
 export interface Models {
   judge?(items: JudgeItem[]): Promise<z.infer<typeof JudgeOut>>;
+  /** Which saved answer's label fits an employer's question. Present only with the typed-decision judge, as `judge` is. */
+  matchQuestion?(item: KitMatchItem): Promise<KitMatchAnswer>;
   complete<T>(
     route: Route,
     messages: ChatMessage[],
@@ -68,7 +71,9 @@ export function setModels(factory: ((env: Env) => Models) | null): void {
 export function models(env: Env, opts: ModelObservers = {}): Models {
   if (override) return override(env);
   return {
-    ...(env.MODEL_JUDGE === CLEF_MODEL ? { judge: (items: JudgeItem[]) => decisionJudge(env, items, opts) } : {}),
+    ...(env.MODEL_JUDGE === CLEF_MODEL
+      ? { judge: (items: JudgeItem[]) => decisionJudge(env, items, opts), matchQuestion: (item: KitMatchItem) => kitMatch(env, item, opts) }
+      : {}),
     complete: (route, messages, schema, callOpts) =>
       chatComplete(
         {

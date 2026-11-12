@@ -97,6 +97,10 @@ To try it in staging:
 
 Each notice writes one `email_notice` data point: the kind, a code from a fixed list and the outcome (`ok`, `retry`, `failed` or `paused`), with the attempt number. A failure also logs `email notice failed` with the code and kind. Neither holds an address or the provider's words.
 
+### Matching an application kit's questions
+
+`APPLICATION_KIT_ENABLED=true` lets an application kit ask the judge which of a person's saved answers, named only by its label, answers an employer's question ([application-kit.md](application-kit.md)). It is absent from every environment, so matching is the closed refused list and a label word for word, with no model. `scripts/validate-config.mjs` refuses it in production configuration (`APPLICATION_KIT_ROLLOUT_UNVERIFIED`): it is new spend, and no eval measures it yet. It does nothing unless `MODEL_JUDGE` is Clef, the typed-decision judge. Switched on, a save of a kit's questions asks at most 30 input-priced judge questions, four at a time, one for each question that neither the list nor a label settled, each reserved against `DAILY_SPEND_CAP_USD` before it is sent, with none retried. Each is given the question and the labels, never an answer's words. Any failure, from building the models to the last answer, makes the question ask, and the save succeeds. The asking is a `match` run inside the Vault, as a fact's embedding is: it has no Workflow, so deleting or moving a vault has none to stop for it, and the alarm fails one left running for ten minutes. Maintenance waits for one that is running.
+
 ## Billing configuration
 
 Billing stays disabled unless `BILLING_ENABLED=true` and all required values are valid. Provide `APP_ORIGIN`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, an explicit `STRIPE_API_VERSION`, and `BILLING_PLANS_JSON`:

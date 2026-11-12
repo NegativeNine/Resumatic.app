@@ -8,6 +8,7 @@ import { api, ApiError } from "../api";
 import { useAction, type Reload } from "../hooks";
 import { trackingWriteObserved } from "../tracker-save";
 import { ApplicationDocuments } from "./Documents";
+import { ApplicationKit } from "./ApplicationKit";
 import { JobPosting } from "./JobPosting";
 import { ActionError, Field } from "./ui";
 import "./workspace.css";
@@ -160,6 +161,7 @@ export function ApplicationWorkspace({
         <ActionError message={action.error} />
       </form>
       <ApplicationDocuments applicationId={application.id} />
+      <ApplicationKit key={application.id} applicationId={application.id} />
     </div>
   );
 }

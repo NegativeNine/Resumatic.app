@@ -27,6 +27,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Private card preview and re-identification test | #NN open, based on main at 3d7c9fe (`market/01-card-preview`) | Off by default, refused in production configuration, needs a wholly loaded taxonomy. No migration. No occupation or skills on real vaults until owner review confirms tags, only a band from job dates. Harness rates are synthetic; Gate 3's real test, counsel and the sharing rules remain |
 | Email notices | #NN open, based on #35 | Vault migration 2 of 2 this round, after saved answers'; at integration it moves after `SAVED_ANSWER_MIGRATIONS` and `removeNotificationMigration` becomes last in the chain. Not deployed to any shared environment until that order is final. Off by default; the DPA and EU-region sending are owed |
 | Paste text as a source | #NN open, based on #35. No migration | The application kit builds on this branch. Text pasted from real word processors, PDF viewers and browsers checked in staging; the extraction eval has no pasted brag documents or reviews yet |
+| Application kit and saved answers | #NN open, based on paste text. Adds the vault's migration 1 of 2 this round, directly after suggested wording; email notices' comes after it | Matching by the judge is off and refused in production; it has not been run against the real judge. Submission and a queue across jobs are not built |
 
 The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments, suggested wording (two columns on the comments' table).
 

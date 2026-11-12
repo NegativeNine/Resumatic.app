@@ -69,6 +69,12 @@ interface ResumaticSecrets {
   EMAIL_FROM?: string;
   /** Cloudflare's send_email binding. Declared in an environment's own configuration, never in the committed one. */
   EMAIL?: SendEmail;
+  /**
+   * "true" lets an application kit ask the judge which saved answer's label fits an employer's
+   * question. It sends the question and the labels, never the answers. Off everywhere by default;
+   * without it matching is deterministic only.
+   */
+  APPLICATION_KIT_ENABLED?: string;
   /** The combined ESCO and O*NET taxonomy, in a D1 database of its own. Optional: nothing reads it where it isn't bound. */
   TAXONOMY?: D1Database;
   /** The taxonomy's concepts as vectors, in a Vectorize index of their own. Optional: nothing reads it where it isn't bound. */

@@ -9,6 +9,9 @@ export const RUN_KINDS = [
   "fit",
   "reembed",
   "embed",
+  // An application kit asking the judge which saved answer's label fits a question. It runs inside
+  // the Vault, as "embed" does, and has no Workflow.
+  "match",
 ] as const;
 export type RunKind = (typeof RUN_KINDS)[number];
 /** Runs that make an application document. A fit preview is one: it reads the posting and writes nothing. */
