@@ -24,6 +24,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Hardening fixes | Merged in #35 | Denial and intention checks read any apostrophe; "upto" is a bound; cleaning keeps a star or backtick set off by spaces; an expired connected-app grant is cleared on time; direction overrides are stripped from postings. The shadow stamps these change are raised to /3 |
 | Tagging facts and roles with taxonomy concepts | Merged in #35 | Off by default, refused in production configuration, and inert without a wholly loaded taxonomy. No vault migration. The eval against the real judge has not been run and nothing has been measured; vector candidates, parts, postings, screens and any use of tags are not built |
 | Paste text as a source | #NN open, based on #35. No migration | The application kit builds on this branch. Text pasted from real word processors, PDF viewers and browsers checked in staging; the extraction eval has no pasted brag documents or reviews yet |
+| Application kit and saved answers | #NN open, based on paste text. Adds the vault's migration 1 of 2 this round, directly after suggested wording; email notices' comes after it | Matching by the judge is off and refused in production; it has not been run against the real judge. Submission and a queue across jobs are not built |
 
 The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments, suggested wording (two columns on the comments' table).
 

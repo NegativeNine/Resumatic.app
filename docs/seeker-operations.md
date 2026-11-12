@@ -76,6 +76,10 @@ Enable it in staging first by adding the variable to `env.staging.vars`. Before 
 
 Before the production guard is lifted, all of these must hold: the precision of each method's tags, measured on lines given with consent; the privacy notice naming the tags as data held and the lookup in the taxonomy's database; the ESCO and O\*NET credits on the legal pages ([taxonomy.md](taxonomy.md), "Credits"); what D1 keeps of the values bound to a query, established for the taxonomy's database; and the stage's D1 statements at its caps (about 400 for the words of an upload, 120 for the rule and eight occupation profiles) run against a deployed Worker.
 
+### Matching an application kit's questions
+
+`APPLICATION_KIT_ENABLED=true` lets an application kit ask the judge which of a person's saved answers, named only by its label, answers an employer's question ([application-kit.md](application-kit.md)). It is absent from every environment, so matching is the closed refused list and a label word for word, with no model. `scripts/validate-config.mjs` refuses it in production configuration (`APPLICATION_KIT_ROLLOUT_UNVERIFIED`): it is new spend, and no eval measures it yet. It does nothing unless `MODEL_JUDGE` is Clef, the typed-decision judge. Switched on, a save of a kit's questions asks at most 30 input-priced judge questions, four at a time, one for each question that neither the list nor a label settled, each reserved against `DAILY_SPEND_CAP_USD` before it is sent, with none retried. Each is given the question and the labels, never an answer's words. Any failure, from building the models to the last answer, makes the question ask, and the save succeeds. The asking is a `match` run inside the Vault, as a fact's embedding is: it has no Workflow, so deleting or moving a vault has none to stop for it, and the alarm fails one left running for ten minutes. Maintenance waits for one that is running.
+
 ## Billing configuration
 
 Billing stays disabled unless `BILLING_ENABLED=true` and all required values are valid. Provide `APP_ORIGIN`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, an explicit `STRIPE_API_VERSION`, and `BILLING_PLANS_JSON`:
