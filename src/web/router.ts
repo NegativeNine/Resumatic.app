@@ -219,6 +219,7 @@ const ALIASES: Readonly<Record<string, string>> = {
   clients: href.clients,
   coaching: href.clients,
   hiring: href.hiringOpenings,
+  "sign-in": href.home,
 };
 
 function segments(hash: string): string[] {

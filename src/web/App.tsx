@@ -1,11 +1,13 @@
 import { SharePage } from "./pages/SharePage";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Me } from "../shared/api";
 import { api, ApiError } from "./api";
 import { Shell } from "./components/Shell";
 import { ErrorNote, Loading } from "./components/ui";
 import { describeError, signInErrorMessage } from "./errors";
 import { LegalPage } from "./pages/LegalPage";
+import { Landing } from "./pages/outside/Landing";
+import { useSignedOutPage } from "./pages/outside/signed-out";
 import { SignedOut, SignInFrame } from "./pages/SignedOut";
 import { useRoute } from "./router";
 import { SCREENS, shownRoute } from "./screens";
@@ -115,7 +117,11 @@ function OwnerApp() {
   }
 }
 
-/** Signed out, the privacy notice and terms are still readable; everything else is the sign-in page. */
+/**
+ * Signed out, the site's root is the landing page, the privacy notice and terms are still readable,
+ * and everything else is the sign-in page (signed-out.ts). Moving between them moves focus to the
+ * new page, as a change of page does signed in.
+ */
 function SignedOutApp({
   note,
   error,
@@ -123,18 +129,30 @@ function SignedOutApp({
   note: string | null;
   error: string | null;
 }) {
-  const route = useRoute();
-  if (route.name === "privacy" || route.name === "terms") {
-    return (
-      <main className="page legal-page" id="main">
-        <p>
-          <a href="#/">← Back to sign in</a>
-        </p>
-        <LegalPage doc={route.name} />
-      </main>
-    );
+  const page = useSignedOutPage(note !== null || error !== null);
+  const shown = useRef(page);
+  useEffect(() => {
+    if (shown.current === page) return;
+    shown.current = page;
+    window.scrollTo(0, 0);
+    document.getElementById("main")?.focus({ preventScroll: true });
+  }, [page]);
+  switch (page) {
+    case "privacy":
+    case "terms":
+      return (
+        <main className="page legal-page" id="main" tabIndex={-1}>
+          <p>
+            <a href="#/">← Back to Resumatic</a>
+          </p>
+          <LegalPage doc={page} />
+        </main>
+      );
+    case "landing":
+      return <Landing />;
+    case "sign-in":
+      return <SignedOut note={note} error={error} />;
   }
-  return <SignedOut note={note} error={error} />;
 }
 
 function SignedInApp() {

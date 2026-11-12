@@ -46,12 +46,10 @@ const SIGN_IN_WORDS: ErrorWords = {
   access_denied: "Sign-in was cancelled. You can try again whenever you’re ready.",
 };
 
-/** A readable message for the `?error=` code that the sign-in callback adds to the URL. */
+/**
+ * A readable message for the `?error=` code that the sign-in callback adds to the URL. A code it
+ * doesn't know gets one fixed sentence: the address is anyone's to write, so nothing in it is shown.
+ */
 export function signInErrorMessage(code: string): string {
-  const known = SIGN_IN_WORDS[code];
-  if (known) return known;
-  // Only echo short, code-like values, so a crafted link can't put arbitrary text on the page.
-  return /^[\w.-]{1,64}$/.test(code)
-    ? `Sign-in didn’t work (${code.replace(/[_.-]+/g, " ")}). Try again.`
-    : "Sign-in didn’t work. Try again.";
+  return (Object.hasOwn(SIGN_IN_WORDS, code) && SIGN_IN_WORDS[code]) || "Sign-in didn’t work. Try again.";
 }
