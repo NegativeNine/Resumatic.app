@@ -1,5 +1,58 @@
 # Resumatic v1: Redesign Plan
 
+## Second redesign: the plain identity (November 2026)
+
+The second redesign moves the app to the identity the design system now defines: a green check for what is backed, amber for what waits for the person, one legible typeface and everyday words. The record of the first redesign (#3 to #11) follows this section and still holds its ground rules: the design system is the source of truth, copies stay in sync, nothing new goes in the security policy, and copy follows voice and writing.
+
+**Sources.**
+
+- The design system Resumatic, version `1794444170-a305`, copied 2026-11-12T01:05:25Z from [the system](https://claude.ai/artifact/3KaBCkca28Q5HiXbhPdzDN). Section 12 of its "Changes to the app", "the plain identity", is what this redesign carries out.
+- The UX redesign: a canvas of 42 boards and its `redesign.css`. Each board marks each capability on it Built, In part, Next or Later. The boards are design, not code.
+- Atkinson Hyperlegible Next from `@fontsource-variable/atkinson-hyperlegible-next` 5.3.0, under the SIL Open Font License 1.1.
+
+**Stages.** Stage 1 merges alone and first. Stage 2 branches from it, and stages 3 to 7 are built at the same time from stage 2 and merged in order.
+
+| Stage | Branch | Owns |
+| --- | --- | --- |
+| 1 identity | `redesign/01-identity` | Tokens, type, the components bundle, fonts, logo and app icon, plain status class names, the label words in `format.ts`, review keys Y/F/L/J/K, the shared `app-*` layout classes, and the list of server text with earlier words (`docs/redesign-words.md`) |
+| 2 shell | `redesign/02-shell` | Router and nested routes, the header, tabs, footer, the phone bottom bar, `GET /api/v2/today` and the placeholder page |
+| 3 today | `redesign/03-today` | Today and its first run |
+| 4 facts | `redesign/04-facts` | Facts: To check, All facts, Skills, Your files |
+| 5 jobs | `redesign/05-jobs` | Jobs and a job's page |
+| 6 sharing | `redesign/06-sharing` | Sharing and Account |
+| 7 outside | `redesign/07-outside` | The coaching and hiring workspaces, `/share`, sign-in, the landing page, phone layouts and the invite email's lockup |
+
+### Stage 1: the plain identity
+
+Today's pages and routes keep their structure; only how they look and what they say changes. `tokens.css`, `type.css` and `components.css` are new copies of the system (custom properties only, the type classes, and the bundle without its `body` rule), and `fonts.css` loads Atkinson Hyperlegible Next, weights 200 to 800, from a latin and a latin-ext file. The main button is `brand`, links and quiet buttons are `link`, focus is `ink`, buttons are 44px (36 and 52), marks are 24px pills, and quotes are upright in the one face with the matched words on `backed-soft`. The lockup is the green tile with its check, then the outlined wordmark in `currentColor`, and `public/favicon.svg` is the tile at full bleed. The review queue answers with Y (that's right), F (fix it) and L (leave it out), and moves with J and K. `docs/redesign-words.md` lists what changed in the interface's words, the labels left for later stages, and every server message a person can reach that still uses an earlier word.
+
+Decisions, each with the alternative rejected:
+
+1. **`controls.css` stays, with new values.** About 70 plain `<button>`, input and select elements still carry v1 classes (finding 10 below), and rewriting their call sites is work for stages 2 to 7. Retiring it now was rejected.
+2. **The system's files are copied as the first redesign copied them.** `tokens.css` holds custom properties only, plus `color-scheme`; `type.css` holds the type classes; `fonts.css` is written for the app; `components.css` is `bundle.css` without its `body` rule. Loading the system's `tokens.css` whole was rejected: its `@font-face` has no latin-ext file, and finding 7 still holds.
+3. **`Badge` and `Tick` take plain tones only.** `MarkTone` and `TickState` are closed unions, and typed maps (`REVIEW_MARK`, `REVIEW_TICK`, `LINE_MARK`, `RUN_MARK`) translate stored states, so the types catch a missed call site. Free strings with an alias map inside `Badge` were rejected.
+4. **Review buttons lose the noun.** A role's buttons read as a fact's, and `aria-describedby` names the item. "That's right role" (not English) and "Is this role right?" headings (a layout change, stage 4) were rejected.
+5. **No "Put it back" yet.** The review API has only confirm and reject, and a left-out fact or role has no Fix it and no Leave it out, so it shows only That's right, and its key hints show only Y and J/K. Adding a review action in an identity stage was rejected.
+6. **"Sensitive" stays.** The rename to private and Keep private goes to stage 4 with the privacy notice, which `legal.test.tsx` pins.
+7. **The gaps heading keeps its qualifier:** "What may be missing, as found when this draft was made". The list is possible gaps at draft time, not a coverage check.
+8. **The copy rule covers sentences, but only for five nouns:** source (meaning the person's file), vault, evidence, gap and output, and sentences that name a control or state by its old label. A rail titled "Your files" beside "No roles or facts from this source" would be incoherent, and the five can be found with grep. Renaming labels only, and changing every earlier word in every sentence, were rejected.
+9. **Checks are not documents.** A line check or an accepted suggestion "counts toward your documents for this period", never "counts as one document", because a document is a finished resume, letter or interview preparation.
+10. **Stray custom properties are resolved, not exempted.** `--application-columns` is set inline by `JobsPage`, so it is on an explicit allow-list in `tokens.test.ts`. `--dur-1` and `--font-mono` became literal values, because the system defines neither. `.app-letter` lost its `box-shadow`, and with it the `rgb()` fallback, because only the resume page and the sign-in sheet cast shadows.
+11. **No server message changes in stage 1.** No screen stage 1 changes shows a server message only to itself, so there was nothing to take early. Changing them now was rejected: it churns integration tests that the room stages rewrite anyway.
+12. **The invite email's PNG is not redrawn here.** Its lockup belongs to stage 7.
+13. **`focus` is tested at 11:1**, the system README's figure, not only at 3:1.
+14. **A coach's unseen comment is `needs-you`**, because it waits for the person. The app's own `.rs-mark--new` rule is gone.
+15. **Fit's "not covered" tick is `todo`**, a neutral ring, not amber: something missing is not a request to the person.
+16. **No screenshots.** See below.
+
+The invite email's lockup (`public/email/resumatic-lockup.png`) still shows the turnstile; stage 7 redraws it. `sharp` 0.35.5 (a dev dependency through miniflare) can render the lockup SVG to PNG locally, at twice the 218 × 44 display size.
+
+No headless Chromium was available, so stage 1 has no screenshots. There is no chrome or chromium binary, `LOCAL_CHROME_BIN` is unset, `node_modules` has no playwright or puppeteer, and downloading a browser needs the network.
+
+Font bytes: 171,880 → 53,088. The four Schibsted Grotesk and Newsreader files go, and the two Atkinson Hyperlegible Next files (33,996 and 19,092 bytes) come in. The latin file is byte-identical to the design system's.
+
+---
+
 Nov 7, 2026. Revised after PR #2 (the job seeker roadmap) merged, which changed 42 of the web app's files. The redesign is rebuilt on that `main` (`215a3e3`).
 
 This plan brings the Resumatic design system into the web app (`src/web`), along with the few server changes the design needs.

@@ -28,6 +28,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Email notices | Merged in #36. The vault's last migration, after saved answers' | Off by default and refused in production. A sender domain onboarded to Cloudflare Email Service, then a real inbox in staging; the DPA naming the service and EU-region sending are owed |
 | Paste text as a source | Merged in #36. No migration | Text pasted from real word processors, PDF viewers and browsers checked in staging; the extraction eval has no pasted brag documents or reviews yet |
 | Application kit and saved answers | Merged in #36. Adds a vault migration directly after suggested wording's | Matching by the judge is off and refused in production; it has not been run against the real judge. Submission and a queue across jobs are not built |
+| Redesign stage 1: the plain identity | `redesign/01-identity`, based on main at 78502c9. No migration | Stage 2 builds on it; server wording and deferred labels move with the room stages (`docs/redesign-words.md`) |
 
 The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments, suggested wording (two columns on the comments' table), saved answers and application kits (three tables), email notices (one table). Only that order is deployed.
 
