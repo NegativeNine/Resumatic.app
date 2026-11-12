@@ -5,6 +5,7 @@ import type { McpGrant } from "../../src/shared/mcp";
 import type { TodayWaiting } from "../../src/shared/today";
 import { Shell } from "../../src/web/components/Shell";
 import { formatDate, formatDateTime } from "../../src/web/format";
+import { VAULT_CHANGED } from "../../src/web/live";
 import { SharingApps } from "../../src/web/pages/sharing/SharingApps";
 import { SharingCoaches } from "../../src/web/pages/sharing/SharingCoaches";
 import { SharingOverview } from "../../src/web/pages/sharing/SharingOverview";
@@ -328,6 +329,24 @@ describe("Sharing › Overview", () => {
     expect(document.body.textContent).not.toMatch(/exploded|token=/);
     expect(apps.querySelector(".rs-mark")).toBeNull();
     await within(way("Coaches")).findByText(/^Dana Okafor: /);
+    await userEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(await within(apps).findByText("1 connected")).toBeInTheDocument();
+  });
+
+  it("counts no app as connected once a later read of the apps fails", async () => {
+    const { api } = overview();
+    const apps = way("Connected apps");
+    await within(apps).findByText("1 connected");
+    // A change elsewhere reads the apps again, and this time they can't be read.
+    api.fail("GET", /^\/api\/mcp\/grants$/, 503, "unavailable", "oauth KV exploded: token=abc");
+    act(() => {
+      window.dispatchEvent(new Event(VAULT_CHANGED));
+    });
+    const alert = await within(apps).findByRole("alert");
+    expect(alert).not.toHaveTextContent(/exploded|token=/);
+    // Nothing the panel couldn't just read is counted or listed beside the error.
+    expect(apps.querySelector(".rs-mark")).toBeNull();
+    expect(apps).not.toHaveTextContent("Claude");
     await userEvent.click(within(alert).getByRole("button", { name: "Try again" }));
     expect(await within(apps).findByText("1 connected")).toBeInTheDocument();
   });

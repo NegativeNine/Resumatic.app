@@ -164,7 +164,9 @@ function AppsWay() {
   const grants = useResource(api.mcpGrants);
   const id = useId();
   const now = Date.now();
-  const all = grants.data?.grants ?? [];
+  // A failed read keeps the last list it had, so nothing is counted from it while the error shows:
+  // the mark would count apps the panel has just said it couldn't read.
+  const all = grants.error ? [] : (grants.data?.grants ?? []);
   const active = all.filter((grant) => appStanding(grant, now) === "active");
   const pending = all.filter((grant) => appStanding(grant, now) === "pending");
   return (
