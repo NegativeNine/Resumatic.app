@@ -32,6 +32,16 @@ export function LegalPage({ doc }: { doc: LegalDoc }) {
   );
 }
 
+/**
+ * The notices ESCO and O*NET ask a product that shows their data to carry, word for word as the
+ * latest build's manifest has them (docs/taxonomy-build-2026-11-11.json, `notices`).
+ * test/web/legal.test.tsx holds them to it.
+ */
+export const TAXONOMY_NOTICES = [
+  "This service uses the ESCO classification of the European Commission.",
+  "This service includes information from the O*NET 31.0 Database by the U.S. Department of Labor, Employment and Training Administration (USDOL/ETA). Used under the CC BY 4.0 license. O*NET® is a trademark of USDOL/ETA. Resumatic has modified all or some of this information. USDOL/ETA has not approved, endorsed, or tested these modifications.",
+] as const;
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section>
@@ -54,8 +64,8 @@ function Privacy() {
             connected app or an AI model, and nothing uses them yet.
           </li>
           <li>
-            The files you upload, the text read from them, and the roles and facts found in that text, each with the
-            words it came from.
+            The files you upload or text you paste, the text read from them, and the roles and facts found in that
+            text, each with the words it came from.
           </li>
           <li>
             Facts and roles you add or edit, and your answers to interview questions, which are saved as facts.
@@ -67,6 +77,10 @@ function Privacy() {
           </li>
           <li>The resumes, cover letters, interview preparation and fit previews made from your facts for those jobs.</li>
           <li>
+            Saved answers and application kits stay in your vault, and the words of your answers are never sent to a model;
+            where matching by AI is turned on, only an employer’s question and the short labels you gave your answers are.
+          </li>
+          <li>
             The links you make to share a copy: what each copy holds, the label you give it and when it was last
             opened. If you name a coach on a link, their sign-in address is kept with it.
           </li>
@@ -77,6 +91,10 @@ function Privacy() {
           <li>
             Comments a coach writes on a copy you shared and wording they suggest, and your replies, with the line or
             fact each is about and the coach’s name and sign-in address.
+          </li>
+          <li>
+            If you turn on email notices: which ones are on, when each was last sent, and a one-way code made from the
+            address you sign in with, so a notice goes only to that address.
           </li>
           <li>The apps you connect, what you allowed each one to do and when its access ends.</li>
           <li>How many resumes and documents you have made in the current period, for your plan’s limit.</li>
@@ -94,8 +112,8 @@ function Privacy() {
       <Section title="Where it is kept">
         <p>
           Your career data lives in a database of its own, separate from every other user’s, on Cloudflare. It is
-          created in a Cloudflare region near where you first sign in. Your uploads and downloaded PDFs are stored
-          with it in Cloudflare R2. A separate directory holds only your email address, your sign-in ID, the ID of
+          created in a Cloudflare region near where you first sign in. Your uploads, the text you paste and
+          downloaded PDFs are stored with it in Cloudflare R2. A separate directory holds only your email address, your sign-in ID, the ID of
           your database and, if you have a paid plan, the Stripe IDs and billing period that tie payments to your
           account. If you connect an app, the credentials it uses are kept in a separate Cloudflare store until they
           expire or you revoke them. The beta does not yet guarantee that data stays in your country.
@@ -104,16 +122,21 @@ function Privacy() {
       <Section title="How AI is used">
         <p>
           Cloudflare Workers AI turns your uploads into text and indexes your facts. Language models from providers
-          such as Anthropic and OpenAI find facts in your uploads, read job descriptions, write resume lines, cover
-          letters and interview preparation, and check each line against your facts. They are reached through
-          Cloudflare AI Gateway with request logging turned off, and each one receives only the text its step needs:
-          your upload’s text, a job description, or the facts chosen for one resume or document. Lines are checked
-          against your confirmed facts, and a line those facts do not support is never shown to you. Comments on a
-          shared copy are never sent to a language model or used to write or check a resume.
+          such as Anthropic and OpenAI find facts in your uploads and the text you paste, read job descriptions, write
+          resume lines, cover letters and interview preparation, and check each line against your facts. They are
+          reached through Cloudflare AI Gateway with request logging turned off, and each one receives only the text
+          its step needs: your upload’s text or the text you pasted, a job description, or the facts chosen for one
+          resume or document. Lines are checked against your confirmed facts, and a line those facts do not support is
+          never shown to you. Comments on a shared copy are never sent to a language model or used to write or check a
+          resume.
         </p>
         <p>
           Wording a coach suggests is sent to a model only if you accept it, to be checked against your facts like any
           edit you make.
+        </p>
+        <p>
+          Where matching by AI is turned on for application kits, an employer’s question and the short labels you gave
+          your saved answers are sent to a model, to suggest which answer fits. The words of your answers never are.
         </p>
         <p>
           Our own logs record IDs, counts and error codes. They never record your files, facts, job descriptions or
@@ -148,8 +171,10 @@ function Privacy() {
           <li>
             The coach you name can comment on a line or a fact in the copy once they have added it to their client
             list. Nobody else with the link can read or write comments. You answer and delete them under Account,
-            where they stay after the copy ends until you delete them. We don’t send email: a count of new comments
-            shows the next time you open Resumatic.
+            where they stay after the copy ends until you delete them. We send email only if you turn on email notices
+            under Account. A notice says only that there’s something new to see, with a link to Resumatic: it holds no
+            career details, comment, suggested wording or coach’s name, and it’s sent through Cloudflare’s email service
+            to the address you sign in with. A count of new comments shows the next time you open Resumatic.
           </li>
           <li>
             A coach you name can suggest new wording for a line. Nothing changes unless you accept it, and then it is
@@ -213,16 +238,17 @@ function Privacy() {
           </li>
           <li>
             <strong>Take it with you:</strong> the data export under Account downloads everything in your account, with
-            links to your original uploads.
+            links to your original uploads and the text you pasted.
           </li>
           <li>
             <strong>Delete it:</strong> deleting your account under Account stops any work in progress, cancels a paid
-            plan, ends every shared copy and app connection, and erases your database, uploads, PDFs and directory
+            plan, ends every shared copy and app connection, and erases your database, uploads, pasted text, PDFs and directory
             entry. A final sweep of stored files runs within an hour.
           </li>
         </ul>
         <p>We keep your data until you delete it, or until the beta ends and we tell you how to export it first.</p>
       </Section>
+      <Credits />
     </>
   );
 }
@@ -276,6 +302,28 @@ function Terms() {
           We’d like to hear what works and what doesn’t: <a href={feedbackHref}>send feedback</a>.
         </p>
       </Section>
+      <Credits />
     </>
+  );
+}
+
+/** The last section of both pages: the two classifications Resumatic describes work in, credited as their licences ask. */
+function Credits() {
+  return (
+    <Section title="Credits">
+      <p>Resumatic describes work in the terms of two public classifications.</p>
+      {TAXONOMY_NOTICES.map((notice) => (
+        <blockquote key={notice}>
+          <p>{notice}</p>
+        </blockquote>
+      ))}
+      <p>
+        We reuse ESCO under{" "}
+        <a href="https://esco.ec.europa.eu/en/use-esco/download">Commission Decision 2011/833/EU</a> and O*NET under the{" "}
+        <a href="https://creativecommons.org/licenses/by/4.0/">Creative Commons Attribution 4.0 International licence</a>.
+        We hold the two in one set and add labels and links of our own, each marked as ours; we reword nothing in
+        either.
+      </p>
+    </Section>
   );
 }

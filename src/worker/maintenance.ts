@@ -9,6 +9,9 @@ import { correlateCacheWrites } from "./cache-correlation";
 import { deletionFenceReport } from "./deletion-fences";
 import { isMissingWorkflowInstance } from "../shared/workflow-errors";
 import { nextR2Cursor } from "../shared/r2";
+import { TAG_KINDS } from "../pipeline/tag";
+import { manifestMatches, readManifest, taxonomyFor } from "../taxonomy";
+import { MAX_BUILD_ATTEMPTS, TAXONOMY_VERSION, indexBuildId, indexConfiguration, sameBuild } from "../workflows/taxonomy-index";
 import {
   TRANSFER_TABLES,
   type TransferManifest,
@@ -355,6 +358,84 @@ maintenance.delete("/fleets/reembed/:id", async (c) => {
   const status = await run.status();
   if (!["complete", "terminated", "errored"].includes(status.status))
     await run.terminate();
+  await run.delete();
+  return c.body(null, 204);
+});
+
+// The taxonomy's vector index (docs/taxonomy.md, "The vector index"). A build is one Workflow
+// instance at a time for each taxonomy, by its ID. A start is refused while any attempt is live,
+// and takes the first free ID; two starts at once take the same one, and the platform itself
+// refuses a second instance under an ID in use.
+const IndexBuildId = z.string().regex(/^taxonomy-index-[0-9a-f]{8}-\d{1,2}$/);
+const FINISHED = new Set(["complete", "errored", "terminated"]);
+const RUNNING = "a build of this index is already running";
+maintenance.post("/taxonomy/vectors/build", bodyLimit({ maxSize: 2048 }), async (c) => {
+  let raw: unknown;
+  try { raw = await c.req.json(); } catch { throw new AppError("invalid", "expected a JSON body"); }
+  const parsed = z.object({ taxonomyVersion: z.string().regex(TAXONOMY_VERSION) }).strict().safeParse(raw);
+  if (!parsed.success) throw new AppError("invalid", "a build names the taxonomy version it is for");
+  const { taxonomyVersion } = parsed.data;
+  const { index, taxonomy: database } = indexConfiguration(c.env);
+  // A taxonomy loaded part of the way has no version: "the taxonomy is not loaded", 503.
+  const info = await taxonomyFor({ TAXONOMY: database })!.info();
+  if (info.version !== taxonomyVersion) throw new AppError("conflict", "the bound taxonomy is another version");
+  const manifest = await readManifest(index);
+  if (manifest && manifestMatches(manifest, { taxonomyVersion, kinds: TAG_KINDS })) return c.json({ state: "complete" as const });
+  if (manifest && !sameBuild(manifest, taxonomyVersion)) throw new AppError("conflict", "this index holds another build; create a new index for this version");
+  const params = { taxonomyVersion };
+  // Every attempt is looked at before one is started. An earlier attempt can be gone, deleted by
+  // the operator or by the platform's retention, while a later one is still at work: its free ID
+  // must not start a second build beside it.
+  let free: string | null = null;
+  for (let attempt = 1; attempt <= MAX_BUILD_ATTEMPTS; attempt++) {
+    const id = indexBuildId(info.contentHash, attempt);
+    let status: string;
+    try {
+      status = (await (await c.env.TAXONOMY_INDEX.get(id)).status()).status;
+    } catch (error) {
+      if (!isMissingWorkflowInstance(error, id)) throw error;
+      free ??= id;
+      continue;
+    }
+    // Queued, running, paused, waiting or unknown: all are live.
+    if (!FINISHED.has(status)) throw new AppError("conflict", RUNNING);
+  }
+  if (!free) throw new AppError("conflict", "delete earlier builds of this index first");
+  try {
+    await c.env.TAXONOMY_INDEX.create({ id: free, params });
+  } catch (refused) {
+    // Another request took this ID first.
+    try { await c.env.TAXONOMY_INDEX.get(free); } catch { throw refused; }
+    throw new AppError("conflict", RUNNING);
+  }
+  return c.json({ runId: free }, 202);
+});
+maintenance.get("/taxonomy/vectors", async (c) => {
+  let configured: ReturnType<typeof indexConfiguration> | null = null;
+  try { configured = indexConfiguration(c.env); } catch { configured = null; }
+  c.header("cache-control", "private, no-store");
+  if (!configured) return c.json({ configured: false, taxonomyVersion: null, manifest: null, ready: false, done: 0 });
+  const taxonomy = taxonomyFor({ TAXONOMY: configured.taxonomy })!;
+  const taxonomyVersion = await taxonomy.info().then((info) => info.version, () => null);
+  const manifest = await readManifest(configured.index);
+  // Counts, codes and IDs only: the manifest says nothing of any concept but how far a build got.
+  return c.json({
+    configured: true,
+    taxonomyVersion,
+    manifest,
+    ready: manifest !== null && taxonomyVersion !== null && manifestMatches(manifest, { taxonomyVersion, kinds: TAG_KINDS }),
+    done: manifest?.after ? await taxonomy.conceptCount(TAG_KINDS, manifest.after) : 0,
+  });
+});
+maintenance.get("/taxonomy/vectors/build/:id", async (c) => {
+  const run = await c.env.TAXONOMY_INDEX.get(IndexBuildId.parse(c.req.param("id")));
+  const status = await run.status();
+  return c.json({ id: run.id, status: status.status, output: status.output ?? null });
+});
+maintenance.delete("/taxonomy/vectors/build/:id", async (c) => {
+  const run = await c.env.TAXONOMY_INDEX.get(IndexBuildId.parse(c.req.param("id")));
+  const status = await run.status();
+  if (!FINISHED.has(status.status)) await run.terminate();
   await run.delete();
   return c.body(null, 204);
 });

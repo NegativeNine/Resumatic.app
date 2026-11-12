@@ -1,6 +1,9 @@
 import type { ApplicationView, FactView, Me, ResumeView, RoleView, SourceView } from "../../src/shared/api";
 import type { DocumentView } from "../../src/shared/documents";
+import type { EmailNotices } from "../../src/shared/email-notices";
 import type { Preferences } from "../../src/shared/preferences";
+import type { CardPreview } from "../../src/shared/card";
+import type { KitView, SavedAnswer } from "../../src/shared/kit";
 import type { McpGrant } from "../../src/shared/mcp";
 import type { CoachClient, CommentThread, OwnerCommentThread, ShareGrant, SharedView } from "../../src/shared/sharing";
 import type { BillingView } from "../../src/web/api";
@@ -12,7 +15,17 @@ export interface Fixtures {
   me: Me;
   /** The person's job preferences as saved. Absent until they first save: nothing said, at revision 0. */
   preferences?: Preferences;
+  /** The owner's card preview. Absent: a ready card with nothing on it, as every vault has today. */
+  cardPreview?: CardPreview;
+  /** Which email notices are on, and the address they go to. Absent: every kind off, to the session's address. */
+  emailNotices?: EmailNotices;
+  /** The person's saved answers. Absent means none. */
+  savedAnswers?: SavedAnswer[];
+  /** Each job's application kit, by the job's ID. A job with none has one at revision 0. */
+  kits?: Record<string, KitView>;
   sources: SourceView[];
+  /** What each source was read as, by its ID, for "See this quote in its source". */
+  sourceTexts?: Record<string, string>;
   roles: RoleView[];
   facts: FactView[];
   applications: ApplicationView[];
@@ -40,11 +53,11 @@ export function emptyVault(): Fixtures {
   return { ...fixtures(), sources: [], roles: [], facts: [], applications: [], resumes: {} };
 }
 
-/** Sam’s vault with every optional screen filled in: documents in each state, share links, apps, plans. */
+/** Sam’s vault with every optional screen filled in: documents in each state, share links, apps, plans, a card. */
 export function fullVault(): Fixtures {
-  const { shared: _shared, ...extras } = structuredClone(full) as unknown as Required<Pick<Fixtures, "documents" | "shares" | "mcpGrants" | "billing">> & { shared: SharedView };
+  const { shared: _shared, ...extras } = structuredClone(full) as unknown as Required<Pick<Fixtures, "documents" | "shares" | "mcpGrants" | "billing" | "cardPreview" | "emailNotices" | "savedAnswers" | "kits">> & { shared: SharedView };
   const state = { ...fixtures(), ...extras };
-  state.me.capabilities = { ocr: false, ...state.me.capabilities, connectedApps: true };
+  state.me.capabilities = { ocr: false, ...state.me.capabilities, connectedApps: true, cardPreview: true, emailNotices: true };
   return state;
 }
 

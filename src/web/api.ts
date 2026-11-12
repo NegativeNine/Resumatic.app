@@ -20,7 +20,11 @@ import type {
   SourceView,
 } from "../shared/api";
 import type { DocumentView, NewDocument } from "../shared/documents";
+import type { PasteSourceRequest } from "../shared/paste";
+import type { KitAnswerChange, KitPart, KitView, SavedAnswer, SavedAnswerInput } from "../shared/kit";
 import type { PreferenceValues, Preferences } from "../shared/preferences";
+import type { CardPreview } from "../shared/card";
+import type { EmailNotices, NoticeKind } from "../shared/email-notices";
 import type { PostingRead } from "../shared/postings";
 import type { CoachClient, ShareableDocument, ShareGrant } from "../shared/sharing";
 import type { CommentThread, NewShareComment, NewSuggestion, OwnerCommentThread, ShareComment } from "../shared/sharing";
@@ -153,6 +157,12 @@ async function uploadSource(
   ), ["sourceId"]);
 }
 
+// As with uploads, the caller keeps one key for the retries of one Add text action; each new
+// action gets a new key, so an expired paste is never resent under its old key.
+async function pasteSource(body: PasteSourceRequest, requestKey: string = crypto.randomUUID()): Promise<{ sourceId: string }> {
+  return requireResponseFields(await request<{ sourceId: string }>("POST", "/api/sources/paste", body, requestKey), ["sourceId"]);
+}
+
 const versionQuery = (version?: number) =>
   version === undefined ? "" : `?version=${version}`;
 
@@ -171,10 +181,25 @@ export const api = {
   /** Replaces all four values, if `expectedRevision` is still the saved revision. */
   updatePreferences: (values: PreferenceValues, expectedRevision: number) =>
     request<Preferences>("PUT", "/api/preferences", { ...values, expectedRevision }),
+  /** The owner's own card, as a recruiter would see it. Shown to its owner alone, and stored nowhere. */
+  cardPreview: () => request<CardPreview>("GET", "/api/v2/card-preview"),
+  /** Which email notices are on, and the address they go to. Loaded by their own card on Account. */
+  emailNotices: () => request<EmailNotices>("GET", "/api/email-notices"),
+  /** Turns one kind on or off. Setting it as it already is changes nothing, so a retry is safe. */
+  setEmailNotice: (kind: NoticeKind, on: boolean) =>
+    request<EmailNotices>("PUT", `/api/email-notices/${kind}`, { on }),
   signOutEverywhere: () =>
     request<void>("POST", "/api/account/sign-out-everywhere"),
+  /** The person's saved answers. Loaded by their own card on Account. */
+  savedAnswers: () => request<{ savedAnswers: SavedAnswer[] }>("GET", "/api/saved-answers"),
+  /** Adds a saved answer. The same label and answer sent again returns the one already kept. */
+  addSavedAnswer: (input: SavedAnswerInput) => request<SavedAnswer>("POST", "/api/saved-answers", input),
+  editSavedAnswer: (id: string, input: SavedAnswerInput, expectedRevision: number) =>
+    request<SavedAnswer>("PUT", `/api/saved-answers/${encodeURIComponent(id)}`, { ...input, expectedRevision }),
+  deleteSavedAnswer: (id: string) => request<void>("DELETE", `/api/saved-answers/${encodeURIComponent(id)}`),
 
   uploadSource,
+  pasteSource,
   reviewView: () => request<{ sources: SourceView[]; roles: RoleView[]; facts: FactView[] }>("GET", "/api/v2/vault"),
   sources: () => request<{ sources: SourceView[] }>("GET", "/api/sources"),
   retryRun: (runId: string) =>
@@ -278,6 +303,18 @@ export const api = {
       undefined,
       ["resumeId"],
     ),
+  /** A job's application kit, with every check worked out now. */
+  kit: (applicationId: string) => request<KitView>("GET", `/api/applications/${encodeURIComponent(applicationId)}/kit`),
+  /** Replaces the kit's questions, in order: one with an ID is one already in the kit. */
+  saveKitQuestions: (applicationId: string, questions: { id?: string; text: string }[], expectedRevision: number) =>
+    request<KitView>("PUT", `/api/applications/${encodeURIComponent(applicationId)}/kit/questions`, { questions, expectedRevision }),
+  chooseKitParts: (applicationId: string, parts: { resume: KitPart | null; letter: KitPart | null; prep: KitPart | null }, expectedRevision: number) =>
+    request<KitView>("PUT", `/api/applications/${encodeURIComponent(applicationId)}/kit/parts`, { ...parts, expectedRevision }),
+  answerKitQuestion: (applicationId: string, questionId: string, change: KitAnswerChange, expectedRevision: number) =>
+    request<KitView>("POST", `/api/applications/${encodeURIComponent(applicationId)}/kit/questions/${encodeURIComponent(questionId)}`, { change, expectedRevision }),
+  approveKit: (applicationId: string, expectedRevision: number) =>
+    request<KitView>("POST", `/api/applications/${encodeURIComponent(applicationId)}/kit/approve`, { expectedRevision }),
+  kitArchiveUrl: (applicationId: string) => `/api/applications/${encodeURIComponent(applicationId)}/kit/archive`,
   documents: (applicationId: string) =>
     request<{ documents: DocumentView[] }>(
       "GET",

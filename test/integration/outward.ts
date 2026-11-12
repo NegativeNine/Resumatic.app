@@ -12,6 +12,9 @@ import { call, cookieFrom, type User } from "./support";
 // words "these went nowhere". A feature that adds a way out of a vault adds it here, and every
 // such test then covers it.
 //
+// The application kit's ZIP is gathered too, though only its owner downloads it: it is what they
+// send on to an employer, so it is a way out like the PDF and the Word file.
+//
 // Not gathered: the owner's own pages, export and document downloads, which are theirs to read;
 // and the answers of the tools that write (add_job, start_tailoring), which hold only IDs. What
 // those tools set going is read here as model inputs and as the resumes they make. preview_fit's
@@ -26,9 +29,17 @@ export interface OutwardCopy {
   coach?: User;
 }
 
+/** What a test gathers from: the owner, their copies, what models were sent, and the email notices a recording binding took. */
+export interface OutwardGiven {
+  owner: User;
+  copies: readonly OutwardCopy[];
+  inputs: readonly string[];
+  notices?: readonly { subject: string; text?: string }[];
+}
+
 /** One thing sent out, and where it went. */
 export interface OutwardPart {
-  surface: "copy by its link" | "copy as its coach" | "coach's client list" | "coach's comments" | "list_facts" | "search_facts" | "list_jobs" | "get_resume" | "preview_fit" | "PDF" | "Word" | "print preview" | "model input";
+  surface: "copy by its link" | "copy as its coach" | "coach's client list" | "coach's comments" | "list_facts" | "search_facts" | "list_jobs" | "get_resume" | "preview_fit" | "PDF" | "Word" | "print preview" | "application kit" | "model input" | "card preview" | "email notice";
   text: string;
 }
 
@@ -56,7 +67,7 @@ function wordText(bytes: Uint8Array): string {
 }
 
 /** Everything the vault sends outward, each part with the surface it left by. A refusal contributes nothing. */
-export async function outwardParts({ owner, copies, inputs }: { owner: User; copies: readonly OutwardCopy[]; inputs: readonly string[] }): Promise<OutwardPart[]> {
+export async function outwardParts({ owner, copies, inputs, notices = [] }: OutwardGiven): Promise<OutwardPart[]> {
   const parts: OutwardPart[] = [];
   const add = (surface: OutwardPart["surface"], text: string) => parts.push({ surface, text });
 
@@ -152,11 +163,26 @@ export async function outwardParts({ owner, copies, inputs }: { owner: User; cop
     if (preview.status === 200) add("print preview", await preview.text());
   }
 
+  // The owner's private card. Only its owner reads it today, but it is what a recruiter would see
+  // if its owner were ever found, so it counts as a way out. It answers only where switched on.
+  const card = await owner.fetch("/api/v2/card-preview");
+  if (card.status === 200) add("card preview", await card.text());
+  // Each job's application kit as its ZIP: every file in it, a Word file as its text. A kit that
+  // isn't approved, or that a check now refuses, gives nothing.
+  for (const job of jobs) {
+    const archive = await owner.fetch(`/api/applications/${job.id}/kit/archive`);
+    if (archive.status !== 200) continue;
+    for (const [name, bytes] of Object.entries(unzipSync(new Uint8Array(await archive.arrayBuffer()))))
+      add("application kit", name.endsWith(".docx") ? wordText(bytes) : strFromU8(bytes));
+  }
+
   for (const input of inputs) add("model input", input);
+  // Every email notice the deployment's binding was given, subject and text.
+  for (const notice of notices) add("email notice", `${notice.subject}\n${notice.text ?? ""}`);
   return parts;
 }
 
 /** Everything the vault sends outward, as one text. */
-export async function outward(given: { owner: User; copies: readonly OutwardCopy[]; inputs: readonly string[] }): Promise<string> {
+export async function outward(given: OutwardGiven): Promise<string> {
   return (await outwardParts(given)).map((part) => part.text).join("\n");
 }

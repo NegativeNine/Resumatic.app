@@ -42,13 +42,51 @@ import type {
   RolePatch,
   RoleView,
   SensitiveRequest,
+  SourceOrigin,
   SourceState,
   SourceView,
 } from "../shared/api";
 import { DATE_PATTERN, MAX_JOB_NAME_CHARS, MAX_LINE_CHARS, MAX_SENSITIVE_IDS, MAX_UPLOAD_BYTES, isWebUrl, normalizePosting } from "../shared/api";
 import type { Preferences, PreferenceValues } from "../shared/preferences";
 import { PreferencesStore } from "./preferences";
-import { AppError, errorCode } from "../shared/errors";
+import { EMAIL_OFF, NOTICE_KINDS, emailConfigured, emailFrom, emailOrigin, noticeMessage, type NoticeKind, type NoticeSettings } from "../shared/email-notices";
+import { EmailNoticeStore, MAX_NOTICE_ATTEMPTS, noticeAddressCheck } from "./email-notices";
+import { cloudflareSender, type NoticeErrorCode } from "./email-sender";
+import { sessionEmail } from "../worker/session";
+import {
+  KIT_ANSWER_REFUSED,
+  KIT_CHANGED,
+  KIT_CHOICE_REFUSED,
+  KIT_DOCUMENT_REFUSED,
+  KIT_NOT_APPROVED,
+  KIT_PROBLEMS,
+  KIT_QUESTIONS_REFUSED,
+  KIT_RESUME_REFUSED,
+  KIT_SENSITIVE_NEVER_SAVED,
+  MAX_KIT_RESUME_CHOICES,
+  classifyDeterministic,
+  cleanKitAnswer,
+  cleanKitParts,
+  cleanKitQuestions,
+  readKitAnswerChange,
+  refusedKind,
+  type KitAnswerChange,
+  type KitArchiveData,
+  type KitChoice,
+  type KitExport,
+  type KitPart,
+  type KitPartsUpdate,
+  type KitProblem,
+  type KitQuestionsUpdate,
+  type KitQuestionRecord,
+  type KitQuestionView,
+  type KitView,
+  type SavedAnswer,
+  type SavedAnswerInput,
+} from "../shared/kit";
+import type { KitMatchAnswer } from "../ai/question-match";
+import { ApplicationKitStore } from "./application-kit";
+import { AppError, errorCode, logErrorCode } from "../shared/errors";
 import { isMissingWorkflowInstance } from "../shared/workflow-errors";
 import { directoryForUser } from "../shared/stubs";
 import type {
@@ -66,6 +104,7 @@ import type {
 } from "../shared/types";
 import { UploadStore, uploadDescriptorDigest, type UploadDescriptor } from "./uploads";
 import { sourceKey } from "../shared/r2";
+import { MAX_PASTE_BYTES, readPastedText } from "../shared/paste";
 import { validateTranscriptionInput, type TranscriptionInput } from "../ai/transcribe";
 import { ExportCache, EXPORT_CACHE_ITEM_BYTES } from "./export-cache";
 import { VaultOperations, ReembedStore } from "./operations";
@@ -79,10 +118,10 @@ import {
 import { vault as vaultStub } from "../shared/stubs";
 import { createSchema, hasSchema, migrate, SCHEMA_VERSION } from "./schema";
 import { assertGroundedResume, evidenceForFacts, evidenceForRoles, SnapshotStore, type ResumeVersion } from "./snapshots";
-import { canShareDocument, SHAREABLE_DOCUMENT_KINDS, type DocumentVersion } from "./document-shares";
+import { canShareDocument, sharedDocument, SHAREABLE_DOCUMENT_KINDS, type DocumentVersion } from "./document-shares";
 import { CoachClientStore, type CoachClientEntry } from "./coach-clients";
 import type { CoachAccount } from "./shares";
-import type { ShareableDocument } from "../shared/sharing";
+import type { ShareableDocument, SharedDocument } from "../shared/sharing";
 import { ShareCommentStore } from "./share-comments";
 import type { CommentThread, NewShareComment, OwnerCommentThread, ShareComment } from "../shared/sharing";
 import { isVisibleLine, targetText, unchangedWording, type NewSuggestion, type ShareSuggestion } from "../shared/sharing";
@@ -94,9 +133,11 @@ import { validateTailorCheckpoint, validateTailorPublication } from "./tailor-pu
 import { finalLegacyEvidence, legacyReceipt, legacyReview } from "./legacy-remediation";
 import { RunStore } from "./runs";
 import { RecordStore } from "./record";
+import { readCardMaterial } from "./card";
+import { CARD_PREVIEW_OFF, type CardMaterial } from "../shared/card";
 import { IDENTICAL_ROLE_METHOD, IDENTICAL_WORDING_METHOD, MAX_OFFER_PAIRS, OFFERS_PER_FACT, OFFER_MIN_COSINE, identicalMatches, type JudgedOffer, type OfferPair } from "../pipeline/match";
 import { roleKey, sameWording, stampProblem } from "../shared/record";
-import { MAX_TAGS_PER_SAVE, MAX_TAG_FACTS, MAX_TAG_ROLES, TAG_JUDGE_METHOD, TAG_RULE_METHOD, skillAsWritten, tagStamp, type HeldTag, type ProposedTag, type TagMade, type TagSubjects } from "../pipeline/tag";
+import { MAX_TAGS_PER_SAVE, MAX_TAG_FACTS, MAX_TAG_ROLES, TAG_JUDGE_METHOD, TAG_RULE_METHOD, TAG_VECTOR_METHOD, skillAsWritten, tagStamp, type HeldTag, type ProposedTag, type TagMade, type TagSubjects } from "../pipeline/tag";
 import type { NewPart, RecordExport } from "../shared/record";
 import { ShareStore } from "./shares";
 import { markedWording, sensitiveUse, setSensitive, usableQuote, withheldFacts } from "./sensitive";
@@ -128,7 +169,7 @@ const REDISPATCH_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
 
 type SourceRow = {
   ocr_image_count: number | null;
-  origin: "upload" | "ocr";
+  origin: SourceOrigin;
   extractor: string | null;
   parent_source_id: string | null;
   id: string;
@@ -160,7 +201,7 @@ type FactRow = {
   interview_question_id?: string | null;
   interview_question?: string | null;
   interview_quote?: string | null;
-  evidence_origin?: "upload" | "ocr";
+  evidence_origin?: SourceOrigin;
   confidence?: number | null;
   review_reasons?: string;
   revision: number;
@@ -219,7 +260,7 @@ export interface ResumePatch {
 }
 
 /** RecordExport adds how lines divide, their concepts and what was merged: every judgement held, with what made it. */
-export interface VaultExport extends RecordExport {
+export interface VaultExport extends RecordExport, KitExport {
   interviewAnswers: Record<string, string | number | null>[];
   generationInputs: Record<string, string | number | null>[];
   generationItems: Record<string, string | number | null>[];
@@ -258,6 +299,8 @@ export interface VaultExport extends RecordExport {
   profile: Profile;
   /** Job preferences as stored. Revision 0, with nothing said, until the first save. */
   preferences: Preferences;
+  /** Which email notices are on and how each last went, as stored: a check of the sign-in address, never the address. */
+  emailNotices: Record<string, string | number | null>[];
   /** `file` is the download path of the original upload. */
   sources: {
     id: string;
@@ -293,9 +336,9 @@ export function monthOf(ms: number): string {
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** An upload's body digest, if it has a well-formed one. OCR page images are never compared. */
+/** An upload's or a paste's body digest, if it has a well-formed one. OCR page images are never compared. */
 function uploadSha256(input: UploadDescriptor): string | null {
-  if ((input.origin ?? "upload") !== "upload" || input.sha256 === undefined) return null;
+  if (input.origin === "ocr" || input.sha256 === undefined) return null;
   if (typeof input.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(input.sha256))
     throw new AppError("invalid", "invalid upload digest");
   return input.sha256;
@@ -520,7 +563,7 @@ export class Vault extends DurableObject<Env> {
       .map((r) => r.run_id);
     const other = this.sql
       .exec<{ kind: string; id: string }>(
-        `SELECT kind,id FROM runs WHERE kind NOT IN ('distill','tailor','embed')`,
+        `SELECT kind,id FROM runs WHERE kind NOT IN ('distill','tailor','embed','match')`,
       )
       .toArray();
     return other.length ? { distill, tailor, other } : { distill, tailor };
@@ -542,10 +585,25 @@ export class Vault extends DurableObject<Env> {
 
   // ---------------------------------------------------------------- sessions
 
-  async openSession(userId: string): Promise<{ gen: number; epoch: string }> {
+  /**
+   * `signInEmail` is the address this sign-in was made with, or null for none. Where any email
+   * notice is on, each kind turned on with another address is paused, and one turned on with this
+   * address is resumed. It is checked whether or not the deployment sends email now, so a later
+   * switch-on never sends on a stale check. A caller that passes nothing (an older Worker) changes
+   * no notice.
+   */
+  async openSession(userId: string, signInEmail?: string | null): Promise<{ gen: number; epoch: string }> {
     this.requireOpen();
     if (this.meta("user_id") !== userId)
       throw new AppError("forbidden", "not this user's vault");
+    if (signInEmail !== undefined && this.notices.anyOn()) {
+      const address = sessionEmail(signInEmail);
+      const check = address ? await noticeAddressCheck(address) : null;
+      this.requireOpen();
+      if (this.meta("user_id") !== userId)
+        throw new AppError("forbidden", "not this user's vault");
+      this.ctx.storage.transactionSync(() => this.notices.signedIn(check));
+    }
     return {
       gen: Number(this.meta("session_gen")),
       epoch: this.meta("security_epoch") ?? "legacy",
@@ -695,6 +753,8 @@ export class Vault extends DurableObject<Env> {
         connectedApps: this.env.MCP_ENABLED === "true",
         roleDateUnknownEnd: this.env.ROLE_UNKNOWN_END_ENABLED === "true",
         postingReader: this.env.POSTING_READER_ENABLED === "true",
+        cardPreview: this.env.CARD_PREVIEW_ENABLED === "true",
+        emailNotices: emailConfigured(this.env),
       },
     };
   }
@@ -751,6 +811,592 @@ export class Vault extends DurableObject<Env> {
     return this.preferences.save(values, expectedRevision);
   }
 
+  // ---------------------------------------------------------------- card preview
+  // The owner's own card, as a recruiter would see it if they were ever found. This reads the
+  // material only: concept IDs, how many facts show each, and job dates. The Worker turns them
+  // into taxonomy groups, so nothing here awaits the taxonomy. Nothing is stored or sent anywhere.
+
+  async cardMaterial(who: Who): Promise<CardMaterial> {
+    this.requireOwner(who);
+    if (this.env.CARD_PREVIEW_ENABLED !== "true") throw new AppError("unavailable", CARD_PREVIEW_OFF);
+    // One synchronous turn with no await and no write, so it needs no transaction.
+    return readCardMaterial(this.record, this.usableFacts(), withheldFacts(this.sql).ids, this.confirmedRoles().filter((role) => role.kind === "job"));
+  }
+
+  // ---------------------------------------------------------------- email notices
+  // Turned on kind by kind by the owner, and sent by this vault's alarm to the address the
+  // Directory holds for its owner, only while that address is the one the kind was turned on with
+  // and the one used at the latest sign-in. A notice holds fixed words and the app's address.
+
+  private get notices(): EmailNoticeStore {
+    return new EmailNoticeStore(this.sql);
+  }
+
+  async emailNotices(who: Who): Promise<NoticeSettings> {
+    this.requireOwner(who);
+    if (!emailConfigured(this.env)) throw new AppError("unavailable", EMAIL_OFF);
+    return this.notices.view();
+  }
+
+  /**
+   * Turns one kind on or off. `signInEmail` is the verified session's address, never one a request
+   * names. Setting a kind as it already is changes nothing, so a repeated request is harmless.
+   */
+  async setEmailNotice(who: Who, kind: NoticeKind, on: boolean, signInEmail: string | null | undefined): Promise<NoticeSettings> {
+    this.requireOwner(who);
+    if (!emailConfigured(this.env)) throw new AppError("unavailable", EMAIL_OFF);
+    if (!(NOTICE_KINDS as readonly unknown[]).includes(kind) || typeof on !== "boolean")
+      throw new AppError("invalid", "choose a notice to turn on or off");
+    const address = sessionEmail(signInEmail);
+    if (on && !address) throw new AppError("conflict", "sign out and in again to turn on email notices");
+    const check = on && address ? await noticeAddressCheck(address) : null;
+    this.requireOwner(who);
+    this.ctx.storage.transactionSync(() => this.notices.set(kind, on, check, Date.now()));
+    await this.scheduleNotices();
+    return this.notices.view();
+  }
+
+  /** Brings the alarm forward to the next notice that may be due. Best effort: the alarm's own pass schedules it too. */
+  private async scheduleNotices(): Promise<void> {
+    try {
+      const now = Date.now();
+      const at = emailConfigured(this.env) ? this.notices.nextDue() : null;
+      if (at !== null) await this.scheduleRunAlarm(Math.max(at, now + 1000));
+    } catch {
+      // A notice is never worth failing the write that queued it. The next alarm or write retries.
+    }
+  }
+
+  /** One data point for a notice. It holds the kind, a code from a fixed list and the outcome: never an address or a provider's words. */
+  private noticeMetric(kind: NoticeKind, code: NoticeErrorCode | null, outcome: "ok" | "retry" | "failed" | "paused", attempt: number): void {
+    this.env.METRICS?.writeDataPoint({
+      indexes: [this.vaultId],
+      blobs: ["email", "email_notice", kind, code ?? "", outcome],
+      doubles: [attempt, 0, 0, 0],
+    });
+    if (outcome === "retry" || outcome === "failed") console.error("email notice failed", { code, kind });
+  }
+
+  /**
+   * Sends whatever notices are due, from the alarm. Where the deployment no longer sends email,
+   * everything queued is dropped. Under the maintenance fence nothing is sent: the replacement's
+   * alarm sends what was due. Each attempt is recorded before anything is awaited, and every step
+   * after an await checks again that the vault is open and the kind is on as it was.
+   */
+  private async sendDueNotices(fenced: boolean, canContinue: () => boolean): Promise<void> {
+    if (!emailConfigured(this.env)) {
+      this.ctx.storage.transactionSync(() => this.notices.dropPending());
+      return;
+    }
+    if (fenced) return;
+    const origin = emailOrigin(this.env);
+    const from = emailFrom(this.env);
+    const userId = this.meta("user_id");
+    if (!origin || !from || !userId) return;
+    // The Directory is asked once an alarm, and only once a notice is due.
+    let lookup: { address: string | null } | "unavailable" | undefined;
+    for (const kind of NOTICE_KINDS) {
+      if (!canContinue()) return;
+      const attempt = this.ctx.storage.transactionSync(() => this.notices.begin(kind, Date.now()));
+      if (!attempt) continue;
+      if ("exhausted" in attempt) {
+        this.noticeMetric(kind, "E_UNANSWERED", "failed", MAX_NOTICE_ATTEMPTS);
+        continue;
+      }
+      // The next attempt is armed before anything leaves the vault, so a send that never returns
+      // still has its retry, and its last one is settled.
+      await this.scheduleRunAlarm(attempt.retryAt);
+      if (!canContinue()) return;
+      if (lookup === undefined) {
+        try {
+          lookup = { address: await directoryForUser(this.env, userId).noticeAddress(userId, this.vaultId) };
+        } catch {
+          lookup = "unavailable";
+        }
+        if (!canContinue()) return;
+      }
+      if (lookup === "unavailable") {
+        // Temporary: the row stays in its retry, and a last attempt is settled when its time comes.
+        this.noticeMetric(kind, "E_ADDRESS_UNAVAILABLE", "retry", attempt.attempt);
+        continue;
+      }
+      const to = lookup.address;
+      if (to === null) {
+        this.ctx.storage.transactionSync(() => this.notices.settle(kind, attempt.onAt, "failed"));
+        this.noticeMetric(kind, "E_NO_ADDRESS", "failed", attempt.attempt);
+        continue;
+      }
+      const check = await noticeAddressCheck(to);
+      if (!canContinue()) return;
+      if (check !== attempt.addressCheck) {
+        this.ctx.storage.transactionSync(() => this.notices.settle(kind, attempt.onAt, "paused"));
+        this.noticeMetric(kind, "E_ADDRESS_CHANGED", "paused", attempt.attempt);
+        continue;
+      }
+      if (!canContinue() || !this.notices.current(attempt)) continue;
+      const outcome = await cloudflareSender(this.env.EMAIL, from).send(to, noticeMessage(kind, origin));
+      if (!canContinue()) return;
+      if (outcome.ok) {
+        this.ctx.storage.transactionSync(() => this.notices.settle(kind, attempt.onAt, "sent"));
+        this.noticeMetric(kind, null, "ok", attempt.attempt);
+      } else if (!outcome.retry || attempt.attempt >= MAX_NOTICE_ATTEMPTS) {
+        this.ctx.storage.transactionSync(() => this.notices.settle(kind, attempt.onAt, "failed"));
+        this.noticeMetric(kind, outcome.code, "failed", attempt.attempt);
+      } else this.noticeMetric(kind, outcome.code, "retry", attempt.attempt);
+    }
+  }
+
+  // ---------------------------------------------------------------- saved answers and application kits
+  // The owner's saved answers, and one kit per job of what they will send. Only the owner's calls
+  // below, the export and the deletion of a job reach the store: test/unit/saved-answers-reach.test.ts
+  // holds it there. A kit's answers are never facts or evidence, and no answer's text reaches a
+  // model: the judge, where it is switched on, is given an employer's question and the labels alone.
+
+  private get kits(): ApplicationKitStore {
+    return new ApplicationKitStore(this.sql);
+  }
+
+  /** Every saved answer, each with what today's list says of it. */
+  async listSavedAnswers(who: Who): Promise<SavedAnswer[]> {
+    this.requireOwner(who);
+    return this.kits.listSaved();
+  }
+
+  /** Adds a saved answer, or returns the one with the same label and words. */
+  async addSavedAnswer(who: Who, input: SavedAnswerInput): Promise<SavedAnswer> {
+    this.requireOwner(who);
+    return this.ctx.storage.transactionSync(() => this.kits.addSaved(input, Date.now()));
+  }
+
+  /** Replaces a saved answer's label and words at the revision it was read at. Every kit using it is a draft again. */
+  async editSavedAnswer(who: Who, id: string, input: SavedAnswerInput, expectedRevision: number): Promise<SavedAnswer> {
+    this.requireOwner(who);
+    return this.ctx.storage.transactionSync(() => {
+      const now = Date.now();
+      const saved = this.kits.editSaved(id, input, expectedRevision, now);
+      this.kits.resetKitsUsing(id, now);
+      return saved;
+    });
+  }
+
+  /** Deletes a saved answer. Questions matched to it ask again, and every kit using it is a draft again. */
+  async deleteSavedAnswer(who: Who, id: string): Promise<void> {
+    this.requireOwner(who);
+    this.ctx.storage.transactionSync(() => this.kits.deleteSaved(id, Date.now()));
+  }
+
+  /** A job's kit, with every check worked out now. A job with no kit yet has one at revision 0. */
+  async getKit(who: Who, applicationId: string): Promise<KitView> {
+    this.requireOwner(who);
+    this.kitJob(applicationId);
+    return this.kitView(applicationId);
+  }
+
+  /**
+   * Replaces a kit's questions with these, in this order. A question whose words are unchanged
+   * keeps its answer; one that is new or reworded is matched again: the closed list first, then a
+   * label word for word, then (switched on only) the judge, given the question and the labels.
+   * The judge is asked between two checks, and its answer is used only if no saved answer changed
+   * while it was asked.
+   */
+  async saveKitQuestions(who: Who, applicationId: string, input: KitQuestionsUpdate): Promise<KitView> {
+    this.requireOwner(who);
+    const submitted = cleanKitQuestions((input as { questions?: unknown } | null)?.questions);
+    if (!submitted) throw new AppError("invalid", KIT_QUESTIONS_REFUSED);
+    const expected = (input as { expectedRevision?: unknown }).expectedRevision;
+    // What each question is, decided from the kit and the saved answers as they are when it runs.
+    const decide = () => {
+      this.kitJob(applicationId);
+      if ((this.kits.kit(applicationId)?.revision ?? 0) !== expected) throw new AppError("conflict", KIT_CHANGED);
+      const held = new Map(this.kits.questions(applicationId).map((row) => [row.id, row]));
+      if (submitted.some((question) => question.id !== null && !held.has(question.id))) throw new AppError("invalid", KIT_QUESTIONS_REFUSED);
+      const usable = this.kits.usableSaved();
+      const questions = submitted.map((question) => {
+        const was = question.id === null ? undefined : held.get(question.id);
+        if (was && was.question === question.text) return { kept: was } as const;
+        return { fresh: question, decided: classifyDeterministic(question.text, usable) } as const;
+      });
+      return { questions, usable, digest: this.kits.savedDigest() };
+    };
+    const before = decide();
+    const unsettled = [...new Set(before.questions.flatMap((question) => ("fresh" in question && question.decided === null ? [question.fresh.text] : [])))];
+    const labels = before.usable.map((saved) => ({ id: saved.id, label: saved.label }));
+    const judged =
+      unsettled.length > 0 && this.env.APPLICATION_KIT_ENABLED === "true" && labels.length > 0
+        ? await this.askKitJudge(applicationId, unsettled.map((text) => ({ key: text, text })), labels, () => this.requireOwner(who))
+        : new Map<string, KitMatchAnswer>();
+    this.requireOwner(who);
+    return this.ctx.storage.transactionSync(() => {
+      const now = decide();
+      // The labels the judge chose from are the ones every saved answer has now, or its answer is none.
+      const sameSaved = now.digest === before.digest;
+      const rows = now.questions.map((question) => {
+        if ("kept" in question) {
+          const { applicationId: _job, position: _was, ...kept } = question.kept!;
+          return kept;
+        }
+        const base: Omit<KitQuestionRecord, "applicationId" | "position"> = {
+          id: question.fresh.id ?? crypto.randomUUID(),
+          question: question.fresh.text,
+          state: "asks",
+          matchedBy: null,
+          savedAnswerId: null,
+          confirmedRevision: null,
+          sensitiveKind: null,
+          typedAnswer: null,
+        };
+        const decided = question.decided;
+        if (decided?.state === "sensitive") return { ...base, state: "sensitive" as const, sensitiveKind: decided.kind };
+        if (decided?.state === "matched") return { ...base, state: "matched" as const, matchedBy: "label" as const, savedAnswerId: decided.savedAnswerId };
+        const answer = sameSaved ? judged.get(question.fresh.text) : undefined;
+        if (answer?.kind === "refused") return { ...base, state: "sensitive" as const, sensitiveKind: "judge" as const };
+        const chosen = answer?.kind === "label" ? labels[answer.index] : undefined;
+        if (chosen && now.usable.some((saved) => saved.id === chosen.id))
+          return { ...base, state: "matched" as const, matchedBy: "judge" as const, savedAnswerId: chosen.id };
+        return base;
+      });
+      this.kits.replaceQuestions(applicationId, rows);
+      this.kits.touchDraft(applicationId, Date.now());
+      return this.kitView(applicationId);
+    });
+  }
+
+  /**
+   * Asks the judge about each question, four at a time, in a `match` run of its own. Best effort:
+   * any failure, building the models included, is no answer, so the question asks. Only codes are
+   * logged: never a question, a label or an answer. `guard` is the caller's owner check, run after
+   * every await: a session that ends between waves fails the run and asks nothing more.
+   */
+  private async askKitJudge(
+    applicationId: string,
+    items: { key: string; text: string }[],
+    labels: { id: string; label: string }[],
+    guard: () => void,
+  ): Promise<Map<string, KitMatchAnswer>> {
+    const id = crypto.randomUUID();
+    let begun = false;
+    let finished = false;
+    try {
+      const m = runModels(this.env, this.vaultId, id, "match", "vault");
+      if (!m.matchQuestion) return new Map();
+      this.runs.begin({ id, kind: "match", targetId: applicationId, requestKey: `match:${id}`, inputDigest: id, steps: ["match"] });
+      begun = true;
+      this.runs.claim(id);
+      await this.scheduleRunAlarm(Date.now() + 60_000);
+      const names = labels.map((label) => label.label);
+      const answers = new Map<string, KitMatchAnswer>();
+      for (let at = 0; at < items.length; at += 4) {
+        guard();
+        const wave = items.slice(at, at + 4);
+        const results = await Promise.allSettled(wave.map((item) => m.matchQuestion!({ question: item.text, labels: names })));
+        results.forEach((result, index) => {
+          if (result.status === "fulfilled") answers.set(wave[index]!.key, result.value);
+          else console.error("application kit match failed", { code: "kit_match_failed", cause: logErrorCode(result.reason) });
+        });
+      }
+      guard();
+      this.runs.commitStep(id, "match", () => {});
+      this.runs.finish(id, () => {});
+      finished = true;
+      return answers;
+    } catch (error) {
+      console.error("application kit match failed", { code: "kit_match_failed", cause: logErrorCode(error) });
+      if (begun && !finished && this.initialised && !this.gone && this.meta("state") === "open") {
+        try {
+          this.runs.fail(id, "match_failed");
+        } catch {
+          // The alarm fails a run that is left behind.
+        }
+      }
+      return new Map();
+    }
+  }
+
+  /** Chooses the kit's resume version, and its letter and preparation if any. Each must pass its gate now. */
+  async chooseKitParts(who: Who, applicationId: string, input: KitPartsUpdate): Promise<KitView> {
+    this.requireOwner(who);
+    const parts = cleanKitParts(input);
+    if (!parts) throw new AppError("invalid", KIT_CHOICE_REFUSED);
+    return this.ctx.storage.transactionSync(() => {
+      this.kitJob(applicationId);
+      if ((this.kits.kit(applicationId)?.revision ?? 0) !== input.expectedRevision) throw new AppError("conflict", KIT_CHANGED);
+      if (parts.resume) this.kitResume(applicationId, parts.resume);
+      if (parts.letter) this.kitDocument(applicationId, parts.letter, "letter");
+      if (parts.prep) this.kitDocument(applicationId, parts.prep, "prep");
+      this.kits.setParts(applicationId, parts, Date.now());
+      return this.kitView(applicationId);
+    });
+  }
+
+  /** Answers one question: confirms or rejects its match, uses a saved answer, types an answer, or keeps a typed one as a saved answer. */
+  async answerKitQuestion(who: Who, applicationId: string, questionId: string, change: KitAnswerChange, expectedRevision: number): Promise<KitView> {
+    this.requireOwner(who);
+    const read = readKitAnswerChange(change);
+    if (!read) throw new AppError("invalid", KIT_ANSWER_REFUSED);
+    return this.ctx.storage.transactionSync(() => {
+      this.kitJob(applicationId);
+      if ((this.kits.kit(applicationId)?.revision ?? 0) !== expectedRevision) throw new AppError("conflict", KIT_CHANGED);
+      const question = this.kits.questions(applicationId).find((row) => row.id === questionId);
+      if (!question) throw new AppError("not_found", "no such question");
+      // A change that doesn't fit the question's state was made from a page that is out of date.
+      const stale = () => new AppError("conflict", KIT_CHANGED);
+      const never = () => new AppError("invalid", KIT_SENSITIVE_NEVER_SAVED);
+      const now = Date.now();
+      const matchedTo = (saved: SavedAnswer) =>
+        ({ state: "matched", matchedBy: "owner", savedAnswerId: saved.id, confirmedRevision: saved.revision, typedAnswer: null }) as const;
+      switch (read.kind) {
+        case "confirm": {
+          if (question.state !== "matched") throw stale();
+          const saved = this.kits.saved(question.savedAnswerId!);
+          if (!saved) throw stale();
+          if (saved.refusedKind || refusedKind(question.question)) throw never();
+          this.kits.answerQuestion(applicationId, question.id, { ...matchedTo(saved), matchedBy: question.matchedBy });
+          break;
+        }
+        case "reject":
+          if (question.state !== "matched") throw stale();
+          this.kits.answerQuestion(applicationId, question.id, { state: "asks", matchedBy: null, savedAnswerId: null, confirmedRevision: null, typedAnswer: null });
+          break;
+        case "use": {
+          if (question.state === "sensitive") throw never();
+          if (question.state !== "asks") throw stale();
+          if (refusedKind(question.question)) throw never();
+          const saved = this.kits.saved(read.savedAnswerId);
+          if (!saved) throw new AppError("not_found", "no such saved answer");
+          if (saved.refusedKind) throw never();
+          this.kits.answerQuestion(applicationId, question.id, matchedTo(saved));
+          break;
+        }
+        case "type": {
+          if (question.state === "matched") throw stale();
+          const answer = cleanKitAnswer(read.answer);
+          if (!answer) throw new AppError("invalid", KIT_ANSWER_REFUSED);
+          this.kits.answerQuestion(applicationId, question.id, { state: question.state, matchedBy: null, savedAnswerId: null, confirmedRevision: null, typedAnswer: answer });
+          break;
+        }
+        case "save": {
+          if (question.state === "sensitive") throw never();
+          if (question.state !== "asks") throw stale();
+          if (refusedKind(question.question)) throw never();
+          const saved = this.kits.addSaved({ label: read.label, answer: read.answer }, now);
+          this.kits.answerQuestion(applicationId, question.id, matchedTo(saved));
+          break;
+        }
+      }
+      this.kits.touchDraft(applicationId, now);
+      return this.kitView(applicationId);
+    });
+  }
+
+  /** Approves a draft kit whose every check passes now. */
+  async approveKit(who: Who, applicationId: string, expectedRevision: number): Promise<KitView> {
+    this.requireOwner(who);
+    return this.ctx.storage.transactionSync(() => {
+      this.kitJob(applicationId);
+      const kit = this.kits.kit(applicationId);
+      if ((kit?.revision ?? 0) !== expectedRevision || kit?.state === "approved") throw new AppError("conflict", KIT_CHANGED);
+      const [problem] = this.kitProblems(applicationId);
+      if (problem || !kit) {
+        const refusal = KIT_PROBLEMS[problem?.code ?? "no_resume"];
+        throw new AppError(refusal.code, refusal.sentence);
+      }
+      this.kits.approve(applicationId, Date.now());
+      return this.kitView(applicationId);
+    });
+  }
+
+  /**
+   * What an approved kit's ZIP is made from, if every check still passes: the resume as it
+   * prints, the letter and preparation as a copy would show them, and each answer, a matched one
+   * in its saved answer's words now.
+   */
+  async kitArchiveData(who: Who, applicationId: string): Promise<KitArchiveData<RenderData>> {
+    this.requireOwner(who);
+    return this.ctx.storage.transactionSync(() => {
+      const job = this.kitJob(applicationId);
+      const kit = this.kits.kit(applicationId);
+      if (!kit || kit.state !== "approved" || kit.approvedAt === null) throw new AppError("conflict", KIT_NOT_APPROVED);
+      const [problem] = this.kitProblems(applicationId);
+      if (problem || !kit.resume) {
+        const refusal = KIT_PROBLEMS[problem?.code ?? "no_resume"];
+        throw new AppError(refusal.code, refusal.sentence);
+      }
+      return {
+        revision: kit.revision,
+        approvedAt: kit.approvedAt,
+        job,
+        resume: { id: kit.resume.id, render: this.kitResume(applicationId, kit.resume) },
+        letter: kit.letter ? this.kitDocument(applicationId, kit.letter, "letter") : null,
+        prep: kit.prep ? this.kitDocument(applicationId, kit.prep, "prep") : null,
+        answers: this.kits.questions(applicationId).map((question) => ({
+          question: question.question,
+          answer: question.state === "matched" ? this.kits.saved(question.savedAnswerId!)!.answer : question.typedAnswer!,
+        })),
+      };
+    });
+  }
+
+  /** The job a kit is for, or not found. */
+  private kitJob(applicationId: string): { title: string | null; company: string | null } {
+    const job = this.sql
+      .exec<{ title: string | null; company: string | null }>(`SELECT title, company FROM applications WHERE id = ?`, applicationId)
+      .toArray()[0];
+    if (!job) throw new AppError("not_found", "no such application");
+    return { title: job.title, company: job.company };
+  }
+
+  /** A kit as its owner reads it, with every check worked out now and nothing written. */
+  private kitView(applicationId: string): KitView {
+    const kit = this.kits.kit(applicationId);
+    const saved = new Map(this.kits.listSaved().map((answer) => [answer.id, answer]));
+    const questions: KitQuestionView[] = this.kits.questions(applicationId).map((row) => {
+      const answer = row.state === "matched" && row.savedAnswerId !== null ? saved.get(row.savedAnswerId) ?? null : null;
+      return {
+        id: row.id,
+        position: row.position,
+        text: row.question,
+        state: row.state,
+        matchedBy: row.matchedBy,
+        savedAnswer: answer,
+        confirmed: answer !== null && row.confirmedRevision === answer.revision,
+        sensitiveKind: row.sensitiveKind,
+        typedAnswer: row.typedAnswer,
+      };
+    });
+    const problems = this.kitProblems(applicationId);
+    return {
+      applicationId,
+      revision: kit?.revision ?? 0,
+      state: kit?.state ?? "draft",
+      approvedAt: kit?.approvedAt ?? null,
+      resume: kit?.resume ?? null,
+      letter: kit?.letter ?? null,
+      prep: kit?.prep ?? null,
+      questions,
+      choices: this.kitChoices(applicationId),
+      problems,
+      ready: kit?.state === "approved" && problems.length === 0,
+      updatedAt: kit?.updatedAt ?? null,
+    };
+  }
+
+  /**
+   * Why a kit can't be approved or downloaded now, in order. Worked out on every read and never
+   * written: a gate that fails after approval (a fact marked sensitive since, say) blocks the kit
+   * without changing it.
+   */
+  private kitProblems(applicationId: string): KitProblem[] {
+    const kit = this.kits.kit(applicationId);
+    const passes = (check: () => unknown) => {
+      try {
+        check();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const problems: KitProblem[] = [];
+    const resume = kit?.resume;
+    const letter = kit?.letter;
+    const prep = kit?.prep;
+    if (!resume) problems.push({ code: "no_resume" });
+    else if (!passes(() => this.kitResume(applicationId, resume))) problems.push({ code: "resume_refused" });
+    if (letter && !passes(() => this.kitDocument(applicationId, letter, "letter"))) problems.push({ code: "letter_refused" });
+    if (prep && !passes(() => this.kitDocument(applicationId, prep, "prep"))) problems.push({ code: "prep_refused" });
+    const refused: string[] = [];
+    const unanswered: string[] = [];
+    for (const question of this.kits.questions(applicationId)) {
+      if (question.state === "matched") {
+        const saved = question.savedAnswerId === null ? null : this.kits.saved(question.savedAnswerId);
+        // The list can grow between releases: a match it refuses now is treated as sensitive.
+        if (refusedKind(question.question) || saved?.refusedKind) refused.push(question.id);
+        else if (!saved || question.confirmedRevision !== saved.revision) unanswered.push(question.id);
+      } else if (question.typedAnswer === null) unanswered.push(question.id);
+    }
+    if (refused.length) problems.push({ code: "refused_kind", questionIds: refused });
+    if (unanswered.length) problems.push({ code: "unanswered", questionIds: unanswered });
+    return problems;
+  }
+
+  /**
+   * The resume versions, letters and preparation made for this job that can go in a kit now, newest
+   * first. Each is gated on every kit read and write, so only the newest MAX_KIT_RESUME_CHOICES
+   * resume versions and the newest 200 document versions are looked at.
+   */
+  private kitChoices(applicationId: string): KitView["choices"] {
+    const resumes: KitChoice[] = [];
+    for (const row of this.sql
+      .exec<{ id: string; version: number; created_at: number }>(
+        `SELECT r.id, v.version, v.created_at FROM resumes r JOIN resume_versions v ON v.resume_id = r.id
+         WHERE r.application_id = ? AND r.state = 'ready' ORDER BY v.created_at DESC, r.id, v.version DESC LIMIT ?`,
+        applicationId, MAX_KIT_RESUME_CHOICES,
+      )
+      .toArray()) {
+      try {
+        this.gatedRender(row.id, row.version);
+        resumes.push({ id: row.id, version: row.version, createdAt: row.created_at });
+      } catch {
+        // Not offered: the version fails the gate now.
+      }
+    }
+    const withheld = withheldFacts(this.sql);
+    const documents = this.sql
+      .exec<{ id: string; kind: string; version: number; data: string; created_at: number }>(
+        `SELECT d.id, d.kind, v.version, v.data, v.created_at FROM documents d JOIN document_versions v ON v.document_id = d.id
+         WHERE d.application_id = ? AND d.state = 'ready' AND d.kind IN ('letter', 'prep') ORDER BY v.created_at DESC, d.id, v.version DESC LIMIT 200`,
+        applicationId,
+      )
+      .toArray()
+      .filter((row) => {
+        try {
+          return canShareDocument(row.id, row.version, row.kind, parseOrNull<DocumentVersion>(row.data), withheld);
+        } catch {
+          return false;
+        }
+      });
+    const choice = (row: { id: string; version: number; created_at: number }): KitChoice => ({ id: row.id, version: row.version, createdAt: row.created_at });
+    return {
+      resumes,
+      letters: documents.filter((row) => row.kind === "letter").map(choice),
+      preps: documents.filter((row) => row.kind === "prep").map(choice),
+    };
+  }
+
+  /** A chosen resume version as it prints, or the refusal: not this job's or not finished, or failing the gate now. */
+  private kitResume(applicationId: string, part: KitPart): RenderData {
+    let row: ResumeRow;
+    try {
+      row = this.resumeRow(part.id);
+    } catch {
+      throw new AppError("invalid", KIT_CHOICE_REFUSED);
+    }
+    if (row.application_id !== applicationId || row.state !== "ready") throw new AppError("invalid", KIT_CHOICE_REFUSED);
+    try {
+      return this.gatedRender(part.id, part.version);
+    } catch (error) {
+      if (errorCode(error) === "not_found") throw new AppError("invalid", KIT_CHOICE_REFUSED);
+      throw new AppError("conflict", KIT_RESUME_REFUSED);
+    }
+  }
+
+  /** A chosen letter or preparation as a copy would show it, or the refusal: not this job's, of another kind or unfinished, or failing the gate now. */
+  private kitDocument(applicationId: string, part: KitPart, kind: "letter" | "prep"): SharedDocument {
+    const row = this.sql
+      .exec<{ kind: string; state: string; application_id: string; data: string | null }>(
+        `SELECT d.kind, d.state, d.application_id, v.data FROM documents d
+         LEFT JOIN document_versions v ON v.document_id = d.id AND v.version = ? WHERE d.id = ?`,
+        part.version, part.id,
+      )
+      .toArray()[0];
+    if (!row || row.application_id !== applicationId || row.kind !== kind || row.state !== "ready" || !row.data)
+      throw new AppError("invalid", KIT_CHOICE_REFUSED);
+    try {
+      return sharedDocument(part.id, part.version, kind, parseOrNull<DocumentVersion>(row.data), withheldFacts(this.sql));
+    } catch {
+      throw new AppError("conflict", KIT_DOCUMENT_REFUSED);
+    }
+  }
+
   // ---------------------------------------------------------------- sources (user)
 
   private get extractionFeedbackStore(): ExtractionFeedback {
@@ -762,7 +1408,7 @@ export class Vault extends DurableObject<Env> {
   }
 
   private extractionStrategy(
-    origin: "upload" | "ocr" | undefined,
+    origin: SourceOrigin | undefined,
     filename: string,
   ): string {
     try {
@@ -813,21 +1459,29 @@ export class Vault extends DurableObject<Env> {
     return { ...reservation, intent: store.reserve(input).intent };
   }
   /**
-   * A second copy of a file the person already uploaded would only propose the same roles and
-   * facts again. Failed readings and completed readings with no evidence may be uploaded again.
+   * A second copy of a file the person already uploaded, or of text they already pasted, would only
+   * propose the same roles and facts again. Failed readings and completed readings with no evidence
+   * may be uploaded or pasted again.
    */
   private refuseSecondCopy(input: UploadDescriptor): void {
     const sha256 = uploadSha256(input);
     if (!sha256) return;
     const copy = this.sql
-      .exec<{ filename: string }>(
-        `SELECT filename FROM sources WHERE sha256 = ? AND state != 'failed'
+      .exec<{ filename: string; origin: SourceOrigin }>(
+        `SELECT filename, origin FROM sources WHERE sha256 = ? AND state != 'failed'
          AND NOT (state = 'ready' AND EXISTS (
            SELECT 1 FROM extraction_commits WHERE source_id = sources.id AND roles = 0 AND facts = 0
          )) ORDER BY created_at LIMIT 1`,
         sha256,
       )
       .toArray()[0];
+    if (copy && input.origin === "paste")
+      throw new AppError(
+        "conflict",
+        copy.origin === "paste"
+          ? "You've already pasted this text."
+          : `You've already uploaded this text as ${copy.filename}.`,
+      );
     if (copy)
       throw new AppError(
         "conflict",
@@ -860,7 +1514,7 @@ export class Vault extends DurableObject<Env> {
     if (!input || typeof input !== "object" || typeof input.requestKey !== "string" ||
         !/^[a-zA-Z0-9_-]{1,100}$/.test(input.requestKey) || typeof input.descriptorDigest !== "string")
       throw new AppError("invalid", "invalid upload identity");
-    const maxBytes = input.origin === "ocr" ? 12 * 1024 * 1024 + 1024 : MAX_UPLOAD_BYTES;
+    const maxBytes = input.origin === "ocr" ? 12 * 1024 * 1024 + 1024 : input.origin === "paste" ? MAX_PASTE_BYTES : MAX_UPLOAD_BYTES;
     if (!(bytes instanceof ArrayBuffer) || bytes.byteLength < 1 || bytes.byteLength > maxBytes ||
         typeof originalFilename !== "string" || originalFilename.length < 1 || originalFilename.length > 8192 ||
         !/^[a-f0-9]{64}$/.test(input.descriptorDigest) ||
@@ -872,6 +1526,10 @@ export class Vault extends DurableObject<Env> {
     // limits and its binding to the existing reservation. This operation has
     // no await and cannot create a new reservation after the lookup above.
     this.uploads.reserve(input);
+    // Pasted text is stored exactly as the Worker cleaned it, under the name its title gave,
+    // and Distill reads it back through the same check.
+    if (input.origin === "paste" && (originalFilename !== input.filename || readPastedText(bytes) === null))
+      throw new AppError("invalid", "invalid pasted text");
     const expectedKey = sourceKey(this.vaultId, `${input.requestKey}-${input.descriptorDigest}${input.origin === "ocr" ? ".ocr.json" : ""}`);
     if (input.r2Key !== expectedKey)
       throw new AppError("invalid", "invalid upload path");
@@ -975,7 +1633,7 @@ export class Vault extends DurableObject<Env> {
             intent.origin,
             intent.parentSourceId,
             extractor,
-            intent.origin === "upload" ? uploadSha256(input) : null,
+            intent.origin === "ocr" ? null : uploadSha256(input),
           );
           this.extractionFeedbackStore.start(id, intent.createdAt);
         },
@@ -991,7 +1649,7 @@ export class Vault extends DurableObject<Env> {
     s: {
       filename: string;
       r2Key: string;
-      origin?: "upload" | "ocr";
+      origin?: SourceOrigin;
       parentSourceId?: string;
       requestKey?: string;
     },
@@ -1085,7 +1743,7 @@ export class Vault extends DurableObject<Env> {
         error: string | null;
         created_at: number;
         proposed: number;
-        origin: "upload" | "ocr";
+        origin: SourceOrigin;
         parent_source_id: string | null;
         extractor: string | null;
         markdown: string | null;
@@ -1129,7 +1787,7 @@ export class Vault extends DurableObject<Env> {
   async sourceFile(
     who: Who,
     sourceId: string,
-  ): Promise<{ r2Key: string; filename: string; origin: "upload" | "ocr" }> {
+  ): Promise<{ r2Key: string; filename: string; origin: SourceOrigin }> {
     this.requireOwner(who);
     const row = this.sourceRow(sourceId);
     return { r2Key: row.r2_key, filename: row.filename, origin: row.origin };
@@ -1141,7 +1799,7 @@ export class Vault extends DurableObject<Env> {
     r2Key: string;
     filename: string;
     createdAt: number;
-    origin: "upload" | "ocr";
+    origin: SourceOrigin;
   }> {
     this.requireOpen();
     const row = this.sourceRow(sourceId);
@@ -1785,7 +2443,8 @@ export class Vault extends DurableObject<Env> {
    * measured, shown to nobody and read by nothing else. A tag is about particular words, so one
    * decided about words its row no longer has is left out, and so is the rule's tag for a skill
    * that is no longer one item of its line as written. So is a tag for a fact its owner has marked
-   * sensitive since it was read. A tag the same decider stored before is left exactly as it is.
+   * sensitive since it was read. A tag the same decider stored before is left exactly as it is,
+   * and so is a word-for-word tag a vector tag names again: the vector tag is left out.
    * What the record itself refuses is counted, and the rest are kept.
    */
   async saveShadowTags(sourceId: string, runId: string | undefined, made: TagMade, tags: ProposedTag[]): Promise<{ stored: number; refused: number }> {
@@ -1793,7 +2452,7 @@ export class Vault extends DurableObject<Env> {
     if (!Array.isArray(tags)) throw new AppError("invalid", "tags are proposed for facts and job roles");
     if (tags.length > MAX_TAGS_PER_SAVE) throw new AppError("invalid", "too many tags for one upload");
     for (const tag of tags) {
-      if (tag?.method !== TAG_JUDGE_METHOD && tag?.method !== TAG_RULE_METHOD) throw new AppError("invalid", "unknown tagging method");
+      if (tag?.method !== TAG_JUDGE_METHOD && tag?.method !== TAG_RULE_METHOD && tag?.method !== TAG_VECTOR_METHOD) throw new AppError("invalid", "unknown tagging method");
       if ((tag.subject?.kind !== "fact" && tag.subject?.kind !== "role") || typeof tag.subject.id !== "string")
         throw new AppError("invalid", "tags are proposed for facts and job roles");
     }
@@ -1824,6 +2483,22 @@ export class Vault extends DurableObject<Env> {
         if (role.kind !== "job" || role.title !== tag.words || tag.method === TAG_RULE_METHOD) continue;
       }
       const stamp = tagStamp(tag.method, made);
+      // A concept found word for word in the row is that row's from its words. A vector tag for it
+      // is left, since proposing it again would restamp the word-for-word row as a vector one.
+      if (
+        tag.method === TAG_VECTOR_METHOD &&
+        this.sql
+          .exec(
+            `SELECT 1 FROM record_tags WHERE subject_kind = ? AND subject_id = ? AND concept_id = ? AND shadow = 1 AND method IN (?, ?)`,
+            tag.subject.kind,
+            tag.subject.id,
+            tag.conceptId,
+            TAG_JUDGE_METHOD,
+            TAG_RULE_METHOD,
+          )
+          .toArray().length > 0
+      )
+        continue;
       // Found before, by the same decider against the same taxonomy: the row stays as it was stored.
       const before =
         typeof tag.conceptId === "string" &&
@@ -2493,6 +3168,8 @@ export class Vault extends DurableObject<Env> {
       if (this.applicationHasWork(id))
         throw new AppError("conflict", "This job has resumes or documents, so it can't be deleted. Mark it Closed instead.");
       this.sql.exec(`DELETE FROM application_create_requests WHERE application_id = ?`, id);
+      // A kit is not work that keeps a job: its chosen resume already does. It goes with the job.
+      this.kits.deleteKit(id);
       this.sql.exec(`DELETE FROM applications WHERE id = ?`, id);
     });
   }
@@ -3017,12 +3694,19 @@ export class Vault extends DurableObject<Env> {
     version?: number,
   ): Promise<RenderData> {
     this.requireOwner(who);
+    return this.gatedRender(resumeId, version);
+  }
+
+  /**
+   * A ready resume version as it prints, if it passes the gate now. PDF, Word, the print preview, a
+   * connected app's read and an application kit all come through here. A version that uses a fact
+   * marked sensitive is refused before any cached file is looked for.
+   */
+  private gatedRender(resumeId: string, version?: number): RenderData {
     const row = this.resumeRow(resumeId);
     if (row.state !== "ready" || !row.body)
       throw new AppError("conflict", "This resume isn't ready yet. Wait for tailoring to finish, then try again.");
     const saved = this.resumeVersion(row, version);
-    // PDF, Word, the print preview and a connected app's read all come through here. A version
-    // that uses a fact marked sensitive is refused before any cached file is looked for.
     assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence, saved.roleEvidence, withheldFacts(this.sql));
     return saved.render;
   }
@@ -3604,7 +4288,15 @@ export class Vault extends DurableObject<Env> {
   }
 
   async commentAsCoach(grantId: string, coach: CoachAccount, input: NewShareComment, requestKey: string): Promise<ShareComment> {
-    return this.ctx.storage.transactionSync(() => this.shareComments.addAsCoach(grantId, coach, input, requestKey));
+    const made = this.ctx.storage.transactionSync(() => {
+      const now = Date.now();
+      const made = this.shareComments.addAsCoach(grantId, coach, input, requestKey, now);
+      // Only a comment made now marks a notice: a retry gets the earlier row, made before now.
+      if (made.createdAt === now && emailConfigured(this.env)) this.notices.note("comment", now);
+      return made;
+    });
+    await this.scheduleNotices();
+    return made;
   }
 
   async removeCommentAsCoach(grantId: string, coach: CoachAccount, id: string): Promise<void> {
@@ -3649,7 +4341,7 @@ export class Vault extends DurableObject<Env> {
 
   /** A coach's suggested wording for one line of a copy that is open to them now. */
   async suggestOnShare(grantId: string, coach: CoachAccount, input: NewSuggestion, requestKey: string): Promise<ShareComment> {
-    return this.ctx.storage.transactionSync(() => {
+    const made = this.ctx.storage.transactionSync((): ShareComment => {
       const now = Date.now();
       const { view } = this.shares.copyForCoach(grantId, coach, now);
       if (typeof requestKey !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(requestKey)) throw new AppError("invalid", "invalid request key");
@@ -3686,8 +4378,12 @@ export class Vault extends DurableObject<Env> {
       // Written as a comment is, so the comments' three limits count it, then marked as a suggestion.
       const made = this.shareComments.addAsCoach(grantId, coach, { target, body: text }, requestKey, now, "suggest");
       this.sql.exec(`UPDATE share_comments SET suggestion_state = 'open' WHERE id = ?`, made.id);
+      // Only a new suggestion marks a notice. A retry returned above, with the row it made before.
+      if (emailConfigured(this.env)) this.notices.note("suggestion", now);
       return { ...made, suggestion: { state: "waiting" } };
     });
+    await this.scheduleNotices();
+    return made;
   }
 
   /**
@@ -4477,7 +5173,7 @@ export class Vault extends DurableObject<Env> {
       if (!/^[A-Za-z0-9_-]{1,100}$/.test(file.id))
         throw new AppError("unavailable", "a source identifier cannot be exported");
       const extension = file.origin === "ocr" ? "json" : file.filename.split(".").pop()?.toLowerCase();
-      const safeExtension = extension && ["pdf", "docx", "zip", "json"].includes(extension) ? extension : "bin";
+      const safeExtension = extension && ["pdf", "docx", "zip", "json", "txt"].includes(extension) ? extension : "bin";
       const path = `sources/${file.id}.${safeExtension}`;
       if (data.sources[index]?.id !== file.id) throw new AppError("unavailable", "the source snapshot is incomplete");
       data.sources[index]!.file = path;
@@ -4588,6 +5284,8 @@ export class Vault extends DurableObject<Env> {
       exportedAt: new Date().toISOString(),
       profile: this.readProfile(),
       preferences: this.preferences.read(),
+      emailNotices: this.notices.export(),
+      ...this.kits.export(),
       sources: this.sql
         .exec<SourceRow>(`SELECT * FROM sources ORDER BY created_at`)
         .toArray()
@@ -4761,6 +5459,11 @@ export class Vault extends DurableObject<Env> {
         throw new AppError(
           "conflict",
           "wait for the in-flight fact save to settle before maintenance",
+        );
+      if (run.kind === "match")
+        throw new AppError(
+          "conflict",
+          "wait for the in-flight answer matching to settle before maintenance",
         );
       const binding =
         run.kind === "distill"
@@ -4981,6 +5684,9 @@ export class Vault extends DurableObject<Env> {
     // replacement starts with no alarm of its own.
     const next = this.coachClients.nextAlarm();
     if (next !== null) await this.scheduleRunAlarm(next);
+    // Email notices that came with the content, a retry among them, are sent from here on.
+    const due = this.notices.nextDue();
+    if (due !== null && emailConfigured(this.env)) await this.scheduleRunAlarm(Math.max(due, Date.now() + 1000));
   }
 
   // ---------------------------------------------------------------- helpers
@@ -6032,6 +6738,12 @@ export class Vault extends DurableObject<Env> {
           this.runs.fail(run.id, "embedding_interrupted");
         return;
       }
+      // Asking the judge about a kit's questions runs inside the Vault too, with no Workflow.
+      if (run.kind === "match") {
+        if (Date.now() - run.createdAt > 600_000)
+          this.runs.fail(run.id, "match_interrupted");
+        return;
+      }
       const binding =
         run.kind === "tailor"
           ? this.env.TAILOR
@@ -6117,6 +6829,14 @@ export class Vault extends DurableObject<Env> {
     const results = await Promise.allSettled([...cleanupLanes, ...lanes]);
     for (const result of results) if (result.status === "rejected") throw result.reason;
     if (this.closing || this.gone || !this.initialised || this.meta("state") !== "open") return;
+    try {
+      await this.sendDueNotices(fenced, canContinue);
+    } catch {
+      // A notice that couldn't be decided or sent keeps its row as it was left, and the
+      // candidates below bring the alarm back for it.
+    }
+    if (!canContinue()) return;
+    const noticeDue = emailConfigured(this.env) ? this.notices.nextDue() : null;
     const expiry = this.sql
       .exec<{ at: number | null }>(
         `SELECT MIN(expires_at) AS at FROM share_grants`,
@@ -6133,6 +6853,8 @@ export class Vault extends DurableObject<Env> {
       // The same for a connected app's grant. Grants never move with a vault, so the fence does
       // not hold them back.
       this.mcpGrants.nextAlarm(),
+      // An email notice's next look. Under the fence nothing is sent, so a due one waits a minute.
+      noticeDue !== null && fenced ? Math.max(noticeDue, Date.now() + 60_000) : noticeDue,
       // An unresolved source write blocks expiry cleanup. Do not turn its
       // immediate retry into a one-second alarm loop; the retry already
       // installed at the top of this alarm remains scheduled.

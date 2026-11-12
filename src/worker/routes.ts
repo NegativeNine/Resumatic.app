@@ -10,7 +10,15 @@ import { unwrapResult } from "../shared/result";
 import { rateLimitRequest, httpRoute } from "./limits";
 import { OcrImagesSchema, validateTranscriptionInput } from "../ai/transcribe";
 import { revokeOAuthGrant } from "./mcp";
-import { uploadBodyDigest, uploadDescriptorDigest } from "../vault/uploads";
+import { uploadBodyDigest, uploadDescriptorDigest, type UploadDescriptor } from "../vault/uploads";
+import {
+  MAX_PASTE_BODY_BYTES,
+  MAX_PASTE_CHARS,
+  PASTE_CONTENT_TYPE,
+  hasLoneSurrogate,
+  normalizePastedText,
+  pasteFilename,
+} from "../shared/paste";
 import { renderPdf } from "../render/pdf";
 import { PILOT_IDENTITY_PATHS, PILOT_MAX_CALLS, PILOT_MAX_MICROS } from "./pilot/ledger";
 import { stagingPilotBudget } from "./pilot/access";
@@ -29,6 +37,7 @@ import {
   shareCookieName,
 } from "./shares";
 import { readPosting } from "./postings";
+import { cardPreviewFor } from "../pipeline/card";
 import { renderDocx, textDocx } from "../render/docx";
 import { renderResumeHtml } from "../render/template";
 import {
@@ -57,6 +66,10 @@ import type { CommentThread, NewSuggestion, OwnerCommentThread } from "../shared
 import { MAX_VAULT_COMMENTS } from "../vault/share-comments";
 import { hintFor, type CfLocation } from "../shared/location";
 import { PREFERENCES_REFUSED, cleanPreferences } from "../shared/preferences";
+import { EMAIL_OFF, NOTICE_KINDS, emailConfigured, type EmailNotices } from "../shared/email-notices";
+import { KIT_CHANGED_WHILE_PREPARING, MAX_KIT_BODY_BYTES, type KitAnswerChange, type KitArchiveData, type KitPartsUpdate, type KitQuestionsUpdate, type SavedAnswerInput } from "../shared/kit";
+import { kitAnswersText } from "../render/kit";
+import { contentDigest } from "../shared/operations";
 import { docxKey, pdfKey, sourceKey } from "../shared/r2";
 import { directoryForSignIn, settleRoutedPlacement } from "../directory/routing";
 import { validShardInviteClaim, type ShardInviteClaim } from "../directory/shard-invite-binding";
@@ -67,7 +80,7 @@ import {
   allDirectories,
   vault,
 } from "../shared/stubs";
-import type { SignInInput, Who } from "../shared/types";
+import type { RenderData, SignInInput, Who } from "../shared/types";
 import { verifyAccess } from "./access";
 import { sameSecret } from "./crypto";
 import { beginLogin, clearOidcCookie, finishLogin, OIDC_COOKIE } from "./oidc";
@@ -90,6 +103,8 @@ export const app = new Hono<AppEnv>();
 
 const tooLarge = (message: string) => (c: Context) => c.json({ error: "too_large", message }, 413);
 const JSON_LIMIT = bodyLimit({ maxSize: 64 * 1024, onError: tooLarge("This request is too large to process.") });
+/** A save of a kit's questions: 30 questions of 1,000 characters can be more than 64 KiB. */
+const KIT_JSON_LIMIT = bodyLimit({ maxSize: MAX_KIT_BODY_BYTES, onError: tooLarge("This request is too large to process.") });
 const UPLOAD_LIMIT = bodyLimit({
   maxSize: MAX_UPLOAD_BYTES + 64 * 1024,
   onError: tooLarge("Files can be up to 10 MB."),
@@ -345,7 +360,8 @@ export async function startSession(env: Env, input: SignInInput): Promise<string
   else
     await directory(env).bindIdentityHome(input.provider, input.subject, userId, input.authEpoch, input.authExpiryMs, requireBound);
   if (input.authExpiryMs !== undefined) requireFreshAuth(input.authExpiryMs);
-  const { gen, epoch } = await vault(env, vaultId).openSession(userId);
+  // The address goes with the sign-in, so the vault can pause email notices turned on with another.
+  const { gen, epoch } = await vault(env, vaultId).openSession(userId, input.email ?? null);
   const cookie = sessionCookie(
     await createSession(env.SESSION_KEY, {
       uid: userId,
@@ -502,6 +518,10 @@ api.get("/me", async (c) => {
     roleDateUnknownEnd: c.env.ROLE_UNKNOWN_END_ENABLED === "true" && me.capabilities?.roleDateUnknownEnd === true,
     // The Worker does the reading, so its own setting decides.
     postingReader: c.env.POSTING_READER_ENABLED === "true",
+    // Both this Worker and the Vault must understand the card preview.
+    cardPreview: c.env.CARD_PREVIEW_ENABLED === "true" && me.capabilities?.cardPreview === true,
+    // Both this Worker and the Vault must send them.
+    emailNotices: emailConfigured(c.env) && me.capabilities?.emailNotices === true,
   } });
 });
 
@@ -564,6 +584,67 @@ api.put("/preferences", JSON_LIMIT, async (c) => {
   return c.json(await myVault(c).updatePreferences(c.get("who"), clean, expectedRevision));
 });
 
+// The card preview belongs to the session's own vault and is shown only to its owner: the request
+// names no account, vault or row. The switch is checked first, then the taxonomy, and only then is
+// the vault read. Nothing is stored or sent anywhere.
+api.get("/v2/card-preview", async (c) =>
+  c.json(await cardPreviewFor(c.env, async () =>
+    unwrapResult(await durableReadResult(() => myVault(c), (v) => v.cardMaterial(c.get("who")))), Date.now())));
+// Email notices belong to the session's own vault. The kind comes from the path, and the address a
+// notice is turned on with only from the verified session, never from the request. Neither route
+// reaches the Directory: only the Vault's alarm asks it for the address a notice goes to.
+function requireEmail(c: C): void {
+  if (!emailConfigured(c.env)) throw new AppError("unavailable", EMAIL_OFF);
+}
+
+api.get("/email-notices", async (c) => {
+  requireEmail(c);
+  const settings = await myVault(c).emailNotices(c.get("who"));
+  return c.json({ ...settings, address: c.get("session").email ?? null } satisfies EmailNotices);
+});
+
+api.put("/email-notices/:kind", JSON_LIMIT, async (c) => {
+  requireEmail(c);
+  const kind = z.enum(NOTICE_KINDS).safeParse(c.req.param("kind"));
+  if (!kind.success) throw new AppError("invalid", "choose a notice to turn on or off");
+  const { on } = await jsonBody(c, z.object({ on: z.boolean() }).strict());
+  const session = c.get("session");
+  const settings = await myVault(c).setEmailNotice(c.get("who"), kind.data, on, session.email ?? null);
+  return c.json({ ...settings, address: session.email ?? null } satisfies EmailNotices);
+});
+
+// Saved answers belong to the session's own vault. The label and the answer are taken as they
+// come and judged by the Vault, which cleans, caps and checks them against the refused list, so
+// the sentence the person sees is the one the rule chose.
+const SavedAnswerBody = z.object({ label: z.unknown(), answer: z.unknown() }).strict();
+const KitRevision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 1);
+
+api.get("/saved-answers", async (c) =>
+  c.json({
+    savedAnswers: unwrapResult(
+      await durableReadResult(
+        () => myVault(c),
+        (v) => v.listSavedAnswers(c.get("who")),
+      ),
+    ),
+  }),
+);
+
+api.post("/saved-answers", JSON_LIMIT, async (c) => {
+  const input = await jsonBody(c, SavedAnswerBody);
+  return c.json(await myVault(c).addSavedAnswer(c.get("who"), input as SavedAnswerInput), 201);
+});
+
+api.put("/saved-answers/:id", JSON_LIMIT, async (c) => {
+  const { expectedRevision, ...input } = await jsonBody(c, SavedAnswerBody.extend({ expectedRevision: KitRevision.min(1) }));
+  return c.json(await myVault(c).editSavedAnswer(c.get("who"), c.req.param("id"), input as SavedAnswerInput, expectedRevision));
+});
+
+api.delete("/saved-answers/:id", async (c) => {
+  await myVault(c).deleteSavedAnswer(c.get("who"), c.req.param("id"));
+  return c.body(null, 204);
+});
+
 api.post("/account/sign-out-everywhere", async (c) => {
   await myVault(c).signOutEverywhere(c.get("who"));
   c.header("set-cookie", clearSessionCookie());
@@ -612,19 +693,74 @@ api.post("/sources", UPLOAD_LIMIT, async (c) => {
     r2Key: sourceKey(c.get("session").vid, `${request}-${digest}`),
     sha256: await uploadBodyDigest(bytes),
   };
+  return c.json(await storeReservedSource(c, descriptor, bytes, file.name), 201);
+});
+
+/**
+ * Reserve, write and commit a source the Worker has described, or return the source an earlier
+ * request with the same key already made. Shared by uploads and pastes, so both have one path
+ * for idempotency, the write fence, the caps, second copies and expiry.
+ */
+async function storeReservedSource(c: C, descriptor: UploadDescriptor, bytes: ArrayBuffer, originalFilename: string): Promise<{ sourceId: string }> {
   const reserved = await myVault(c).reserveUpload(c.get("who"), descriptor);
   if (reserved.intent.state === "complete")
-    return c.json({ sourceId: reserved.intent.sourceId }, 201);
-  const authorized = await myVault(c).writeReservedSource(c.get("who"), descriptor, bytes, file.name);
-  if (authorized.sourceId) return c.json({ sourceId: authorized.sourceId }, 201);
-  return c.json(
-    await completeReservedUpload(c.env.FILES, descriptor.r2Key, () =>
-      myVault(c).completeUpload(c.get("who"), descriptor), {
-        expired: () => myVault(c).expiredUploadForCleanup(c.get("who"), descriptor),
-      },
-    ),
-    201,
+    return { sourceId: reserved.intent.sourceId };
+  const authorized = await myVault(c).writeReservedSource(c.get("who"), descriptor, bytes, originalFilename);
+  if (authorized.sourceId) return { sourceId: authorized.sourceId };
+  return completeReservedUpload(c.env.FILES, descriptor.r2Key, () =>
+    myVault(c).completeUpload(c.get("who"), descriptor), {
+      expired: () => myVault(c).expiredUploadForCleanup(c.get("who"), descriptor),
+    },
   );
+}
+
+const PASTE_UNREADABLE = "This text couldn't be read. Paste it as plain text, then try again.";
+const PASTE_EMPTY = "There's no text to read. Paste some text, then try again.";
+const PASTE_TOO_LONG = "Pasted text can be up to 60,000 characters.";
+const PASTE_TITLE_TOO_LONG = "Titles can be up to 120 characters.";
+const PASTE_LIMIT = bodyLimit({ maxSize: MAX_PASTE_BODY_BYTES, onError: tooLarge(PASTE_TOO_LONG) });
+const PasteSourceBody = z.object({ text: z.string(), title: z.string().nullable().optional() }).strict();
+
+/**
+ * Text pasted as a source. The body is read as bytes, because a JSON or form reader would turn
+ * invalid UTF-8 into replacement characters instead of refusing it. The text is cleaned and
+ * counted as it will be stored, then goes the way an upload goes.
+ */
+api.post("/sources/paste", PASTE_LIMIT, async (c) => {
+  if (!(c.req.header("content-type") ?? "").toLowerCase().startsWith("application/json"))
+    throw new AppError("invalid", PASTE_UNREADABLE);
+  let body: z.infer<typeof PasteSourceBody>;
+  try {
+    const bytes = await c.req.arrayBuffer();
+    const parsed = PasteSourceBody.safeParse(JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes)));
+    if (!parsed.success) throw new Error("paste_body");
+    body = parsed.data;
+  } catch {
+    throw new AppError("invalid", PASTE_UNREADABLE);
+  }
+  if (hasLoneSurrogate(body.text) || (body.title != null && hasLoneSurrogate(body.title)))
+    throw new AppError("invalid", PASTE_UNREADABLE);
+  const text = normalizePastedText(body.text);
+  if (!text) throw new AppError("invalid", PASTE_EMPTY);
+  if (text.length > MAX_PASTE_CHARS) throw new AppError("too_large", PASTE_TOO_LONG);
+  const filename = pasteFilename(body.title);
+  if (filename === null) throw new AppError("invalid", PASTE_TITLE_TOO_LONG);
+
+  await myVault(c).checkSession(c.get("who"));
+  const encoded = new TextEncoder().encode(text).slice().buffer;
+  const key = requestKey(c);
+  const digest = await uploadDescriptorDigest({ filename, contentType: PASTE_CONTENT_TYPE, origin: "paste" }, encoded);
+  const descriptor: UploadDescriptor = {
+    requestKey: key,
+    descriptorDigest: digest,
+    filename,
+    contentType: PASTE_CONTENT_TYPE,
+    origin: "paste",
+    byteLength: encoded.byteLength,
+    r2Key: sourceKey(c.get("session").vid, `${key}-${digest}`),
+    sha256: await uploadBodyDigest(encoded),
+  };
+  return c.json(await storeReservedSource(c, descriptor, encoded, filename), 201);
 });
 
 api.get("/sources/:id/text", async (c) =>
@@ -727,7 +863,7 @@ api.get("/sources/:id/file", async (c) => {
   const extension = filename.split(".").pop()?.toLowerCase() ?? "";
   const name = origin === "ocr"
     ? `${fileName(filename.replace(/\s*\(image transcription\)$/i, "").replace(/\.[^.]*$/, ""))}-image-inputs.json`
-    : `${fileName(filename.replace(/\.[^.]*$/, ""))}${ALLOWED_UPLOADS[extension] ? `.${extension}` : ""}`;
+    : `${fileName(filename.replace(/\.[^.]*$/, ""))}${ALLOWED_UPLOADS[extension] || extension === "txt" ? `.${extension}` : ""}`;
   return new Response(guardedStream(object.body, () => v.checkSession(who)), {
     headers: {
       "content-type": origin === "ocr"
@@ -985,6 +1121,34 @@ api.post("/resumes/:id/grounding-review", JSON_LIMIT, async (c) => {
   return c.json(await myVault(c).beginResumeReview(c.get("who"), c.req.param("id"), expectedVersion));
 });
 
+/** A checked resume version's PDF: rendered once per version, and served from the cache after that. */
+async function resumePdf(c: C, resumeId: string, data: RenderData): Promise<ArrayBuffer | Uint8Array> {
+  // Legacy renderers ignore unknown-end starts. Isolate their cached output
+  // from new output for this same immutable version; old versions keep keys.
+  const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
+  const key = await snapshotCacheKey(pdfKey(c.get("session").vid, resumeId, data.version, hasUnknownEndDates), data);
+  return cachedExport(() => myVault(c), c.get("who"), key,
+    () => renderPdf(c.env, renderResumeHtml(data)));
+}
+
+/** A checked resume version's Word file, cached as its PDF is. */
+async function resumeDocx(c: C, resumeId: string, data: RenderData): Promise<ArrayBuffer | Uint8Array> {
+  const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
+  const key = await snapshotCacheKey(docxKey(c.get("session").vid, resumeId, data.version, hasUnknownEndDates), data);
+  return cachedExport(() => myVault(c), c.get("who"), key,
+    async () => renderDocx(data));
+}
+
+/** One archive member from bytes already made. */
+function bytesEntry(name: string, bytes: ArrayBuffer | Uint8Array): ArchiveEntry {
+  const body = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  return {
+    name,
+    size: body.byteLength,
+    open: async () => new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(body); controller.close(); } }),
+  };
+}
+
 /** Renders once per resume version and serves the cached PDF after that. */
 api.get("/resumes/:id/pdf", async (c) => {
   const resumeId = c.req.param("id");
@@ -993,12 +1157,7 @@ api.get("/resumes/:id/pdf", async (c) => {
     resumeId,
     versionQuery(c),
   );
-  // Legacy renderers ignore unknown-end starts. Isolate their cached output
-  // from new output for this same immutable version; old versions keep keys.
-  const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
-  const key = await snapshotCacheKey(pdfKey(c.get("session").vid, resumeId, data.version, hasUnknownEndDates), data);
-  const pdf = await cachedExport(() => myVault(c), c.get("who"), key,
-    () => renderPdf(c.env, renderResumeHtml(data)));
+  const pdf = await resumePdf(c, resumeId, data);
   const name = fileName(
     [data.profile.name, data.company].filter(Boolean).join(" ") || "resume",
   );
@@ -1140,10 +1299,7 @@ api.get("/resumes/:id/docx", async (c) => {
     c.req.param("id"),
     versionQuery(c),
   );
-  const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
-  const key = await snapshotCacheKey(docxKey(c.get("session").vid, c.req.param("id"), data.version, hasUnknownEndDates), data);
-  const bytes = await cachedExport(() => myVault(c), c.get("who"), key,
-    async () => renderDocx(data));
+  const bytes = await resumeDocx(c, c.req.param("id"), data);
   return new Response(bytes, {
     headers: {
       "content-type":
@@ -1294,6 +1450,76 @@ api.post(
     );
   },
 );
+// A job's application kit, the owner's alone. Each write names the revision it was read at, and
+// the Vault judges what it carries: the routes only take it as it comes.
+api.get("/applications/:id/kit", async (c) =>
+  c.json(
+    unwrapResult(
+      await durableReadResult(
+        () => myVault(c),
+        (v) => v.getKit(c.get("who"), c.req.param("id")),
+      ),
+    ),
+  ),
+);
+
+api.put("/applications/:id/kit/questions", KIT_JSON_LIMIT, async (c) => {
+  const body = await jsonBody(c, z.object({ questions: z.unknown(), expectedRevision: KitRevision }).strict());
+  return c.json(await myVault(c).saveKitQuestions(c.get("who"), c.req.param("id"), body as KitQuestionsUpdate));
+});
+
+api.put("/applications/:id/kit/parts", JSON_LIMIT, async (c) => {
+  const body = await jsonBody(c, z.object({ resume: z.unknown(), letter: z.unknown(), prep: z.unknown(), expectedRevision: KitRevision }).strict());
+  return c.json(await myVault(c).chooseKitParts(c.get("who"), c.req.param("id"), body as KitPartsUpdate));
+});
+
+api.post("/applications/:id/kit/questions/:qid", JSON_LIMIT, async (c) => {
+  const { change, expectedRevision } = await jsonBody(c, z.object({ change: z.unknown(), expectedRevision: KitRevision }).strict());
+  return c.json(
+    await myVault(c).answerKitQuestion(
+      c.get("who"),
+      c.req.param("id"),
+      c.req.param("qid"),
+      change as KitAnswerChange,
+      expectedRevision,
+    ),
+  );
+});
+
+api.post("/applications/:id/kit/approve", JSON_LIMIT, async (c) => {
+  const { expectedRevision } = await jsonBody(c, z.object({ expectedRevision: KitRevision }).strict());
+  return c.json(await myVault(c).approveKit(c.get("who"), c.req.param("id"), expectedRevision));
+});
+
+/**
+ * An approved kit as one ZIP, for its owner to send themselves: nothing is sent anywhere. Read
+ * twice, before and after the files are made, so a kit that changed in between is refused rather
+ * than given out half old and half new.
+ */
+api.get("/applications/:id/kit/archive", async (c) => {
+  const who = c.get("who");
+  const id = c.req.param("id");
+  const data = await myVault(c).kitArchiveData(who, id);
+  const entries: ArchiveEntry[] = [
+    bytesEntry("resume.pdf", await resumePdf(c, data.resume.id, data.resume.render)),
+    bytesEntry("resume.docx", await resumeDocx(c, data.resume.id, data.resume.render)),
+  ];
+  if (data.letter) entries.push(bytesEntry("cover-letter.docx", textDocx("Cover letter", data.letter.paragraphs)));
+  if (data.prep)
+    entries.push(bytesEntry("interview-preparation.docx", textDocx("Interview preparation", data.prep.questions.flatMap((q) => [q.question, ...q.points]))));
+  entries.push(bytesEntry("answers.txt", new TextEncoder().encode(kitAnswersText(data))));
+  const again: KitArchiveData<RenderData> = await myVault(c).kitArchiveData(who, id);
+  if ((await contentDigest(again)) !== (await contentDigest(data))) throw new AppError("conflict", KIT_CHANGED_WHILE_PREPARING);
+  const name = fileName([data.job.company, data.job.title].filter(Boolean).join(" ") || "job");
+  return new Response(createArchive(entries, { signal: c.req.raw.signal, maxEntries: 5 }), {
+    headers: {
+      "content-type": "application/zip",
+      "content-disposition": `attachment; filename="application-kit-${name}.zip"`,
+      "cache-control": "private, no-store",
+    },
+  });
+});
+
 // The finished letters and preparation a copy can be made from, without their text.
 api.get("/documents", async (c) =>
   c.json({ documents: await myVault(c).listShareableDocuments(c.get("who")) }),

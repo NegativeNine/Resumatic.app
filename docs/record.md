@@ -107,6 +107,7 @@ Dropping a confirmed tag when its fact is reworded is deliberate: the tag was co
 - **Export.** `factSplits` (each with its parts and their words), `conceptTags` and `recordLinks` are in the JSON export, in every state, shadow judgements included and marked.
 - **A vault moved to a replacement** takes all four tables with it.
 - **Deleting the account** deletes them with everything else.
+- **The card preview** reads confirmed, non-shadow tags of usable facts and confirmed jobs, and shows their owner only taxonomy groups ([visibility-design.md](visibility-design.md)).
 - **Nowhere else.** A coach's copy, a connected app and a saved resume version hold what they held before. A copy shows the line, not its parts.
 
 ## What is not built

@@ -150,4 +150,10 @@ test("accepts every table the app transfers, and no other", async () => {
   const transferred = [...source.slice(start, end).matchAll(/^\s*"([a-z_]+)",\s*$/gm)].map((match) => match[1]);
   assert.ok(transferred.length >= 18);
   assert.deepEqual([...TABLES], transferred);
+  // Saved answers and application kits come after every table they name, and after comments, in
+  // the order of their migration.
+  const kit = ["saved_answers", "application_kits", "kit_questions"];
+  const at = transferred.indexOf("saved_answers");
+  assert.deepEqual(transferred.slice(at, at + 3), kit);
+  for (const before of ["applications", "resumes", "documents", "share_comments"]) assert.ok(transferred.indexOf(before) < at, before);
 });

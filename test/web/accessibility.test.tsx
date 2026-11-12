@@ -47,6 +47,10 @@ describe("accessibility", () => {
     const job = (await screen.findByRole("heading", { name: "Platform Engineer at Litware" })).closest("li")!;
     await userEvent.click(job.querySelector<HTMLButtonElement>("button[aria-expanded]")!);
     await screen.findByText("Read cover letter");
+    // The application kit loads by itself, with a question in each state.
+    await screen.findByRole("heading", { name: "Application kit" });
+    await screen.findByRole("button", { name: "Approve kit" });
+    await screen.findByText("Asked every time");
     for (const details of document.querySelectorAll("details")) details.open = true;
     expect(await violations()).toEqual([]);
   });
@@ -68,7 +72,7 @@ describe("accessibility", () => {
     expect(await violations()).toEqual([]);
   });
 
-  it("Account, with plans, share links and connected apps", async () => {
+  it("Account, with plans, share links, connected apps and the card preview", async () => {
     const state = fullVault();
     installFakeApi(state);
     renderWithSession(<AccountPage />, state.me);
@@ -77,6 +81,13 @@ describe("accessibility", () => {
     await screen.findByRole("combobox", { name: "Choose a plan" });
     // The job preferences card loads by itself, so its form is waited for too.
     await screen.findByRole("button", { name: "Save preferences" });
+    // So does the card preview, with an occupation, a band and two skill groups.
+    await screen.findByText("Web platform development software");
+    // So does the email notices card.
+    await screen.findByRole("checkbox", { name: "A coach comments on a copy you shared" });
+    // So is the saved answers card, with an answer the list now refuses.
+    await screen.findByText("Portfolio link", { selector: "strong" });
+    await screen.findByText(/can’t be offered any more/);
     expect(await violations()).toEqual([]);
     // The form for a new link: what to share, who it’s for and what the copy should say.
     await userEvent.click(screen.getByRole("button", { name: "Choose what to share" }));

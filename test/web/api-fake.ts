@@ -1,8 +1,31 @@
 import { vi } from "vitest";
 import type { DocumentView } from "../../src/shared/documents";
 import type { PostingRead } from "../../src/shared/postings";
+import type { CardPreview } from "../../src/shared/card";
 import { normalizePosting, type FactPatch, type NewFact, type NewRole, type Profile, type ReviewRequest, type RolePatch, type SensitiveRequest } from "../../src/shared/api";
 import { PREFERENCES_CHANGED, PREFERENCES_REFUSED, cleanPreferences, type Preferences, type PreferencesUpdate } from "../../src/shared/preferences";
+import { EMAIL_OFF, NOTICE_KINDS, type EmailNotices, type NoticeKind } from "../../src/shared/email-notices";
+import { normalizePastedText, pasteFilename, type PasteSourceRequest } from "../../src/shared/paste";
+import {
+  KIT_CHANGED,
+  KIT_PROBLEMS,
+  REFUSED_KIND_SENTENCE,
+  SAVED_ANSWER_CHANGED,
+  SAVED_ANSWER_LABEL_TAKEN,
+  SAVED_ANSWER_REFUSED,
+  answerKey,
+  classifyDeterministic,
+  cleanKitAnswer,
+  cleanKitQuestions,
+  cleanSavedAnswerInput,
+  refusedKind,
+  type KitAnswerChange,
+  type KitPart,
+  type KitProblem,
+  type KitQuestionView,
+  type KitView,
+  type SavedAnswer,
+} from "../../src/shared/kit";
 import { wording } from "../../src/shared/record";
 import { targetText, type NewShareComment, type NewSuggestion, type ShareComment } from "../../src/shared/sharing";
 import { sharedView, type Fixtures } from "./fixtures";
@@ -12,6 +35,8 @@ export interface Call {
   /** Path and query, such as "/api/facts?state=proposed". */
   path: string;
   body: unknown;
+  /** The Idempotency-Key header, when the request sent one. */
+  key?: string;
 }
 
 type Reply = { status: number; body?: unknown };
@@ -41,6 +66,12 @@ export class FakeApi {
   /** What reading each link comes to. A link that isn't here can't be reached. */
   readonly pages = new Map<string, PostingRead>();
 
+  /** Request keys whose paste was reserved too long ago: replaying one is refused as the Vault refuses it. */
+  readonly expiredPasteKeys = new Set<string>();
+
+  /** The text of every paste so far, cleaned as the Worker stores it: the same text again is a second copy. */
+  private readonly pasted = new Set<string>();
+
   /** Whole postings, which the list of jobs doesn't carry. A fixture job's is its excerpt. */
   private readonly postings = new Map<string, string>();
   private posting(id: string): string {
@@ -61,7 +92,8 @@ export class FakeApi {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://localhost");
     const method = (init?.method ?? "GET").toUpperCase();
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : (init?.body ?? null);
-    const call: Call = { method, path: url.pathname + url.search, body };
+    const key = (init?.headers as Record<string, string> | undefined)?.["idempotency-key"];
+    const call: Call = { method, path: url.pathname + url.search, body, ...(key ? { key } : {}) };
     this.calls.push(call);
 
     const failure = this.failures.find((f) => f.method === method && f.path.test(url.pathname));
@@ -301,6 +333,152 @@ export class FakeApi {
         return ok(this.state.preferences);
       },
     ],
+    ["GET", /^\/api\/v2\/card-preview$/, () => ok(this.state.cardPreview ?? EMPTY_CARD)],
+    // Email notices, as the server answers: 503 where the deployment sends none, an address only
+    // from the session, and a kind turned on only by a session that has one.
+    ["GET", /^\/api\/email-notices$/, () => (this.state.me.capabilities?.emailNotices ? ok(this.notices()) : EMAIL_UNAVAILABLE)],
+    [
+      "PUT",
+      /^\/api\/email-notices\/([^/]+)$/,
+      (call, [kind]) => {
+        if (!this.state.me.capabilities?.emailNotices) return EMAIL_UNAVAILABLE;
+        const on = (call.body as { on?: unknown } | undefined)?.on;
+        if (!(NOTICE_KINDS as readonly string[]).includes(kind!) || typeof on !== "boolean")
+          return { status: 422, body: { error: "invalid", message: "choose a notice to turn on or off" } };
+        const current = this.notices();
+        if (on && !current.address) return conflict("sign out and in again to turn on email notices");
+        this.state.emailNotices = { ...current, [kind as NoticeKind]: on };
+        return ok(this.state.emailNotices);
+      },
+    ],
+    // Saved answers and application kits, by the same rules the vault keeps: the closed list,
+    // matching a label word for word, revisions, and every write making the kit a draft. There is
+    // no judge here.
+    ["GET", /^\/api\/saved-answers$/, () => ok({ savedAnswers: this.state.savedAnswers ?? [] })],
+    ["POST", /^\/api\/saved-answers$/, (call) => this.addSaved(call.body)],
+    [
+      "PUT",
+      /^\/api\/saved-answers\/([^/]+)$/,
+      (call, [id]) => {
+        const saved = (this.state.savedAnswers ?? []).find((answer) => answer.id === id);
+        if (!saved) return notFound("no such saved answer");
+        const { expectedRevision, ...input } = call.body as { label: string; answer: string; expectedRevision: number };
+        const clean = cleanSavedAnswerInput(input);
+        if (!clean) return invalid(SAVED_ANSWER_REFUSED);
+        const kind = refusedKind(clean.label) ?? refusedKind(clean.answer);
+        if (kind) return invalid(REFUSED_KIND_SENTENCE[kind]);
+        if (expectedRevision !== saved.revision) return conflict(SAVED_ANSWER_CHANGED);
+        Object.assign(saved, clean, { revision: saved.revision + 1, updatedAt: Date.now() });
+        for (const kit of Object.values(this.state.kits ?? {})) if (kit.questions.some((question) => question.savedAnswer?.id === id)) this.touchKit(kit);
+        return ok(saved);
+      },
+    ],
+    [
+      "DELETE",
+      /^\/api\/saved-answers\/([^/]+)$/,
+      (_call, [id]) => {
+        if (!(this.state.savedAnswers ?? []).some((answer) => answer.id === id)) return notFound("no such saved answer");
+        this.state.savedAnswers = (this.state.savedAnswers ?? []).filter((answer) => answer.id !== id);
+        for (const kit of Object.values(this.state.kits ?? {})) {
+          if (!kit.questions.some((question) => question.savedAnswer?.id === id)) continue;
+          for (const question of kit.questions)
+            if (question.savedAnswer?.id === id) Object.assign(question, { state: "asks", matchedBy: null, savedAnswer: null, confirmed: false });
+          this.touchKit(kit);
+        }
+        return { status: 204 };
+      },
+    ],
+    ["GET", /^\/api\/applications\/([^/]+)\/kit$/, (_call, [id]) => ok(this.kit(id!))],
+    [
+      "PUT",
+      /^\/api\/applications\/([^/]+)\/kit\/questions$/,
+      (call, [id]) => {
+        const kit = this.kit(id!);
+        const { questions, expectedRevision } = call.body as { questions: unknown; expectedRevision: number };
+        const submitted = cleanKitQuestions(questions);
+        if (!submitted) return invalid("These questions couldn't be saved as written. Keep to 30 questions of up to 1,000 characters each, then save again.");
+        if (expectedRevision !== kit.revision) return conflict(KIT_CHANGED);
+        const usable = (this.state.savedAnswers ?? []).filter((answer) => !answer.refusedKind).map((answer) => ({ id: answer.id, labelKey: answerKey(answer.label) }));
+        kit.questions = submitted.map((question, position): KitQuestionView => {
+          const was = kit.questions.find((held) => held.id === question.id);
+          if (was && was.text === question.text) return { ...was, position };
+          const decided = classifyDeterministic(question.text, usable);
+          const savedAnswer = decided?.state === "matched" ? (this.state.savedAnswers ?? []).find((answer) => answer.id === decided.savedAnswerId)! : null;
+          return {
+            id: question.id ?? this.id("question"),
+            position,
+            text: question.text,
+            state: decided?.state ?? "asks",
+            matchedBy: savedAnswer ? "label" : null,
+            savedAnswer,
+            confirmed: false,
+            sensitiveKind: decided?.state === "sensitive" ? decided.kind : null,
+            typedAnswer: null,
+          };
+        });
+        return ok(this.touchKit(kit));
+      },
+    ],
+    [
+      "PUT",
+      /^\/api\/applications\/([^/]+)\/kit\/parts$/,
+      (call, [id]) => {
+        const kit = this.kit(id!);
+        const { resume, letter, prep, expectedRevision } = call.body as { resume: KitPart | null; letter: KitPart | null; prep: KitPart | null; expectedRevision: number };
+        if (expectedRevision !== kit.revision) return conflict(KIT_CHANGED);
+        Object.assign(kit, { resume, letter, prep });
+        return ok(this.touchKit(kit));
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/applications\/([^/]+)\/kit\/questions\/([^/]+)$/,
+      (call, [id, questionId]) => {
+        const kit = this.kit(id!);
+        const { change, expectedRevision } = call.body as { change: KitAnswerChange; expectedRevision: number };
+        if (expectedRevision !== kit.revision) return conflict(KIT_CHANGED);
+        const question = kit.questions.find((held) => held.id === questionId);
+        if (!question) return notFound("no such question");
+        const savedById = (savedId: string) => (this.state.savedAnswers ?? []).find((answer) => answer.id === savedId);
+        switch (change.kind) {
+          case "confirm":
+            question.confirmed = true;
+            break;
+          case "reject":
+            Object.assign(question, { state: "asks", matchedBy: null, savedAnswer: null, confirmed: false, typedAnswer: null });
+            break;
+          case "use":
+            Object.assign(question, { state: "matched", matchedBy: "owner", savedAnswer: savedById(change.savedAnswerId) ?? null, confirmed: true, typedAnswer: null });
+            break;
+          case "type": {
+            const answer = cleanKitAnswer(change.answer);
+            if (!answer) return invalid("This answer couldn't be saved as written. Keep it to 4,000 characters, then save again.");
+            question.typedAnswer = answer;
+            break;
+          }
+          case "save": {
+            const added = this.addSaved({ label: change.label, answer: change.answer });
+            if (added.status >= 400) return added;
+            Object.assign(question, { state: "matched", matchedBy: "owner", savedAnswer: added.body, confirmed: true, typedAnswer: null });
+            break;
+          }
+        }
+        return ok(this.touchKit(kit));
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/applications\/([^/]+)\/kit\/approve$/,
+      (call, [id]) => {
+        const kit = this.kit(id!);
+        const { expectedRevision } = call.body as { expectedRevision: number };
+        if (expectedRevision !== kit.revision || kit.state === "approved") return conflict(KIT_CHANGED);
+        const [problem] = kitProblems(kit);
+        if (problem) return { status: problem.code === "no_resume" || problem.code === "unanswered" ? 422 : 409, body: { error: "invalid", message: KIT_PROBLEMS[problem.code].sentence } };
+        Object.assign(kit, { state: "approved", approvedAt: Date.now(), revision: kit.revision + 1, ready: true });
+        return ok(kit);
+      },
+    ],
     ["POST", /^\/api\/account\/sign-out-everywhere$/, () => ({ status: 204 })],
     ["POST", /^\/auth\/logout$/, () => ({ status: 204 })],
     ["DELETE", /^\/auth\/account$/, () => ({ status: 202, body: { deleting: true } })],
@@ -315,6 +493,30 @@ export class FakeApi {
         const filename = file instanceof File ? file.name : "upload.pdf";
         this.state.sources.unshift({ id, filename, state: "queued", error: null, createdAt: Date.now(), proposed: 0 });
         return { status: 201, body: { sourceId: id } };
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/sources\/paste$/,
+      (call) => {
+        const { text, title } = call.body as PasteSourceRequest;
+        if (call.key && this.expiredPasteKeys.has(call.key)) return conflict("This text wasn't added. Add it again.");
+        const stored = normalizePastedText(text);
+        if (this.pasted.has(stored)) return conflict("You've already pasted this text.");
+        this.pasted.add(stored);
+        const id = this.id("src");
+        this.state.sources.unshift({ id, filename: pasteFilename(title) ?? "Pasted text.txt", origin: "paste", state: "queued", error: null, createdAt: Date.now(), proposed: 0 });
+        return { status: 201, body: { sourceId: id } };
+      },
+    ],
+    [
+      "GET",
+      /^\/api\/sources\/([^/]+)\/text$/,
+      (_call, [sourceId]) => {
+        const markdown = this.state.sourceTexts?.[sourceId];
+        if (markdown === undefined) return conflict("this source has not been read yet");
+        const origin = this.state.sources.find((s) => s.id === sourceId)?.origin ?? "upload";
+        return ok({ markdown, revisionId: `${sourceId}:1`, origin });
       },
     ],
 
@@ -559,6 +761,63 @@ export class FakeApi {
     ],
   ];
 
+  /** The email notice settings as saved, or every kind off, to the session's address. */
+  private notices(): EmailNotices {
+    return this.state.emailNotices ?? { comment: false, suggestion: false, reminder: false, status: "ok", address: this.state.me.signInEmail ?? null };
+  }
+
+  /** Adds a saved answer as the vault does: the same label and words again returns the one kept. */
+  private addSaved(body: unknown): Reply {
+    const clean = cleanSavedAnswerInput(body);
+    if (!clean) return invalid(SAVED_ANSWER_REFUSED);
+    const kind = refusedKind(clean.label) ?? refusedKind(clean.answer);
+    if (kind) return invalid(REFUSED_KIND_SENTENCE[kind]);
+    const answers = (this.state.savedAnswers ??= []);
+    const same = answers.find((answer) => answerKey(answer.label) === answerKey(clean.label));
+    if (same) return same.answer === clean.answer ? { status: 201, body: same } : conflict(SAVED_ANSWER_LABEL_TAKEN);
+    const now = Date.now();
+    const made: SavedAnswer = { id: this.id("saved"), revision: 1, ...clean, refusedKind: null, createdAt: now, updatedAt: now };
+    answers.push(made);
+    return { status: 201, body: made };
+  }
+
+  /** A job's kit as it stands, made at revision 0 with what can be chosen for the job if it has none yet. */
+  private kit(applicationId: string): KitView {
+    const kits = (this.state.kits ??= {});
+    const held = kits[applicationId];
+    if (held) return held;
+    const job = this.state.applications.find((application) => application.id === applicationId);
+    const ready = (this.state.documents ?? []).filter((doc) => doc.applicationId === applicationId && doc.state === "ready");
+    const made: KitView = {
+      applicationId,
+      revision: 0,
+      state: "draft",
+      approvedAt: null,
+      resume: null,
+      letter: null,
+      prep: null,
+      questions: [],
+      choices: {
+        resumes: (job?.resumes ?? []).filter((resume) => resume.state === "ready").map((resume) => ({ id: resume.id, version: this.state.resumes[resume.id]?.version ?? 1, createdAt: resume.createdAt })),
+        letters: ready.filter((doc) => doc.kind === "letter").map((doc) => ({ id: doc.id, version: doc.version ?? 1, createdAt: doc.createdAt })),
+        preps: ready.filter((doc) => doc.kind === "prep").map((doc) => ({ id: doc.id, version: doc.version ?? 1, createdAt: doc.createdAt })),
+      },
+      problems: [],
+      ready: false,
+      updatedAt: null,
+    };
+    made.problems = kitProblems(made);
+    kits[applicationId] = made;
+    return made;
+  }
+
+  /** Every write to a kit makes it a draft at its next revision, with its problems worked out again. */
+  private touchKit(kit: KitView): KitView {
+    Object.assign(kit, { revision: kit.revision + 1, state: "draft", approvedAt: null, ready: false, updatedAt: Date.now() });
+    kit.problems = kitProblems(kit);
+    return kit;
+  }
+
   /** Keeps SourceView.proposed in step with the facts, as the vault’s query does. */
   private recountSources(): void {
     for (const source of this.state.sources) {
@@ -577,8 +836,20 @@ export function installFakeApi(state: Fixtures): FakeApi {
 const ok = (body: unknown): Reply => ({ status: 200, body });
 /** Job preferences before the first save. */
 const NOTHING_SAID: Preferences = { revision: 0, place: null, jobTypes: [], availableFrom: null, payFloor: null, updatedAt: null };
+/** The card of a vault with no confirmed tags and no confirmed job: every vault today. */
+const EMPTY_CARD: CardPreview = { state: "ready", taxonomyVersion: "esco-1.2.1+onet-31.0+3f810824", card: { occupation: null, experience: null, skills: [] } };
 const notFound = (message: string): Reply => ({ status: 404, body: { error: "not_found", message } });
 const conflict = (message: string): Reply => ({ status: 409, body: { error: "conflict", message } });
+const EMAIL_UNAVAILABLE: Reply = { status: 503, body: { error: "unavailable", message: EMAIL_OFF } };
+const invalid = (message: string): Reply => ({ status: 422, body: { error: "invalid", message } });
+
+/** What keeps a kit from approval, as the vault reports it: no resume, or a question with no answer typed or checked. */
+function kitProblems(kit: KitView): KitProblem[] {
+  const problems: KitProblem[] = kit.resume ? [] : [{ code: "no_resume" }];
+  const unanswered = kit.questions.filter((question) => (question.state === "matched" ? !question.confirmed : question.typedAnswer === null)).map((question) => question.id);
+  if (unanswered.length) problems.push({ code: "unanswered", questionIds: unanswered });
+  return problems;
+}
 
 function respond({ status, body }: Reply): Response {
   if (body === undefined || status === 204) return new Response(null, { status });

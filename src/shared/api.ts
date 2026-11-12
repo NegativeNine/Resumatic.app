@@ -14,8 +14,13 @@
 //   PUT    /api/profile                Partial<Profile> -> Profile
 //   GET    /api/preferences            Preferences
 //   PUT    /api/preferences            PreferencesUpdate -> Preferences
+//   GET    /api/saved-answers          { savedAnswers: SavedAnswer[] }   (types in ./kit)
+//   POST   /api/saved-answers          SavedAnswerInput -> 201 SavedAnswer   (the same label and answer again returns it)
+//   PUT    /api/saved-answers/:id      SavedAnswerInput & { expectedRevision } -> SavedAnswer
+//   DELETE /api/saved-answers/:id      204
 //   POST   /api/account/sign-out-everywhere   204
 //   POST   /api/sources                multipart field "file" (PDF or DOCX, at most 10 MB) -> 201 { sourceId }
+//   POST   /api/sources/paste   PasteSourceRequest + Idempotency-Key -> 201 { sourceId }
 //   GET    /api/sources                { sources: SourceView[] }
 //   GET    /api/sources/:id/file       source object as an attachment (OCR sources contain JSON input)
 //   POST   /api/sources/:id/cancel     request cancellation of the current reading run
@@ -36,6 +41,12 @@
 //   DELETE /api/applications/:id       204                  (only a job with no resumes or documents)
 //   GET    /api/applications           { applications: ApplicationView[] }
 //   POST   /api/applications/:id/resumes   202 { resumeId }
+//   GET    /api/applications/:id/kit   KitView   (revision 0 before the first write)
+//   PUT    /api/applications/:id/kit/questions   KitQuestionsUpdate (at most 256 KiB) -> KitView
+//   PUT    /api/applications/:id/kit/parts       KitPartsUpdate -> KitView
+//   POST   /api/applications/:id/kit/questions/:qid   { change: KitAnswerChange, expectedRevision } -> KitView
+//   POST   /api/applications/:id/kit/approve     { expectedRevision } -> KitView
+//   GET    /api/applications/:id/kit/archive     application/zip: an approved kit that passes every check
 //   GET    /api/resumes/:id            ResumeView               (poll while state is "running")
 //   PATCH  /api/resumes/:id/lines/:lineId  { text } -> 204
 //   GET    /api/resumes/:id/pdf        application/pdf
@@ -58,6 +69,8 @@ export type FactKind = "accomplishment" | "skill" | "credential";
 export type Level = "contributed" | "implemented" | "led" | "owned" | "founded";
 export type ReviewState = "proposed" | "confirmed" | "rejected";
 export type SourceState = "queued" | "ready" | "failed";
+/** How a source arrived: a file, page images read from a PDF, or text pasted on the Facts page. */
+export type SourceOrigin = "upload" | "ocr" | "paste";
 export type ResumeState = "running" | "ready" | "failed";
 export type LineStatus = "kept" | "repaired" | "replaced" | "edited";
 export type FactOrigin = "extracted" | "user";
@@ -121,6 +134,10 @@ export interface Me {
     roleDateUnknownEnd?: boolean;
     /** A posting can be read from its link. */
     postingReader?: boolean;
+    /** The owner's own card can be previewed. */
+    cardPreview?: boolean;
+    /** The deployment sends email notices, so Account offers them. */
+    emailNotices?: boolean;
   };
   userId: string;
   profile: Profile;
@@ -144,7 +161,7 @@ export interface SourceView {
    * This does not assert the number of pages in the original PDF. */
   conversionImageCount?: number | null;
   conversionWarnings?: ("little-text" | "short-lines" | "no-structure")[];
-  origin?: "upload" | "ocr";
+  origin?: SourceOrigin;
   /** Original upload used to create an image-transcription source, if known. */
   parentSourceId?: string | null;
   extractor?: string | null;
@@ -190,7 +207,7 @@ export interface FactView {
   previousLevel?: Level;
   /** Original user-authored interview answer; it is historical after a fact edit. */
   interview?: import("./interview").InterviewProvenance | null;
-  evidenceOrigin?: "upload" | "ocr";
+  evidenceOrigin?: SourceOrigin;
   confidence?: number | null;
   reviewReasons?: string[];
   revision?: number;

@@ -7,14 +7,15 @@ import { runModels } from "./models";
 import { modelFor } from "../ai/models";
 import { ENTAILMENT_METHOD, offers } from "../pipeline/match";
 import { SPLIT_METHOD, splitLines } from "../pipeline/split";
-import { emptyTagReport, tagUpload } from "../pipeline/tag";
-import { taxonomyFor } from "../taxonomy";
+import { TAG_KINDS, emptyTagReport, tagUpload } from "../pipeline/tag";
+import { taxonomyFor, taxonomyVectorsFor } from "../taxonomy";
 import { extractFacts } from "../pipeline/distill";
 import { extractorById } from "../pipeline/extract";
 import { validateTranscriptionInput } from "../ai/transcribe";
 import { extractLinkedIn } from "../pipeline/linkedin-extract";
 import { linkedInDocument, linkedInMarkdown } from "../pipeline/linkedin";
 import { AppError, errorCode } from "../shared/errors";
+import { readPastedText } from "../shared/paste";
 import { vault } from "../shared/stubs";
 import { MODEL_STEP, STEP, once, retrySafely, sourceFailureMessage } from "./steps";
 
@@ -62,11 +63,22 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
           }
           const info = await v.sourceInfo(sourceId);
           const object = await this.env.FILES.get(info.r2Key);
+          if (!object && info.origin === "paste")
+            throw new AppError("not_found", "The pasted text is missing. Paste it again.");
           if (!object)
             throw new AppError(
               "not_found",
               "The uploaded file is missing. Upload it again.",
             );
+          // Pasted text is already text: it is read as it was stored, with no conversion and no
+          // model, after the same check the Vault made before storing it.
+          if (info.origin === "paste") {
+            const pasted = readPastedText(await object.arrayBuffer());
+            if (pasted === null)
+              throw new AppError("invalid", "This pasted text couldn't be read. Paste it again.");
+            await v.saveSource(sourceId, { markdown: pasted }, event.instanceId);
+            return { chars: pasted.length };
+          }
           const m = runModels(this.env, vaultId, event.instanceId, "convert", "distill");
           let markdown: string;
           let ocrImageCount: number | undefined;
@@ -117,7 +129,7 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
             .slice(0, 10);
           let result;
           if (
-            info.origin !== "ocr" &&
+            info.origin === "upload" &&
             info.filename.toLowerCase().endsWith(".zip")
           ) {
             const object = await this.env.FILES.get(info.r2Key);
@@ -288,6 +300,8 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
       // title is decided, by a rule or by the judge, and each tag is kept in shadow as it is
       // decided. Without both there is no step: nothing is looked up and no model is asked. A
       // failure here leaves the upload as it is read today, with whatever tags were kept before it.
+      // Where the taxonomy's vector index is bound too and holds a complete build of this version,
+      // each title and fact is then also looked up in it, after every word-for-word tag is kept.
       const taxonomy = this.env.TAG_SHADOW_ENABLED === "true" ? taxonomyFor(this.env) : null;
       if (taxonomy)
         try {
@@ -299,16 +313,20 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
                 // An empty, part-loaded or unreachable taxonomy fails here, before anything is read from the vault.
                 const made = { model: modelFor(this.env, "judge"), taxonomyVersion: (await taxonomy.info()).version };
                 const subjects = await v.tagCandidates(sourceId, event.instanceId);
+                const m = runModels(this.env, vaultId, event.instanceId, "tag", "distill");
                 // Counts only: no line, title or label is kept in the Workflow's own state.
                 // The vault is asked before every call about facts which of them have been marked
                 // sensitive since, so a line marked while the stage runs is put to the judge no more.
                 return await tagUpload(
-                  runModels(this.env, vaultId, event.instanceId, "tag", "distill"),
+                  m,
                   taxonomy,
                   subjects,
                   made,
                   (tags) => v.saveShadowTags(sourceId, event.instanceId, made, tags),
                   (factIds) => v.tagWithheld(sourceId, event.instanceId, factIds),
+                  {
+                    vectors: this.env.TAXONOMY_VECTORS ? () => taxonomyVectorsFor(this.env, taxonomy, made.taxonomyVersion, TAG_KINDS, m) : undefined,
+                  },
                 );
               } catch (error) {
                 return { ...emptyTagReport(), failed: errorCode(error) ?? "error" };

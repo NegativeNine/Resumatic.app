@@ -133,10 +133,10 @@ Each step is a pull request, off by default, with its own tests. Steps 3 onward 
 | # | Step | Depends on |
 | --- | --- | --- |
 | 1 | The taxonomy: builder, records, lookup | Done in this change |
-| 2 | First real build (made and checked on 10 November, and to be made again with the builder as it now is: [taxonomy.md](taxonomy.md)), loaded into staging; a vector index of the concepts | Access to the staging account |
+| 2 | First real build (made and checked on 10 November, and to be made again with the builder as it now is: [taxonomy.md](taxonomy.md)), loaded into staging; a vector index of the concepts (built by an operator job; not yet run on staging) | Access to the staging account |
 | 3 | The record: evidence per fact, parts, tags, links. No behaviour change | Built: [record.md](record.md) |
 | 4 | Splitting, in shadow, with labelled examples in the extraction evals | 3. Built: [splitting.md](splitting.md). Not yet run against the real models or measured on real lines |
-| 5 | Tagging facts, roles and postings, in shadow | 2, 3. Built in shadow for facts and roles, from labels found word for word ([tagging.md](tagging.md)). Vector candidates wait for step 2's index; parts and postings are not tagged. Not run against the real judge or measured |
+| 5 | Tagging facts, roles and postings, in shadow | 2, 3. Built in shadow for facts and roles, from labels found word for word ([tagging.md](tagging.md)). Vector candidates are built in shadow ([tagging.md](tagging.md)); no index is built yet; parts and postings are not tagged. Not run against the real judge or measured |
 | 6 | Merging roles and facts, in shadow, then offered in review | 3, 5. Built in shadow: identical roles and facts are found by rule, and two wordings of one thing are put to the judge and kept as offers ([merging.md](merging.md)). Not yet run against the real judge or measured. Offering them in review waits for step 7 |
 | 7 | Review screens: parts under a line, tags, merge offers | 4 to 6 |
 | 8 | Tailoring by concept, coverage by concept, years per skill | 5 |

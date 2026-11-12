@@ -1,5 +1,20 @@
-/** Test-only helper to reconstruct a Vault schema before a coach could suggest wording, the latest migration. */
+/** Test-only helper to reconstruct a Vault schema before saved answers and application kits were kept, and so before every later migration. The index goes before its table. */
+export function removeSavedAnswerMigration(sql: SqlStorage): void {
+  removeNotificationMigration(sql);
+  sql.exec(`DROP INDEX IF EXISTS kit_questions_by_saved_answer`);
+  sql.exec(`DROP TABLE IF EXISTS kit_questions`);
+  sql.exec(`DROP TABLE IF EXISTS application_kits`);
+  sql.exec(`DROP TABLE IF EXISTS saved_answers`);
+}
+
+/** Test-only helper to reconstruct a Vault schema before email notices could be turned on, the latest migration. */
+export function removeNotificationMigration(sql: SqlStorage): void {
+  sql.exec(`DROP TABLE IF EXISTS email_notices`);
+}
+
+/** Test-only helper to reconstruct a Vault schema before a coach could suggest wording, and so before every later migration. */
 export function removeSuggestionMigration(sql: SqlStorage): void {
+  removeSavedAnswerMigration(sql);
   sql.exec(`ALTER TABLE share_comments DROP COLUMN document_id`);
   sql.exec(`ALTER TABLE share_comments DROP COLUMN suggestion_state`);
 }

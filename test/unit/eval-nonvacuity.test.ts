@@ -5,7 +5,7 @@ import { extractFacts } from "../../src/pipeline/distill";
 import type { ResumeBody } from "../../src/shared/api";
 import { requireCitedDraft, requireExpectedExtraction, requirePilotExtraction, requireTagging } from "../evals/nonvacuity";
 import { runPilotTailoring } from "../evals/pilot-tailor";
-import { runTagging } from "../evals/tagging";
+import { precision, runTagging } from "../evals/tagging";
 import { CASES } from "../extract-evals/cases";
 import { scoreCase } from "../extract-evals/score";
 import { TAG_CONCEPTS, TAG_LINES, type TagExample } from "../fixtures/tag-lines";
@@ -73,6 +73,23 @@ describe("evaluation non-vacuity", () => {
     expect(() => requireTagging(recased.outcomes)).toThrow("eval_no_tags");
     // Labels that expect no tag from a method ask nothing of it.
     expect(() => requireTagging([{ found: true, expected: null, tagged: null }])).not.toThrow();
+  });
+
+  it("reports precision for vector-judge/1, and fails when a vector tag was expected and none was proposed", async () => {
+    // With the made-up taxonomy's vector index, a judge that says yes to everything tags every
+    // concept found near a line, and the method's precision is reported beside the others.
+    const agreed = await runTagging(fakeModels(), TAG_LINES);
+    const methods = precision(agreed.outcomes);
+    expect(methods["vector-judge/1"].tagged).toBeGreaterThan(0);
+    expect(methods["vector-judge/1"].precision).toBeGreaterThan(0);
+    expect(methods["vector-judge/1"].precision).toBeLessThan(1);
+    expect(() => requireTagging(agreed.outcomes)).not.toThrow();
+    // Without an index the labels still expect vector tags, and a run that proposed none has measured nothing.
+    const unindexed = await runTagging(fakeModels(), TAG_LINES, undefined, { embed: null });
+    expect(unindexed.outcomes.some((outcome) => outcome.expected === "vector-judge/1")).toBe(true);
+    expect(unindexed.outcomes.some((outcome) => outcome.tagged === "vector-judge/1")).toBe(false);
+    expect(precision(unindexed.outcomes)["vector-judge/1"]).toEqual({ tagged: 0, right: 0, precision: null });
+    expect(() => requireTagging(unindexed.outcomes)).toThrow("eval_no_tags");
   });
 
   it("counts the pilot's judge whichever way the configuration asks it", async () => {

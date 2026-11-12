@@ -1,11 +1,15 @@
+import { readFileSync } from "node:fs";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MAX_APP_FIT_STARTS_PER_DAY, MCP_GRANT_TTL_MS } from "../../src/shared/mcp";
 import { SESSION_TTL_MS } from "../../src/shared/session";
 import { COACH_CLIENT_KEPT_MS, SHARE_READ_INTERVAL_MS, SHARE_SESSION_TTL_MS, SHARE_TTL_MS } from "../../src/shared/sharing";
-import { LegalPage } from "../../src/web/pages/LegalPage";
+import { LegalPage, TAXONOMY_NOTICES } from "../../src/web/pages/LegalPage";
 
 const MINUTE = 60_000;
+/** What the notice says of email, in the item about a coach's comments. */
+const EMAIL_SENTENCES =
+  "We send email only if you turn on email notices under Account. A notice says only that there’s something new to see, with a link to Resumatic: it holds no career details, comment, suggested wording or coach’s name, and it’s sent through Cloudflare’s email service to the address you sign in with. A count of new comments shows the next time you open Resumatic.";
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
@@ -25,6 +29,7 @@ describe("the privacy notice", () => {
       "Sharing a copy",
       "Connecting an app",
       "Your choices",
+      "Credits",
     ]);
     const kept = section("What we keep");
     expect(kept).toContain("The job site sees a request from Resumatic, not from you, and nothing about you is sent with it.");
@@ -62,6 +67,20 @@ describe("the privacy notice", () => {
     expect(section("Your choices")).toContain("cancels a paid plan, ends every shared copy and app connection");
   });
 
+  it("says pasted text is kept, stored, read and exported as an upload is", () => {
+    render(<LegalPage doc="privacy" />);
+    expect(section("What we keep")).toContain(
+      "The files you upload or text you paste, the text read from them, and the roles and facts found in that text, each with the words it came from.",
+    );
+    expect(section("Where it is kept")).toContain("Your uploads, the text you paste and downloaded PDFs are stored with it in Cloudflare R2.");
+    const ai = section("How AI is used");
+    expect(ai).toContain("find facts in your uploads and the text you paste, read job descriptions");
+    expect(ai).toContain("each one receives only the text its step needs: your upload’s text or the text you pasted, a job description, or the facts chosen for one resume or document.");
+    const choices = section("Your choices");
+    expect(choices).toContain("Take it with you: the data export under Account downloads everything in your account, with links to your original uploads and the text you pasted.");
+    expect(choices).toContain("erases your database, uploads, pasted text, PDFs and directory entry.");
+  });
+
   it("says who reads a coach's comments, where they are kept and where they never go", () => {
     render(<LegalPage doc="privacy" />);
     const items = (title: string) => [...screen.getByRole("heading", { level: 2, name: title }).closest("section")!.querySelectorAll("li")].map((item) => item.textContent!.replace(/\s+/g, " ").trim());
@@ -73,9 +92,10 @@ describe("the privacy notice", () => {
     // Never a model's input, said where the notice says what models are sent.
     const ai = screen.getByRole("heading", { level: 2, name: "How AI is used" }).closest("section")!.querySelector("p")!.textContent!.replace(/\s+/g, " ").trim();
     expect(ai.endsWith("a line those facts do not support is never shown to you. Comments on a shared copy are never sent to a language model or used to write or check a resume.")).toBe(true);
-    // Who can comment, who can't, where the owner answers, and that nothing is sent to tell them.
+    // Who can comment, who can't, where the owner answers, and that email is sent only if they ask for it.
     expect(items("Sharing a copy").at(-2)).toBe(
-      "The coach you name can comment on a line or a fact in the copy once they have added it to their client list. Nobody else with the link can read or write comments. You answer and delete them under Account, where they stay after the copy ends until you delete them. We don’t send email: a count of new comments shows the next time you open Resumatic.",
+      "The coach you name can comment on a line or a fact in the copy once they have added it to their client list. Nobody else with the link can read or write comments. You answer and delete them under Account, where they stay after the copy ends until you delete them. " +
+        EMAIL_SENTENCES,
     );
     // The coach is told, where they will look, that their words are kept in someone else's account.
     const sharing = section("Sharing a copy");
@@ -86,12 +106,27 @@ describe("the privacy notice", () => {
     expect(section("Connecting an app")).toContain("or a resume that uses one. It never receives a coach’s comments or suggested wording either. Its access lasts an hour");
   });
 
+  it("says email is sent only if the owner turns notices on, what a notice holds, and what is kept for it", () => {
+    render(<LegalPage doc="privacy" />);
+    const items = (title: string) => [...screen.getByRole("heading", { level: 2, name: title }).closest("section")!.querySelectorAll("li")].map((item) => item.textContent!.replace(/\s+/g, " ").trim());
+    // The sentence is true wherever the page is read, signed in or not, and whatever the deployment offers.
+    expect(items("Sharing a copy").at(-2)!.endsWith(EMAIL_SENTENCES)).toBe(true);
+    expect(section("Sharing a copy")).not.toContain("We don’t send email");
+    // What is kept: which are on, when each last went, and a one-way code, never the address itself.
+    const kept = items("What we keep");
+    const notices = "If you turn on email notices: which ones are on, when each was last sent, and a one-way code made from the address you sign in with, so a notice goes only to that address.";
+    expect(kept).toContain(notices);
+    expect(kept[kept.indexOf(notices) + 1]).toBe("The apps you connect, what you allowed each one to do and when its access ends.");
+  });
+
   it("says what a coach's suggested wording can change, who is told what, and when it reaches a model", () => {
     render(<LegalPage doc="privacy" />);
     const items = (title: string) => [...screen.getByRole("heading", { level: 2, name: title }).closest("section")!.querySelectorAll("li")].map((item) => item.textContent!.replace(/\s+/g, " ").trim());
     // Its own paragraph, straight after the one that says comments never reach a model.
     const ai = [...screen.getByRole("heading", { level: 2, name: "How AI is used" }).closest("section")!.querySelectorAll("p")].map((p) => p.textContent!.replace(/\s+/g, " ").trim());
     expect(ai[1]).toBe("Wording a coach suggests is sent to a model only if you accept it, to be checked against your facts like any edit you make.");
+    // Then what an application kit sends, where its matching is on: the question and the labels, never the answers.
+    expect(ai[2]).toBe("Where matching by AI is turned on for application kits, an employer’s question and the short labels you gave your saved answers are sent to a model, to suggest which answer fits. The words of your answers never are.");
     // After the comments item: nothing changes unless the owner accepts, and the coach is told one thing.
     expect(items("Sharing a copy").at(-1)).toBe(
       "A coach you name can suggest new wording for a line. Nothing changes unless you accept it, and then it is checked against your confirmed facts first. Your coach is told whether you used it, and nothing else.",
@@ -132,6 +167,18 @@ describe("the privacy notice", () => {
     );
   });
 
+  it("says saved answers and kits stay in the vault, and that a model is given at most a question and labels", () => {
+    render(<LegalPage doc="privacy" />);
+    const items = [...screen.getByRole("heading", { level: 2, name: "What we keep" }).closest("section")!.querySelectorAll("li")].map((item) => item.textContent!.replace(/\s+/g, " ").trim());
+    const item = items.findIndex((text) => text.startsWith("Saved answers and application kits"));
+    expect(items[item]).toBe(
+      "Saved answers and application kits stay in your vault, and the words of your answers are never sent to a model; where matching by AI is turned on, only an employer’s question and the short labels you gave your answers are.",
+    );
+    // With the jobs and what is made for them.
+    expect(items[item - 1]).toBe("The resumes, cover letters, interview preparation and fit previews made from your facts for those jobs.");
+    expect(items[item - 2]).toMatch(/^The jobs you save/);
+  });
+
   it("names the job preferences that are kept, and says that nothing reads them", () => {
     render(<LegalPage doc="privacy" />);
     const kept = section("What we keep");
@@ -150,5 +197,40 @@ describe("the privacy notice", () => {
     expect(section("Your choices")).toContain("every fact, role, profile detail and job preference can be edited, rejected or cleared under Facts and Account.");
     // No app is given them, so what an app may do says nothing about them.
     expect(section("Connecting an app")).not.toMatch(/preference/i);
+  });
+});
+
+describe("the credits", () => {
+  // The latest build's manifest is the record of what the sources ask to be said. A rebuild that
+  // changes a notice changes the manifest, and this test then fails until the pages say it too.
+  const manifest = JSON.parse(readFileSync("docs/taxonomy-build-2026-11-11.json", "utf8")) as {
+    notices: string[];
+    licences: { source: string; terms: string; url: string }[];
+  };
+
+  it("credits ESCO and O*NET on both pages, word for word as the latest manifest has them", () => {
+    expect(TAXONOMY_NOTICES).toEqual(manifest.notices);
+    const [esco, onet] = manifest.licences;
+    expect(esco).toMatchObject({ source: "ESCO", url: "https://esco.ec.europa.eu/en/use-esco/download" });
+    expect(onet).toMatchObject({ source: "O*NET 31.0 Database", url: "https://creativecommons.org/licenses/by/4.0/" });
+    for (const doc of ["privacy", "terms"] as const) {
+      const page = render(<LegalPage doc={doc} />);
+      const headings = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
+      // The last section of each page.
+      expect(headings.at(-1), doc).toBe("Credits");
+      const credits = screen.getByRole("heading", { level: 2, name: "Credits" }).closest("section")!;
+      // Each notice in a quotation of its own, exactly.
+      expect([...credits.querySelectorAll("blockquote")].map((quote) => quote.textContent), doc).toEqual(manifest.notices);
+      // Each licence linked where the manifest says, under the name of its terms.
+      const ec = within(credits).getByRole("link", { name: "Commission Decision 2011/833/EU" });
+      expect(ec).toHaveAttribute("href", esco!.url);
+      expect(esco!.terms.startsWith(ec.textContent!)).toBe(true);
+      const cc = within(credits).getByRole("link", { name: `${onet!.terms} licence` });
+      expect(cc).toHaveAttribute("href", onet!.url);
+      const text = credits.textContent!.replace(/\s+/g, " ");
+      expect(text).toContain("Resumatic describes work in the terms of two public classifications.");
+      expect(text).toContain("We hold the two in one set and add labels and links of our own, each marked as ours; we reword nothing in either.");
+      page.unmount();
+    }
   });
 });

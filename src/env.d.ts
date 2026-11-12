@@ -51,8 +51,34 @@ interface ResumaticSecrets {
    * up. It adds judge calls to an upload, and a failure in it leaves the upload as it is read today.
    */
   TAG_SHADOW_ENABLED?: string;
+  /**
+   * "true" shows the owner, under Account, the card a recruiter would see if they were ever found:
+   * built from confirmed tags only, shown to nobody else, published nowhere. Off everywhere by
+   * default. It does nothing useful without a wholly loaded taxonomy bound as TAXONOMY.
+   */
+  CARD_PREVIEW_ENABLED?: string;
+  /**
+   * "true" lets an owner turn on email notices under Account: content-free notices of a coach's
+   * comment or suggested wording, and a reminder of facts waiting for review, sent from their own
+   * Vault's alarm. Off unless exactly "true", and offered only with the EMAIL binding, a
+   * well-formed EMAIL_FROM and an https APP_ORIGIN. Refused in production configuration until the
+   * DPA names Cloudflare Email Service and sending from an EU region is confirmed.
+   */
+  EMAIL_ENABLED?: string;
+  /** The address notices are sent from, on a sender domain onboarded to Email Sending, such as notices@notices.example.com. */
+  EMAIL_FROM?: string;
+  /** Cloudflare's send_email binding. Declared in an environment's own configuration, never in the committed one. */
+  EMAIL?: SendEmail;
+  /**
+   * "true" lets an application kit ask the judge which saved answer's label fits an employer's
+   * question. It sends the question and the labels, never the answers. Off everywhere by default;
+   * without it matching is deterministic only.
+   */
+  APPLICATION_KIT_ENABLED?: string;
   /** The combined ESCO and O*NET taxonomy, in a D1 database of its own. Optional: nothing reads it where it isn't bound. */
   TAXONOMY?: D1Database;
+  /** The taxonomy's concepts as vectors, in a Vectorize index of their own. Optional: nothing reads it where it isn't bound. */
+  TAXONOMY_VECTORS?: Vectorize;
   METRICS?: AnalyticsEngineDataset;
   AUTH_LIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };
   WRITE_LIMIT?: {

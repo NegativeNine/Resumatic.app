@@ -305,6 +305,131 @@ main:focus {
   margin: 0;
 }
 
+/* Account: the owner's card preview */
+
+.app-card-preview__fields {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.app-card-preview__fields dt {
+  font: 600 14px/20px var(--font-sans);
+  color: var(--ink);
+}
+
+.app-card-preview__fields ul {
+  margin: var(--space-1) 0 0;
+  padding-left: 1.25rem;
+}
+
+/* Email notices on Account: one checkbox a kind, the reminder's hint under its own. */
+.app-email-notices__checks {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.app-email-notices__checks label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 400;
+}
+
+.app-email-notices__checks input[type="checkbox"] {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+}
+
+.app-email-notices__checks .rs-hint {
+  margin: var(--space-1) 0 0 calc(1rem + var(--space-2));
+}
+
+/* Account: saved answers. Each answer is the person's own words, kept as they wrote them. */
+
+.app-saved-answers__list {
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-saved-answer {
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--rule);
+}
+
+.app-saved-answer p {
+  margin: 0 0 var(--space-2);
+}
+
+.app-saved-answer__text,
+.app-kit__words {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.app-saved-answers__form {
+  margin-top: var(--space-5);
+}
+
+/* Jobs: the application kit. Each question is a quote, with its answer beneath it. */
+
+.app-kit > .rs-meta {
+  max-width: 62ch;
+  margin: 0 0 var(--space-4);
+}
+
+.app-kit h4 {
+  margin: var(--space-5) 0 var(--space-3);
+  font-size: 1rem;
+}
+
+.app-kit__list {
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.app-kit__question {
+  padding: var(--space-4) 0;
+  border-top: 1px solid var(--rule);
+}
+
+.app-kit__answer {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-4);
+  background: var(--paper-sunken);
+  border-radius: var(--radius-md);
+}
+
+.app-kit__answer p {
+  margin: 0;
+  max-width: 62ch;
+}
+
+.app-kit__keep {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 400;
+}
+
+.app-kit__status {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--rule);
+}
+
+.app-kit__problems {
+  margin: var(--space-2) 0 var(--space-3);
+  padding-left: 1.15em;
+}
+
 /* The beta's privacy notice and terms */
 
 .legal {
@@ -336,6 +461,11 @@ main:focus {
 
 .legal li + li {
   margin-top: 0.4rem;
+}
+
+.legal blockquote {
+  padding-left: var(--space-4);
+  border-left: 3px solid var(--rule);
 }
 
 .legal .draft-note {
@@ -414,6 +544,28 @@ main:focus {
   line-height: 18px;
 }
 
+/* Adding a source: Upload a file or Paste text above the panel chosen. */
+.app-add-source {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.app-add-source > .app-view-toggle {
+  justify-self: start;
+}
+
+.app-paste {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.app-paste textarea {
+  width: 100%;
+  resize: vertical;
+}
+
 .app-source-panel {
   padding: var(--space-1) var(--space-5);
 }
@@ -474,6 +626,10 @@ main:focus {
 .facts-first-run > div {
   width: 100%;
   max-width: var(--layout-paper);
+}
+
+.facts-first-run .app-add-source > .app-view-toggle {
+  justify-self: center;
 }
 
 .app-drop--first-run {

@@ -35,6 +35,8 @@ const SAFE_DETAILS = new Set([
   "Confirm some facts before tailoring a resume.",
   "None of your confirmed facts match this job yet. Add facts that cover its requirements, then tailor a new version.",
   "The uploaded file is missing. Upload it again.",
+  "The pasted text is missing. Paste it again.",
+  "This pasted text couldn't be read. Paste it again.",
   "No text could be read from this file.",
   "This file couldn't be read. Try a Word file (.docx) or a PDF with selectable text.",
   "This file is too long to read. Upload a resume of a few pages.",
