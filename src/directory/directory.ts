@@ -19,6 +19,8 @@ import { boundShardInviteClaim } from "./shard-invite-owner";
 import { ShardClaimRevocation, type RevokedShardClaim, type ShardClaimSeal, type ShardClaimObservation } from "./shard-claim-revocation";
 import { InviteRevocation, type InviteRevocationStatus } from "./invite-revocation";
 import { InviteOrphanInspection } from "./invite-orphan-inspection";
+import { OperatorSpendStore } from "./operator-spend";
+import type { ModelAttempt } from "../ai/usage";
 
 /** How soon a failed deletion is retried. */
 const RETRY_MS = 60_000;
@@ -398,6 +400,20 @@ export class Directory extends DurableObject<Env> {
         ),
     });
   }
+  private get operatorSpend(): OperatorSpendStore {
+    return new OperatorSpendStore(this.sql, (fn) => this.ctx.storage.transactionSync(fn), this.isGlobal);
+  }
+
+  /** Reserves an operator job's model call, such as a taxonomy index build's, before it is sent. Only the global Directory keeps these. */
+  async reserveOperatorModelAttempt(runId: string, step: string, attempt: ModelAttempt, maxCostMicros: number, dailyCapMicros: number): Promise<void> {
+    this.operatorSpend.reserve(runId, step, attempt, maxCostMicros, dailyCapMicros);
+  }
+
+  /** Settles an operator job's model call. A null cost keeps it counted at its reservation. */
+  async settleOperatorModelAttempt(id: string, costMicros: number | null, inputTokens: number | null, outputTokens: number | null): Promise<void> {
+    this.operatorSpend.settle(id, costMicros, inputTokens, outputTokens);
+  }
+
   async acceptBillingEvent(event: BillingEvent, userId?: string): Promise<void> {
     this.billing.accept(userId, event);
     if (this.billing.pending()) await this.scheduleAt(Date.now());

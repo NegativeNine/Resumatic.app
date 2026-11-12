@@ -21,6 +21,8 @@ import {
  */
 export const MAX_MENTION_TEXT_CHARS = 20_000;
 const MAX_DEPTH = 12;
+/** The most concepts one page of `conceptPage` holds. */
+export const MAX_CONCEPT_PAGE = 100;
 
 const typeRank = (type: string) => LABEL_TYPES.indexOf(type as (typeof LABEL_TYPES)[number]);
 const matchRank = (type: MatchType | null) => (type === null ? -1 : MATCH_TYPES.indexOf(type));
@@ -45,6 +47,24 @@ export class Taxonomy {
   async get(ids: readonly string[]): Promise<Map<string, Concept>> {
     const found = await this.store.concepts(ids.filter(validConceptId));
     return new Map(found.map((concept) => [concept.id, concept]));
+  }
+
+  /**
+   * Up to `limit` concepts of these kinds whose IDs come after `after`, in ID order: a page of the
+   * concepts the vector index is built from (src/workflows/taxonomy-index.ts). "" starts at the first.
+   */
+  async conceptPage(after: string, kinds: readonly ConceptKind[], limit: number): Promise<Concept[]> {
+    if (typeof after !== "string" || after.length > 200) throw new AppError("invalid", "a page starts after a concept ID");
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_CONCEPT_PAGE) throw new AppError("invalid", "a page holds one to a hundred concepts");
+    if (kinds.length === 0) return [];
+    return this.store.conceptPage(after, kinds, limit);
+  }
+
+  /** How many concepts of these kinds there are, or how many of them have IDs up to and including `upTo`. */
+  async conceptCount(kinds: readonly ConceptKind[], upTo?: string): Promise<number> {
+    if (upTo !== undefined && (typeof upTo !== "string" || upTo.length > 200)) throw new AppError("invalid", "a count runs up to a concept ID");
+    if (kinds.length === 0) return 0;
+    return this.store.conceptCount(kinds, upTo);
   }
 
   /**

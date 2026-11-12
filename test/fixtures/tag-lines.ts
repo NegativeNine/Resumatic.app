@@ -38,6 +38,8 @@ export const TAG_CONCEPTS = {
   orchestrationSoftware: "onet:toolcat:5.A.1.02",
   /** O*NET detailed work activity "Manage project teams." */
   manageProjectTeams: "onet:activity:4.A.4.b.4.I01.D01",
+  /** O*NET intermediate work activity "Manage budgets or finances." */
+  manageBudgetsOrFinances: "onet:activity:4.A.4.c.3.I01",
   /** ESCO occupation "software developer", also "software engineer" and "programmer". */
   softwareDeveloper: occupation(1),
   /** ESCO occupation "ICT project manager", also "IT project manager". */
@@ -46,6 +48,8 @@ export const TAG_CONCEPTS = {
   budgetAnalyst: occupation(3),
   /** O*NET occupation "Example Software Developers", with the job title "Software Engineer". */
   softwareDevelopers: "onet:occ:99-1001.00",
+  /** O*NET occupation "Example Budget Analysts". */
+  budgetAnalysts: "onet:occ:99-1003.00",
   /** O*NET occupation "Example Project Management Specialists", with the job title "Tech PM". */
   projectSpecialists: "onet:occ:99-1002.00",
   /** ISCO group "Software developers": a group of occupations, never a job's occupation. */
@@ -60,10 +64,12 @@ export interface LabelledCandidate {
   /**
    * What settles it. "rule": the rule for a listed skill tags it, with no model. "judge": it is
    * put to the judge; where a reader expects none, nothing but the judge's answer stops the tag.
+   * "vector": it is near the words in the vector index, and no label in them names it, so it is
+   * put to the judge in the same question; again only the judge's answer stops a wrong one.
    * "check": something that needs no model keeps it from ever being a candidate, whatever a
    * judge would say.
    */
-  decidedBy: "rule" | "judge" | "check";
+  decidedBy: "rule" | "judge" | "vector" | "check";
   why: string;
 }
 
@@ -84,6 +90,8 @@ const rule = by("rule", "tag");
 const yes = by("judge", "tag");
 const no = by("judge", "none");
 const never = by("check", "none");
+const near = by("vector", "tag");
+const notNear = by("vector", "none");
 
 export const TAG_LINES: TagExample[] = [
   // ---- skills from a list: the rule tags an item that is one label and nothing else
@@ -115,7 +123,11 @@ export const TAG_LINES: TagExample[] = [
   line("Planning to learn Python next year", no(C.python, "an intention, not experience"), no(C.pythonKnowledge, "an intention, not experience")),
   line("Hired and onboarded two Python developers", no(C.python, "the line only mentions it: the skill is someone else's"), no(C.pythonKnowledge, "the same")),
   line("Asked to lead a team of five, and turned it down", no(C.leadATeam, "the line says it did not happen")),
-  line("Selected container orchestration software for the platform team", no(C.orchestrationSoftware, "choosing software is not using it")),
+  line(
+    "Selected container orchestration software for the platform team",
+    no(C.orchestrationSoftware, "choosing software is not using it"),
+    notNear(C.containerOrchestration, "nor is it knowing the field, though the words are near it"),
+  ),
   line("Go to market planning for two product launches", no(C.go, "an everyday word that is also a name"), no(C.goKnowledge, "the same")),
   line("Reported to the IT project manager", never(C.ictProjectManager, "an occupation named in a line is usually someone else's, so a fact is never tagged with one")),
   line("Moved session data to NoSQL stores", never(C.sql, "NoSQL names something else, and a label is never found inside a longer word")),
@@ -124,7 +136,22 @@ export const TAG_LINES: TagExample[] = [
   title("IT Project Manager", yes(C.ictProjectManager, "a name the source lists for the occupation")),
   title("Programmer", yes(C.softwareDeveloper, "one word, written as the source writes it")),
   title("Tech PM", yes(C.projectSpecialists, "a short job title O*NET lists")),
-  title("Budget Analyst", yes(C.budgetAnalyst, "the occupation's own name")),
-  title("Assistant to the Budget Analyst", no(C.budgetAnalyst, "the title names the occupation of the person assisted")),
-  title("Software Developers", never(C.developersGroup, "a group of occupations is not a job's occupation, so it is never a candidate")),
+  title("Budget Analyst", yes(C.budgetAnalyst, "the occupation's own name"), near(C.budgetAnalysts, "and O*NET's, by a name its words are near")),
+  title(
+    "Assistant to the Budget Analyst",
+    no(C.budgetAnalyst, "the title names the occupation of the person assisted"),
+    notNear(C.budgetAnalysts, "the same, by a name its words are near"),
+  ),
+  title(
+    "Software Developers",
+    never(C.developersGroup, "a group of occupations is not a job's occupation, so it is never a candidate"),
+    near(C.softwareDeveloper, "the occupation, in the plural"),
+    near(C.softwareDevelopers, "and O*NET's"),
+  ),
+  // ---- said in other words: no label stands in them, and only the vector index finds the concept
+  line("Oversaw spending for three departments", near(C.manageBudgets, "managing budgets, in other words"), near(C.manageBudgetsOrFinances, "the activity, in other words")),
+  line("Headed a crew of six engineers", near(C.leadATeam, "leading a team, in other words")),
+  title("Coder", near(C.softwareDeveloper, "another word for the occupation"), near(C.softwareDevelopers, "and for O*NET's")),
+  line("Hoping to oversee spending next year", notNear(C.manageBudgets, "an intention, not experience"), notNear(C.manageBudgetsOrFinances, "an intention, not experience")),
+  line("Assisted the director who oversaw spending", notNear(C.manageBudgets, "someone else's budget"), notNear(C.manageBudgetsOrFinances, "someone else's budget")),
 ];

@@ -54,6 +54,13 @@
       "binding": "FLEET_REEMBED",
       "class_name": "FleetReembedWorkflow",
     },
+    // Builds the taxonomy's vector index. It does nothing where TAXONOMY_VECTORS is not bound, and
+    // nothing committed here binds it (docs/taxonomy.md, "The vector index").
+    {
+      "name": "taxonomy-index",
+      "binding": "TAXONOMY_INDEX",
+      "class_name": "TaxonomyIndexWorkflow",
+    },
   ],
   "r2_buckets": [{ "binding": "FILES", "bucket_name": "resumatic-files" }],
   "analytics_engine_datasets": [
@@ -140,6 +147,11 @@
           "name": "fleet-reembed-staging",
           "binding": "FLEET_REEMBED",
           "class_name": "FleetReembedWorkflow",
+        },
+        {
+          "name": "taxonomy-index-staging",
+          "binding": "TAXONOMY_INDEX",
+          "class_name": "TaxonomyIndexWorkflow",
         },
       ],
       "r2_buckets": [

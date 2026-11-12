@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { embedTexts } from "../../src/ai/vectors";
+import { CONCEPT_LOOKUP_INSTRUCTION, embeddingInput } from "../../src/ai/embedding-input";
 import { packVector, toUnit, topMatches } from "../../src/vault/search";
 import { vi } from "vitest";
 import { runModels } from "../../src/workflows/models";
@@ -12,6 +13,23 @@ describe("embedding model selection", () => {
     await embedTexts(env, ["job requirement"], {}, { purpose: "query" });
     expect(run.mock.calls[0]).toEqual([env.EMBEDDING_MODEL, { documents: ["career evidence"] }, expect.anything()]);
     expect(run.mock.calls[1]).toEqual([env.EMBEDDING_MODEL, { queries: ["job requirement"], instruction: "Given a job requirement, retrieve career facts that provide supporting experience." }, expect.anything()]);
+  });
+
+  it("a concept lookup is a query with its own instruction; documents carry none", async () => {
+    const run = vi.fn(async () => ({ data: [[1, 0]] }));
+    const env = { AI: { run }, AI_GATEWAY_ID: "test" } as unknown as Env;
+    const qwen = "@cf/qwen/qwen3-embedding-0.6b";
+    await embedTexts(env, ["Oversaw spending"], {}, { model: qwen, purpose: "concept-query" });
+    await embedTexts(env, ["manage budgets\nSkill"], {}, { model: qwen, purpose: "document" });
+    await embedTexts(env, ["job requirement"], {}, { model: qwen, purpose: "query" });
+    expect(run.mock.calls[0]).toEqual([qwen, { queries: ["Oversaw spending"], instruction: CONCEPT_LOOKUP_INSTRUCTION }, expect.anything()]);
+    expect(CONCEPT_LOOKUP_INSTRUCTION).toBe("Given a line from a resume or a job title, retrieve the skills, knowledge, work activities, software and occupations it shows.");
+    expect(run.mock.calls[1]).toEqual([qwen, { documents: ["manage budgets\nSkill"] }, expect.anything()]);
+    // The lookup's instruction is its own, not a requirement search's.
+    expect((run.mock.calls[2] as unknown[])[1]).toMatchObject({ queries: ["job requirement"] });
+    expect((run.mock.calls[2] as unknown[])[1]).not.toEqual((run.mock.calls[0] as unknown[])[1]);
+    // A model without instructions is given the text alone, whatever the purpose.
+    expect(embeddingInput("@cf/baai/bge-m3", ["Oversaw spending"], "concept-query")).toEqual({ text: ["Oversaw spending"] });
   });
 
   it("preserves the active or snapshot model and forwards query purpose through the Workflow adapter", async () => {

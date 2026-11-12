@@ -6,6 +6,7 @@ import type { ModelObservers } from "./usage";
 import { transcribePages, type TranscriptionInput } from "./transcribe";
 import { CLEF_MODEL, decisionJudge } from "./decision-judge";
 import type { JudgeItem, JudgeOut } from "./prompts";
+import type { EmbeddingPurpose } from "./embedding-input";
 export type { Usage } from "./usage";
 export type { ModelAttempt, ModelObservers } from "./usage";
 
@@ -51,7 +52,7 @@ export interface Models {
     referenceDate: string,
   ): Promise<FieldResult>;
   transcribePages?(input: TranscriptionInput): Promise<{ markdown: string }>;
-  embed(texts: string[], opts?: { model?: string; purpose?: "query" | "document" }): Promise<number[][]>;
+  embed(texts: string[], opts?: { model?: string; purpose?: EmbeddingPurpose }): Promise<number[][]>;
   /** Relevance scores for texts against the query, in the same order as texts. */
   rerank(query: string, texts: string[]): Promise<number[]>;
   toMarkdown(name: string, blob: Blob): Promise<string>;

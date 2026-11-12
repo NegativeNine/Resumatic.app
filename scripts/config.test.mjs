@@ -24,7 +24,7 @@ test("production secrets cannot shadow reviewed variables or activate guarded se
     if (name !== "TEST_SIGNIN_KEY") assert.equal(validEvaluationSecretNames([{ name }]), false);
   }
   assert.equal(validEvaluationSecretNames([{ name: "TEST_SIGNIN_KEY" }]), true);
-  for (const name of ["DAILY_SPEND_CAP_USD", "ACCESS_AUD", "FUTURE_SETTING", "ALLOW_TEST_SIGNIN", "RESTORE_FENCE_IDS", "R2_CACHE_FENCE_ENABLED", "PLACEMENT_FENCE_ENABLED", "DIRECTORY_SHARDS", "INVITE_ONLY", "MCP_ENABLED", "APP_ORIGIN", "PILOT_SHARED_BUDGET", "MODEL_PRICES_JSON", "POSTING_READER_ENABLED", "UNKNOWN_SECRET"]) {
+  for (const name of ["DAILY_SPEND_CAP_USD", "ACCESS_AUD", "FUTURE_SETTING", "ALLOW_TEST_SIGNIN", "RESTORE_FENCE_IDS", "R2_CACHE_FENCE_ENABLED", "PLACEMENT_FENCE_ENABLED", "DIRECTORY_SHARDS", "INVITE_ONLY", "MCP_ENABLED", "APP_ORIGIN", "PILOT_SHARED_BUDGET", "MODEL_PRICES_JSON", "POSTING_READER_ENABLED", "TAG_SHADOW_ENABLED", "UNKNOWN_SECRET"]) {
     assert.equal(validProductionSecretNames([{ name }], vars), false, name);
   }
   assert.equal(validProductionSecretNames({}, vars), false);

@@ -53,6 +53,8 @@ interface ResumaticSecrets {
   TAG_SHADOW_ENABLED?: string;
   /** The combined ESCO and O*NET taxonomy, in a D1 database of its own. Optional: nothing reads it where it isn't bound. */
   TAXONOMY?: D1Database;
+  /** The taxonomy's concepts as vectors, in a Vectorize index of their own. Optional: nothing reads it where it isn't bound. */
+  TAXONOMY_VECTORS?: Vectorize;
   METRICS?: AnalyticsEngineDataset;
   AUTH_LIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };
   WRITE_LIMIT?: {

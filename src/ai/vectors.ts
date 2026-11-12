@@ -4,7 +4,7 @@ import { rerankScores } from "./rerank";
 import { usableEmbedding } from "../shared/embedding";
 import { docxText } from "../pipeline/docx";
 import { relevanceScores } from "./relevance";
-import { embeddingInput } from "./embedding-input";
+import { embeddingInput, type EmbeddingPurpose } from "./embedding-input";
 
 const EMBED_MODEL = "@cf/baai/bge-m3";
 const RERANK_MODEL = "@cf/baai/bge-reranker-base";
@@ -22,7 +22,7 @@ export async function embedTexts(
   env: Env,
   texts: string[],
   observers: ModelObservers = {},
-  opts: { model?: string; purpose?: "query" | "document" } = {},
+  opts: { model?: string; purpose?: EmbeddingPurpose } = {},
 ): Promise<number[][]> {
   const model = opts.model ?? env.EMBEDDING_MODEL ?? EMBED_MODEL;
   const run = env.AI.run.bind(env.AI) as (

@@ -321,7 +321,8 @@ describe("reading with shadow tagging switched on", () => {
       const result = await reported(instance!);
       expect(result).toEqual(WHOLE);
       const leaves = (value: unknown): unknown[] => (value !== null && typeof value === "object" ? Object.values(value).flatMap(leaves) : [value]);
-      expect(leaves(result).map((leaf) => typeof leaf)).toEqual(Array(16).fill("number"));
+      // Sixteen for the word-for-word part, and eight for the vector part, which did not run.
+      expect(leaves(result).map((leaf) => typeof leaf)).toEqual(Array(24).fill("number"));
     } finally {
       await reading.dispose();
     }
@@ -980,7 +981,7 @@ describe("what a reading may ask of a vault", () => {
       const { sourceId, runId, inside, keep, refusal } = await open(usual);
       const refused: [why: string, made: TagMade, tags: ProposedTag[], message: string][] = [
         ["more tags than an upload can have", made, Array.from({ length: MAX_TAGS_PER_SAVE + 1 }, () => KUBERNETES_TAG), "invalid: too many tags for one upload"],
-        ["a method that is not one of the two", made, [SQL_TAG, { ...KUBERNETES_TAG, method: "vector-judge/1" as ProposedTag["method"] }], "invalid: unknown tagging method"],
+        ["a method that is not one of the three", made, [SQL_TAG, { ...KUBERNETES_TAG, method: "vector-judge/2" as ProposedTag["method"] }], "invalid: unknown tagging method"],
         ["no method", made, [{ ...KUBERNETES_TAG, method: undefined as unknown as ProposedTag["method"] }], "invalid: unknown tagging method"],
         ["a part of a line", made, [SQL_TAG, { ...KUBERNETES_TAG, subject: { kind: "part" as "fact", id: "fact-kubernetes" } }], "invalid: tags are proposed for facts and job roles"],
         ["a subject with no ID", made, [{ ...KUBERNETES_TAG, subject: { kind: "fact", id: 7 as unknown as string } }], "invalid: tags are proposed for facts and job roles"],

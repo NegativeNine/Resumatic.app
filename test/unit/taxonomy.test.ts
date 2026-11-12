@@ -41,7 +41,7 @@ async function marksNormalised<T>(read: () => T | Promise<T>): Promise<[T, numbe
 describe("the combined taxonomy", () => {
   it("says which taxonomy it is, and that none is loaded when none is", async () => {
     expect(await taxonomy().info()).toEqual(TAXONOMY_FIXTURE.info);
-    const empty: TaxonomyStore = { info: async () => null, concepts: async () => [], labels: async () => [], from: async () => [], fromAny: async () => [], to: async () => [] };
+    const empty: TaxonomyStore = { info: async () => null, concepts: async () => [], labels: async () => [], from: async () => [], fromAny: async () => [], to: async () => [], conceptPage: async () => [], conceptCount: async () => 0 };
     await expect(new Taxonomy(empty).info()).rejects.toThrow("unavailable: the taxonomy is not loaded");
     // Without the binding there is no taxonomy, and nothing that depends on one runs.
     expect(taxonomyFor({})).toBeNull();
@@ -89,6 +89,35 @@ describe("the combined taxonomy", () => {
     expect(await t.lookup(spaced(MAX_MENTION_TEXT_CHARS))).toEqual([{ id: S(1), kind: "skill", type: "alternative", matched: "budget management" }]);
     expect(await marksNormalised(() => t.lookup(spaced(MAX_MENTION_TEXT_CHARS + 1)))).toEqual([[], 0]);
     expect(await marksNormalised(() => t.lookup(`Python${pile(3 * MAX_MENTION_TEXT_CHARS)}`))).toEqual([[], 0]);
+  });
+});
+
+describe("the concepts of given kinds", () => {
+  it("pages through concepts of given kinds in ID order and counts them", async () => {
+    const t = taxonomy();
+    const kinds = ["skill", "tool", "occupation"] as const;
+    const all = TAXONOMY_FIXTURE.concepts.filter((concept) => (kinds as readonly string[]).includes(concept.kind)).map((concept) => concept.id).sort();
+    expect(all.length).toBeGreaterThan(5);
+    // Three at a time, each page after the last ID of the one before, until a page comes back empty.
+    const seen: string[] = [];
+    let after = "";
+    for (;;) {
+      const page = await t.conceptPage(after, kinds, 3);
+      expect(page.length).toBeLessThanOrEqual(3);
+      if (page.length === 0) break;
+      seen.push(...page.map((concept) => concept.id));
+      after = page.at(-1)!.id;
+    }
+    expect(seen).toEqual(all);
+    // Whole records, as the builder wrote them.
+    expect((await t.conceptPage("", ["skill"], 1))[0]).toEqual(TAXONOMY_FIXTURE.concepts.find((concept) => concept.id === S(1)));
+    expect(await t.conceptCount(kinds)).toBe(all.length);
+    expect(await t.conceptCount(kinds, all[2])).toBe(3);
+    expect(await t.conceptCount(kinds, "")).toBe(0);
+    expect(await t.conceptPage("", [], 10)).toEqual([]);
+    expect(await t.conceptCount([])).toBe(0);
+    for (const limit of [0, 101, 1.5]) await expect(t.conceptPage("", kinds, limit), String(limit)).rejects.toThrow("invalid");
+    expect(await t.conceptPage("", kinds, 100)).toHaveLength(all.length);
   });
 });
 
@@ -420,6 +449,8 @@ describe("an occupation seen through both sources", () => {
       from: (src, rels) => (reads.push("from"), store.from(src, rels)),
       fromAny: (srcs, rels) => (reads.push("fromAny"), store.fromAny(srcs, rels)),
       to: (dst, rels) => (reads.push("to"), store.to(dst, rels)),
+      conceptPage: (after, kinds, limit) => store.conceptPage(after, kinds, limit),
+      conceptCount: (kinds, upTo) => store.conceptCount(kinds, upTo),
     };
     const profile = (await new Taxonomy(counted).profile(BA))!;
     expect(profile.counterparts.map((counterpart) => [counterpart.concept.id, counterpart.match])).toEqual([

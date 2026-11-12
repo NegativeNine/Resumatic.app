@@ -8,7 +8,7 @@ Resumatic describes work in the terms of two public classifications, held as one
 
 This document says what is in the taxonomy, how it is built and loaded, how the app reads it, and what must be credited. The redesign of the reading and tailoring pipelines that uses it is set out in [taxonomy-pipelines-design.md](taxonomy-pipelines-design.md).
 
-**Status: the builder and the lookup exist and are tested on small synthetic files, and one build from the real downloads was made and checked on 10 November 2026 (see "What has and has not been checked"). The builder changed after it, so the build was made again from the same downloads on 11 November 2026 and that build was loaded into a D1 database on the staging account. The staging deployment binds it as `TAXONOMY` through its hand-applied configuration; the committed configuration binds none. One stage reads one where it is bound and switched on, which is nowhere yet: tagging in shadow ([tagging.md](tagging.md)).**
+**Status: the builder and the lookup exist and are tested on small synthetic files, and one build from the real downloads was made and checked on 10 November 2026 (see "What has and has not been checked"). The builder changed after it, so the build was made again from the same downloads on 11 November 2026 and that build was loaded into a D1 database on the staging account. The staging deployment binds it as `TAXONOMY` through its hand-applied configuration; the committed configuration binds none. One stage reads one where it is bound and switched on, which is nowhere yet: tagging in shadow ([tagging.md](tagging.md)). Its concepts can be indexed as vectors for tagging in shadow; no index has been built on staging.**
 
 ## What each source is used for
 
@@ -157,7 +157,26 @@ In every other way the comparison is exact. These count as other spellings: two 
 
 The text these reads are given is someone else's (an upload, a job posting), so what reading it can cost is bounded. `mentions` refuses a text of more than 20,000 characters, and `lookup` finds nothing for one: no label is over a hundredth of that. Within the limit, a word may carry any number of combining marks and unseen characters. They are dropped before the word is put in its comparison form, and a word too long to be any way of writing its label is not compared with it, so the time a pile of marks on one letter takes to read grows with the pile and not with its square.
 
-Limits today: English only, and exact wording only. Finding the activity or skill a line describes in other words needs a vector index of the concepts, which is the next step.
+Limits today: English only, and exact wording only. Concepts a line describes in other words are found in the vector index below.
+
+## The vector index
+
+One taxonomy version has one Vectorize index of its own, with the concepts tagging uses (skills, knowledge and their groups, work activities, software and its categories, and occupations) as vectors. It is built once by an operator, on staging only:
+
+1. `npx wrangler vectorize create resumatic-taxonomy-<hash8> --dimensions=1024 --metric=cosine`. Only cosine is supported; the build checks the metric and stops with `metric` otherwise.
+2. `npx wrangler vectorize create-metadata-index resumatic-taxonomy-<hash8> --property-name=kind --type=string`, run before anything is put in. Vectors added before it cannot be filtered, and the build will not finish over them; make a new index instead.
+3. Bind it in the staging overlay with `"vectorize": [{ "binding": "TAXONOMY_VECTORS", "index_name": "…" }]`, next to `TAXONOMY`, and set `PILOT_SHARED_BUDGET` to `"false"`. In pilot mode no `@cf/` model is called, and the build stops with `unavailable`. `TAG_SHADOW_ENABLED` must be `"true"` too. The committed configuration binds neither database.
+4. Through Access, send `POST /admin/taxonomy/vectors/build` with `{"taxonomyVersion":"…"}`, then poll `GET /admin/taxonomy/vectors`.
+
+Each concept is embedded as its preferred label, its kind and the first 500 characters of its description, with Qwen3 0.6B. A build reserves its spend against `DAILY_SPEND_CAP_USD` in an operator ledger, and is started again to resume. One index holds one taxonomy version.
+
+- **The manifest.** The index describes itself in a record of its own, `manifest`: the taxonomy version, the model, the size, the form of document (`label-kind-description/1`), the kinds, how many concepts it holds, and how far a build has got. Tagging reads the index only when the manifest says it is a complete build of the bound version, by this model and form, for these kinds. A build refuses an index whose manifest names another build: a new version gets a new index.
+- **The build** (`src/workflows/taxonomy-index.ts`) pages through the concepts in ID order, 100 at a time. Each page is embedded as documents, then put in together with the manifest's new place, so a build started again goes on after the last page that is in, and a page put in twice leaves the index as it was. A concept ID over 64 bytes is stored under `h:` and its digest, with the ID in the vector's metadata.
+- **Complete** means three things: the index counts exactly one vector per concept and the manifest; a lookup filtered by kind finds the first and the last concept as their own nearest match; and that match scores between 0.99 and 1.01, which only cosine gives. Until then tagging reads nothing from it.
+- **Starts.** Each start of a build is a Workflow instance named `taxonomy-index-<hash8>-<n>`. A start is refused while any of the twenty is live, even when an earlier one has been deleted, and otherwise takes the first free name; two starts at once take the same name, and the platform refuses the second instance under it. `GET /admin/taxonomy/vectors/build/<id>` gives a build's status and `DELETE` removes it; after twenty attempts the earlier ones are deleted first.
+- **What it holds** is public reference data: no line of anyone's is put in it. The routes and the Workflow's state hold counts, codes and concept IDs only.
+
+How tagging uses the index is in [tagging.md](tagging.md). The index is deleted by hand when its version is retired.
 
 ## Credits
 
@@ -177,5 +196,6 @@ The notices are not in the app yet because the app shows no taxonomy data yet. T
 - `scripts/taxonomy-build.test.mjs`: the CSV reader, both source readers, the crosswalk reader, joining, the SQL (loaded into SQLite as written, whole and with each file left out in turn), the build command, and that the same files always give the same bytes.
 - `test/unit/taxonomy.test.ts`: the four reads over records in memory.
 - `test/integration/taxonomy-d1.test.ts`: the same records loaded into D1 answer every read identically, and a database that does not hold all of them is read as not loaded.
+- `test/unit/taxonomy-vectors.test.ts`: lookups in the vector index, what makes an index ready, and what a concept's document is. `test/unit/taxonomy-index.test.ts` and `test/integration/taxonomy-index.test.ts`: the build, its refusals, its routes and their Access check, over an index in memory (`test/support/fake-vectorize.ts`). No real Vectorize index has been built.
 
 The test files under `test/fixtures/taxonomy` are synthetic and say so. `test/support/taxonomy-fixture.ts` is generated from them by `node scripts/taxonomy/fixture.mjs`, and a test fails if it is out of date.

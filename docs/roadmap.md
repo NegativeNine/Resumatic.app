@@ -10,7 +10,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Muse Ember generation/extraction and Clef decisions | #25 merged in #34; on staging | The live eval: the first pilot cannot start within the 50 weighted attempts authorised against the typed-decision judge (it needs 66). Authorise more, or choose a smaller case |
 | Qwen embeddings and Clef relevance | #27 merged in #34; on staging | Keep the task-aware query/document inputs and per-vault embedding migration |
 | Coach accounts and client list | #26 merged in #34, with six review fixes | The take-up writes to two vaults and is not atomic; the page offers the add again |
-| Taxonomy builder and lookup | #28 merged in #34, with review fixes. Rebuilt from the same downloads on 11 November ([manifest](taxonomy-build-2026-11-11.json), version `esco-1.2.1+onet-31.0+3f810824`) and loaded into a D1 database on the staging account, its counts checked | A vector index of the concepts |
+| Taxonomy builder and lookup | #28 merged in #34, with review fixes. Rebuilt from the same downloads on 11 November ([manifest](taxonomy-build-2026-11-11.json), version `esco-1.2.1+onet-31.0+3f810824`) and loaded into a D1 database on the staging account, its counts checked | Build the vector index on staging (`pipeline/06-vector-index`) |
 | Shared-copy title test | #29 merged in #34 | |
 | The record: parts of a line, tags and links | #30 merged in #34 | Its migration comes before coach accounts' |
 | Dividing a line into its claims | #31 merged in #34 | Off by default, and kept in shadow where switched on. Not run against the real models; nothing has been measured |
@@ -23,6 +23,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Fit preview through connected apps | Merged in #35. No migration | Deployed before connected apps are switched on anywhere; then MCP in staging and a real client |
 | Hardening fixes | Merged in #35 | Denial and intention checks read any apostrophe; "upto" is a bound; cleaning keeps a star or backtick set off by spaces; an expired connected-app grant is cleared on time; direction overrides are stripped from postings. The shadow stamps these change are raised to /3 |
 | Tagging facts and roles with taxonomy concepts | Merged in #35 | Off by default, refused in production configuration, and inert without a wholly loaded taxonomy. No vault migration. The eval against the real judge has not been run and nothing has been measured; vector candidates, parts, postings, screens and any use of tags are not built |
+| Vector index and vector candidates | `pipeline/06-vector-index`, open | No vault migration; one Directory migration (operator spend), after which production cannot be rolled back past this release. Not built on staging, not run against real models, precision unmeasured. |
 
 The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments, suggested wording (two columns on the comments' table).
 
@@ -36,7 +37,7 @@ Nothing. All five Now features are merged: preferences, sensitive facts and comm
 
 The [pipeline design](taxonomy-pipelines-design.md) is agreed. The rebuilt taxonomy ([manifest](taxonomy-build-2026-11-11.json)) is loaded on staging, and the vault can hold parts, tags and links ([record.md](record.md)); nothing uses either except the shadow stages below, switched on nowhere.
 
-1. Load the versioned taxonomy into staging (done on 11 November) and build its vector index (not started).
+1. Load the versioned taxonomy into staging (done on 11 November) and build its vector index (the build and vector candidates are written, in shadow; no index exists on staging).
 2. Add evidence, parts, tags and links without changing existing records. Merged in #34.
 3. Evaluate splitting, tagging and duplicate matching in shadow, using consented labelled examples. Splitting ([splitting.md](splitting.md)) and matching ([merging.md](merging.md)) are merged in #34; none has been run against the real models. Tagging of facts and roles is merged in #35 ([tagging.md](tagging.md)); it is switched on nowhere, including staging, where the taxonomy it reads is bound, and has not been run against the real judge.
 4. Add owner review of parts, tags and merge proposals.
