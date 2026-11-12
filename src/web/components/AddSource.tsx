@@ -44,7 +44,7 @@ export function AddSource({
     onState((s) => ({ ...s, notices: { ...s.notices, [from]: sentence } }));
   return (
     <div className="app-add-source">
-      <div className="rs-filter app-view-toggle" role="group" aria-label="Add a source">
+      <div className="rs-filter app-view-toggle" role="group" aria-label="Add a file">
         <button type="button" className="rs-filter__opt" aria-pressed={mode === "file"} onClick={() => onState((s) => ({ ...s, mode: "file" }))}>
           Upload a file
         </button>

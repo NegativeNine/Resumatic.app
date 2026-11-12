@@ -1,19 +1,19 @@
 import { useId, useState } from "react";
 import { FACT_KINDS, MAX_FACT_CHARS, type FactKind, type ResumeReport } from "../../shared/api";
 import { api } from "../api";
-import { count, FACT_KIND_LABEL, LINE_STATUS_HINT, LINE_STATUS_LABEL } from "../format";
+import { FACT_KIND_LABEL, LINE_STATUS_HINT, LINE_STATUS_LABEL } from "../format";
 import { useAction } from "../hooks";
 import { href } from "../router";
 import { useTailor } from "../tailor";
-import { ActionError, Badge, CharCount, Success } from "./ui";
+import { ActionError, Badge, CharCount, LINE_MARK, Success } from "./ui";
 
 /** How each line was checked (CheckReport): a strip of counts above the sheet, and what the marks mean. */
 export function ReportCard({ report }: { report: ResumeReport }) {
   const stats = [
-    ["kept", LINE_STATUS_LABEL.kept, report.kept],
-    ["repaired", LINE_STATUS_LABEL.repaired, report.repaired],
-    ["replaced", LINE_STATUS_LABEL.replaced, report.replaced],
-    ["dropped", "Dropped", report.dropped],
+    ["kept", LINE_STATUS_LABEL.kept, report.kept, LINE_MARK.kept],
+    ["repaired", LINE_STATUS_LABEL.repaired, report.repaired, LINE_MARK.repaired],
+    ["replaced", LINE_STATUS_LABEL.replaced, report.replaced, LINE_MARK.replaced],
+    ["dropped", "Left out", report.dropped, "note"],
   ] as const;
 
   return (
@@ -24,13 +24,13 @@ export function ReportCard({ report }: { report: ResumeReport }) {
         </h2>
         {report.gaps.length > 0 && (
           <a className="rs-link" href="#gaps-heading">
-            {count(report.gaps.length, "possible gap")} noted when this draft was made
+            {report.gaps.length.toLocaleString()} that may be missing, found when this draft was made
           </a>
         )}
       </div>
       <dl className="rs-report__stats rs-report__stats--wide">
-        {stats.map(([tone, label, value]) => (
-          <div key={tone} className={`rs-report__stat rs-report__stat--${tone}`}>
+        {stats.map(([status, label, value, tone]) => (
+          <div key={status} className={`rs-report__stat rs-report__stat--${tone}`}>
             <dt>{label}</dt>
             <dd>{value}</dd>
           </div>
@@ -40,19 +40,19 @@ export function ReportCard({ report }: { report: ResumeReport }) {
         <summary>What the marks mean</summary>
         <ul className="rs-legend">
           <li>
-            <Badge tone="kept">Kept</Badge> <span>passed every check as written.</span>
+            <Badge tone={LINE_MARK.kept}>{LINE_STATUS_LABEL.kept}</Badge> <span>is backed by your record as written.</span>
           </li>
           <li>
-            <Badge tone="repaired">Repaired</Badge> <span>was fixed once so that it matches its facts.</span>
+            <Badge tone={LINE_MARK.repaired}>{LINE_STATUS_LABEL.repaired}</Badge> <span>was rewritten once to match its facts.</span>
           </li>
           <li>
-            <Badge tone="replaced">{LINE_STATUS_LABEL.replaced}</Badge> <span>{LINE_STATUS_HINT.replaced}.</span>
+            <Badge tone={LINE_MARK.replaced}>{LINE_STATUS_LABEL.replaced}</Badge> <span>{LINE_STATUS_HINT.replaced}.</span>
           </li>
           <li>
-            <Badge tone="dropped">Dropped</Badge> <span>was left out, because no fact could back it.</span>
+            <Badge tone="note">Left out</Badge> <span>was left out, because nothing in your record backs it.</span>
           </li>
           <li>
-            <Badge tone="edited">Edited</Badge> <span>was changed by you.</span>
+            <Badge tone={LINE_MARK.edited}>{LINE_STATUS_LABEL.edited}</Badge> <span>was changed by you.</span>
           </li>
         </ul>
       </details>
@@ -60,18 +60,18 @@ export function ReportCard({ report }: { report: ResumeReport }) {
   );
 }
 
-/** The job's requirements no confirmed fact covered when this draft was made (GapList). */
+/** What may be missing: the job's requirements no confirmed fact covered when this draft was made (GapList). */
 export function GapsCard({ gaps, applicationId, readOnly = false }: { gaps: string[]; applicationId?: string; readOnly?: boolean }) {
   const [answering, setAnswering] = useState<number | null>(null);
   return (
     <section className="rs-panel" aria-labelledby="gaps-heading">
       <h2 id="gaps-heading" className="rs-h3" tabIndex={-1}>
-        Possible gaps identified when this draft was created
+        What may be missing, as found when this draft was made
       </h2>
       {gaps.length === 0 ? (
         <p className="rs-meta app-gaps-note">
-          The initial matching found no potential gaps. Check the resume against the job description; matching does
-          not guarantee every requirement appears in the resume.
+          The initial matching found nothing that may be missing. Check the resume against the job description;
+          matching doesn’t guarantee every requirement appears in the resume.
         </p>
       ) : (
         <>
@@ -99,9 +99,9 @@ export function GapsCard({ gaps, applicationId, readOnly = false }: { gaps: stri
             ))}
           </ul>
           <p className="rs-meta app-gaps-note">
-            These are possible gaps in the confirmed facts used when this draft was made, not a coverage check on the
-            current resume. Resumatic never fills a gap by itself. If you have this experience, add it as a fact, then
-            tailor a new version. You can also <a href={href.facts}>add it under Facts</a>.
+            These may be missing from the confirmed facts used when this draft was made; this is not a coverage check on
+            the current resume. Resumatic never fills in what’s missing by itself. If you have this experience, add it as
+            a fact, then tailor a new version. You can also <a href={href.facts}>add it under Facts</a>.
           </p>
         </>
       )}
@@ -118,7 +118,7 @@ export function isWrittenAnswer(text: string): boolean {
   return !BARE_ANSWER.test(trimmed) && trimmed.split(/\s+/).filter(Boolean).length >= 3;
 }
 
-/** Closing a gap: the person's own words, saved as their own claim (Close a gap). */
+/** Adding what's missing: the person's own words, saved as a fact marked Added by you (Close a gap). */
 function GapAnswer({ requirement, applicationId, onClose }: { requirement: string; applicationId: string; onClose: () => void }) {
   const id = useId();
   const [text, setText] = useState("");
@@ -140,7 +140,7 @@ function GapAnswer({ requirement, applicationId, onClose }: { requirement: strin
     return (
       <div className="rs-well app-gap-answer">
         <Success>Fact added.</Success>
-        <p className="rs-meta">It’s your own claim, and the next version can use it.</p>
+        <p className="rs-meta">It’s marked Added by you, and the next version can use it.</p>
         <div className="rs-actions">
           <button type="button" className="rs-btn rs-btn--primary rs-btn--sm" disabled={tailor.pending} onClick={() => void tailor.tailor(applicationId)}>
             {tailor.pending ? "Starting…" : "Tailor a new version"}

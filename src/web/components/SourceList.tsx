@@ -7,7 +7,7 @@ import { sourceReviewSummaries, type Vault } from "../vault";
 import { useSession } from "../session";
 import { rasterizeResume } from "../scan";
 import { ApiError } from "../api";
-import { ActionError, Badge, Glyph } from "./ui";
+import { ActionError, Badge, Glyph, RUN_MARK } from "./ui";
 import { sourceErrorMessage } from "../source-error";
 
 export function SourceList({
@@ -30,7 +30,7 @@ export function SourceList({
   return (
     <>
       {sources.length === 0 ? (
-        <p className="rs-empty">No sources yet. Upload your current resume to get started.</p>
+        <p className="rs-empty">No files yet. Upload your current resume to get started.</p>
       ) : (
         <ul className="rs-sources rs-panel app-source-panel">
           {sources.map((source) => (
@@ -83,7 +83,7 @@ function SourceRow({
       <p className="rs-source__meta app-meta-row">
         <span>Uploaded {formatDate(source.createdAt)}</span>
         <a href={api.sourceFileUrl(source.id)}>
-          {source.origin === "ocr" ? "Download image inputs (JSON)" : "Download source"}
+          {source.origin === "ocr" ? "Download image inputs (JSON)" : "Download original"}
         </a>
         {source.origin === "ocr" && source.parentSourceId && (
           <a href={api.sourceFileUrl(source.parentSourceId)}>Download original PDF</a>
@@ -91,7 +91,7 @@ function SourceRow({
       </p>
       {source.origin === "ocr" && (
         <p className="rs-source__meta">
-          <Badge tone="queued">Image transcription</Badge> Check proposed facts against the original PDF.
+          <Badge tone="note">Image transcription</Badge> Check its facts against the original PDF.
           {source.conversionImageCount != null &&
             ` ${source.conversionImageCount} image${source.conversionImageCount === 1 ? "" : "s"} submitted.`}
         </p>
@@ -122,14 +122,14 @@ function SourceRow({
       {source.state === "ready" &&
         Boolean(source.conversionWarnings?.length) && (
           <p className="source-error" role="status">
-            Some text may be missing or out of order. Check the source
+            Some text may be missing or out of order. Check the file
             carefully; a Word document or text export may read better.
           </p>
         )}
       {source.state === "ready" && visibleItems === 0 && (
         <p className="source-error" role="status">
-          No roles or facts from this source are shown. Upload the file again,
-          try a different format, or add your experience manually below.
+          No roles or facts from this file are shown. Upload the file again,
+          try a different format, or add your experience yourself below.
         </p>
       )}
       {proposedIds.length > 0 && (
@@ -201,7 +201,7 @@ function ScanRecovery({
         throw new ApiError(
           response.status,
           "unavailable",
-          "The source file couldn’t be opened. Try again.",
+          "The file couldn’t be opened. Try again.",
         );
       setProgress("Preparing all pages as images…");
       const images = await rasterizeResume(await response.blob());
@@ -217,9 +217,9 @@ function ScanRecovery({
       <summary>Missing text or mixed-up columns?</summary>
       <p className="hint">
         A Word document or a PDF with selectable text usually reads best. You
-        can also read the complete PDF as images, up to four pages. This creates
-        another source. Check its proposed facts against your original PDF
-        because image transcription can misread words and numbers.
+        can also read the complete PDF as images, up to four pages. This adds
+        another file. Check its facts against your original PDF, because image
+        transcription can misread words and numbers.
       </p>
       <button
         type="button"
@@ -240,7 +240,7 @@ function ScanRecovery({
       )}
       {added && (
         <p className="success" role="status">
-          The new image transcription will appear in your sources for review.
+          The new image transcription will appear in your files for you to check.
         </p>
       )}
       <ActionError message={error} />
@@ -254,18 +254,18 @@ function SourceStatus({ source, proposedRoles, proposedFacts, visibleItems }: {
   switch (source.state) {
     case "queued":
       if (source.cancellationPending)
-        return <Badge tone="queued">Cancellation pending</Badge>;
+        return <Badge tone="working">Cancellation pending</Badge>;
       if (source.dispatchUncertain)
-        return <Badge tone="queued">Start unconfirmed</Badge>;
+        return <Badge tone="working">Start unconfirmed</Badge>;
       return (
-        <Badge tone="queued">
+        <Badge tone={RUN_MARK.queued}>
           <span className="spinner" aria-hidden="true" />
           Reading…
         </Badge>
       );
     case "failed":
       return (
-        <Badge tone="failed">
+        <Badge tone={RUN_MARK.failed}>
           <Glyph name="alert" />
           Reading stopped
         </Badge>
@@ -277,11 +277,11 @@ function SourceStatus({ source, proposedRoles, proposedFacts, visibleItems }: {
       ].filter(Boolean).join(" and ");
       return (
         <>
-          <Badge tone="ready">
+          <Badge tone={RUN_MARK.ready}>
             <Glyph name="check" />
             Ready
           </Badge>
-          <span>{pending ? `${pending} to review` : visibleItems ? "Review complete" : "No items shown"}</span>
+          <span>{pending ? `${pending} to check` : visibleItems ? "All checked" : "No items shown"}</span>
         </>
       );
     }
@@ -304,8 +304,8 @@ function ConfirmAll({
   const trigger = useRef<HTMLButtonElement>(null);
   const items = count(
     ids.length,
-    "proposed role and fact",
-    "proposed roles and facts",
+    "role and fact",
+    "roles and facts",
   );
 
   function cancel() {
@@ -337,12 +337,12 @@ function ConfirmAll({
         aria-expanded={asking}
         onClick={() => setAsking(!asking)}
       >
-        Confirm all from this source
+        Confirm all from this file
       </button>
       {asking && (
         <div className="confirm-panel">
           <p>
-            Confirm all {items} from {filename}? Only do this if you have
+            Confirm all {items} from {filename}? Only do this if you’ve
             checked that every one is true.
           </p>
           <div className="actions">

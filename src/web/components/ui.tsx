@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import type { LineStatus, ResumeState, ReviewState, SourceState } from "../../shared/api";
 
 // The design system's primitives, drawn with its rs- classes (styles/components.css).
 
@@ -12,7 +13,6 @@ export type GlyphName =
   | "strike"
   | "alert"
   | "info"
-  | "follows"
   | "upload"
   | "download"
   | "file"
@@ -117,29 +117,51 @@ export function EmptyState({ title, children }: { title?: string; children: Reac
   );
 }
 
-/** Tone names that the design system calls something else. A sensitive fact is set aside, as a dropped line is. */
-const MARK_TONE: Readonly<Record<string, string>> = { queued: "reading", sensitive: "dropped" };
+/**
+ * The design system's plain status tones. Green (`backed`) means it is backed or done; amber
+ * (`needs-you`) means it waits for the person; `note` is a plain note about what happened; `working`
+ * is work in progress; `problem` is a failure. `beta` and `status` are neutral outlines: the beta
+ * label, and a job's own tracking status, which is the person's record, not a check result.
+ * Every mark keeps its word: the colour only backs it up.
+ */
+export type MarkTone = "backed" | "needs-you" | "note" | "working" | "problem" | "beta" | "status";
 
-/** A status mark (StatusMark): the state of a fact, role, source, resume or line, in words. */
-export function Badge({ tone, title, children }: { tone: string; title?: string; children: ReactNode }) {
+/** A status mark (StatusMark): the state of a fact, role, file, resume or line, in words. */
+export function Badge({ tone, title, children }: { tone: MarkTone; title?: string; children: ReactNode }) {
   return (
-    <span className={`rs-mark rs-mark--${MARK_TONE[tone] ?? tone}`} title={title}>
+    <span className={`rs-mark rs-mark--${tone}`} title={title}>
       {children}
     </span>
   );
 }
 
-export type TickState = "proposed" | "confirmed" | "rejected" | "mine" | "running" | "failed" | "todo" | "done";
+/** The tick column's states: a green check once it is backed, an amber dot while it waits for you. */
+export type TickState = "backed" | "needs-you" | "left-out" | "working" | "problem" | "todo";
 
 const TICK_GLYPH: Partial<Record<TickState, GlyphName>> = {
-  confirmed: "check",
-  done: "check",
-  rejected: "strike",
-  mine: "pen",
-  failed: "cross",
+  backed: "check",
+  "left-out": "cross",
+  problem: "alert",
 };
 
-/** The tick column: a dashed pencil tick until someone confirms, ink once they do. */
+/** The tone for a fact's or role's review state: To check waits for you, Confirmed is backed, Left out is a note. */
+export const REVIEW_MARK: Readonly<Record<ReviewState, MarkTone>> = { proposed: "needs-you", confirmed: "backed", rejected: "note" };
+
+/** The tick for a fact's or role's review state. */
+export const REVIEW_TICK: Readonly<Record<ReviewState, TickState>> = { proposed: "needs-you", confirmed: "backed", rejected: "left-out" };
+
+/** The tone for what the check did to a resume line: only a line backed as written is green. */
+export const LINE_MARK: Readonly<Record<LineStatus, MarkTone>> = {
+  kept: "backed",
+  repaired: "note",
+  replaced: "note",
+  edited: "note",
+};
+
+/** The tone for a run's state: a file being read, a resume, a cover letter or interview preparation. */
+export const RUN_MARK: Readonly<Record<ResumeState | SourceState, MarkTone>> = { queued: "working", running: "working", ready: "backed", failed: "problem" };
+
+/** The tick column: an amber dot while it waits for you, a green check once it is backed. */
 export function Tick({ state, label }: { state: TickState; label?: string }) {
   const glyph = TICK_GLYPH[state];
   return (
@@ -150,8 +172,8 @@ export function Tick({ state, label }: { state: TickState; label?: string }) {
 }
 
 /**
- * A verbatim quote from a source, the evidence behind a fact. The quoted words are highlighted,
- * because yellow means the person said it, and ⊢ in the gutter reads "follows from".
+ * A verbatim quote from a file: the words a fact came from. It is upright, in the interface face,
+ * with the quote icon beside it, and the quoted words sit on backed-soft, because green means backed.
  */
 export function Quote({
   text,
@@ -162,13 +184,13 @@ export function Quote({
   text: string;
   caption?: string;
   size?: "sm";
-  /** A few words around the quote in its source, shown muted on either side. */
+  /** A few words around the quote in its file, shown muted on either side. */
   context?: { before: string; after: string } | null;
 }) {
   const classes = ["rs-quote", size === "sm" ? "rs-quote--sm" : "", context ? "rs-quote--context" : ""].filter(Boolean);
   return (
     <figure className={classes.join(" ")}>
-      <Glyph name="follows" />
+      <Glyph name="quote" />
       <blockquote>
         {context?.before && <span className="rs-quote__context">{context.before}</span>}
         <mark className="rs-hl">{text.trim()}</mark>

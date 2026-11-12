@@ -115,14 +115,14 @@ export function ResumeSheet({
               type="button"
               onClick={() => setOpen(allOpen ? new Set() : new Set(lineIds))}
             >
-              {allOpen ? "Hide all evidence" : "Show all evidence"}
+              {allOpen ? "Hide where each line came from" : "Show where each line came from"}
             </button>
           )}
           <TailorAgain applicationId={resume.applicationId} />
         </div>
         {needsEvidence && (
           <p className="notice" role="status">
-            This version contains wording or headings without verified evidence, so its PDF,
+            This version contains wording or headings that haven’t been checked against your record, so its PDF,
             Word download and print preview are unavailable. Your text is still here.{" "}
             {!readOnly && resume.provenance === "snapshot"
               ? "Start a line-by-line review below, or confirm your facts and tailor a new version."
@@ -157,7 +157,7 @@ export function ResumeSheet({
         {!readOnly && review && (
           <section className="card" aria-label="Review older resume">
             <h2>Review this older resume</h2>
-            <p>{verifiedCount} of {review.totalLines} lines checked. Choose “Review line” for each line and select its supporting facts. Each completed line check uses one output.</p>
+            <p>{verifiedCount} of {review.totalLines} lines checked. Choose “Review line” for each line and select its supporting facts. Each completed line check counts toward your documents for this period.</p>
             {(!review.headersReady || !review.skillsReady) && (
               <p className="notice">
                 {!review.headersReady && !review.skillsReady
@@ -253,7 +253,7 @@ export function ResumeSheet({
                         <li key={index}>
                           <span>
                             {skill}
-                            {sensitive?.skills.includes(skill) && <> <Badge tone="sensitive">Sensitive fact</Badge></>}
+                            {sensitive?.skills.includes(skill) && <> <Badge tone="note">Sensitive fact</Badge></>}
                           </span>
                           <button
                             type="button"

@@ -4,7 +4,7 @@ import { presentResumeBullet } from "../../shared/resume-presentation";
 import { formatRoleDates } from "../../shared/sheet";
 import type { SharedDocument, SharedJob, SharedLine, SharedResume, SharedView, ShareTarget } from "../../shared/sharing";
 import { Lockup } from "./Lockup";
-import { Badge, Glyph } from "./ui";
+import { Badge, Glyph, type MarkTone } from "./ui";
 
 /**
  * The frame around a shared copy: the lockup, then the page. The reader has no account here.
@@ -64,11 +64,12 @@ function Pick({ target, commenting, sheet, children }: { target: ShareTarget; co
   );
 }
 
-const RESUME_CHECK: Readonly<Record<SharedResume["verification"], { tone: string; text: string }>> = {
-  verified: { tone: "ready", text: "Every line checked against confirmed facts" },
-  "user-authored": { tone: "mine", text: "Written by the owner" },
-  mixed: { tone: "proposed", text: "Some lines haven\u2019t been checked" },
-  unverified: { tone: "proposed", text: "Lines haven\u2019t been checked" },
+// The coach reading the copy can't act on a line that hasn't been checked, so it is a plain note, not amber.
+const RESUME_CHECK: Readonly<Record<SharedResume["verification"], { tone: MarkTone; text: string }>> = {
+  verified: { tone: "backed", text: "Every line checked against confirmed facts" },
+  "user-authored": { tone: "note", text: "Written by the owner" },
+  mixed: { tone: "note", text: "Some lines haven\u2019t been checked" },
+  unverified: { tone: "note", text: "Lines haven\u2019t been checked" },
 };
 
 /** Kept separate so the same read-only snapshot can be tested without a browser session. */
@@ -167,7 +168,7 @@ function SharedDocumentSheet({ document, number }: { document: SharedDocument & 
           <h2>{name}</h2>
           {job && <p className="rs-meta app-share__job">For {job}</p>}
         </div>
-        <Badge tone="ready">
+        <Badge tone="backed">
           <Glyph name="check" />
           Every sentence checked against confirmed facts
         </Badge>

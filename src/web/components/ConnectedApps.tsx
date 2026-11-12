@@ -81,11 +81,11 @@ export function ConnectedApps() {
                   <strong>
                     {grant.clientName}{" "}
                     {inactive ? (
-                      <Badge tone="rejected">Access ended</Badge>
+                      <Badge tone="note">Access ended</Badge>
                     ) : pending ? (
-                      <Badge tone="proposed">Waiting to connect</Badge>
+                      <Badge tone="needs-you">Waiting to connect</Badge>
                     ) : (
-                      <Badge tone="ready">
+                      <Badge tone="backed">
                         <Glyph name="check" />
                         Connected
                       </Badge>

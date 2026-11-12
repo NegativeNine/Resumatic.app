@@ -284,9 +284,9 @@ function KitQuestions({ view, action, write, saved }: PartProps & { saved: Saved
                         setEditing(item.key);
                         setEditText(item.text);
                       }}
-                      aria-label={`Edit question ${index + 1}`}
+                      aria-label={`Change question ${index + 1}`}
                     >
-                      Edit
+                      Change
                     </button>
                   )}
                   <button type="button" className="small" disabled={action.pending} onClick={() => setDraft(draft.filter((question) => question.key !== item.key))} aria-label={`Remove question ${index + 1}`}>
@@ -344,7 +344,7 @@ function QuestionAnswer({ question, view, action, write, saved }: PartProps & { 
     const match = question.savedAnswer;
     return (
       <div className="app-kit__answer">
-        <Badge tone="confirmed">Saved answer</Badge>
+        <Badge tone="backed">Saved answer</Badge>
         {match && (
           <>
             <p>Matched to your saved answer “{match.label}”.</p>
@@ -390,7 +390,7 @@ function QuestionAnswer({ question, view, action, write, saved }: PartProps & { 
     >
       {sensitive ? (
         <>
-          <Badge tone="sensitive">Asked every time</Badge>
+          <Badge tone="note">Asked every time</Badge>
           <p>
             This question asks about {SENSITIVE_KIND_WORDS[question.sensitiveKind ?? "judge"]}. Answers to questions like this are never
             saved or matched. Type your answer for this application only.
@@ -398,7 +398,7 @@ function QuestionAnswer({ question, view, action, write, saved }: PartProps & { 
         </>
       ) : (
         <>
-          <Badge tone="proposed">Needs your answer</Badge>
+          <Badge tone="needs-you">Needs your answer</Badge>
           <p>None of your saved answers fits this question. Type your answer, or choose a saved answer.</p>
         </>
       )}

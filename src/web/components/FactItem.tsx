@@ -17,7 +17,7 @@ import { ReviewButtons, useReview } from "./ReviewButtons";
 import { useQueueItem } from "./ReviewQueue";
 import { SENSITIVE_HINT, SensitiveButton, SensitiveWell, useSensitive } from "./SensitiveControl";
 import { SourceEvidence } from "./SourceEvidence";
-import { ActionError, Badge, CharCount, Quote, Tick, type TickState } from "./ui";
+import { ActionError, Badge, CharCount, Quote, REVIEW_TICK, Tick, type TickState } from "./ui";
 
 interface Props {
   facts: FactView[];
@@ -81,22 +81,17 @@ function FactItem({
   }
 
   const busy = review.deciding !== null || reviewLocked || sensitive.pending !== null;
-  // A rejected fact is used for nothing already, so it shows its mark and offers no control.
+  // A fact left out is used for nothing already, so it shows its mark and offers no control.
   const canMark = fact.state !== "rejected";
   const active = useQueueItem(fact.id, {
     confirm: fact.state !== "confirmed" && !roleRejected && !busy ? () => void review.decide("confirm") : undefined,
     edit: fact.state !== "rejected" && !editing && !busy ? startEditing : undefined,
     reject: fact.state !== "rejected" && !busy ? () => void review.decide("reject") : undefined,
   });
-  // Pencil until someone confirms, ink once they do; a fact they wrote carries the pen.
+  // An amber dot while it waits for the person, a green check once it is confirmed. A fact they
+  // wrote says so in its Added by you mark.
   const tick: TickState =
-    review.deciding === "confirm"
-      ? "confirmed"
-      : review.deciding === "reject"
-        ? "rejected"
-        : fact.state === "confirmed" && fact.origin === "user"
-          ? "mine"
-          : fact.state;
+    review.deciding === "confirm" ? "backed" : review.deciding === "reject" ? "left-out" : REVIEW_TICK[fact.state];
   const classes = ["rs-fact", fact.state === "rejected" ? "rs-fact--rejected" : "", active ? "is-active" : ""];
 
   return (
@@ -118,11 +113,11 @@ function FactItem({
       <p className="rs-fact__meta">
         <span>{FACT_KIND_LABEL[fact.kind]}</span>
         {fact.level && <span>Level: {LEVEL_LABEL[fact.level]}</span>}
-        {fact.origin === "user" && <Badge tone="mine">Your own claim</Badge>}
-        {fact.sensitive && <Badge tone="sensitive">Sensitive</Badge>}
-        {fact.evidenceOrigin === "ocr" && <Badge tone="queued">Read from an image</Badge>}
+        {fact.origin === "user" && <Badge tone="note">Added by you</Badge>}
+        {fact.sensitive && <Badge tone="note">Sensitive</Badge>}
+        {fact.evidenceOrigin === "ocr" && <Badge tone="note">Read from an image</Badge>}
         {fact.reviewReasons?.length || (fact.confidence != null && fact.confidence < 0.8) ? (
-          <Badge tone="proposed">Check closely</Badge>
+          <Badge tone="needs-you">Check closely</Badge>
         ) : null}
       </p>
       {fact.evidenceOrigin === "ocr" && (
@@ -136,7 +131,7 @@ function FactItem({
         <p className="hint">The earlier ownership level{fact.previousLevel ? ` (${LEVEL_LABEL[fact.previousLevel]})` : ""} needs your confirmation before it is used.</p>
       )}
       {roleRejected && (
-        <p className="hint">This fact can’t be used while its role is rejected. Confirm the role to use it.</p>
+        <p className="hint">This fact can’t be used while its role is left out. Say “That’s right” to the role to use it.</p>
       )}
       {role?.state === "proposed" && fact.state === "confirmed" && (
         <p className="hint">This fact can’t be used until its role is confirmed.</p>
@@ -148,7 +143,7 @@ function FactItem({
         </p>
       )}
       <FactEvidence fact={fact} filenames={filenames} />
-      {duplicates.length > 0 && <p className="meta">This fact also appears in {duplicates.length} other {duplicates.length === 1 ? "record" : "records"}. Review applies to all shown copies; editing changes this copy only.</p>}
+      {duplicates.length > 0 && <p className="meta">This fact also appears in {duplicates.length} other {duplicates.length === 1 ? "record" : "records"}. Your answer applies to every copy shown; Fix it changes this copy only.</p>}
       {duplicates.map((copy) => <FactEvidence key={copy.id} fact={copy} filenames={filenames} />)}
       {!editing && (
         <ReviewButtons
@@ -199,14 +194,14 @@ function FactEvidence({
   if (!fact.quote) {
     return fact.origin === "user" ? (
       <p className="meta">
-        You added this yourself, so it has no source quote.
+        You wrote this yourself, so no file backs it.
       </p>
     ) : null;
   }
   const from = sourceLabel(filenames, fact.sourceId);
   const caption =
     fact.origin === "user"
-      ? `The original quote from ${from}, before your edit`
+      ? `The original words from ${from}, before your change`
       : `From ${from}`;
   return (
     <>
@@ -331,7 +326,7 @@ function FactEditor(props: {
         </label>
       )}
       <p className="hint" id={`${id}-note`}>
-        An edited or moved fact becomes your own claim: resumes use your wording
+        An edited or moved fact is marked Added by you: resumes use your wording
         and role, and the original quote stays beside it for reference. Changing
         the wording clears its prior level unless you choose a level again. Only write what’s true.
       </p>

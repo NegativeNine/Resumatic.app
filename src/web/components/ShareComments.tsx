@@ -77,7 +77,7 @@ export function ThreadCard({
                 {comment.seen === false && (
                   <>
                     {" "}
-                    <Badge tone="new">New</Badge>
+                    <Badge tone="needs-you">New</Badge>
                   </>
                 )}
               </p>

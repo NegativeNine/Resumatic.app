@@ -6,7 +6,7 @@ import { ReportCard } from "../../src/web/components/ResumeReport";
 import { SessionContext } from "../../src/web/session";
 
 describe("resume line presentation", () => {
-  it("explains when a verified fact was used as a fallback", () => {
+  it("explains when your fact’s own words were used as a fallback", () => {
     const line = { id: "line", text: "• Built a service\n  for customers", factIds: ["fact"], status: "replaced" as const };
     const lineItem = createElement(LineItem, {
       resumeId: "resume", applicationId: "job", roleId: "role", line,
@@ -23,8 +23,8 @@ describe("resume line presentation", () => {
         updateMe: () => {}, refreshMe: async () => {}, endSession: () => {},
       },
     }, lineItem));
-    expect(html).toContain("Used your fact");
-    expect(html).toContain("be verified, so this line uses the wording of a confirmed fact");
+    expect(html).toContain("Your wording");
+    expect(html).toContain("couldn’t be backed, so this line uses your fact’s own words");
     expect(html).toContain(">Built a service for customers</p>");
     expect(html).toContain("• Built a service\n  for customers"); // The source quote is unchanged.
     expect(line.text).toBe("• Built a service\n  for customers");
@@ -34,8 +34,8 @@ describe("resume line presentation", () => {
     const html = renderToStaticMarkup(createElement(ReportCard, {
       report: { kept: 0, repaired: 0, replaced: 1, dropped: 0, gaps: [] },
     }));
-    expect(html).toContain("Used your fact");
-    expect(html).toContain("be verified, so this line uses the wording of a confirmed fact");
+    expect(html).toContain("Your wording");
+    expect(html).toContain("couldn’t be backed, so this line uses your fact’s own words");
     expect(html).not.toContain(">Replaced<");
   });
 });

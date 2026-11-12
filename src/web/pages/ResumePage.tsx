@@ -136,7 +136,7 @@ function ReadyResume({
         </select>
         {resume.provenance === "legacy" && (
           <span className="meta">
-            Created before saved evidence snapshots were available.
+            Created before Resumatic saved where each line came from.
           </span>
         )}
       </div>
@@ -166,8 +166,8 @@ function ReadyResume({
       ) : (
         <>
           <p className="notice">
-            This is a saved version. Its downloads use the wording and evidence
-            saved with it. Select Latest to edit or refine.
+            This is a saved version. Its downloads use its wording and the facts it
+            was checked against, as saved. Select Latest to edit or refine.
           </p>
           <ArchivedResume
             key={`${resume.id}:${version}`}

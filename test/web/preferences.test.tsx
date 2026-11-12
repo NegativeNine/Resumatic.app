@@ -83,7 +83,7 @@ describe("job preferences", () => {
     await within(card).findByRole("button", { name: "Save preferences" });
     expect(within(card).getByText("The work you’re looking for. Leave empty anything you’d rather not say.")).toBeInTheDocument();
     expect(card.querySelector(".rs-msg")!.textContent!.replace(/\s+/g, " ")).toBe(
-      "Nothing here is shown to anyone or used yet. It stays in your vault: it isn’t put in a resume or a shared copy, and connected apps can’t read it.",
+      "Nothing here is shown to anyone or used yet. It stays in your record: it isn’t put in a resume or a shared copy, and connected apps can’t read it.",
     );
     // The note is part of the card, not an announcement each time the page opens.
     expect(card.querySelector(".rs-msg")).not.toHaveAttribute("role");

@@ -73,9 +73,9 @@ export function count(n: number, singular: string, plural = `${singular}s`): str
 }
 
 export const STATE_LABEL: Record<ReviewState, string> = {
-  proposed: "Proposed",
+  proposed: "To check",
   confirmed: "Confirmed",
-  rejected: "Rejected",
+  rejected: "Left out",
 };
 
 export const ROLE_KIND_LABEL: Record<RoleKind, string> = {
@@ -93,9 +93,9 @@ export const SECTION_HEADING: Record<RoleKind, string> = {
 };
 
 export const FACT_KIND_LABEL: Record<FactKind, string> = {
-  accomplishment: "Accomplishment",
-  skill: "Skill",
-  credential: "Credential",
+  accomplishment: "Something you did",
+  skill: "A skill",
+  credential: "A credential",
 };
 
 export const LEVEL_LABEL: Record<Level, string> = {
@@ -113,16 +113,16 @@ export const RESUME_STATE_LABEL: Record<ResumeState, string> = {
 };
 
 export const LINE_STATUS_LABEL: Record<LineStatus, string> = {
-  kept: "Kept",
-  repaired: "Repaired",
-  replaced: "Used your fact",
-  edited: "Edited",
+  kept: "Backed",
+  repaired: "Corrected",
+  replaced: "Your wording",
+  edited: "Edited by you",
 };
 
 export const LINE_STATUS_HINT: Record<LineStatus, string> = {
-  kept: "Passed every check as written",
-  repaired: "Fixed once so that it matches its facts",
-  replaced: "The draft wording couldn’t be verified, so this line uses the wording of a confirmed fact",
+  kept: "Backed by your record as written",
+  repaired: "Rewritten once to match its facts",
+  replaced: "The draft’s wording couldn’t be backed, so this line uses your fact’s own words",
   edited: "Changed by you",
 };
 
@@ -151,24 +151,24 @@ export function findingSentence(finding: LineFinding, status: LineStatus): strin
   switch (finding.kind) {
     case "numbers":
       reason = values
-        ? `The draft said ${listOf(values)}. Your facts don’t include ${values.length === 1 ? "that number" : "those numbers"}.`
-        : "The draft used a number your facts don’t include.";
+        ? `The draft said ${listOf(values)}. Your record doesn’t include ${values.length === 1 ? "that number" : "those numbers"}.`
+        : "The draft used a number your record doesn’t include.";
       break;
     case "names":
       reason = values
-        ? `The draft named ${listOf(values)}. Your facts don’t mention ${values.length === 1 ? "it" : "them"}.`
-        : "The draft named something your facts don’t mention.";
+        ? `The draft named ${listOf(values)}. Your record doesn’t mention ${values.length === 1 ? "it" : "them"}.`
+        : "The draft named something your record doesn’t mention.";
       break;
     case "scope":
-      reason = `The draft said you ${LEVEL_CLAIM[finding.claimed] ?? "led it"}, which is more than your facts show.`;
+      reason = `The draft said you ${LEVEL_CLAIM[finding.claimed] ?? "led it"}, which is more than your record shows.`;
       break;
     case "citation":
-      reason = "The draft cited a fact it couldn’t use for this line.";
+      reason = "The draft leaned on a fact it couldn’t use for this line.";
       break;
     default:
-      reason = "The check found wording its facts don’t support.";
+      reason = "The check found wording your record doesn’t back.";
   }
-  if (status === "repaired") return `${reason} Resumatic rewrote it once to match its facts.`;
+  if (status === "repaired") return `${reason} Resumatic rewrote the line to match.`;
   if (status === "replaced") return `${reason} This line uses your fact’s own words instead.`;
   return reason;
 }

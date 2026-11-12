@@ -27,6 +27,7 @@ import {
   Loading,
   Message,
   PageHeader,
+  RUN_MARK,
   type GlyphName,
 } from "../components/ui";
 import { formatDate, formatDateTime, RESUME_STATE_LABEL } from "../format";
@@ -459,7 +460,7 @@ function ApplicationCard({
               <a href={href.resume(resume.id)}>Resume tailored {formatDateTime(resume.createdAt)}</a>
               <span className="app-resume-state">
                 {index === 0 && resumes.length > 1 && <span className="app-latest">Latest</span>}
-                <Badge tone={resume.state}>
+                <Badge tone={RUN_MARK[resume.state]}>
                   {STATE_GLYPH[resume.state] && <Glyph name={STATE_GLYPH[resume.state]!} />}
                   {resume.state === "running" && resume.cancellationPending
                     ? "Cancellation pending"

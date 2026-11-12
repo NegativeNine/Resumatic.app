@@ -241,7 +241,7 @@ function CoachNotice({
     case "joined":
       return (
         <Message tone="info">
-          <Badge tone="ready">Fixed copy</Badge> Shared with you until {formatDate(view.expiresAt)}.
+          <Badge tone="backed">Fixed copy</Badge> Shared with you until {formatDate(view.expiresAt)}.
           {commentable ? " You can comment." : ""} Only {view.snapshot.owner?.name ?? "its owner"} can change it.{" "}
           <a className="rs-link" href="/#/clients">
             Open your clients

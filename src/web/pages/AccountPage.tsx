@@ -42,26 +42,26 @@ export function AccountPage() {
             <p className="rs-setting__text">
               <strong>Everything</strong>
               <span>
-                Your vault data and source files together, as a ZIP archive. It holds up to 128 source files and
-                100 MiB of data.
+                Your record and your files together, as a ZIP archive. It holds up to 128 files and 100 MiB of
+                data.
               </span>
             </p>
             <a className="rs-btn" href={api.exportArchiveUrl} download>
               <Glyph name="download" />
-              Download vault archive (ZIP)
+              Download your record and files (ZIP)
             </a>
           </div>
           <div className="rs-setting">
             <p className="rs-setting__text">
-              <strong>Vault data only</strong>
+              <strong>Your record only</strong>
               <span>
-                One JSON file. For a larger vault, download this and the individual files from{" "}
+                One JSON file. For a larger record, download this and the individual files from{" "}
                 <a href={href.facts}>Facts</a> while your account is active.
               </span>
             </p>
             <a className="rs-btn" href={api.exportUrl} download>
               <Glyph name="download" />
-              Download vault data (JSON)
+              Download your record (JSON)
             </a>
           </div>
         </section>
@@ -338,9 +338,9 @@ function DeleteAccount() {
     <section className="card danger-card" aria-labelledby="delete-heading">
       <h2 id="delete-heading">Delete account</h2>
       <p className="card-text">
-        This permanently deletes your account and everything in your vault:
-        uploaded files, roles, facts, applications and resumes. It can’t be
-        undone. Before deleting, download your vault data and any original files
+        This permanently deletes your account and everything in your record:
+        uploaded files, roles, facts, jobs and resumes. It can’t be undone.
+        Before deleting, download your record and any original files
         you want to keep from <a href={href.facts}>Facts</a>.
       </p>
       <form

@@ -102,6 +102,26 @@ describe("Account", () => {
     await userEvent.type(screen.getByLabelText(/to confirm/), "delete my account");
     expect(remove).toBeEnabled();
   });
+
+  it("offers your record and your files for download, in the plain words", async () => {
+    const state = fixtures();
+    installFakeApi(state);
+    renderWithSession(<AccountPage />, state.me);
+    const data = (await screen.findByRole("heading", { name: "Your data" })).closest("section")!;
+    const rows = [...data.querySelectorAll(".rs-setting")];
+    expect(rows.map((row) => row.querySelector("strong")!.textContent)).toEqual(["Everything", "Your record only"]);
+    expect(rows[0]).toHaveTextContent(
+      "Your record and your files together, as a ZIP archive. It holds up to 128 files and 100 MiB of data.",
+    );
+    expect(within(rows[0] as HTMLElement).getByRole("link", { name: "Download your record and files (ZIP)" })).toHaveAttribute("download");
+    expect(rows[1]).toHaveTextContent(
+      "One JSON file. For a larger record, download this and the individual files from Facts while your account is active.",
+    );
+    expect(within(rows[1] as HTMLElement).getByRole("link", { name: "Download your record (JSON)" })).toHaveAttribute("download");
+    expect(screen.getByRole("region", { name: "Delete account" })).toHaveTextContent(
+      "This permanently deletes your account and everything in your record: uploaded files, roles, facts, jobs and resumes. It can’t be undone. Before deleting, download your record and any original files you want to keep from Facts.",
+    );
+  });
 });
 
 describe("account tools", () => {
@@ -320,7 +340,7 @@ describe("account tools", () => {
     installFakeApi(state);
     renderWithSession(<AccountPage />, state.me);
     const plans = await screen.findByRole("combobox", { name: "Choose a plan" });
-    expect(within(plans).getByRole("option", { name: "Plus, 60 outputs each billing period" })).toBeInTheDocument();
+    expect(within(plans).getByRole("option", { name: "Plus, 60 documents each billing period" })).toBeInTheDocument();
     const app = (await screen.findByText("Claude")).closest("li")!;
     expect(within(app).getByText("Connected")).toBeInTheDocument();
     expect(within(app).getByText(/Can read your facts and create documents\./)).toBeInTheDocument();

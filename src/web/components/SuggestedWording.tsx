@@ -6,7 +6,7 @@ import { describeError } from "../errors";
 import { useAction } from "../hooks";
 import { useSession } from "../session";
 import { quotaMessage } from "../tailor";
-import { ActionError, Badge, CharCount, Field } from "./ui";
+import { ActionError, Badge, CharCount, Field, type MarkTone } from "./ui";
 import "./suggestion.css";
 
 // Suggested wording on a shared copy. The coach a copy names proposes new words for one line;
@@ -139,12 +139,13 @@ export function CoachSuggestion({ comment, quote, ownerName }: { comment: ShareC
   const state = comment.suggestion?.state;
   const owner = ownerName ?? "the owner";
   const Owner = ownerName ?? "The owner";
-  const [tone, mark, sentence] =
+  // Only the person who can act sees amber, so the coach's own wait is a plain note.
+  const [tone, mark, sentence]: [MarkTone, string, string] =
     state === "used"
-      ? ["ready", "Used", `${Owner} used this wording. This copy is fixed, so it still shows the earlier line.`]
+      ? ["backed", "Used", `${Owner} used this wording. This copy is fixed, so it still shows the earlier line.`]
       : state === "not_used"
-        ? ["rejected", "Not used", `${Owner} didn’t use this suggestion.`]
-        : ["proposed", `Waiting for ${owner}`, `If ${owner} accepts, the wording is checked against their confirmed facts before the resume changes.`];
+        ? ["note", "Not used", `${Owner} didn’t use this suggestion.`]
+        : ["note", `Waiting for ${owner}`, `If ${owner} accepts, the wording is checked against their confirmed facts before the resume changes.`];
   return (
     <div className="app-suggestion">
       <p className="app-suggestion__head">
@@ -205,18 +206,18 @@ export function OwnerSuggestion({
       await onChanged();
     });
 
-  const [tone, mark] =
+  const [tone, mark]: [MarkTone, string] =
     state === "checking"
-      ? ["running", "Checking"]
+      ? ["working", "Checking"]
       : state === "applied"
-        ? ["ready", "Accepted"]
+        ? ["backed", "Accepted"]
         : state === "not_applied"
-          ? ["rejected", "Not applied"]
+          ? ["note", "Not applied"]
           : state === "declined"
-            ? ["rejected", "Declined"]
+            ? ["note", "Declined"]
             : state === "stale"
-              ? ["rejected", "Out of date"]
-              : ["proposed", "Waiting for you"];
+              ? ["note", "Out of date"]
+              : ["needs-you", "Waiting for you"];
   const pending = accept.pending || decline.pending;
 
   return (
@@ -248,7 +249,7 @@ export function OwnerSuggestion({
                 ? "You declined this suggestion."
                 : state === "stale"
                   ? "This line has changed or been removed since the copy was made, so this can’t be applied."
-                  : "If you accept, this wording is checked against the facts this line cites before it replaces the line. A completed check uses one output."}
+                  : "If you accept, this wording is checked against the facts this line cites before it replaces the line. A completed check counts toward your documents for this period."}
       </p>
       {(state === "waiting" || state === "stale") && (
         <div className="actions">

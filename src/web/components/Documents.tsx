@@ -25,6 +25,7 @@ import {
   Loading,
   Message,
   Quote,
+  RUN_MARK,
   Success,
   Tick,
 } from "./ui";
@@ -38,7 +39,7 @@ const LABELS: Record<DocumentKind, string> = {
   fit: "Fit preview",
 };
 
-/** Kinds that use no output, so they stay available when the allowance is used up. */
+/** Kinds that aren't counted as documents, so they stay available when the allowance is used up. */
 const FREE: readonly DocumentKind[] = ["questions", "fit"];
 
 type ApplicationDocumentsProps = {
@@ -132,8 +133,8 @@ function ApplicationDocumentsForUser({
     <section className={panel ? "rs-panel app-documents" : "workspace-section app-documents"} aria-labelledby={`${id}-heading`}>
       <h3 id={`${id}-heading`}>Prepare your application</h3>
       <p className="rs-meta">
-        Letters and interview answers are written from your confirmed facts. Each finished document uses one
-        output. Checking your fit and experience questions are free.
+        Letters and interview answers are written from your confirmed facts. Each finished one counts as one
+        document. Checking your fit and experience questions are free.
       </p>
       <div className="actions app-documents__start">
         <button
@@ -167,7 +168,7 @@ function ApplicationDocumentsForUser({
       </div>
       {available === 0 && (
         <Message tone="info" live={false}>
-          Your outputs for this period are used or held for work in progress. You can still read your documents
+          Your documents for this period are used or held for work in progress. You can still read your documents
           and answer experience questions.
         </Message>
       )}
@@ -187,7 +188,7 @@ function ApplicationDocumentsForUser({
           <Field
             id={`${id}-instruction`}
             label={`Refine resume version ${resume.version}`}
-            hint="Describe a change in wording or emphasis. A rewrite your facts don’t support keeps your current text, and an unchanged resume uses no output."
+            hint="Describe a change in wording or emphasis. A rewrite your facts don’t support keeps your current text, and an unchanged resume isn’t counted."
           >
             <textarea
               id={`${id}-instruction`}
@@ -255,7 +256,7 @@ function DocumentCard({ doc, reload, retry, retryDisabled }: {
           <h4>{LABELS[doc.kind]}</h4>
           <p className="rs-meta">{formatDateTime(doc.createdAt)}</p>
         </div>
-        <Badge tone={doc.state}>
+        <Badge tone={RUN_MARK[doc.state]}>
           {doc.state === "ready" && <Glyph name="check" />}
           {doc.state === "failed" && <Glyph name="alert" />}
           {doc.state === "running"
@@ -365,7 +366,7 @@ function DocumentContent({ doc }: { doc: DocumentView }) {
       </div>
       <DocumentDownload doc={doc} />
       <details className="evidence">
-        <summary>Evidence behind these sentences</summary>
+        <summary>Where these sentences came from</summary>
         <ul className="plain-list app-doc-evidence">
           {result.units.map((unit) => (
             <li className="evidence-item" key={unit.id}>
@@ -382,7 +383,7 @@ function DocumentContent({ doc }: { doc: DocumentView }) {
                     {fact.quote ? (
                       <Quote text={fact.quote} size="sm" />
                     ) : (
-                      <p className="rs-meta">Your own claim, with no source quote.</p>
+                      <p className="rs-meta">Added by you, with no quote from a file.</p>
                     )}
                   </div>
                 ) : null;
@@ -418,15 +419,15 @@ function FitPreview({ doc }: { doc: DocumentView }) {
           const facts = requirement.factIds.map((id) => doc.facts[id]).filter((fact) => fact !== undefined);
           return (
             <li key={`${index}-${requirement.text}`}>
-              <Tick state={facts.length > 0 ? "confirmed" : "proposed"} />
+              <Tick state={facts.length > 0 ? "backed" : "todo"} />
               <div>
                 <p className="app-fit__req">
                   {requirement.text}
-                  {facts.length === 0 && <span className="rs-meta"> Not covered</span>}
+                  {facts.length === 0 && <span className="rs-meta"> Not in your record</span>}
                 </p>
                 {facts.map((fact, i) => (
                   <p className="rs-meta app-fit__fact" key={i}>
-                    <Glyph name="follows" />
+                    <Glyph name="quote" />
                     {fact.text}
                   </p>
                 ))}
@@ -436,8 +437,8 @@ function FitPreview({ doc }: { doc: DocumentView }) {
         })}
       </ul>
       <p className="rs-meta">
-        A gap is never filled for you. If you have the experience, add it with Find missing experience, or
-        under Facts.
+        Resumatic never fills in what’s missing for you. If you have the experience, add it with Find missing
+        experience, or under Facts.
       </p>
     </div>
   );
@@ -527,7 +528,7 @@ function GapQuestions({
   const roles = useResource(api.roles);
   if (!questions.length)
     return (
-      <Success>No gaps were found in the requirements that were checked.</Success>
+      <Success>Nothing missing was found in the requirements that were checked.</Success>
     );
   return (
     <div className="document-content stack">
@@ -641,8 +642,8 @@ function documentError(code: string | null): string {
   if (code === "conflict")
     return "The resume or facts changed while this document was being prepared. Review the current version, then try again.";
   if (code === "quota")
-    return "This document stopped at a usage limit, so it doesn’t count toward your outputs.";
+    return "This document stopped at a usage limit, so it isn’t counted toward your documents.";
   if (code === "invalid")
     return "Your confirmed facts aren’t enough to finish this document. Confirm the facts it needs, then try again.";
-  return "This document couldn’t be finished, so it doesn’t count toward your outputs. Try again with the buttons above.";
+  return "This document couldn’t be finished, so it isn’t counted toward your documents. Try again with the buttons above.";
 }

@@ -8,7 +8,7 @@ import { isReading, loadVault, type Vault } from "../vault";
 
 const isFirstRun = (vault: Vault) => vault.sources.length === 0 && vault.roles.length === 0 && vault.facts.length === 0;
 
-/** Facts: the sources rail beside the review queue, or one big dropzone before the first upload. */
+/** Facts: the rail of your files beside the review queue, or one big dropzone before the first upload. */
 export function SourcesPage() {
   const vault = useResource(loadVault, isReading);
   const firstRun = vault.data ? isFirstRun(vault.data) : false;
@@ -24,12 +24,12 @@ export function SourcesPage() {
       </PageHeader>
 
       {vault.error && <ErrorNote message={vault.error} onRetry={vault.reload} />}
-      {!vault.data && !vault.error && <Loading>Loading your sources and facts…</Loading>}
+      {!vault.data && !vault.error && <Loading>Loading your files and facts…</Loading>}
       {vault.data && firstRun && (
         <>
           <section className="facts-first-run" aria-labelledby="upload-heading">
             <h2 id="upload-heading" className="rs-visually-hidden">
-              Add a source
+              Add a file
             </h2>
             <AddSource onAdded={vault.reload} size="first-run" state={adding} onState={setAdding} />
           </section>
@@ -41,7 +41,7 @@ export function SourcesPage() {
         <div className="facts-layout">
           <aside className="facts-rail" aria-labelledby="sources-heading">
             <h2 id="sources-heading" className="rs-h3">
-              Your sources
+              Your files
             </h2>
             <AddSource onAdded={vault.reload} state={adding} onState={setAdding} />
             <SourceList vault={vault.data} reload={vault.reload} />
@@ -62,7 +62,7 @@ const STEPS = [
   },
   {
     title: "You confirm what’s true",
-    text: "Check each fact against its words. Confirm it, fix it, or reject it. Nothing is used until you confirm it.",
+    text: "Check each fact against its words. Say that’s right, fix it, or leave it out. Nothing is used until you confirm it.",
   },
   {
     title: "You tailor it to a job",

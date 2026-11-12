@@ -103,7 +103,7 @@ export function PasteText({
         submit();
       }}
     >
-      <Field id={`${id}-title`} label="Title" optional hint="Shown in your sources, such as “2025 performance review”.">
+      <Field id={`${id}-title`} label="Title" optional hint="Shown in your files, such as “2025 performance review”.">
         <input
           id={`${id}-title`}
           type="text"

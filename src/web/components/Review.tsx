@@ -46,7 +46,7 @@ export function Review({ vault, reload }: { vault: Vault; reload: () => Promise<
   const filenames = useMemo(() => new Map(displayed.sources.map((s) => [s.id, s.filename] as const)), [displayed.sources]);
   const counts = countByState(displayed);
   const groups = groupByRole(displayed, filter);
-  /** Facts still proposed under a role or its copies, whatever the filter shows. */
+  /** Facts still to check under a role or its copies, whatever the filter shows. */
   const proposedUnder = (roleIds: string[]) =>
     displayed.facts.filter((f) => f.state === "proposed" && f.roleId !== null && roleIds.includes(f.roleId)).length;
 
@@ -62,10 +62,10 @@ export function Review({ vault, reload }: { vault: Vault; reload: () => Promise<
   return (
     <section className="section" aria-labelledby={REVIEW_HEADING_ID}>
       <h2 id={REVIEW_HEADING_ID} tabIndex={-1}>
-        Review roles and facts
+        Check your roles and facts
       </h2>
       <p className="section-intro">
-        Check each one against the words it came from. Confirm what’s true, edit what’s nearly right, and reject the
+        Check each one against the words it came from. Say what’s right, fix what’s nearly right, and leave out the
         rest.
       </p>
       <div className="add-row">
@@ -162,22 +162,22 @@ function EmptyReview({ filter, vault }: { filter: ReviewState; vault: Vault }) {
   if (filter === "confirmed") {
     return (
       <EmptyState title="No confirmed facts yet">
-        Confirm the proposed facts that are true, and your resumes will use them.
+        Say “That’s right” to the facts that are true, and your resumes will use them.
       </EmptyState>
     );
   }
   if (filter === "rejected") {
-    return <EmptyState title="Nothing rejected">Anything you reject is kept here and never used.</EmptyState>;
+    return <EmptyState title="Nothing left out">Anything you leave out is kept here and never used.</EmptyState>;
   }
   if (isReading(vault)) {
-    return <EmptyState>Resumatic is reading your upload. Its roles and facts will appear here for review.</EmptyState>;
+    return <EmptyState>Resumatic is reading your file. What it finds will appear here for you to check.</EmptyState>;
   }
   if (vault.roles.length === 0 && vault.facts.length === 0) {
-    return <EmptyState>Nothing to review yet. Upload a resume or CV, or add a fact yourself.</EmptyState>;
+    return <EmptyState>Nothing to check yet. Upload a resume or CV, or add a fact yourself.</EmptyState>;
   }
   return (
     <EmptyState title="You’re all caught up">
-      Nothing is waiting for review. Next, <a href={href.jobs}>add a job</a> and tailor a resume to it.
+      Nothing is waiting for you to check. Next, <a href={href.jobs}>add a job</a> and tailor a resume to it.
     </EmptyState>
   );
 }

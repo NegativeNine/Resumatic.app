@@ -36,8 +36,8 @@ export function BillingTools() {
       <h2 id={`${id}-title`}>Your plan</h2>
       <QuotaMeter className="app-plan-quota" />
       <p className="rs-meta app-plan-note">
-        A tailored resume, cover letter or interview preparation uses one output when it finishes.
-        {me.quota.periodEnd ? ` Your outputs renew on ${formatDate(me.quota.periodEnd)}.` : ""}
+        A tailored resume, cover letter or interview preparation counts as one document when it finishes.
+        {me.quota.periodEnd ? ` Your documents renew on ${formatDate(me.quota.periodEnd)}.` : ""}
       </p>
       {!data && !billing.error && <Loading>Loading billing details…</Loading>}
       {billing.error && (
@@ -45,7 +45,7 @@ export function BillingTools() {
       )}
       {data && !data.enabled && (
         <p className="rs-meta">
-          Plans can’t be bought at the moment. The outputs you already have stay available.
+          Plans can’t be bought at the moment. The documents you already have stay available.
         </p>
       )}
       {data?.enabled && (
@@ -55,7 +55,7 @@ export function BillingTools() {
               <p className="rs-setting__text">
                 <strong>
                   {planName(data.current.planId)} plan{" "}
-                  <Badge tone={data.current.cancelAtPeriodEnd ? "rejected" : data.current.status === "active" || data.current.status === "trialing" ? "ready" : "failed"}>
+                  <Badge tone={data.current.cancelAtPeriodEnd ? "note" : data.current.status === "active" || data.current.status === "trialing" ? "backed" : "problem"}>
                     {data.current.cancelAtPeriodEnd ? "Ending" : PLAN_STATUS[data.current.status] ?? planName(data.current.status)}
                   </Badge>
                 </strong>
@@ -98,7 +98,7 @@ export function BillingTools() {
                 >
                   {data.plans.map((plan) => (
                     <option key={plan.id} value={plan.id}>
-                      {planName(plan.id)}, {plan.generationLimit} outputs each billing period
+                      {planName(plan.id)}, {plan.generationLimit} documents each billing period
                     </option>
                   ))}
                 </select>
@@ -253,13 +253,13 @@ export function CoachSharingTools() {
                   <strong>
                     {grant.label || shareContents(grant)}{" "}
                     {active && grant.available !== false && (
-                      <Badge tone="ready">
+                      <Badge tone="backed">
                         <Glyph name="check" />
                         Active
                       </Badge>
                     )}
                     {!active && (
-                      <Badge tone="rejected">{grant.revokedAt ? "Revoked" : "Expired"}</Badge>
+                      <Badge tone="note">{grant.revokedAt ? "Revoked" : "Expired"}</Badge>
                     )}
                   </strong>
                   <span>

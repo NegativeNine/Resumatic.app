@@ -84,9 +84,10 @@ export function useReview(
 
 interface Props {
   state: ReviewState;
-  /** Added to each label, as in "Confirm role". */
-  noun?: string;
-  /** ID of the text the buttons act on, so screen readers announce it with each button. */
+  /**
+   * ID of the text the buttons act on, so screen readers announce it with each button. A role's
+   * buttons read the same as a fact's; this is what names the item.
+   */
   describedBy: string;
   review: ReviewControl;
   onEdit?: () => void;
@@ -98,13 +99,12 @@ interface Props {
   disabled?: boolean;
   /** Show the keyboard hints, on the active item of the review queue. */
   showKeys?: boolean;
-  /** One more control for this item, after Reject. It has no key of its own. */
+  /** One more control for this item, after Leave it out. It has no key of its own. */
   extra?: ReactNode;
 }
 
 export function ReviewButtons({
   state,
-  noun,
   describedBy,
   review,
   onEdit,
@@ -116,7 +116,6 @@ export function ReviewButtons({
   extra,
 }: Props) {
   const busy = review.deciding !== null || disabled;
-  const suffix = noun ? ` ${noun}` : "";
 
   return (
     <div className="rs-actions">
@@ -125,12 +124,12 @@ export function ReviewButtons({
           type="button"
           className="rs-btn rs-btn--primary rs-btn--sm"
           aria-describedby={describedBy}
-          aria-keyshortcuts="C"
+          aria-keyshortcuts="Y"
           data-review-action="confirm"
           disabled={busy || confirmDisabled}
           onClick={() => void review.decide("confirm")}
         >
-          {review.deciding === "confirm" ? "Confirming…" : `Confirm${suffix}`}
+          {review.deciding === "confirm" ? "Saving…" : "That’s right"}
         </button>
       )}
       {onEdit && (
@@ -138,12 +137,12 @@ export function ReviewButtons({
           type="button"
           className="rs-btn rs-btn--sm"
           aria-describedby={describedBy}
-          aria-keyshortcuts="E"
+          aria-keyshortcuts="F"
           data-review-action="edit"
           disabled={busy}
           onClick={onEdit}
         >
-          Edit{suffix}
+          Fix it
         </button>
       )}
       {state !== "rejected" && (
@@ -151,13 +150,13 @@ export function ReviewButtons({
           type="button"
           className="rs-btn rs-btn--sm"
           aria-describedby={describedBy}
-          aria-keyshortcuts="R"
+          aria-keyshortcuts="L"
           aria-expanded={onReject ? Boolean(rejectExpanded) : undefined}
           data-review-action="reject"
           disabled={busy}
           onClick={() => (onReject ? onReject() : void review.decide("reject"))}
         >
-          {review.deciding === "reject" ? "Rejecting…" : `Reject${suffix}`}
+          {review.deciding === "reject" ? "Saving…" : "Leave it out"}
         </button>
       )}
       {extra}
@@ -165,22 +164,22 @@ export function ReviewButtons({
         <span className="rs-actions__keys" aria-hidden="true">
           {state !== "confirmed" && (
             <span>
-              <kbd className="rs-kbd">C</kbd> confirm
+              <kbd className="rs-kbd">Y</kbd> that’s right
             </span>
           )}
           {onEdit && (
             <span>
-              <kbd className="rs-kbd">E</kbd> edit
+              <kbd className="rs-kbd">F</kbd> fix it
             </span>
           )}
           {state !== "rejected" && (
             <span>
-              <kbd className="rs-kbd">R</kbd> reject
+              <kbd className="rs-kbd">L</kbd> leave it out
             </span>
           )}
           <span>
             <kbd className="rs-kbd">J</kbd>
-            <kbd className="rs-kbd">K</kbd> move
+            <kbd className="rs-kbd">K</kbd> next and previous
           </span>
         </span>
       )}

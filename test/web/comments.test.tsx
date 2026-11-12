@@ -653,6 +653,8 @@ describe("an owner reading what their coach wrote", () => {
     // New ones are marked on this showing. The owner's own reply and one already seen are not.
     const items = within(thread(LED_LINE)).getAllByRole("listitem");
     expect(items.map((item) => within(item).queryByText("New") !== null)).toEqual([true, false, true]);
+    // Something new waits for the person, so it is amber.
+    for (const mark of within(thread(LED_LINE)).getAllByText("New")) expect(mark).toHaveClass("rs-mark", "rs-mark--needs-you");
     expect(within(thread(LED)).queryByText("New")).toBeNull();
     // Told once, naming what was shown as new, and the count beside Account is read again afterwards.
     await waitFor(() => expect(refreshed).toHaveBeenCalledTimes(1));

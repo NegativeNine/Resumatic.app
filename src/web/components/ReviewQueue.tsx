@@ -25,7 +25,7 @@ interface Queue {
 
 const QueueContext = createContext<Queue | null>(null);
 
-const KEYS = new Set(["c", "e", "r", "j", "k"]);
+const KEYS = new Set(["y", "f", "l", "j", "k"]);
 
 /** Text fields, selects and editable regions keep their keys: typing never triggers a shortcut. */
 function isTyping(target: EventTarget): boolean {
@@ -37,9 +37,11 @@ function isTyping(target: EventTarget): boolean {
 
 /**
  * The review queue: roles and facts in page order, one of them active. While focus is inside the
- * queue, C confirms, E edits and R rejects the active item, and J and K move to the next and
- * previous item. The keys work only with focus inside, which keeps them clear of speech input
- * and typing elsewhere on the page (WCAG 2.1.4); the buttons stay the main way to review.
+ * queue, Y says that's right (confirms), F fixes (edits) and L leaves out (rejects) the active
+ * item, and J and K move to the next and previous item. The keys work only with focus inside,
+ * never in a field, with Ctrl, Meta or Alt held, or on key repeat, which keeps them clear of
+ * speech input and typing elsewhere on the page (WCAG 2.1.4); the buttons stay the main way to
+ * review.
  */
 export function ReviewQueue({ children }: { children: ReactNode }) {
   const container = useRef<HTMLDivElement>(null);
@@ -90,7 +92,7 @@ export function ReviewQueue({ children }: { children: ReactNode }) {
       return;
     }
     const actions = current ? items.current.get(current)?.() : undefined;
-    const run = key === "c" ? actions?.confirm : key === "e" ? actions?.edit : actions?.reject;
+    const run = key === "y" ? actions?.confirm : key === "f" ? actions?.edit : actions?.reject;
     if (!run) return;
     e.preventDefault();
     run();

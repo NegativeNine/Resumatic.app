@@ -10,7 +10,7 @@ import { api } from "../api";
 import { count, findingSentence, LINE_STATUS_HINT, LINE_STATUS_LABEL } from "../format";
 import { useAction, type Reload } from "../hooks";
 import { sessionEndNote, useSession } from "../session";
-import { ActionError, Badge, CharCount, Glyph, Quote } from "./ui";
+import { ActionError, Badge, CharCount, Glyph, LINE_MARK, Quote } from "./ui";
 
 type CitedFact = { id: string; text: string; quote: string | null };
 
@@ -72,10 +72,10 @@ export function LineItem({
   return (
     <div className={expanded ? "rs-note is-open" : "rs-note"} ref={ref} tabIndex={-1} data-note-for={line.id}>
       <div className="rs-note__row rs-note__head">
-        <Badge tone={legacyReview === "pending" ? "edited" : line.status} title={legacyReview === "pending" ? "This older line needs a fresh check against confirmed facts." : LINE_STATUS_HINT[line.status]}>
+        <Badge tone={legacyReview === "pending" ? "needs-you" : LINE_MARK[line.status]} title={legacyReview === "pending" ? "This older line needs a fresh check against confirmed facts." : LINE_STATUS_HINT[line.status]}>
           {legacyReview === "pending" ? "Needs review" : legacyReview === "verified" ? "Checked" : LINE_STATUS_LABEL[line.status]}
         </Badge>
-        {sensitive && <Badge tone="sensitive">Sensitive fact</Badge>}
+        {sensitive && <Badge tone="note">Sensitive fact</Badge>}
         <button
           type="button"
           className="rs-note__toggle"
@@ -84,11 +84,11 @@ export function LineItem({
           aria-describedby={`${id}-text`}
           onClick={() => onToggle(line.id)}
         >
-          <Glyph name="follows" />
+          <Glyph name="quote" />
           <span>
             {legacyReview === "pending"
               ? expanded ? "Hide review note" : "Review note"
-              : expanded ? "Hide evidence" : count(cited.length, "fact")}
+              : expanded ? "Hide where it came from" : count(cited.length, "fact")}
           </span>
         </button>
       </div>
@@ -160,7 +160,7 @@ function Evidence({ facts }: { facts: CitedFact[] }) {
           {fact.quote ? (
             <Quote text={fact.quote} size="sm" caption="The words it came from" />
           ) : (
-            <p className="rs-meta">Your own claim, with no source quote.</p>
+            <p className="rs-meta">Added by you, with no quote from a file.</p>
           )}
         </div>
       ))}
@@ -235,7 +235,7 @@ function LineEditor({
           setCheckingMessage(null);
           setError(doc.error === "conflict"
             ? "The resume or its facts changed. Refresh the resume, then try your edit again."
-            : "That wording couldn’t be verified against its evidence. Confirm or add the facts it needs, then try again.");
+            : "That wording isn’t backed by the facts it cites. Confirm or add the facts it needs, then try again.");
           void refreshMe();
           return;
         }
@@ -292,10 +292,10 @@ function LineEditor({
       />
       <p className="hint" id={`${id}-note`}>
         {hasEvidence
-          ? "Your wording is checked against the cited facts before it replaces this line. A completed check uses one output."
+          ? "Your wording is checked against the cited facts before it replaces this line. A completed check counts toward your documents for this period."
           : legacyReview
-            ? "Choose up to four confirmed facts that support this older line. You can check its current wording or change it. The check uses one output."
-            : "This line has no verified citations. Choose up to four confirmed facts that support it. The check uses one output."}
+            ? "Choose up to four confirmed facts that support this older line. You can check its current wording or change it. The check counts toward your documents for this period."
+            : "This line has no verified citations. Choose up to four confirmed facts that support it. The check counts toward your documents for this period."}
       </p>
       {!hasEvidence && (
         <fieldset disabled={pending || !!documentId}>

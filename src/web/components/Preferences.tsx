@@ -60,7 +60,7 @@ export function JobPreferences() {
       <h2 id={`${id}-title`}>Job preferences</h2>
       <p className="card-text meta">The work you’re looking for. Leave empty anything you’d rather not say.</p>
       <Message tone="info" live={false}>
-        Nothing here is shown to anyone or used yet. It stays in your vault: it isn’t put in a resume or a shared
+        Nothing here is shown to anyone or used yet. It stays in your record: it isn’t put in a resume or a shared
         copy, and connected apps can’t read it.
       </Message>
       {/* Once the form is up it stays up: a later reload that fails changes nothing the person sees. */}

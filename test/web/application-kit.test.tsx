@@ -161,7 +161,7 @@ describe("the application kit panel", () => {
     expect(within(item("Are you willing to travel?")).getByText("Save the questions to answer this one.")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Remove question 2" }));
     await userEvent.click(screen.getByRole("button", { name: "Move up question 4" }));
-    await userEvent.click(screen.getByRole("button", { name: "Edit question 1" }));
+    await userEvent.click(screen.getByRole("button", { name: "Change question 1" }));
     const editing = screen.getByRole("textbox", { name: "Question 1" });
     await userEvent.clear(editing);
     await userEvent.type(editing, "What notice do you need to give?");
@@ -314,7 +314,7 @@ describe("the saved answers card", () => {
     await screen.findByText("Portfolio link", { selector: "strong" });
     expect(
       within(card()).getByText(
-        "Short answers you give on many applications, in your own words. An application kit offers one when an employer’s question fits its label. Your answers stay in your vault, and their words are never sent to an AI model.",
+        "Short answers you give on many applications, in your own words. An application kit offers one when an employer’s question fits its label. Your answers stay in your record, and their words are never sent to an AI model.",
       ),
     ).toBeInTheDocument();
     expect(card().querySelector(".rs-msg")!.textContent!.replace(/\s+/g, " ").trim()).toBe(
@@ -343,7 +343,7 @@ describe("the saved answers card", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save answer" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(typeset(SAVED_ANSWER_LABEL_TAKEN));
     // Edited at the revision it was read at.
-    await userEvent.click(screen.getByRole("button", { name: "Edit Notice period" }));
+    await userEvent.click(screen.getByRole("button", { name: "Change Notice period" }));
     const editing = screen.getByRole("form", { name: "Edit Notice period" });
     await userEvent.clear(within(editing).getByRole("textbox", { name: "Answer" }));
     await userEvent.type(within(editing).getByRole("textbox", { name: "Answer" }), "Two weeks.");
@@ -357,7 +357,7 @@ describe("the saved answers card", () => {
   it("loads the saved answers again after a stale edit, so the next save names the revision changed elsewhere", async () => {
     const { state, api } = openCard();
     await screen.findByText("Portfolio link", { selector: "strong" });
-    await userEvent.click(screen.getByRole("button", { name: "Edit Notice period" }));
+    await userEvent.click(screen.getByRole("button", { name: "Change Notice period" }));
     // Edited somewhere else since this page read it.
     Object.assign(state.savedAnswers![0]!, { revision: 3, answer: "Three weeks." });
     const editing = () => screen.getByRole("form", { name: "Edit Notice period" });

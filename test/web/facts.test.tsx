@@ -18,18 +18,29 @@ const reviewCalls = (api: FakeApi) => api.callsTo("POST", /^\/api\/review$/).map
 const factItem = (text: string) => screen.getByText(text).closest<HTMLElement>("[data-queue-item]")!;
 
 describe("the Facts page", () => {
-  it("puts the sources in a rail beside the review queue", async () => {
+  it("puts your files in a rail beside the review queue", async () => {
     await openFacts();
-    const rail = screen.getByRole("complementary", { name: "Your sources" });
+    const rail = screen.getByRole("complementary", { name: "Your files" });
     expect(within(rail).getByText("sam-rivera-2024.pdf")).toBeInTheDocument();
     expect(within(rail).getByRole("button", { name: "Choose a file" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Review roles and facts" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Check your roles and facts" })).toBeInTheDocument();
   });
 
-  it("orders the review buttons as the copy does: Confirm, Edit, Reject, then Mark sensitive", async () => {
+  it("orders the review buttons as the copy does: That’s right, Fix it, Leave it out, then Mark sensitive", async () => {
     await openFacts();
     const fact = factItem("Led the migration of 40 services from Heroku to Kubernetes.");
-    expect(within(fact).getAllByRole("button").map((b) => b.textContent)).toEqual(["Confirm", "Edit", "Reject", "Mark sensitive"]);
+    expect(within(fact).getAllByRole("button").map((b) => b.textContent)).toEqual(["That’s right", "Fix it", "Leave it out", "Mark sensitive"]);
+  });
+
+  it("gives a role the same buttons as a fact, named by the role", async () => {
+    await openFacts();
+    const role = screen.getByRole("heading", { name: "Northwind Logistics" }).closest<HTMLElement>("[data-queue-item]")!;
+    const head = role.querySelector<HTMLElement>(".rs-role__head")!;
+    const buttons = within(head).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual(["That’s right", "Fix it", "Leave it out"]);
+    // The buttons don't carry the noun; aria-describedby names the role they act on.
+    for (const button of buttons) expect(button).toHaveAccessibleDescription("Northwind Logistics");
+    expect(within(head).getByText("To check", { selector: ".rs-mark" })).toHaveClass("rs-mark--needs-you");
   });
 
   it("joins meta with space and rules, never middle dots", async () => {
@@ -46,7 +57,7 @@ describe("the Facts page", () => {
     renderWithSession(<SourcesPage />, state.me);
     expect(await screen.findByRole("heading", { name: "What happens next" })).toBeInTheDocument();
     expect(document.querySelector(".app-drop--first-run")).not.toBeNull();
-    expect(screen.queryByRole("complementary", { name: "Your sources" })).toBeNull();
+    expect(screen.queryByRole("complementary", { name: "Your files" })).toBeNull();
   });
 });
 
@@ -64,20 +75,20 @@ describe("the keyboard queue", () => {
     expect(document.activeElement).toHaveClass("is-active");
   });
 
-  it("confirms the active fact with C", async () => {
+  it("confirms the active fact with Y", async () => {
     const api = await openFacts();
     factItem("Led the migration of 40 services from Heroku to Kubernetes.").focus();
-    await userEvent.keyboard("c");
+    await userEvent.keyboard("y");
     await waitFor(() => expect(reviewCalls(api)).toHaveLength(1));
     expect(reviewCalls(api)[0]).toMatchObject({ confirm: ["fact-migration"], reject: [] });
     await waitFor(() => expect(screen.queryByText("Led the migration of 40 services from Heroku to Kubernetes.")).toBeNull());
   });
 
-  it("edits with E, and Escape cancels the edit and returns focus to the fact", async () => {
+  it("fixes with F, and Escape cancels the edit and returns focus to the fact", async () => {
     await openFacts();
     const fact = factItem("Mentored four engineers through their first on-call rotations.");
     fact.focus();
-    await userEvent.keyboard("e");
+    await userEvent.keyboard("f");
     // ByLabelText rather than ByRole: computing every accessible name is slow on a page this size.
     const editor = await screen.findByLabelText("Fact", { selector: "textarea" }, { timeout: 4000 });
     expect(editor).toHaveFocus();
@@ -86,47 +97,112 @@ describe("the keyboard queue", () => {
     expect(document.activeElement).toBe(factItem("Mentored four engineers through their first on-call rotations."));
   });
 
-  it("asks before R rejects a role with proposed facts under it", async () => {
+  it("asks before L leaves out a role with facts still to check under it", async () => {
     const api = await openFacts();
     const role = screen.getByRole("heading", { name: "Northwind Logistics" }).closest<HTMLElement>("[data-queue-item]")!;
     role.focus();
-    await userEvent.keyboard("r");
-    const well = screen.getByRole("group", { name: "Reject Northwind Logistics" });
-    expect(well).toHaveTextContent("Reject Northwind Logistics and its 3 proposed facts? Rejected items are kept here and never used.");
+    await userEvent.keyboard("l");
+    const well = screen.getByRole("group", { name: "Leave out Northwind Logistics" });
+    expect(well).toHaveTextContent(
+      "Leave out Northwind Logistics and its 3 facts still to check? They’re kept under Left out and never used.",
+    );
     expect(reviewCalls(api)).toHaveLength(0);
-    const yes = within(well).getByRole("button", { name: "Yes, reject 4" });
+    const yes = within(well).getByRole("button", { name: "Yes, leave out 4" });
     expect(yes).toHaveFocus();
     await userEvent.click(yes);
     await waitFor(() => expect(reviewCalls(api)).toHaveLength(1));
     expect(reviewCalls(api)[0]).toMatchObject({ confirm: [], reject: ["role-northwind"] });
   });
 
-  it("returns focus to Reject role when the question is cancelled", async () => {
+  it("returns focus to Leave it out when the question is cancelled", async () => {
     await openFacts();
-    await userEvent.click(screen.getByRole("button", { name: "Reject role" }));
-    expect(screen.getByRole("button", { name: "Reject role" })).toHaveAttribute("aria-expanded", "true");
+    const head = () => screen.getByRole("heading", { name: "Northwind Logistics" }).closest<HTMLElement>("[data-queue-item]")!.querySelector<HTMLElement>(".rs-role__head")!;
+    await userEvent.click(within(head()).getByRole("button", { name: "Leave it out" }));
+    expect(within(head()).getByRole("button", { name: "Leave it out" })).toHaveAttribute("aria-expanded", "true");
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByRole("group", { name: "Reject Northwind Logistics" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Reject role" })).toHaveFocus();
+    expect(screen.queryByRole("group", { name: "Leave out Northwind Logistics" })).toBeNull();
+    expect(within(head()).getByRole("button", { name: "Leave it out" })).toHaveFocus();
   });
 
   it("leaves keys alone while someone types, or holds a modifier", async () => {
     const api = await openFacts();
     await userEvent.click(screen.getByRole("button", { name: "Add a fact yourself" }));
     const text = screen.getByLabelText("Fact", { selector: "textarea" });
-    await userEvent.type(text, "crjk");
-    expect(text).toHaveValue("crjk");
+    await userEvent.type(text, "yfljk");
+    expect(text).toHaveValue("yfljk");
     factItem("Led the migration of 40 services from Heroku to Kubernetes.").focus();
-    await userEvent.keyboard("{Control>}c{/Control}{Meta>}r{/Meta}");
+    await userEvent.keyboard("{Control>}y{/Control}{Meta>}l{/Meta}{Alt>}y{/Alt}");
     expect(reviewCalls(api)).toHaveLength(0);
+    expect(screen.queryByRole("group", { name: "Leave out Northwind Logistics" })).toBeNull();
+  });
+
+  it("ignores a key held down", async () => {
+    const api = await openFacts();
+    const fact = factItem("Led the migration of 40 services from Heroku to Kubernetes.");
+    fact.focus();
+    fireEvent.keyDown(fact, { key: "y", repeat: true });
+    fireEvent.keyDown(fact, { key: "l", repeat: true });
+    fireEvent.keyDown(fact, { key: "j", repeat: true });
+    expect(reviewCalls(api)).toHaveLength(0);
+    expect(document.activeElement).toBe(fact);
+    // The same key, pressed once, is an answer: the repeat is what was ignored.
+    fireEvent.keyDown(fact, { key: "y" });
+    await waitFor(() => expect(reviewCalls(api)).toHaveLength(1));
+  });
+
+  it("ignores keys pressed outside the queue", async () => {
+    const api = await openFacts();
+    const fact = factItem("Led the migration of 40 services from Heroku to Kubernetes.");
+    fact.focus();
+    const outside = screen.getByRole("heading", { name: "Check your roles and facts" });
+    outside.focus();
+    await userEvent.keyboard("yfljk");
+    expect(reviewCalls(api)).toHaveLength(0);
+    expect(screen.queryByLabelText("Fact", { selector: "textarea" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Leave out Northwind Logistics" })).toBeNull();
+    expect(document.activeElement).toBe(outside);
+  });
+
+  it("ignores the earlier keys C, E and R", async () => {
+    const api = await openFacts();
+    const fact = factItem("Mentored four engineers through their first on-call rotations.");
+    fact.focus();
+    await userEvent.keyboard("cer");
+    expect(reviewCalls(api)).toHaveLength(0);
+    expect(screen.queryByLabelText("Fact", { selector: "textarea" })).toBeNull();
+    const role = screen.getByRole("heading", { name: "Northwind Logistics" }).closest<HTMLElement>("[data-queue-item]")!;
+    role.focus();
+    await userEvent.keyboard("r");
+    expect(screen.queryByRole("group", { name: "Leave out Northwind Logistics" })).toBeNull();
+  });
+
+  it("offers only That’s right for a left-out fact or role", async () => {
+    const state = fixtures();
+    state.roles.find((role) => role.id === "role-northwind")!.state = "rejected";
+    for (const fact of state.facts) if (fact.roleId === "role-northwind") fact.state = "rejected";
+    installFakeApi(state);
+    renderWithSession(<SourcesPage />, state.me);
+    await userEvent.click(await screen.findByRole("radio", { name: /^Left out/ }));
+    const role = (await screen.findByRole("heading", { name: "Northwind Logistics" })).closest<HTMLElement>("[data-queue-item]")!;
+    const head = role.querySelector<HTMLElement>(".rs-role__head")!;
+    expect(within(head).getAllByRole("button").map((b) => b.textContent)).toEqual(["That’s right"]);
+    expect(within(head).getByText("Left out", { selector: ".rs-mark" })).toHaveClass("rs-mark--note");
+    expect(head.querySelector(".rs-tick")).toHaveClass("rs-tick--left-out");
+    const fact = factItem("Led the migration of 40 services from Heroku to Kubernetes.");
+    expect(within(fact).getAllByRole("button").map((b) => b.textContent)).toEqual(["That’s right"]);
+    // The key hints show only what this item offers.
+    role.focus();
+    await waitFor(() => expect(role).toHaveClass("is-active"));
+    const keys = head.querySelector(".rs-actions__keys")!;
+    expect([...keys.children].map((hint) => hint.textContent)).toEqual(["Y that’s right", "JK next and previous"]);
   });
 
   it("names each button’s key for assistive technology", async () => {
     await openFacts();
     const fact = factItem("Led the migration of 40 services from Heroku to Kubernetes.");
-    expect(within(fact).getByRole("button", { name: "Confirm" })).toHaveAttribute("aria-keyshortcuts", "C");
-    expect(within(fact).getByRole("button", { name: "Edit" })).toHaveAttribute("aria-keyshortcuts", "E");
-    expect(within(fact).getByRole("button", { name: "Reject" })).toHaveAttribute("aria-keyshortcuts", "R");
+    expect(within(fact).getByRole("button", { name: "That’s right" })).toHaveAttribute("aria-keyshortcuts", "Y");
+    expect(within(fact).getByRole("button", { name: "Fix it" })).toHaveAttribute("aria-keyshortcuts", "F");
+    expect(within(fact).getByRole("button", { name: "Leave it out" })).toHaveAttribute("aria-keyshortcuts", "L");
   });
 });
 
@@ -155,10 +231,10 @@ describe("marking a fact sensitive", () => {
     expect(sensitiveCalls(api)[0]).toEqual({ ids: ["fact-migration"], sensitive: true, expectedRevisions: { "fact-migration": 1 } });
     const unmark = await within(fact()).findByRole("button", { name: "Unmark sensitive" });
     expect(screen.queryByRole("group", { name: "Unmark this fact" })).toBeNull();
-    expect(within(fact()).getByText("Sensitive", { selector: ".rs-mark" })).toHaveClass("rs-mark--dropped");
+    expect(within(fact()).getByText("Sensitive", { selector: ".rs-mark" })).toHaveClass("rs-mark--note");
     expect(within(fact()).getByText(HINT)).toBeInTheDocument();
     // It is still a fact to review: the mark is one more button, after the others.
-    expect(within(fact()).getAllByRole("button").map((b) => b.textContent)).toEqual(["Confirm", "Edit", "Reject", "Unmark sensitive"]);
+    expect(within(fact()).getAllByRole("button").map((b) => b.textContent)).toEqual(["That’s right", "Fix it", "Leave it out", "Unmark sensitive"]);
     expect(unmark).toHaveAttribute("aria-expanded", "false");
     expect(unmark).not.toHaveAttribute("aria-keyshortcuts");
     // Focus is where the person left it: on the button they pressed.
@@ -250,22 +326,22 @@ describe("marking a fact sensitive", () => {
     await userEvent.click(within(fact()).getByRole("button", { name: "Mark sensitive" }));
     const pending = within(fact()).getByRole("button", { name: "Marking…" });
     expect(pending).toBeDisabled();
-    for (const name of ["Confirm", "Edit", "Reject"]) expect(within(fact()).getByRole("button", { name })).toBeDisabled();
+    for (const name of ["That’s right", "Fix it", "Leave it out"]) expect(within(fact()).getByRole("button", { name })).toBeDisabled();
     release();
     expect(await within(fact()).findByRole("button", { name: "Unmark sensitive" })).toBeEnabled();
-    expect(within(fact()).getByRole("button", { name: "Confirm" })).toBeEnabled();
+    expect(within(fact()).getByRole("button", { name: "That’s right" })).toBeEnabled();
   });
 
-  it("shows only the mark on a rejected fact, and offers the control again once it is confirmed", async () => {
+  it("shows only the mark on a left-out fact, and offers the control again once it is confirmed", async () => {
     const state = fixtures();
     state.facts.find((fact) => fact.id === "fact-runbook")!.sensitive = true;
     await openFacts(state);
-    await userEvent.click(screen.getByRole("radio", { name: /^Rejected/ }));
+    await userEvent.click(screen.getByRole("radio", { name: /^Left out/ }));
     const rejected = factItem("Wrote the on-call runbook.");
     expect(within(rejected).getByText("Sensitive", { selector: ".rs-mark" })).toBeInTheDocument();
-    expect(within(rejected).getAllByRole("button").map((b) => b.textContent)).toEqual(["Confirm"]);
+    expect(within(rejected).getAllByRole("button").map((b) => b.textContent)).toEqual(["That’s right"]);
     expect(within(rejected).queryByText(HINT)).toBeNull();
-    await userEvent.click(within(rejected).getByRole("button", { name: "Confirm" }));
+    await userEvent.click(within(rejected).getByRole("button", { name: "That’s right" }));
     await userEvent.click(await screen.findByRole("radio", { name: /^Confirmed/ }));
     const confirmed = await waitFor(() => factItem("Wrote the on-call runbook."));
     expect(within(confirmed).getByRole("button", { name: "Unmark sensitive" })).toBeEnabled();
@@ -279,7 +355,7 @@ describe("marking a fact sensitive", () => {
     expect(screen.getByRole("group", { name: "Unmark this fact" })).toBeInTheDocument();
     // Opening the editor closes the question, and the editor says what saving will leave as it is.
     fact().focus();
-    await userEvent.keyboard("e");
+    await userEvent.keyboard("f");
     const editor = await screen.findByLabelText("Fact", { selector: "textarea" }, { timeout: 4000 });
     expect(screen.queryByRole("group", { name: "Unmark this fact" })).toBeNull();
     const note = within(fact()).getByText("This fact stays sensitive after you save. To use a different wording, add it as a new fact and leave this one marked.");
@@ -301,7 +377,7 @@ describe("marking a fact sensitive", () => {
     // An open editor holds the list as it is, so nothing in it may change underneath: the question
     // stays, and its answer waits with the fact's other buttons.
     const other = factItem("Mentored four engineers through their first on-call rotations.");
-    await userEvent.click(within(other).getByRole("button", { name: "Edit" }));
+    await userEvent.click(within(other).getByRole("button", { name: "Fix it" }));
     await screen.findByLabelText("Fact", { selector: "textarea" }, { timeout: 4000 });
     expect(screen.getByRole("button", { name: "Yes, unmark it" })).toBeDisabled();
     expect(within(factItem(MIGRATION)).getByRole("button", { name: "Unmark sensitive" })).toBeDisabled();
@@ -316,7 +392,7 @@ describe("marking a fact sensitive", () => {
     await openFacts();
     const fact = factItem(MIGRATION);
     fact.focus();
-    await userEvent.keyboard("e");
+    await userEvent.keyboard("f");
     await screen.findByLabelText("Fact", { selector: "textarea" }, { timeout: 4000 });
     expect(screen.queryByText(/This fact stays sensitive after you save/)).toBeNull();
   });
@@ -342,7 +418,7 @@ describe("pasting text", () => {
 
   it("offers Paste text beside Upload a file, with a textarea, a title and a count against 60,000", async () => {
     await openFacts();
-    const group = screen.getByRole("group", { name: "Add a source" });
+    const group = screen.getByRole("group", { name: "Add a file" });
     const [file, paste] = within(group).getAllByRole("button");
     expect([file!.textContent, paste!.textContent]).toEqual(["Upload a file", "Paste text"]);
     expect(file).toHaveAttribute("aria-pressed", "true");
@@ -405,7 +481,7 @@ describe("pasting text", () => {
     expect(textBox()).toHaveValue("");
     expect(titleBox()).toHaveValue("");
     // The list is read again, and shows the source by the name its title gave.
-    const rail = screen.getByRole("complementary", { name: "Your sources" });
+    const rail = screen.getByRole("complementary", { name: "Your files" });
     expect(await within(rail).findByText("Q3 review.txt")).toBeInTheDocument();
   });
 
@@ -465,10 +541,10 @@ describe("pasting text", () => {
     installFakeApi(state);
     renderWithSession(<SourcesPage />, state.me);
     await screen.findByRole("heading", { name: "What happens next" });
-    await userEvent.click(within(screen.getByRole("group", { name: "Add a source" })).getByRole("button", { name: "Paste text" }));
+    await userEvent.click(within(screen.getByRole("group", { name: "Add a file" })).getByRole("button", { name: "Paste text" }));
     await pasteInto(textBox(), "Led the Q3 launch of the carrier rates service.");
     await userEvent.click(within(pastePanel()).getByRole("button", { name: "Add text" }));
-    const rail = await screen.findByRole("complementary", { name: "Your sources" });
+    const rail = await screen.findByRole("complementary", { name: "Your files" });
     expect(
       await within(rail).findByText("Added your text. Resumatic is reading it now, and its roles and facts will appear for you to review."),
     ).toHaveAttribute("role", "status");
@@ -483,7 +559,7 @@ describe("pasting text", () => {
     await screen.findByRole("heading", { name: "What happens next" });
     const input = document.querySelector<HTMLInputElement>(".app-drop--first-run input[type=file]")!;
     await userEvent.upload(input, new File(["%PDF-1.4"], "cv.pdf", { type: "application/pdf" }));
-    const rail = await screen.findByRole("complementary", { name: "Your sources" });
+    const rail = await screen.findByRole("complementary", { name: "Your files" });
     expect(
       await within(rail).findByText("Uploaded cv.pdf. Resumatic is reading it now, and its roles and facts will appear for you to review."),
     ).toHaveAttribute("role", "status");
@@ -496,11 +572,11 @@ describe("pasting text", () => {
     renderWithSession(<SourcesPage />, state.me);
     await screen.findByRole("heading", { name: "What happens next" });
     const input = document.querySelector<HTMLInputElement>(".app-drop--first-run input[type=file]")!;
-    await userEvent.click(within(screen.getByRole("group", { name: "Add a source" })).getByRole("button", { name: "Paste text" }));
+    await userEvent.click(within(screen.getByRole("group", { name: "Add a file" })).getByRole("button", { name: "Paste text" }));
     await pasteInto(titleBox(), "Q3 review");
     await pasteInto(textBox(), "Led the Q3 launch.");
     await userEvent.upload(input, new File(["%PDF-1.4"], "cv.pdf", { type: "application/pdf" }));
-    await screen.findByRole("complementary", { name: "Your sources" });
+    await screen.findByRole("complementary", { name: "Your files" });
     expect(textBox()).toHaveValue("Led the Q3 launch.");
     expect(titleBox()).toHaveValue("Q3 review");
   });
@@ -543,7 +619,7 @@ describe("pasting text", () => {
     await screen.findByRole("heading", { name: "What happens next" });
     const drop = document.querySelector(".app-drop--first-run")!;
     expect(drop).not.toBeNull();
-    const group = screen.getByRole("group", { name: "Add a source" });
+    const group = screen.getByRole("group", { name: "Add a file" });
     expect(group.compareDocumentPosition(drop) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await userEvent.click(within(group).getByRole("button", { name: "Paste text" }));
     expect(textBox()).toHaveAttribute("rows", "12");
@@ -568,10 +644,10 @@ describe("pasting text", () => {
     });
     state.sourceTexts = { "src-paste": markdown };
     await openFacts(state);
-    expect(within(screen.getByRole("complementary", { name: "Your sources" })).getByText("Q3 review.txt")).toBeInTheDocument();
+    expect(within(screen.getByRole("complementary", { name: "Your files" })).getByText("Q3 review.txt")).toBeInTheDocument();
     const fact = factItem("Shipped carrier rates to 12 regions.");
-    await userEvent.click(within(fact).getByRole("button", { name: "See this quote in its source" }));
-    const shown = await within(fact).findByLabelText("Source text with the evidence highlighted");
+    await userEvent.click(within(fact).getByRole("button", { name: "See this quote in its file" }));
+    const shown = await within(fact).findByLabelText("The file’s text, with the quoted words highlighted");
     expect(shown.querySelector("mark")!.textContent).toBe(quote);
     expect(shown.textContent).toBe(markdown);
   });

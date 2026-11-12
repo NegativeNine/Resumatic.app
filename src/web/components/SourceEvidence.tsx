@@ -56,15 +56,15 @@ export function SourceEvidence({
         onClick={() => void toggle()}
       >
         {pending
-          ? "Opening source…"
+          ? "Opening file…"
           : open
-            ? "Hide source context"
-            : "See this quote in its source"}
+            ? "Hide the file’s text"
+            : "See this quote in its file"}
       </button>
       {open && (
         <div id={panelId} className="source-context" aria-live="polite">
           {valid ? (
-            <pre aria-label="Source text with the evidence highlighted">
+            <pre aria-label="The file’s text, with the quoted words highlighted">
               {span[0] > 600 ? "…" : ""}
               {before}
               <mark>{quote}</mark>
@@ -74,8 +74,8 @@ export function SourceEvidence({
           ) : (
             source && (
               <p className="hint">
-                The saved quote is shown above. Its source position could not be
-                matched, so no passage has been highlighted.
+                The saved quote is shown above. Its place in the file couldn’t be
+                found, so nothing is highlighted.
               </p>
             )
           )}

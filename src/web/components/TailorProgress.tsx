@@ -46,7 +46,7 @@ export function TailorProgress({ step, dispatchUncertain, cancellationPending }:
           const state = i < done ? "done" : i === current ? "current" : "todo";
           return (
             <li key={s.id} className={`rs-step is-${state}`} aria-current={state === "current" ? "step" : undefined}>
-              <Tick state={state === "done" ? "done" : state === "current" ? "running" : "todo"} />
+              <Tick state={state === "done" ? "backed" : state === "current" ? "working" : "todo"} />
               <span>
                 {s.label}
                 {state === "done" && <span className="rs-visually-hidden"> (done)</span>}

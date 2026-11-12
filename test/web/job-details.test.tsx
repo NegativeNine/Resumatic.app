@@ -263,8 +263,11 @@ describe("checking fit", () => {
     expect(rows[0]).toHaveTextContent("Kubernetes in production");
     // The covering facts are the person's own, shown as they confirmed them.
     expect(rows[0]!.querySelectorAll(".app-fit__fact")).toHaveLength(2);
-    expect(rows[1]).toHaveTextContent("Terraform Not covered");
-    expect(rows[1]!.querySelector(".rs-tick--proposed")).not.toBeNull();
+    expect(rows[1]).toHaveTextContent("Terraform Not in your record");
+    // Something missing is not a request to the person: a neutral ring, not amber.
+    expect(rows[1]!.querySelector(".rs-tick--todo")).not.toBeNull();
+    expect(rows[1]!.querySelector(".rs-tick--needs-you")).toBeNull();
+    expect(rows[0]!.querySelector(".rs-tick--backed")).not.toBeNull();
     expect((await axe.run(preview, { rules: { "color-contrast": { enabled: false }, region: { enabled: false } } })).violations).toEqual([]);
   });
 

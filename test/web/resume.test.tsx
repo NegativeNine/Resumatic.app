@@ -56,11 +56,11 @@ describe("the resume sheet", () => {
 describe("the margin", () => {
   it("opens a line’s note from the sheet or its toggle, and says so", async () => {
     await openResume();
-    const toggles = screen.getAllByRole("button", { name: /^\d+ facts?$|^Hide evidence$/ });
+    const toggles = screen.getAllByRole("button", { name: /^\d+ facts?$|^Hide where it came from$/ });
     expect(toggles.length).toBe(7);
     for (const toggle of toggles) expect(toggle).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(within(sheet()).getByText("Led the migration of 40 services from Heroku to Kubernetes."));
-    expect(screen.getByRole("button", { name: "Hide evidence" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Hide where it came from" })).toHaveAttribute("aria-expanded", "true");
   });
 
   it("says why a repaired or replaced line changed, in Resumatic’s own words", async () => {
@@ -68,29 +68,57 @@ describe("the margin", () => {
     const note = (lineId: string) => document.querySelector<HTMLElement>(`[data-note-for="${lineId}"]`)!;
     await userEvent.click(within(note("line-latency")).getByRole("button", { name: /^\d+ facts?$/ }));
     expect(within(note("line-latency")).getByText(
-      "The draft said 85%. Your facts don’t include that number. Resumatic rewrote it once to match its facts.",
+      "The draft said 85%. Your record doesn’t include that number. Resumatic rewrote the line to match.",
     )).toBeVisible();
     await userEvent.click(within(note("line-mentoring")).getByRole("button", { name: /^\d+ facts?$/ }));
     expect(within(note("line-mentoring")).getByText(
-      "The draft said you led it, which is more than your facts show. This line uses your fact’s own words instead.",
+      "The draft said you led it, which is more than your record shows. This line uses your fact’s own words instead.",
     )).toBeVisible();
     // A kept line has nothing to explain.
     expect(note("line-migration").textContent).not.toMatch(/The draft/);
   });
 
-  it("opens and closes every note with Show all evidence", async () => {
+  it("opens and closes every note with Show where each line came from", async () => {
     await openResume();
-    await userEvent.click(screen.getByRole("button", { name: "Show all evidence" }));
-    expect(screen.getAllByRole("button", { name: "Hide evidence" })).toHaveLength(7);
-    await userEvent.click(screen.getByRole("button", { name: "Hide all evidence" }));
-    expect(screen.queryAllByRole("button", { name: "Hide evidence" })).toHaveLength(0);
+    await userEvent.click(screen.getByRole("button", { name: "Show where each line came from" }));
+    expect(screen.getAllByRole("button", { name: "Hide where it came from" })).toHaveLength(7);
+    await userEvent.click(screen.getByRole("button", { name: "Hide where each line came from" }));
+    expect(screen.queryAllByRole("button", { name: "Hide where it came from" })).toHaveLength(0);
   });
 
   it("shows what each mark means and how many lines took it", async () => {
     await openResume();
     const strip = screen.getByRole("region", { name: "How each line was checked" });
-    expect(within(strip).getByText("Used your fact", { selector: "dt" })).toBeInTheDocument();
-    expect(within(strip).getByRole("link", { name: "2 possible gaps noted when this draft was made" })).toHaveAttribute("href", "#gaps-heading");
+    expect([...strip.querySelectorAll("dt")].map((dt) => dt.textContent)).toEqual(["Backed", "Corrected", "Your wording", "Left out"]);
+    expect(strip.querySelector(".rs-report__stat--backed dt")).toHaveTextContent("Backed");
+    expect(within(strip).getByRole("link", { name: "2 that may be missing, found when this draft was made" })).toHaveAttribute("href", "#gaps-heading");
+    const legend = [...strip.querySelectorAll(".rs-legend li")].map((item) => [item.querySelector(".rs-mark")!.className, item.textContent]);
+    expect(legend).toEqual([
+      ["rs-mark rs-mark--backed", "Backed is backed by your record as written."],
+      ["rs-mark rs-mark--note", "Corrected was rewritten once to match its facts."],
+      ["rs-mark rs-mark--note", "Your wording The draft’s wording couldn’t be backed, so this line uses your fact’s own words."],
+      ["rs-mark rs-mark--note", "Left out was left out, because nothing in your record backs it."],
+      ["rs-mark rs-mark--note", "Edited by you was changed by you."],
+    ]);
+  });
+
+  it("lists what may be missing, as found when the draft was made, and never fills it in", async () => {
+    await openResume();
+    const gaps = screen.getByRole("heading", { name: "What may be missing, as found when this draft was made" });
+    const panel = gaps.closest("section")!;
+    expect(within(panel).getByText(/^These may be missing from the confirmed facts used when this draft was made; this is not a coverage check on the current resume\. Resumatic never fills in what’s missing by itself\./)).toBeInTheDocument();
+  });
+
+  it("says a line check counts toward your documents for this period", async () => {
+    await openResume();
+    const note = document.querySelector<HTMLElement>('[data-note-for="line-migration"]')!;
+    await userEvent.click(within(note).getByRole("button", { name: /^\d+ facts?$/ }));
+    await userEvent.click(within(note).getByRole("button", { name: "Edit line" }));
+    expect(
+      await within(note).findByText(
+        "Your wording is checked against the cited facts before it replaces this line. A completed check counts toward your documents for this period.",
+      ),
+    ).toBeInTheDocument();
   });
 });
 
@@ -123,8 +151,8 @@ describe("a version that uses a fact marked sensitive", () => {
     // The text is still on the sheet, and a new version can still be tailored.
     expect(within(sheet()).getByText("Led the migration of 40 services from Heroku to Kubernetes.")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Tailor a new version" }).length).toBeGreaterThan(0);
-    // It is not the notice for wording without evidence, and no line-by-line review is offered.
-    expect(screen.queryByText(/without verified evidence/)).toBeNull();
+    // It is not the notice for unchecked wording, and no line-by-line review is offered.
+    expect(screen.queryByText(/haven’t been checked against your record/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Start review" })).toBeNull();
   });
 
@@ -132,9 +160,9 @@ describe("a version that uses a fact marked sensitive", () => {
     const state = marked();
     const api = await openResume(state);
     const flagged = note("line-migration");
-    expect(within(flagged).getByText("Sensitive fact")).toHaveClass("rs-mark--dropped");
+    expect(within(flagged).getByText("Sensitive fact")).toHaveClass("rs-mark--note");
     // Its note is open without being asked, with its evidence and its one tool.
-    expect(within(flagged).getByRole("button", { name: "Hide evidence" })).toHaveAttribute("aria-expanded", "true");
+    expect(within(flagged).getByRole("button", { name: "Hide where it came from" })).toHaveAttribute("aria-expanded", "true");
     expect(within(flagged).getByText("Led migration of 40 services from Heroku to Kubernetes")).toBeVisible();
     expect(within(flagged).queryByRole("button", { name: "Edit line" })).toBeNull();
     expect(within(flagged).getByRole("button", { name: "Remove line (keeps earlier versions)" })).toBeVisible();
@@ -166,7 +194,7 @@ describe("a version that uses a fact marked sensitive", () => {
     await openResume(marked());
     const tools = screen.getByRole("region", { name: "Change this version" });
     const skill = (name: string) => within(tools).getByRole("button", { name: `Remove skill ${name}` }).closest("li")!;
-    expect(within(skill("Redis")).getByText("Sensitive fact")).toHaveClass("rs-mark--dropped");
+    expect(within(skill("Redis")).getByText("Sensitive fact")).toHaveClass("rs-mark--note");
     for (const name of ["Python", "Apache Airflow", "PostgreSQL", "Kubernetes"]) expect(within(skill(name)).queryByText("Sensitive fact")).toBeNull();
     expect(within(skill("Redis")).getByRole("button", { name: "Remove skill Redis" })).toBeEnabled();
   });

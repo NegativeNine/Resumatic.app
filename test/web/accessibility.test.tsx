@@ -28,7 +28,7 @@ describe("accessibility", () => {
     installFakeApi(state);
     renderWithSession(<SourcesPage />, state.me);
     await screen.findByRole("heading", { name: "Facts", level: 1 });
-    await screen.findAllByRole("button", { name: /Confirm/ });
+    await screen.findAllByRole("button", { name: /That’s right/ });
     expect(await violations()).toEqual([]);
   });
 

@@ -86,7 +86,7 @@ function ClientRow({ client, unknown, onChanged }: { client: CoachClient; unknow
                 : "Their link has expired or been revoked. They can share again at any time."}
           </p>
         </div>
-        {!unknown && <Badge tone={client.active ? "ready" : "rejected"}>{client.active ? "Fixed copy" : "Access ended"}</Badge>}
+        {!unknown && <Badge tone={client.active ? "backed" : "note"}>{client.active ? "Fixed copy" : "Access ended"}</Badge>}
       </div>
       <div className="app-client__actions">
         {client.active && !unknown && (

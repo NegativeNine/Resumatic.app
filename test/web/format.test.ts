@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   count,
+  FACT_KIND_LABEL,
   findingSentence,
   formatBytes,
   formatDate,
@@ -9,6 +10,13 @@ import {
   formatDayMonthAfter,
   formatMonth,
   formatMonthAfter,
+  LEVEL_LABEL,
+  LINE_STATUS_HINT,
+  LINE_STATUS_LABEL,
+  RESUME_STATE_LABEL,
+  ROLE_KIND_LABEL,
+  SECTION_HEADING,
+  STATE_LABEL,
 } from "../../src/web/format";
 
 describe("dates", () => {
@@ -54,7 +62,7 @@ describe("numbers", () => {
     expect(count(1, "fact")).toBe("1 fact");
     expect(count(3, "fact")).toBe("3 facts");
     expect(count(20000, "character")).toBe("20,000 characters");
-    expect(count(2, "proposed role and fact", "proposed roles and facts")).toBe("2 proposed roles and facts");
+    expect(count(2, "role and fact", "roles and facts")).toBe("2 roles and facts");
   });
 
   it("shows file sizes in KB or MB", () => {
@@ -64,29 +72,70 @@ describe("numbers", () => {
   });
 });
 
+describe("labels", () => {
+  it("names a fact's or role's state in the plain words", () => {
+    expect(STATE_LABEL).toEqual({ proposed: "To check", confirmed: "Confirmed", rejected: "Left out" });
+  });
+
+  it("names what the check did to a line, and says it again in a sentence", () => {
+    expect(LINE_STATUS_LABEL).toEqual({ kept: "Backed", repaired: "Corrected", replaced: "Your wording", edited: "Edited by you" });
+    expect(LINE_STATUS_HINT).toEqual({
+      kept: "Backed by your record as written",
+      repaired: "Rewritten once to match its facts",
+      replaced: "The draft’s wording couldn’t be backed, so this line uses your fact’s own words",
+      edited: "Changed by you",
+    });
+  });
+
+  it("names a fact's kind as a person would", () => {
+    expect(FACT_KIND_LABEL).toEqual({ accomplishment: "Something you did", skill: "A skill", credential: "A credential" });
+  });
+
+  it("leaves the labels that already used the plain words as they were", () => {
+    expect(RESUME_STATE_LABEL).toEqual({ running: "Tailoring…", ready: "Ready", failed: "Failed" });
+    expect(ROLE_KIND_LABEL).toEqual({ job: "Job", education: "Education", project: "Project", volunteer: "Volunteering" });
+    expect(SECTION_HEADING).toEqual({ job: "Experience", education: "Education", project: "Projects", volunteer: "Volunteering" });
+    expect(LEVEL_LABEL).toEqual({ contributed: "Contributed", implemented: "Implemented", led: "Led", owned: "Owned", founded: "Founded" });
+  });
+});
+
 describe("findings", () => {
+  const REPAIRED = "Resumatic rewrote the line to match.";
+  const REPLACED = "This line uses your fact’s own words instead.";
+
   it("says what the check found, then what happened to the line", () => {
     expect(findingSentence({ kind: "numbers", values: ["40%"] }, "repaired")).toBe(
-      "The draft said 40%. Your facts don’t include that number. Resumatic rewrote it once to match its facts.",
+      `The draft said 40%. Your record doesn’t include that number. ${REPAIRED}`,
+    );
+    expect(findingSentence({ kind: "numbers", values: ["40%", "3x"] }, "replaced")).toBe(
+      `The draft said 40% and 3x. Your record doesn’t include those numbers. ${REPLACED}`,
+    );
+    expect(findingSentence({ kind: "names", values: ["Kafka"] }, "repaired")).toBe(
+      `The draft named Kafka. Your record doesn’t mention it. ${REPAIRED}`,
     );
     expect(findingSentence({ kind: "names", values: ["Kafka", "Flink", "Spark"] }, "replaced")).toBe(
-      "The draft named Kafka, Flink and Spark. Your facts don’t mention them. This line uses your fact’s own words instead.",
+      `The draft named Kafka, Flink and Spark. Your record doesn’t mention them. ${REPLACED}`,
     );
     expect(findingSentence({ kind: "scope", claimed: "owned", allowed: "implemented" }, "repaired")).toBe(
-      "The draft said you owned it, which is more than your facts show. Resumatic rewrote it once to match its facts.",
+      `The draft said you owned it, which is more than your record shows. ${REPAIRED}`,
     );
     expect(findingSentence({ kind: "citation" }, "replaced")).toBe(
-      "The draft cited a fact it couldn’t use for this line. This line uses your fact’s own words instead.",
+      `The draft leaned on a fact it couldn’t use for this line. ${REPLACED}`,
     );
-    expect(findingSentence({ kind: "unsupported" }, "repaired")).toBe(
-      "The check found wording its facts don’t support. Resumatic rewrote it once to match its facts.",
-    );
+    expect(findingSentence({ kind: "unsupported" }, "repaired")).toBe(`The check found wording your record doesn’t back. ${REPAIRED}`);
   });
 
   it("stays general when a stored finding has no usable values", () => {
     expect(findingSentence({ kind: "numbers", values: [] }, "replaced")).toBe(
-      "The draft used a number your facts don’t include. This line uses your fact’s own words instead.",
+      `The draft used a number your record doesn’t include. ${REPLACED}`,
     );
+    expect(findingSentence({ kind: "names", values: [] }, "repaired")).toBe(
+      `The draft named something your record doesn’t mention. ${REPAIRED}`,
+    );
+  });
+
+  it("says only what was found for a line the check didn't change", () => {
+    expect(findingSentence({ kind: "unsupported" }, "kept")).toBe("The check found wording your record doesn’t back.");
   });
 });
 

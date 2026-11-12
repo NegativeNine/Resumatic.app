@@ -214,7 +214,7 @@ describe("an owner answering suggested wording", () => {
     await screen.findByRole("region", { name: "Comments from your coach" });
     expect(told("Waiting wording")).toEqual([
       "Waiting for you",
-      "If you accept, this wording is checked against the facts this line cites before it replaces the line. A completed check uses one output.",
+      "If you accept, this wording is checked against the facts this line cites before it replaces the line. A completed check counts toward your documents for this period.",
     ]);
     expect(told("Checking wording")).toEqual(["Checking", "Checking this wording against the cited facts…"]);
     expect(told("Applied wording")).toEqual(["Accepted", "This wording passed the check. It’s in version 4 of your resume."]);
@@ -277,7 +277,7 @@ describe("an owner answering suggested wording", () => {
     expect(told("Changed wording")).toEqual([
       "Waiting for you",
       "The resume or its facts changed, so this wording wasn’t applied. You can accept again.",
-      "If you accept, this wording is checked against the facts this line cites before it replaces the line. A completed check uses one output.",
+      "If you accept, this wording is checked against the facts this line cites before it replaces the line. A completed check counts toward your documents for this period.",
     ]);
     expect(told("Unfinished wording")[1]).toBe("The check couldn’t be finished, so nothing changed. You can accept again.");
     expect(told("Unconfirmed wording")).toEqual(["Checking", "Your check was requested, but Resumatic can’t confirm yet that it started. Keep this page open."]);

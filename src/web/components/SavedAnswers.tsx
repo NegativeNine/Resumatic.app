@@ -24,7 +24,7 @@ export function SavedAnswers() {
       <h2 id={`${id}-title`}>Saved answers</h2>
       <p className="card-text meta">
         Short answers you give on many applications, in your own words. An application kit offers one when an employer’s
-        question fits its label. Your answers stay in your vault, and their words are never sent to an AI model.
+        question fits its label. Your answers stay in your record, and their words are never sent to an AI model.
       </p>
       <Message tone="info" live={false}>
         Questions about work authorisation, visas, sponsorship or citizenship, pay, or personal details such as age, health or
@@ -75,8 +75,8 @@ function SavedAnswerList({ answers, reload }: { answers: SavedAnswer[]; reload: 
                   <p className="rs-inline-error">This answer can’t be offered any more: it’s about {SENSITIVE_KIND_WORDS[answer.refusedKind]}.</p>
                 )}
                 <div className="actions">
-                  <button type="button" className="small" disabled={action.pending} onClick={() => setEditing(answer.id)} aria-label={`Edit ${answer.label}`}>
-                    Edit
+                  <button type="button" className="small" disabled={action.pending} onClick={() => setEditing(answer.id)} aria-label={`Change ${answer.label}`}>
+                    Change
                   </button>
                   <button
                     type="button"

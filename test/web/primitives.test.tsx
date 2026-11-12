@@ -8,12 +8,18 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  LINE_MARK,
   Loading,
   Message,
   PageHeader,
   Quote,
+  REVIEW_MARK,
+  REVIEW_TICK,
+  RUN_MARK,
   Success,
   Tick,
+  type MarkTone,
+  type TickState,
 } from "../../src/web/components/ui";
 
 describe("messages", () => {
@@ -59,36 +65,68 @@ describe("messages", () => {
 });
 
 describe("marks and ticks", () => {
-  it("draws a v1 tone as its status mark", () => {
+  it("draws each tone as its plain status mark", () => {
+    const tones: MarkTone[] = ["backed", "needs-you", "note", "working", "problem", "beta", "status"];
     render(
       <>
-        <Badge tone="proposed">Proposed role</Badge>
-        <Badge tone="queued">Reading…</Badge>
+        {tones.map((tone) => (
+          <Badge key={tone} tone={tone}>{`Mark ${tone}`}</Badge>
+        ))}
       </>,
     );
-    expect(screen.getByText("Proposed role")).toHaveClass("rs-mark", "rs-mark--proposed");
-    expect(screen.getByText("Reading…")).toHaveClass("rs-mark", "rs-mark--reading");
+    for (const tone of tones) expect(screen.getByText(`Mark ${tone}`)).toHaveClass("rs-mark", `rs-mark--${tone}`);
+  });
+
+  it("maps stored states to the plain tones, so no earlier class name reaches the page", () => {
+    expect(REVIEW_MARK).toEqual({ proposed: "needs-you", confirmed: "backed", rejected: "note" });
+    expect(REVIEW_TICK).toEqual({ proposed: "needs-you", confirmed: "backed", rejected: "left-out" });
+    expect(LINE_MARK).toEqual({ kept: "backed", repaired: "note", replaced: "note", edited: "note" });
+    expect(RUN_MARK).toEqual({ queued: "working", running: "working", ready: "backed", failed: "problem" });
   });
 
   it("names a tick only when it carries meaning on its own", () => {
     render(
       <>
-        <Tick state="confirmed" label="Confirmed" />
-        <Tick state="proposed" />
+        <Tick state="backed" label="Confirmed" />
+        <Tick state="needs-you" />
       </>,
     );
-    expect(screen.getByRole("img", { name: "Confirmed" })).toHaveClass("rs-tick--confirmed");
-    expect(document.querySelector(".rs-tick--proposed")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("img", { name: "Confirmed" })).toHaveClass("rs-tick--backed");
+    expect(document.querySelector(".rs-tick--needs-you")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("draws a check when backed, a cross when left out and an alert for a problem, and nothing otherwise", () => {
+    const states: TickState[] = ["backed", "needs-you", "left-out", "working", "problem", "todo"];
+    render(
+      <>
+        {states.map((state) => (
+          <Tick key={state} state={state} />
+        ))}
+      </>,
+    );
+    const glyph = (state: TickState) => document.querySelector(`.rs-tick--${state} .rs-g`)?.className ?? null;
+    expect(glyph("backed")).toBe("rs-g rs-g--check");
+    expect(glyph("left-out")).toBe("rs-g rs-g--cross");
+    expect(glyph("problem")).toBe("rs-g rs-g--alert");
+    for (const state of ["needs-you", "working", "todo"] as const) expect(glyph(state)).toBeNull();
   });
 });
 
 describe("Quote", () => {
-  it("highlights the person’s words and keeps the source in the caption", () => {
+  it("highlights the person’s words and keeps the file in the caption", () => {
     render(<Quote text="  Led migration of 40 services  " caption="From sam-rivera-2024.pdf" />);
     const mark = screen.getByText("Led migration of 40 services");
     expect(mark.tagName).toBe("MARK");
     expect(mark.closest("blockquote")).not.toBeNull();
     expect(screen.getByText("From sam-rivera-2024.pdf").tagName).toBe("FIGCAPTION");
+  });
+
+  it("Quote carries the quote icon", () => {
+    render(<Quote text="Led migration of 40 services" />);
+    const icon = document.querySelector("figure > .rs-g");
+    expect(icon).toHaveClass("rs-g--quote");
+    expect(icon).toHaveAttribute("aria-hidden", "true");
+    expect(document.querySelector(".rs-g--follows")).toBeNull();
   });
 
   it("sets a little context around the quote, muted", () => {
