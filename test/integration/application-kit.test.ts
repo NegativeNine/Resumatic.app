@@ -1080,11 +1080,13 @@ describe("a kit's life with its vault", { timeout: 120_000 }, () => {
       runs.claim(stale);
       await state.storage.setAlarm(Date.now());
     });
-    expect(await runDurableObjectAlarm(vaultOf(user))).toBe(true);
+    // The alarm is due at once; run it now, if the runtime hasn't already.
+    await runDurableObjectAlarm(vaultOf(user));
     expect((await runsOf(user, "match")).find((run) => run.id === stale)).toMatchObject({ state: "running" });
     await sql(user, (db) => db.exec(`UPDATE runs SET created_at = ? WHERE id = ?`, Date.now() - 601_000, stale));
     await runInDurableObject(vaultOf(user), (_instance, state) => state.storage.setAlarm(Date.now()));
-    expect(await runDurableObjectAlarm(vaultOf(user))).toBe(true);
+    await runDurableObjectAlarm(vaultOf(user));
+    await eventually(async () => (await runsOf(user, "match")).find((run) => run.id === stale && run.state === "failed"), "the stale match to fail");
     expect((await runsOf(user, "match")).find((run) => run.id === stale)).toMatchObject({ state: "failed", error_code: "match_interrupted" });
   });
 });
