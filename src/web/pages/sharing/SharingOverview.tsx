@@ -42,7 +42,7 @@ export function SharingOverview() {
 }
 
 /** What waits for the person on Coaches: the number the Coaches tab shows. */
-export function coachesWaiting(today: Today | undefined, me: Me): number {
+function coachesWaiting(today: Today | undefined, me: Me): number {
   return today ? today.counts.sharing : (me.newFromCoach ?? 0);
 }
 
@@ -87,7 +87,7 @@ function CoachesWay() {
 }
 
 /** One sentence for each copy a coach can open now, up to three, then what is left and what is closed. */
-export function openCopies(grants: readonly ShareGrant[], now: number): string[] {
+function openCopies(grants: readonly ShareGrant[], now: number): string[] {
   const live = grants.filter((grant) => grant.revokedAt === null && grant.expiresAt > now);
   const active = live.filter((grant) => grant.available !== false);
   const closed = live.length - active.length;
@@ -105,7 +105,7 @@ export function openCopies(grants: readonly ShareGrant[], now: number): string[]
 }
 
 /** What waits on Coaches, in words: from Today where it has loaded, otherwise from the session. */
-export function coachesWaitingWords(today: Today | undefined, me: Me): string {
+function coachesWaitingWords(today: Today | undefined, me: Me): string {
   if (!today) {
     const comments = me.newFromCoach ?? 0;
     return comments > 0 ? `${count(comments, "new comment")}.` : "Nothing.";
@@ -152,7 +152,7 @@ function RecruitersWay() {
  * Whether a connected app's access has ended, is waiting for it to finish connecting, or is in use:
  * the rules ConnectedApps applies to its own list, so the two never disagree.
  */
-export function appStanding(grant: McpGrant, now: number): "inactive" | "pending" | "active" | "other" {
+function appStanding(grant: McpGrant, now: number): "inactive" | "pending" | "active" | "other" {
   const inactive = grant.revokedAt !== null || grant.expiresAt <= now;
   if (inactive) return "inactive";
   if (grant.state === "pending") return "pending";
