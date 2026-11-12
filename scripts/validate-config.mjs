@@ -144,6 +144,10 @@ export async function validate({
     // precision is measured on lines given with consent and the notice and credits are in place.
     if (environment === "production" && config.vars?.TAG_SHADOW_ENABLED === "true")
       missing.push("TAG_SHADOW_ROLLOUT_UNVERIFIED");
+    // An application kit's judge is new model spend, and no eval measures it yet. The existing
+    // questions document asks about posting gaps and never judges an employer's questions.
+    if (environment === "production" && config.vars?.APPLICATION_KIT_ENABLED === "true")
+      missing.push("APPLICATION_KIT_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.R2_CACHE_FENCE_ENABLED && config.vars.R2_CACHE_FENCE_ENABLED !== "false")
       missing.push("R2_CACHE_FENCE_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.PLACEMENT_FENCE_ENABLED && config.vars.PLACEMENT_FENCE_ENABLED !== "false")

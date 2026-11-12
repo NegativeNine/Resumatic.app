@@ -49,7 +49,39 @@ import type {
 import { DATE_PATTERN, MAX_JOB_NAME_CHARS, MAX_LINE_CHARS, MAX_SENSITIVE_IDS, MAX_UPLOAD_BYTES, isWebUrl, normalizePosting } from "../shared/api";
 import type { Preferences, PreferenceValues } from "../shared/preferences";
 import { PreferencesStore } from "./preferences";
-import { AppError, errorCode } from "../shared/errors";
+import {
+  KIT_ANSWER_REFUSED,
+  KIT_CHANGED,
+  KIT_CHOICE_REFUSED,
+  KIT_DOCUMENT_REFUSED,
+  KIT_NOT_APPROVED,
+  KIT_PROBLEMS,
+  KIT_QUESTIONS_REFUSED,
+  KIT_RESUME_REFUSED,
+  KIT_SENSITIVE_NEVER_SAVED,
+  classifyDeterministic,
+  cleanKitAnswer,
+  cleanKitParts,
+  cleanKitQuestions,
+  readKitAnswerChange,
+  refusedKind,
+  type KitAnswerChange,
+  type KitArchiveData,
+  type KitChoice,
+  type KitExport,
+  type KitPart,
+  type KitPartsUpdate,
+  type KitProblem,
+  type KitQuestionsUpdate,
+  type KitQuestionRecord,
+  type KitQuestionView,
+  type KitView,
+  type SavedAnswer,
+  type SavedAnswerInput,
+} from "../shared/kit";
+import type { KitMatchAnswer } from "../ai/question-match";
+import { ApplicationKitStore } from "./application-kit";
+import { AppError, errorCode, logErrorCode } from "../shared/errors";
 import { isMissingWorkflowInstance } from "../shared/workflow-errors";
 import { directoryForUser } from "../shared/stubs";
 import type {
@@ -81,10 +113,10 @@ import {
 import { vault as vaultStub } from "../shared/stubs";
 import { createSchema, hasSchema, migrate, SCHEMA_VERSION } from "./schema";
 import { assertGroundedResume, evidenceForFacts, evidenceForRoles, SnapshotStore, type ResumeVersion } from "./snapshots";
-import { canShareDocument, SHAREABLE_DOCUMENT_KINDS, type DocumentVersion } from "./document-shares";
+import { canShareDocument, sharedDocument, SHAREABLE_DOCUMENT_KINDS, type DocumentVersion } from "./document-shares";
 import { CoachClientStore, type CoachClientEntry } from "./coach-clients";
 import type { CoachAccount } from "./shares";
-import type { ShareableDocument } from "../shared/sharing";
+import type { ShareableDocument, SharedDocument } from "../shared/sharing";
 import { ShareCommentStore } from "./share-comments";
 import type { CommentThread, NewShareComment, OwnerCommentThread, ShareComment } from "../shared/sharing";
 import { isVisibleLine, targetText, unchangedWording, type NewSuggestion, type ShareSuggestion } from "../shared/sharing";
@@ -221,7 +253,7 @@ export interface ResumePatch {
 }
 
 /** RecordExport adds how lines divide, their concepts and what was merged: every judgement held, with what made it. */
-export interface VaultExport extends RecordExport {
+export interface VaultExport extends RecordExport, KitExport {
   interviewAnswers: Record<string, string | number | null>[];
   generationInputs: Record<string, string | number | null>[];
   generationItems: Record<string, string | number | null>[];
@@ -522,7 +554,7 @@ export class Vault extends DurableObject<Env> {
       .map((r) => r.run_id);
     const other = this.sql
       .exec<{ kind: string; id: string }>(
-        `SELECT kind,id FROM runs WHERE kind NOT IN ('distill','tailor','embed')`,
+        `SELECT kind,id FROM runs WHERE kind NOT IN ('distill','tailor','embed','match')`,
       )
       .toArray();
     return other.length ? { distill, tailor, other } : { distill, tailor };
@@ -751,6 +783,447 @@ export class Vault extends DurableObject<Env> {
     // The store reads the revision and writes in one synchronous turn: nothing is awaited
     // between the owner check above and the write.
     return this.preferences.save(values, expectedRevision);
+  }
+
+  // ---------------------------------------------------------------- saved answers and application kits
+  // The owner's saved answers, and one kit per job of what they will send. Only the owner's calls
+  // below, the export and the deletion of a job reach the store: test/unit/saved-answers-reach.test.ts
+  // holds it there. A kit's answers are never facts or evidence, and no answer's text reaches a
+  // model: the judge, where it is switched on, is given an employer's question and the labels alone.
+
+  private get kits(): ApplicationKitStore {
+    return new ApplicationKitStore(this.sql);
+  }
+
+  /** Every saved answer, each with what today's list says of it. */
+  async listSavedAnswers(who: Who): Promise<SavedAnswer[]> {
+    this.requireOwner(who);
+    return this.kits.listSaved();
+  }
+
+  /** Adds a saved answer, or returns the one with the same label and words. */
+  async addSavedAnswer(who: Who, input: SavedAnswerInput): Promise<SavedAnswer> {
+    this.requireOwner(who);
+    return this.ctx.storage.transactionSync(() => this.kits.addSaved(input, Date.now()));
+  }
+
+  /** Replaces a saved answer's label and words at the revision it was read at. Every kit using it is a draft again. */
+  async editSavedAnswer(who: Who, id: string, input: SavedAnswerInput, expectedRevision: number): Promise<SavedAnswer> {
+    this.requireOwner(who);
+    return this.ctx.storage.transactionSync(() => {
+      const now = Date.now();
+      const saved = this.kits.editSaved(id, input, expectedRevision, now);
+      this.kits.resetKitsUsing(id, now);
+      return saved;
+    });
+  }
+
+  /** Deletes a saved answer. Questions matched to it ask again, and every kit using it is a draft again. */
+  async deleteSavedAnswer(who: Who, id: string): Promise<void> {
+    this.requireOwner(who);
+    this.ctx.storage.transactionSync(() => this.kits.deleteSaved(id, Date.now()));
+  }
+
+  /** A job's kit, with every check worked out now. A job with no kit yet has one at revision 0. */
+  async getKit(who: Who, applicationId: string): Promise<KitView> {
+    this.requireOwner(who);
+    this.kitJob(applicationId);
+    return this.kitView(applicationId);
+  }
+
+  /**
+   * Replaces a kit's questions with these, in this order. A question whose words are unchanged
+   * keeps its answer; one that is new or reworded is matched again: the closed list first, then a
+   * label word for word, then (switched on only) the judge, given the question and the labels.
+   * The judge is asked between two checks, and its answer is used only if no saved answer changed
+   * while it was asked.
+   */
+  async saveKitQuestions(who: Who, applicationId: string, input: KitQuestionsUpdate): Promise<KitView> {
+    this.requireOwner(who);
+    const submitted = cleanKitQuestions((input as { questions?: unknown } | null)?.questions);
+    if (!submitted) throw new AppError("invalid", KIT_QUESTIONS_REFUSED);
+    const expected = (input as { expectedRevision?: unknown }).expectedRevision;
+    // What each question is, decided from the kit and the saved answers as they are when it runs.
+    const decide = () => {
+      this.kitJob(applicationId);
+      if ((this.kits.kit(applicationId)?.revision ?? 0) !== expected) throw new AppError("conflict", KIT_CHANGED);
+      const held = new Map(this.kits.questions(applicationId).map((row) => [row.id, row]));
+      if (submitted.some((question) => question.id !== null && !held.has(question.id))) throw new AppError("invalid", KIT_QUESTIONS_REFUSED);
+      const usable = this.kits.usableSaved();
+      const questions = submitted.map((question) => {
+        const was = question.id === null ? undefined : held.get(question.id);
+        if (was && was.question === question.text) return { kept: was } as const;
+        return { fresh: question, decided: classifyDeterministic(question.text, usable) } as const;
+      });
+      return { questions, usable, digest: this.kits.savedDigest() };
+    };
+    const before = decide();
+    const unsettled = [...new Set(before.questions.flatMap((question) => ("fresh" in question && question.decided === null ? [question.fresh.text] : [])))];
+    const labels = before.usable.map((saved) => ({ id: saved.id, label: saved.label }));
+    const judged =
+      unsettled.length > 0 && this.env.APPLICATION_KIT_ENABLED === "true" && labels.length > 0
+        ? await this.askKitJudge(applicationId, unsettled.map((text) => ({ key: text, text })), labels)
+        : new Map<string, KitMatchAnswer>();
+    this.requireOwner(who);
+    return this.ctx.storage.transactionSync(() => {
+      const now = decide();
+      // The labels the judge chose from are the ones every saved answer has now, or its answer is none.
+      const sameSaved = now.digest === before.digest;
+      const rows = now.questions.map((question) => {
+        if ("kept" in question) {
+          const { applicationId: _job, position: _was, ...kept } = question.kept!;
+          return kept;
+        }
+        const base: Omit<KitQuestionRecord, "applicationId" | "position"> = {
+          id: question.fresh.id ?? crypto.randomUUID(),
+          question: question.fresh.text,
+          state: "asks",
+          matchedBy: null,
+          savedAnswerId: null,
+          confirmedRevision: null,
+          sensitiveKind: null,
+          typedAnswer: null,
+        };
+        const decided = question.decided;
+        if (decided?.state === "sensitive") return { ...base, state: "sensitive" as const, sensitiveKind: decided.kind };
+        if (decided?.state === "matched") return { ...base, state: "matched" as const, matchedBy: "label" as const, savedAnswerId: decided.savedAnswerId };
+        const answer = sameSaved ? judged.get(question.fresh.text) : undefined;
+        if (answer?.kind === "refused") return { ...base, state: "sensitive" as const, sensitiveKind: "judge" as const };
+        const chosen = answer?.kind === "label" ? labels[answer.index] : undefined;
+        if (chosen && now.usable.some((saved) => saved.id === chosen.id))
+          return { ...base, state: "matched" as const, matchedBy: "judge" as const, savedAnswerId: chosen.id };
+        return base;
+      });
+      this.kits.replaceQuestions(applicationId, rows);
+      this.kits.touchDraft(applicationId, Date.now());
+      return this.kitView(applicationId);
+    });
+  }
+
+  /**
+   * Asks the judge about each question, four at a time, in a `match` run of its own. Best effort:
+   * any failure, building the models included, is no answer, so the question asks. Only codes are
+   * logged: never a question, a label or an answer.
+   */
+  private async askKitJudge(
+    applicationId: string,
+    items: { key: string; text: string }[],
+    labels: { id: string; label: string }[],
+  ): Promise<Map<string, KitMatchAnswer>> {
+    const id = crypto.randomUUID();
+    let begun = false;
+    let finished = false;
+    try {
+      const m = runModels(this.env, this.vaultId, id, "match", "vault");
+      if (!m.matchQuestion) return new Map();
+      this.runs.begin({ id, kind: "match", targetId: applicationId, requestKey: `match:${id}`, inputDigest: id, steps: ["match"] });
+      begun = true;
+      this.runs.claim(id);
+      await this.scheduleRunAlarm(Date.now() + 60_000);
+      const names = labels.map((label) => label.label);
+      const answers = new Map<string, KitMatchAnswer>();
+      for (let at = 0; at < items.length; at += 4) {
+        this.requireOpen();
+        const wave = items.slice(at, at + 4);
+        const results = await Promise.allSettled(wave.map((item) => m.matchQuestion!({ question: item.text, labels: names })));
+        results.forEach((result, index) => {
+          if (result.status === "fulfilled") answers.set(wave[index]!.key, result.value);
+          else console.error("application kit match failed", { code: "kit_match_failed", cause: logErrorCode(result.reason) });
+        });
+      }
+      this.requireOpen();
+      this.runs.commitStep(id, "match", () => {});
+      this.runs.finish(id, () => {});
+      finished = true;
+      return answers;
+    } catch (error) {
+      console.error("application kit match failed", { code: "kit_match_failed", cause: logErrorCode(error) });
+      if (begun && !finished && this.initialised && !this.gone && this.meta("state") === "open") {
+        try {
+          this.runs.fail(id, "match_failed");
+        } catch {
+          // The alarm fails a run that is left behind.
+        }
+      }
+      return new Map();
+    }
+  }
+
+  /** Chooses the kit's resume version, and its letter and preparation if any. Each must pass its gate now. */
+  async chooseKitParts(who: Who, applicationId: string, input: KitPartsUpdate): Promise<KitView> {
+    this.requireOwner(who);
+    const parts = cleanKitParts(input);
+    if (!parts) throw new AppError("invalid", KIT_CHOICE_REFUSED);
+    return this.ctx.storage.transactionSync(() => {
+      this.kitJob(applicationId);
+      if ((this.kits.kit(applicationId)?.revision ?? 0) !== input.expectedRevision) throw new AppError("conflict", KIT_CHANGED);
+      if (parts.resume) this.kitResume(applicationId, parts.resume);
+      if (parts.letter) this.kitDocument(applicationId, parts.letter, "letter");
+      if (parts.prep) this.kitDocument(applicationId, parts.prep, "prep");
+      this.kits.setParts(applicationId, parts, Date.now());
+      return this.kitView(applicationId);
+    });
+  }
+
+  /** Answers one question: confirms or rejects its match, uses a saved answer, types an answer, or keeps a typed one as a saved answer. */
+  async answerKitQuestion(who: Who, applicationId: string, questionId: string, change: KitAnswerChange, expectedRevision: number): Promise<KitView> {
+    this.requireOwner(who);
+    const read = readKitAnswerChange(change);
+    if (!read) throw new AppError("invalid", KIT_ANSWER_REFUSED);
+    return this.ctx.storage.transactionSync(() => {
+      this.kitJob(applicationId);
+      if ((this.kits.kit(applicationId)?.revision ?? 0) !== expectedRevision) throw new AppError("conflict", KIT_CHANGED);
+      const question = this.kits.questions(applicationId).find((row) => row.id === questionId);
+      if (!question) throw new AppError("not_found", "no such question");
+      // A change that doesn't fit the question's state was made from a page that is out of date.
+      const stale = () => new AppError("conflict", KIT_CHANGED);
+      const never = () => new AppError("invalid", KIT_SENSITIVE_NEVER_SAVED);
+      const now = Date.now();
+      const matchedTo = (saved: SavedAnswer) =>
+        ({ state: "matched", matchedBy: "owner", savedAnswerId: saved.id, confirmedRevision: saved.revision, typedAnswer: null }) as const;
+      switch (read.kind) {
+        case "confirm": {
+          if (question.state !== "matched") throw stale();
+          const saved = this.kits.saved(question.savedAnswerId!);
+          if (!saved) throw stale();
+          if (saved.refusedKind || refusedKind(question.question)) throw never();
+          this.kits.answerQuestion(applicationId, question.id, { ...matchedTo(saved), matchedBy: question.matchedBy });
+          break;
+        }
+        case "reject":
+          if (question.state !== "matched") throw stale();
+          this.kits.answerQuestion(applicationId, question.id, { state: "asks", matchedBy: null, savedAnswerId: null, confirmedRevision: null, typedAnswer: null });
+          break;
+        case "use": {
+          if (question.state !== "asks") throw stale();
+          if (refusedKind(question.question)) throw never();
+          const saved = this.kits.saved(read.savedAnswerId);
+          if (!saved) throw new AppError("not_found", "no such saved answer");
+          if (saved.refusedKind) throw never();
+          this.kits.answerQuestion(applicationId, question.id, matchedTo(saved));
+          break;
+        }
+        case "type": {
+          if (question.state === "matched") throw stale();
+          const answer = cleanKitAnswer(read.answer);
+          if (!answer) throw new AppError("invalid", KIT_ANSWER_REFUSED);
+          this.kits.answerQuestion(applicationId, question.id, { state: question.state, matchedBy: null, savedAnswerId: null, confirmedRevision: null, typedAnswer: answer });
+          break;
+        }
+        case "save": {
+          if (question.state !== "asks") throw stale();
+          if (refusedKind(question.question)) throw never();
+          const saved = this.kits.addSaved({ label: read.label, answer: read.answer }, now);
+          this.kits.answerQuestion(applicationId, question.id, matchedTo(saved));
+          break;
+        }
+      }
+      this.kits.touchDraft(applicationId, now);
+      return this.kitView(applicationId);
+    });
+  }
+
+  /** Approves a draft kit whose every check passes now. */
+  async approveKit(who: Who, applicationId: string, expectedRevision: number): Promise<KitView> {
+    this.requireOwner(who);
+    return this.ctx.storage.transactionSync(() => {
+      this.kitJob(applicationId);
+      const kit = this.kits.kit(applicationId);
+      if ((kit?.revision ?? 0) !== expectedRevision || kit?.state === "approved") throw new AppError("conflict", KIT_CHANGED);
+      const [problem] = this.kitProblems(applicationId);
+      if (problem || !kit) {
+        const refusal = KIT_PROBLEMS[problem?.code ?? "no_resume"];
+        throw new AppError(refusal.code, refusal.sentence);
+      }
+      this.kits.approve(applicationId, Date.now());
+      return this.kitView(applicationId);
+    });
+  }
+
+  /**
+   * What an approved kit's ZIP is made from, if every check still passes: the resume as it
+   * prints, the letter and preparation as a copy would show them, and each answer, a matched one
+   * in its saved answer's words now.
+   */
+  async kitArchiveData(who: Who, applicationId: string): Promise<KitArchiveData> {
+    this.requireOwner(who);
+    return this.ctx.storage.transactionSync(() => {
+      const job = this.kitJob(applicationId);
+      const kit = this.kits.kit(applicationId);
+      if (!kit || kit.state !== "approved" || kit.approvedAt === null) throw new AppError("conflict", KIT_NOT_APPROVED);
+      const [problem] = this.kitProblems(applicationId);
+      if (problem || !kit.resume) {
+        const refusal = KIT_PROBLEMS[problem?.code ?? "no_resume"];
+        throw new AppError(refusal.code, refusal.sentence);
+      }
+      return {
+        revision: kit.revision,
+        approvedAt: kit.approvedAt,
+        job,
+        resume: { id: kit.resume.id, render: this.kitResume(applicationId, kit.resume) },
+        letter: kit.letter ? this.kitDocument(applicationId, kit.letter, "letter") : null,
+        prep: kit.prep ? this.kitDocument(applicationId, kit.prep, "prep") : null,
+        answers: this.kits.questions(applicationId).map((question) => ({
+          question: question.question,
+          answer: question.state === "matched" ? this.kits.saved(question.savedAnswerId!)!.answer : question.typedAnswer!,
+        })),
+      };
+    });
+  }
+
+  /** The job a kit is for, or not found. */
+  private kitJob(applicationId: string): { title: string | null; company: string | null } {
+    const job = this.sql
+      .exec<{ title: string | null; company: string | null }>(`SELECT title, company FROM applications WHERE id = ?`, applicationId)
+      .toArray()[0];
+    if (!job) throw new AppError("not_found", "no such application");
+    return { title: job.title, company: job.company };
+  }
+
+  /** A kit as its owner reads it, with every check worked out now and nothing written. */
+  private kitView(applicationId: string): KitView {
+    const kit = this.kits.kit(applicationId);
+    const saved = new Map(this.kits.listSaved().map((answer) => [answer.id, answer]));
+    const questions: KitQuestionView[] = this.kits.questions(applicationId).map((row) => {
+      const answer = row.state === "matched" && row.savedAnswerId !== null ? saved.get(row.savedAnswerId) ?? null : null;
+      return {
+        id: row.id,
+        position: row.position,
+        text: row.question,
+        state: row.state,
+        matchedBy: row.matchedBy,
+        savedAnswer: answer,
+        confirmed: answer !== null && row.confirmedRevision === answer.revision,
+        sensitiveKind: row.sensitiveKind,
+        typedAnswer: row.typedAnswer,
+      };
+    });
+    const problems = this.kitProblems(applicationId);
+    return {
+      applicationId,
+      revision: kit?.revision ?? 0,
+      state: kit?.state ?? "draft",
+      approvedAt: kit?.approvedAt ?? null,
+      resume: kit?.resume ?? null,
+      letter: kit?.letter ?? null,
+      prep: kit?.prep ?? null,
+      questions,
+      choices: this.kitChoices(applicationId),
+      problems,
+      ready: kit?.state === "approved" && problems.length === 0,
+      updatedAt: kit?.updatedAt ?? null,
+    };
+  }
+
+  /**
+   * Why a kit can't be approved or downloaded now, in order. Worked out on every read and never
+   * written: a gate that fails after approval (a fact marked sensitive since, say) blocks the kit
+   * without changing it.
+   */
+  private kitProblems(applicationId: string): KitProblem[] {
+    const kit = this.kits.kit(applicationId);
+    const passes = (check: () => unknown) => {
+      try {
+        check();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const problems: KitProblem[] = [];
+    const resume = kit?.resume;
+    const letter = kit?.letter;
+    const prep = kit?.prep;
+    if (!resume) problems.push({ code: "no_resume" });
+    else if (!passes(() => this.kitResume(applicationId, resume))) problems.push({ code: "resume_refused" });
+    if (letter && !passes(() => this.kitDocument(applicationId, letter, "letter"))) problems.push({ code: "letter_refused" });
+    if (prep && !passes(() => this.kitDocument(applicationId, prep, "prep"))) problems.push({ code: "prep_refused" });
+    const refused: string[] = [];
+    const unanswered: string[] = [];
+    for (const question of this.kits.questions(applicationId)) {
+      if (question.state === "matched") {
+        const saved = question.savedAnswerId === null ? null : this.kits.saved(question.savedAnswerId);
+        // The list can grow between releases: a match it refuses now is treated as sensitive.
+        if (refusedKind(question.question) || saved?.refusedKind) refused.push(question.id);
+        else if (!saved || question.confirmedRevision !== saved.revision) unanswered.push(question.id);
+      } else if (question.typedAnswer === null) unanswered.push(question.id);
+    }
+    if (refused.length) problems.push({ code: "refused_kind", questionIds: refused });
+    if (unanswered.length) problems.push({ code: "unanswered", questionIds: unanswered });
+    return problems;
+  }
+
+  /** The resume versions, letters and preparation made for this job that can go in a kit now, newest first. */
+  private kitChoices(applicationId: string): KitView["choices"] {
+    const resumes: KitChoice[] = [];
+    for (const { id } of this.sql
+      .exec<{ id: string }>(`SELECT id FROM resumes WHERE application_id = ? AND state = 'ready' ORDER BY created_at DESC, id`, applicationId)
+      .toArray()) {
+      for (const { version, createdAt } of this.snapshots.versions(id)) {
+        try {
+          this.gatedRender(id, version);
+          resumes.push({ id, version, createdAt });
+        } catch {
+          // Not offered: the version fails the gate now.
+        }
+      }
+    }
+    const withheld = withheldFacts(this.sql);
+    const documents = this.sql
+      .exec<{ id: string; kind: string; version: number; data: string; created_at: number }>(
+        `SELECT d.id, d.kind, v.version, v.data, v.created_at FROM documents d JOIN document_versions v ON v.document_id = d.id
+         WHERE d.application_id = ? AND d.state = 'ready' AND d.kind IN ('letter', 'prep') ORDER BY v.created_at DESC, d.id, v.version DESC LIMIT 200`,
+        applicationId,
+      )
+      .toArray()
+      .filter((row) => {
+        try {
+          return canShareDocument(row.id, row.version, row.kind, parseOrNull<DocumentVersion>(row.data), withheld);
+        } catch {
+          return false;
+        }
+      });
+    const choice = (row: { id: string; version: number; created_at: number }): KitChoice => ({ id: row.id, version: row.version, createdAt: row.created_at });
+    return {
+      resumes: resumes.sort((a, b) => b.createdAt - a.createdAt),
+      letters: documents.filter((row) => row.kind === "letter").map(choice),
+      preps: documents.filter((row) => row.kind === "prep").map(choice),
+    };
+  }
+
+  /** A chosen resume version as it prints, or the refusal: not this job's or not finished, or failing the gate now. */
+  private kitResume(applicationId: string, part: KitPart): RenderData {
+    let row: ResumeRow;
+    try {
+      row = this.resumeRow(part.id);
+    } catch {
+      throw new AppError("invalid", KIT_CHOICE_REFUSED);
+    }
+    if (row.application_id !== applicationId || row.state !== "ready") throw new AppError("invalid", KIT_CHOICE_REFUSED);
+    try {
+      return this.gatedRender(part.id, part.version);
+    } catch (error) {
+      if (errorCode(error) === "not_found") throw new AppError("invalid", KIT_CHOICE_REFUSED);
+      throw new AppError("conflict", KIT_RESUME_REFUSED);
+    }
+  }
+
+  /** A chosen letter or preparation as a copy would show it, or the refusal: not this job's, of another kind or unfinished, or failing the gate now. */
+  private kitDocument(applicationId: string, part: KitPart, kind: "letter" | "prep"): SharedDocument {
+    const row = this.sql
+      .exec<{ kind: string; state: string; application_id: string; data: string | null }>(
+        `SELECT d.kind, d.state, d.application_id, v.data FROM documents d
+         LEFT JOIN document_versions v ON v.document_id = d.id AND v.version = ? WHERE d.id = ?`,
+        part.version, part.id,
+      )
+      .toArray()[0];
+    if (!row || row.application_id !== applicationId || row.kind !== kind || row.state !== "ready" || !row.data)
+      throw new AppError("invalid", KIT_CHOICE_REFUSED);
+    try {
+      return sharedDocument(part.id, part.version, kind, parseOrNull<DocumentVersion>(row.data), withheldFacts(this.sql));
+    } catch {
+      throw new AppError("conflict", KIT_DOCUMENT_REFUSED);
+    }
   }
 
   // ---------------------------------------------------------------- sources (user)
@@ -2507,6 +2980,8 @@ export class Vault extends DurableObject<Env> {
       if (this.applicationHasWork(id))
         throw new AppError("conflict", "This job has resumes or documents, so it can't be deleted. Mark it Closed instead.");
       this.sql.exec(`DELETE FROM application_create_requests WHERE application_id = ?`, id);
+      // A kit is not work that keeps a job: its chosen resume already does. It goes with the job.
+      this.kits.deleteKit(id);
       this.sql.exec(`DELETE FROM applications WHERE id = ?`, id);
     });
   }
@@ -3031,12 +3506,19 @@ export class Vault extends DurableObject<Env> {
     version?: number,
   ): Promise<RenderData> {
     this.requireOwner(who);
+    return this.gatedRender(resumeId, version);
+  }
+
+  /**
+   * A ready resume version as it prints, if it passes the gate now. PDF, Word, the print preview, a
+   * connected app's read and an application kit all come through here. A version that uses a fact
+   * marked sensitive is refused before any cached file is looked for.
+   */
+  private gatedRender(resumeId: string, version?: number): RenderData {
     const row = this.resumeRow(resumeId);
     if (row.state !== "ready" || !row.body)
       throw new AppError("conflict", "This resume isn't ready yet. Wait for tailoring to finish, then try again.");
     const saved = this.resumeVersion(row, version);
-    // PDF, Word, the print preview and a connected app's read all come through here. A version
-    // that uses a fact marked sensitive is refused before any cached file is looked for.
     assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence, saved.roleEvidence, withheldFacts(this.sql));
     return saved.render;
   }
@@ -4602,6 +5084,7 @@ export class Vault extends DurableObject<Env> {
       exportedAt: new Date().toISOString(),
       profile: this.readProfile(),
       preferences: this.preferences.read(),
+      ...this.kits.export(),
       sources: this.sql
         .exec<SourceRow>(`SELECT * FROM sources ORDER BY created_at`)
         .toArray()
@@ -4775,6 +5258,11 @@ export class Vault extends DurableObject<Env> {
         throw new AppError(
           "conflict",
           "wait for the in-flight fact save to settle before maintenance",
+        );
+      if (run.kind === "match")
+        throw new AppError(
+          "conflict",
+          "wait for the in-flight answer matching to settle before maintenance",
         );
       const binding =
         run.kind === "distill"
@@ -6044,6 +6532,12 @@ export class Vault extends DurableObject<Env> {
       if (run.kind === "embed") {
         if (Date.now() - run.createdAt > 600_000)
           this.runs.fail(run.id, "embedding_interrupted");
+        return;
+      }
+      // Asking the judge about a kit's questions runs inside the Vault too, with no Workflow.
+      if (run.kind === "match") {
+        if (Date.now() - run.createdAt > 600_000)
+          this.runs.fail(run.id, "match_interrupted");
         return;
       }
       const binding =

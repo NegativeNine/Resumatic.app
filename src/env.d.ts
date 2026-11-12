@@ -51,6 +51,12 @@ interface ResumaticSecrets {
    * up. It adds judge calls to an upload, and a failure in it leaves the upload as it is read today.
    */
   TAG_SHADOW_ENABLED?: string;
+  /**
+   * "true" lets an application kit ask the judge which saved answer's label fits an employer's
+   * question. It sends the question and the labels, never the answers. Off everywhere by default;
+   * without it matching is deterministic only.
+   */
+  APPLICATION_KIT_ENABLED?: string;
   /** The combined ESCO and O*NET taxonomy, in a D1 database of its own. Optional: nothing reads it where it isn't bound. */
   TAXONOMY?: D1Database;
   METRICS?: AnalyticsEngineDataset;

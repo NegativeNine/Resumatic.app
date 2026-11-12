@@ -32,6 +32,11 @@ export const TABLES = new Set([
   "record_links",
   "coach_clients",
   "share_comments",
+  // Saved answers and application kits: the owner's own words and choices. Resume and document IDs
+  // move unchanged, and no row holds a vault ID, storage key or run ID.
+  "saved_answers",
+  "application_kits",
+  "kit_questions",
 ]);
 const vaultId = (value) =>
   typeof value === "string" && /^[a-f0-9]{64}$/i.test(value);

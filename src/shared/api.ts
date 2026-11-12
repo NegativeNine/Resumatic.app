@@ -14,6 +14,10 @@
 //   PUT    /api/profile                Partial<Profile> -> Profile
 //   GET    /api/preferences            Preferences
 //   PUT    /api/preferences            PreferencesUpdate -> Preferences
+//   GET    /api/saved-answers          { savedAnswers: SavedAnswer[] }   (types in ./kit)
+//   POST   /api/saved-answers          SavedAnswerInput -> 201 SavedAnswer   (the same label and answer again returns it)
+//   PUT    /api/saved-answers/:id      SavedAnswerInput & { expectedRevision } -> SavedAnswer
+//   DELETE /api/saved-answers/:id      204
 //   POST   /api/account/sign-out-everywhere   204
 //   POST   /api/sources                multipart field "file" (PDF or DOCX, at most 10 MB) -> 201 { sourceId }
 //   POST   /api/sources/paste   PasteSourceRequest + Idempotency-Key -> 201 { sourceId }
@@ -37,6 +41,12 @@
 //   DELETE /api/applications/:id       204                  (only a job with no resumes or documents)
 //   GET    /api/applications           { applications: ApplicationView[] }
 //   POST   /api/applications/:id/resumes   202 { resumeId }
+//   GET    /api/applications/:id/kit   KitView   (revision 0 before the first write)
+//   PUT    /api/applications/:id/kit/questions   KitQuestionsUpdate (at most 256 KiB) -> KitView
+//   PUT    /api/applications/:id/kit/parts       KitPartsUpdate -> KitView
+//   POST   /api/applications/:id/kit/questions/:qid   { change: KitAnswerChange, expectedRevision } -> KitView
+//   POST   /api/applications/:id/kit/approve     { expectedRevision } -> KitView
+//   GET    /api/applications/:id/kit/archive     application/zip: an approved kit that passes every check
 //   GET    /api/resumes/:id            ResumeView               (poll while state is "running")
 //   PATCH  /api/resumes/:id/lines/:lineId  { text } -> 204
 //   GET    /api/resumes/:id/pdf        application/pdf

@@ -86,6 +86,22 @@ test("the posting reader cannot be enabled in production configuration, and can 
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test("the application kit's judge cannot be enabled in production configuration, and can in staging", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "application-kit-config-"));
+  try {
+    const path = join(dir, "wrangler.jsonc");
+    const report = async (environment, vars, staging = {}) => {
+      await writeFile(path, JSON.stringify({ name: "example", vars, env: { staging: { vars: staging } } }));
+      return (await validate({ environment, purpose: "deploy", configPath: path, env: {} })).missing;
+    };
+    assert.ok((await report("production", { APPLICATION_KIT_ENABLED: "true" })).includes("APPLICATION_KIT_ROLLOUT_UNVERIFIED"));
+    for (const off of [{}, { APPLICATION_KIT_ENABLED: "false" }, { APPLICATION_KIT_ENABLED: "" }])
+      assert.ok(!(await report("production", off)).includes("APPLICATION_KIT_ROLLOUT_UNVERIFIED"), JSON.stringify(off));
+    // Staging is where the judge would be exercised before the guard is lifted.
+    assert.ok(!(await report("staging", {}, { APPLICATION_KIT_ENABLED: "true" })).includes("APPLICATION_KIT_ROLLOUT_UNVERIFIED"));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test("experimental cache-write fencing cannot be enabled in production configuration", async () => {
   const dir = await mkdtemp(join(tmpdir(), "cache-fence-config-"));
   try {

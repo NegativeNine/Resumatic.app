@@ -12,6 +12,9 @@ import { call, cookieFrom, type User } from "./support";
 // words "these went nowhere". A feature that adds a way out of a vault adds it here, and every
 // such test then covers it.
 //
+// The application kit's ZIP is gathered too, though only its owner downloads it: it is what they
+// send on to an employer, so it is a way out like the PDF and the Word file.
+//
 // Not gathered: the owner's own pages, export and document downloads, which are theirs to read;
 // and the answers of the tools that write (add_job, start_tailoring), which hold only IDs. What
 // those tools set going is read here as model inputs and as the resumes they make. preview_fit's
@@ -28,7 +31,7 @@ export interface OutwardCopy {
 
 /** One thing sent out, and where it went. */
 export interface OutwardPart {
-  surface: "copy by its link" | "copy as its coach" | "coach's client list" | "coach's comments" | "list_facts" | "search_facts" | "list_jobs" | "get_resume" | "preview_fit" | "PDF" | "Word" | "print preview" | "model input";
+  surface: "copy by its link" | "copy as its coach" | "coach's client list" | "coach's comments" | "list_facts" | "search_facts" | "list_jobs" | "get_resume" | "preview_fit" | "PDF" | "Word" | "print preview" | "application kit" | "model input";
   text: string;
 }
 
@@ -150,6 +153,15 @@ export async function outwardParts({ owner, copies, inputs }: { owner: User; cop
     if (word.status === 200) add("Word", wordText(new Uint8Array(await word.arrayBuffer())));
     const preview = await owner.fetch(`/api/resumes/${resume.id}/preview?version=${resume.version}`);
     if (preview.status === 200) add("print preview", await preview.text());
+  }
+
+  // Each job's application kit as its ZIP: every file in it, a Word file as its text. A kit that
+  // isn't approved, or that a check now refuses, gives nothing.
+  for (const job of jobs) {
+    const archive = await owner.fetch(`/api/applications/${job.id}/kit/archive`);
+    if (archive.status !== 200) continue;
+    for (const [name, bytes] of Object.entries(unzipSync(new Uint8Array(await archive.arrayBuffer()))))
+      add("application kit", name.endsWith(".docx") ? wordText(bytes) : strFromU8(bytes));
   }
 
   for (const input of inputs) add("model input", input);
