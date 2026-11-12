@@ -669,7 +669,8 @@ describe("when Today can't be read", () => {
     expect(before.every(Boolean)).toBe(true);
     expect(sentence).toHaveFocus();
 
-    api.fail("GET", /\/api\/v2\/today$/, 503, "unavailable", "Upstream exception 7f3a");
+    // Every read fails until Try again, so a refresh that something else starts can’t answer first.
+    api.fail("GET", /\/api\/v2\/today$/, 503, "unavailable", "Upstream exception 7f3a", false);
     act(() => void window.dispatchEvent(new Event(COUNTS_CHANGED)));
     // Wait for the retry itself: under load the alert can be found before its button renders.
     const retry = await screen.findByRole("button", { name: "Try again" });
@@ -685,6 +686,7 @@ describe("when Today can't be read", () => {
     expect(sentence).toBeInTheDocument();
     expect(spoken(within(rooms()).getByRole("link", { name: /^Today/ }))).toBe("Today, 11 waiting for you");
 
+    api.recover("GET", /\/api\/v2\/today$/);
     await userEvent.click(within(alert).getByRole("button", { name: "Try again" }));
     await within(rooms()).findByRole("link", { name: "Today, 11 waiting for you" });
     expect(screen.queryByRole("alert")).toBeNull();
@@ -692,7 +694,8 @@ describe("when Today can't be read", () => {
   });
 
   it("shows Try again when Today can't load at first, and a loading line before it answers", async () => {
-    showToday(withToday(everyKind()), (api) => api.fail("GET", /\/api\/v2\/today$/, 503, "unavailable", "Upstream exception 7f3a"));
+    // Every read fails until Try again, so a second read that something else starts can’t answer first.
+    const { api } = showToday(withToday(everyKind()), (api) => api.fail("GET", /\/api\/v2\/today$/, 503, "unavailable", "Upstream exception 7f3a", false));
     // Before it answers, a loading line, and nothing else.
     expect(screen.getByRole("status")).toHaveTextContent("Loading what’s waiting for you…");
     expect(screen.getByRole("heading", { name: "Today", level: 1 })).toBeInTheDocument();
@@ -703,6 +706,7 @@ describe("when Today can't be read", () => {
     // Its words are the interface's own, never the server's text for an outage.
     expect(alert).toHaveTextContent("Resumatic is busy right now. Try again in a minute.");
     expect(alert).not.toHaveTextContent("Upstream");
+    api.recover("GET", /\/api\/v2\/today$/);
     await userEvent.click(within(alert).getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(nextTitle()).toBe("See why sam-rivera-cv.docx couldn’t be read"));
     expect(screen.queryByRole("alert")).toBeNull();

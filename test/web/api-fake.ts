@@ -85,6 +85,11 @@ export class FakeApi {
     this.failures.push({ method, path, reply: { status, body: { error, message } }, once });
   }
 
+  /** Ends every failure set for this method and path, so the next call is answered as usual. */
+  recover(method: string, path: RegExp): void {
+    this.failures = this.failures.filter((f) => !(f.method === method && f.path.source === path.source));
+  }
+
   /** Calls made with this method to paths that match. */
   callsTo(method: string, path: RegExp): Call[] {
     return this.calls.filter((c) => c.method === method && path.test(c.path));
