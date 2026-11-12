@@ -47,3 +47,13 @@ The [pipeline design](taxonomy-pipelines-design.md) is agreed. The rebuilt taxon
 Skills with years and the card preview depend on tagging and belong in this pipeline sequence. Missing or uncertain tags remain unknown; they do not establish missing experience.
 
 The owner agreed the design and its three starting rules on 10 November 2026: qualified lines stay whole; coaches see the original line; only identical wording in a verified identical role merges automatically. They are recorded under "Decided" in the design.
+
+## Decisions waiting
+
+Each memo states the question, what it blocks, the options, a recommendation, what changes once it is decided and who decides.
+
+- [Live read-only access for a coach](decisions/live-coach-access.md)
+- [A job listings provider for search](decisions/job-search-provider.md)
+- [What counts as years of using a skill](decisions/years-per-skill.md)
+- [The bars before parts, tags and offers are shown for review](decisions/review-bars.md)
+- [Who may see the private card](decisions/card-sharing.md)
