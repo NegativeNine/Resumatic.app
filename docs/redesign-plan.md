@@ -154,6 +154,7 @@ Decisions, each with the alternative rejected:
 13. **The phone layout is CSS only:** the columns wrap, with the next step first in the DOM. The board's "2 more" collapse was rejected.
 14. **Export, don't copy:** `STEPS` from `TailorProgress.tsx` and `chosenName` from `ShareComments.tsx`.
 15. **The web fake works out `standing` from its own record** when a test sets no `today`. Upload and paste routes writing a Today were rejected: they cover only those two paths and duplicate state.
+16. **A connected app counts only while its grant can still reach the vault:** active, not revoked or expired, and made in the vault's current security epoch and session generation, which is what the grant check itself requires. Signing out everywhere changes no grant row, so counting every active row was rejected: Today would name apps that can no longer read anything. The Connected apps list on Account still shows such a grant as active; that is older than this stage and is left to stage 6.
 
 Open questions for the owner, each built as stated:
 

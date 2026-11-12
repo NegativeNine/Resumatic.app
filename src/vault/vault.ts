@@ -1794,7 +1794,7 @@ export class Vault extends DurableObject<Env> {
           leftOut: states.rejected,
           jobs: this.todayStore.jobsByStatus(),
           copies: this.shares.openCounts(now),
-          apps: this.mcpGrants.activeCount(now),
+          apps: this.mcpGrants.activeCount(who, now),
         },
         now,
       );

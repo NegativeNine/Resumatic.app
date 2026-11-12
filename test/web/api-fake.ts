@@ -857,7 +857,8 @@ export class FakeApi {
 // stage 3: today
 /**
  * Where things stand in a record, as the Vault counts it: every file, roles and facts as the review
- * groups them, jobs by status, copies neither revoked nor expired at `now`, and active apps.
+ * groups them, jobs by status, copies neither revoked nor expired at `now`, and active apps. The
+ * fake has one security epoch and session generation, so it skips the Vault's match on them.
  */
 export function standingOf(state: Fixtures, now: number): TodayStanding {
   const states = countByState({ roles: state.roles, facts: state.facts });

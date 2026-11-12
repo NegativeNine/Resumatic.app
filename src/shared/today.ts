@@ -87,7 +87,7 @@ export interface TodayStanding {
   /** Shared copies neither revoked nor expired, and those naming a coach. */
   copies: number;
   coachCopies: number;
-  /** Connected apps whose access is active now. */
+  /** Connected apps whose access is active now: bound, unrevoked, unexpired, and not ended by signing out everywhere. */
   apps: number;
 }
 

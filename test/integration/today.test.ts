@@ -504,11 +504,13 @@ describe("where things stand", () => {
   it("counts connected apps whose access is active", async () => {
     const sam = await signIn();
     const now = Date.now();
-    const grant = (id: string, state: string, expiresAt: number, revokedAt: number | null) =>
+    const { gen, epoch = "legacy" } = whoOf(sam);
+    // Grants are made in the session's own epoch and generation, as McpGrantStore.create makes them.
+    const grant = (id: string, state: string, expiresAt: number, revokedAt: number | null, at = { epoch, gen }) =>
       sql(sam, (db) =>
         db.exec(
-          `INSERT INTO mcp_grants (id, client_id, client_name, scopes, epoch, gen, created_at, expires_at, revoked_at, oauth_grant_id, state) VALUES (?, 'https://client.test/app', 'A client', '["vault:read"]', 'epoch', 1, ?, ?, ?, ?, ?)`,
-          id, now, expiresAt, revokedAt, state === "pending" ? null : `remote_${id}`, state,
+          `INSERT INTO mcp_grants (id, client_id, client_name, scopes, epoch, gen, created_at, expires_at, revoked_at, oauth_grant_id, state) VALUES (?, 'https://client.test/app', 'A client', '["vault:read"]', ?, ?, ?, ?, ?, ?, ?)`,
+          id, at.epoch, at.gen, now, expiresAt, revokedAt, state === "pending" ? null : `remote_${id}`, state,
         ),
       );
     await grant(crypto.randomUUID(), "active", now + DAY, null);
@@ -517,7 +519,27 @@ describe("where things stand", () => {
     await grant(crypto.randomUUID(), "revoked", now + DAY, now - 1);
     await grant(crypto.randomUUID(), "active", now + DAY, now - 1);
     await grant(crypto.randomUUID(), "active", now - 1, null);
+    // Access the vault would refuse: a grant from a generation already signed out, or from another epoch.
+    await grant(crypto.randomUUID(), "active", now + DAY, null, { epoch, gen: gen - 1 });
+    await grant(crypto.randomUUID(), "active", now + DAY, null, { epoch: "an-earlier-epoch", gen });
     expect((await today(sam)).today.standing?.apps).toBe(2);
+  });
+
+  it("counts no connected app once the owner signs out everywhere", async () => {
+    const sam = await signIn();
+    const now = Date.now();
+    const { gen, epoch = "legacy" } = whoOf(sam);
+    await sql(sam, (db) =>
+      db.exec(
+        `INSERT INTO mcp_grants (id, client_id, client_name, scopes, epoch, gen, created_at, expires_at, revoked_at, oauth_grant_id, state) VALUES (?, 'https://client.test/app', 'A client', '["vault:read"]', ?, ?, ?, ?, NULL, 'remote_app', 'active')`,
+        crypto.randomUUID(), epoch, gen, now, now + DAY,
+      ),
+    );
+    expect((await today(sam)).today.standing?.apps).toBe(1);
+    expect((await sam.send("POST", "/api/account/sign-out-everywhere", {})).status).toBe(204);
+    // The grant's row is unchanged, but its generation can no longer reach the vault, so none is counted.
+    const apps = await runInDurableObject(vaultOf(sam), async (instance) => (await instance.today({ ...whoOf(sam), gen: gen + 1 })).standing?.apps);
+    expect(apps).toBe(0);
   });
 
   it("holds only numbers in standing", async () => {

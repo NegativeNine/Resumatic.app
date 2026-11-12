@@ -193,13 +193,21 @@ export class McpGrantStore {
     return { oauthGrantId: row?.oauth_grant_id ?? null };
   }
 
-  /** How many connected apps have access now: active, not revoked and not expired. It checks nobody, so the Vault calls it for the owner only. */
-  activeCount(now: number): number {
+  /**
+   * How many connected apps have access now, for the owner: active, not revoked, not expired, and
+   * made in the vault's current security epoch and session generation. `checked` refuses a grant
+   * from any other, so one that signing out everywhere or a vault move has ended is not counted.
+   * `authorizeOwner` has just confirmed that `who.gen` is the current generation.
+   */
+  activeCount(who: Who, now: number): number {
+    this.auth.authorizeOwner(who);
     return (
       this.sql
         .exec<{ n: number }>(
-          `SELECT COUNT(*) AS n FROM mcp_grants WHERE state = 'active' AND revoked_at IS NULL AND expires_at > ?`,
+          `SELECT COUNT(*) AS n FROM mcp_grants WHERE state = 'active' AND revoked_at IS NULL AND expires_at > ? AND epoch = ? AND gen = ?`,
           now,
+          this.auth.currentEpoch(),
+          who.gen,
         )
         .toArray()[0]?.n ?? 0
     );
