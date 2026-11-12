@@ -4,11 +4,11 @@ import { PlaceholderPage } from "./components/Placeholder";
 import { EmptyState, PageHeader } from "./components/ui";
 import { AccountPage } from "./pages/AccountPage";
 import { ClientsPage } from "./pages/ClientsPage";
-import { RulesInterim } from "./pages/interim/jobs";
 import { AppsInterim, CoachesInterim, RecruitersInterim, SharingInterim } from "./pages/interim/sharing";
 import { JobsPage } from "./pages/JobsPage";
+import { JobPage } from "./pages/jobs/JobPage";
+import { RulesPage } from "./pages/jobs/RulesPage";
 import { LEGAL_TITLES, LegalPage } from "./pages/LegalPage";
-import { ResumePage } from "./pages/ResumePage";
 import { SourcesPage } from "./pages/SourcesPage";
 import { PLACEHOLDERS, type PlaceholderName } from "./placeholders";
 import { href, NOT_FOUND_ROUTE, routeNeeds, type Route, type RouteName } from "./router";
@@ -45,9 +45,9 @@ export const SCREENS: { [K in RouteName]: Screen } = {
   jobs: { title: "Jobs", render: () => <JobsPage /> },
   jobsFind: placeholder("jobsFind"),
   jobsApplications: placeholder("jobsApplications"),
-  jobsRules: { title: "Rules and answers", render: () => <RulesInterim /> },
-  job: { title: "Jobs", render: (route) => <JobsPage focus={route.params.id} /> },
-  resume: { title: "Tailored resume", render: (route) => <ResumePage id={route.params.resumeId!} /> },
+  jobsRules: { title: "Rules and answers", render: () => <RulesPage /> },
+  job: { title: "Jobs", render: (route) => <JobPage id={route.params.id!} tab={route.params.jobTab!} /> },
+  resume: { title: "Jobs", render: (route) => <JobPage id={route.params.id} tab="resume" resumeId={route.params.resumeId!} /> },
 
   // stage 6: sharing and account
   sharing: { title: "Sharing", render: () => <SharingInterim /> },

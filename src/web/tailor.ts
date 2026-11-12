@@ -18,7 +18,7 @@ export function quotaMessage({
   return `You’ve used all ${limit} documents for this allowance period.${reset ? ` Your allowance renews on ${reset}.` : ""}`;
 }
 
-/** Starts a Tailor run for an application, then opens the new resume. */
+/** Starts a Tailor run for a job, then opens the new run on the job's page. */
 export function useTailor() {
   const { me, refreshMe } = useSession();
   const { run, pending, error } = useAction();
@@ -28,7 +28,7 @@ export function useTailor() {
       async () => {
         const { resumeId } = await api.tailor(applicationId);
         void refreshMe();
-        navigate(href.resume(resumeId));
+        navigate(href.jobResume(applicationId, resumeId));
       },
       {
         quota: quotaMessage(me.quota),

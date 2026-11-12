@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import {
   MAX_LINE_CHARS,
   type FactView,
@@ -7,10 +7,10 @@ import {
 } from "../../shared/api";
 import { presentResumeBullet } from "../../shared/resume-presentation";
 import { api } from "../api";
-import { count, findingSentence, LINE_STATUS_HINT, LINE_STATUS_LABEL } from "../format";
+import { findingSentence, LINE_STATUS_HINT, LINE_STATUS_LABEL } from "../format";
 import { useAction, type Reload } from "../hooks";
 import { sessionEndNote, useSession } from "../session";
-import { ActionError, Badge, CharCount, Glyph, LINE_MARK, Quote } from "./ui";
+import { ActionError, Badge, CharCount, LINE_MARK, Quote } from "./ui";
 
 type CitedFact = { id: string; text: string; quote: string | null };
 
@@ -21,8 +21,6 @@ interface Props {
   line: ResumeLine;
   facts: ResumeView["facts"];
   legacyReview?: "verified" | "pending";
-  expanded: boolean;
-  onToggle: (lineId: string) => void;
   reload: Reload;
   expectedVersion?: number;
   readOnly?: boolean;
@@ -31,22 +29,22 @@ interface Props {
   sensitive?: boolean;
   onEditingChange?: (id: string, active: boolean) => void;
   editingOutdated?: boolean;
+  /** Where focus goes once the editor closes, so it stays with the line: the card's heading. */
+  onEditorClosed?: () => void;
 }
 
 /**
- * A resume line's note in the margin (ResumeLine): its status, a toggle for the facts and quotes
- * it cites, and its tools. The line itself prints on the sheet (ResumePaper); the note repeats
- * its words only on narrow screens, where the notes follow the sheet as a list.
+ * Where one resume line came from, in its card beside the page (ResumeLine): what the check did and
+ * why, the facts it cites with the words each came from, and its tools. The line itself prints on
+ * the sheet (ResumePaper); its card repeats it. A saved version is only read, so it offers no tool.
  */
-export function LineItem({
+export function LineDetail({
   resumeId,
   applicationId,
   roleId,
   line,
   facts,
   legacyReview,
-  expanded,
-  onToggle,
   reload,
   expectedVersion,
   readOnly = false,
@@ -54,47 +52,39 @@ export function LineItem({
   sensitive = false,
   onEditingChange,
   editingOutdated = false,
+  onEditorClosed,
 }: Props) {
   const [editing, setEditing] = useState(false);
   const removal = useAction();
-  const ref = useRef<HTMLDivElement>(null);
   const id = useId();
   const cited: CitedFact[] = line.factIds.flatMap((factId) =>
     facts[factId] ? [{ id: factId, ...facts[factId] }] : [],
   );
+  const pending = legacyReview === "pending";
 
   const closeEditor = useCallback(() => {
     setEditing(false);
     onEditingChange?.(line.id, false);
-    ref.current?.focus();
-  }, [line.id, onEditingChange]);
+    onEditorClosed?.();
+  }, [line.id, onEditingChange, onEditorClosed]);
 
   return (
-    <div className={expanded ? "rs-note is-open" : "rs-note"} ref={ref} tabIndex={-1} data-note-for={line.id}>
-      <div className="rs-note__row rs-note__head">
-        <Badge tone={legacyReview === "pending" ? "needs-you" : LINE_MARK[line.status]} title={legacyReview === "pending" ? "This older line needs a fresh check against confirmed facts." : LINE_STATUS_HINT[line.status]}>
-          {legacyReview === "pending" ? "Needs review" : legacyReview === "verified" ? "Checked" : LINE_STATUS_LABEL[line.status]}
+    <div className="app-line-detail">
+      <p className="app-line-detail__status">
+        <Badge tone={pending ? "needs-you" : LINE_MARK[line.status]}>
+          {pending ? "Needs review" : legacyReview === "verified" ? "Checked" : LINE_STATUS_LABEL[line.status]}
         </Badge>
         {sensitive && <Badge tone="note">Sensitive fact</Badge>}
-        <button
-          type="button"
-          className="rs-note__toggle"
-          aria-expanded={expanded}
-          aria-controls={`${id}-evidence`}
-          aria-describedby={`${id}-text`}
-          onClick={() => onToggle(line.id)}
-        >
-          <Glyph name="quote" />
-          <span>
-            {legacyReview === "pending"
-              ? expanded ? "Hide review note" : "Review note"
-              : expanded ? "Hide where it came from" : count(cited.length, "fact")}
-          </span>
-        </button>
-      </div>
-      <p className="rs-note__line" id={`${id}-text`}>
-        {roleId === null ? line.text : presentResumeBullet(line.text)}
+        <span className="rs-meta" id={`${id}-hint`}>
+          {pending ? "This older line needs a fresh check against confirmed facts." : `${LINE_STATUS_HINT[line.status]}.`}
+        </span>
       </p>
+      {!legacyReview && line.finding && (line.status === "repaired" || line.status === "replaced") && (
+        <p className="rs-meta">{findingSentence(line.finding, line.status)}</p>
+      )}
+      {pending
+        ? <p className="rs-meta">This older line’s citations haven’t been rechecked. Select confirmed facts when reviewing it.</p>
+        : <Evidence facts={cited} />}
       {editing && (
         <LineEditor
           resumeId={resumeId}
@@ -110,39 +100,30 @@ export function LineItem({
           editingOutdated={editingOutdated}
         />
       )}
-      <div className="rs-note__evidence" id={`${id}-evidence`} hidden={!expanded}>
-        {!legacyReview && line.finding && (line.status === "repaired" || line.status === "replaced") && (
-          <p className="rs-meta">{findingSentence(line.finding, line.status)}</p>
-        )}
-        {legacyReview === "pending"
-          ? <p className="rs-meta">This older line’s citations haven’t been rechecked. Select confirmed facts when reviewing it.</p>
-          : <Evidence facts={cited} />}
-        {!editing && !readOnly && (
-          <div className="rs-note__row">
-            {/* A line that uses a marked fact can't be reworded from it. It can be removed, or reviewed against other facts. */}
-            {(!sensitive || legacyReview === "pending") && (
-              <button
-                type="button"
-                className="rs-linkbtn"
-                aria-describedby={`${id}-text`}
-                onClick={() => { onEditingChange?.(line.id, true); setEditing(true); }}
-              >
-                {legacyReview === "pending" ? "Review line" : "Edit line"}
-              </button>
-            )}
-            {(legacyReview || canRemove) && expectedVersion !== undefined && (
-              <button type="button" className="rs-linkbtn" disabled={removal.pending} aria-describedby={`${id}-text`}
-                onClick={() => void removal.run(async () => {
-                  if (legacyReview) await api.removeLegacyLine(resumeId, line.id, expectedVersion);
-                  else await api.removeResumeLine(resumeId, line.id, expectedVersion);
-                  await reload();
-                })}>
-                {removal.pending ? "Removing…" : "Remove line (keeps earlier versions)"}
-              </button>
-            )}
-          </div>
-        )}
-      </div>
+      {!editing && !readOnly && (
+        <div className="app-line-detail__tools">
+          {/* A line that uses a marked fact can't be reworded from it. It can be removed, or reviewed against other facts. */}
+          {(!sensitive || pending) && (
+            <button
+              type="button"
+              className="rs-linkbtn"
+              onClick={() => { onEditingChange?.(line.id, true); setEditing(true); }}
+            >
+              {pending ? "Review line" : "Edit line"}
+            </button>
+          )}
+          {(legacyReview || canRemove) && expectedVersion !== undefined && (
+            <button type="button" className="rs-linkbtn" disabled={removal.pending}
+              onClick={() => void removal.run(async () => {
+                if (legacyReview) await api.removeLegacyLine(resumeId, line.id, expectedVersion);
+                else await api.removeResumeLine(resumeId, line.id, expectedVersion);
+                await reload();
+              })}>
+              {removal.pending ? "Removing…" : "Remove line (keeps earlier versions)"}
+            </button>
+          )}
+        </div>
+      )}
       <ActionError message={removal.error} />
     </div>
   );
@@ -295,7 +276,7 @@ function LineEditor({
           ? "Your wording is checked against the cited facts before it replaces this line. A completed check counts toward your documents for this period."
           : legacyReview
             ? "Choose up to four confirmed facts that support this older line. You can check its current wording or change it. The check counts toward your documents for this period."
-            : "This line has no verified citations. Choose up to four confirmed facts that support it. The check counts toward your documents for this period."}
+            : "Nothing in your record is linked to this line yet. Choose up to four confirmed facts that back it. The check counts toward your documents for this period."}
       </p>
       {!hasEvidence && (
         <fieldset disabled={pending || !!documentId}>

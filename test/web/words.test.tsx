@@ -1,16 +1,16 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
+import { App } from "../../src/web/App";
 import { ShareSnapshotContent } from "../../src/web/components/ShareSnapshotContent";
 import { AccountPage } from "../../src/web/pages/AccountPage";
 import { JobsPage } from "../../src/web/pages/JobsPage";
-import { ResumePage } from "../../src/web/pages/ResumePage";
 import { SourcesPage } from "../../src/web/pages/SourcesPage";
 import { installFakeApi } from "./api-fake";
 import { fullVault, sharedView } from "./fixtures";
-import { renderWithSession } from "./render";
+import { goTo, renderWithSession } from "./render";
 
 // The plain words (voice and writing): every label the interface writes itself uses them. A label
 // is a button, link, heading, legend, summary, caption, mark, filter option, aria-label, field hint
@@ -37,22 +37,17 @@ const DEFERRED: Readonly<Record<string, string>> = {
   "Sensitive fact": "stage 4",
   "Mark sensitive": "stage 4",
   "Unmark sensitive": "stage 4",
-  // Stage 5, jobs: posting becomes job description, and application becomes job.
-  "The posting": "stage 5",
-  "Read the posting": "stage 5",
-  "Hide the posting": "stage 5",
-  "Open the original posting": "stage 5",
-  "Original posting": "stage 5",
-  "Link to the posting": "stage 5",
-  "Paste the whole posting, including the requirements.": "stage 5",
-  "Track this application": "stage 5",
-  "Prepare your application": "stage 5",
-  "Application kit": "stage 5",
   // Stage 6, sharing and account: card becomes anonymous profile.
   "Card preview": "stage 6",
   // Stage 7, outside: snapshot becomes shared copy.
   "Shared career snapshot": "stage 7",
 };
+
+/**
+ * The boards' own names for a job's tab and for the room's page of prepared applications: names of
+ * places, used exactly so, not the earlier word for a job.
+ */
+const BOARD_NAMES = new Set(["Application", "Applications"]);
 
 /** Every label on the page now, as a person reads it. */
 function labels(): string[] {
@@ -61,7 +56,7 @@ function labels(): string[] {
   return [...texts, ...aria].filter(Boolean);
 }
 
-/** Facts in each filter, Jobs with a workspace open, a resume, Account and a shared copy, with fullVault(). */
+/** Facts in each filter, Your jobs, a job's five tabs with a line's card open, Account and a shared copy, with fullVault(). */
 async function everyScreen(): Promise<Map<string, string>> {
   const seen = new Map<string, string>();
   const take = (where: string) => {
@@ -81,22 +76,41 @@ async function everyScreen(): Promise<Map<string, string>> {
   state = fullVault();
   installFakeApi(state);
   page = renderWithSession(<JobsPage />, state.me);
-  const job = (await screen.findByRole("heading", { name: "Platform Engineer at Litware" })).closest("li")!;
-  await userEvent.click(job.querySelector<HTMLButtonElement>("button[aria-expanded]")!);
-  await screen.findByText("Read cover letter");
-  await screen.findByRole("heading", { name: "Application kit" });
-  await screen.findByText("Asked every time");
-  for (const details of document.querySelectorAll("details")) details.open = true;
-  take("Jobs");
+  await screen.findByRole("link", { name: "Platform Engineer" });
+  take("Your jobs");
   page.unmount();
 
+  // A job's page, through the app so its tabs and the room's are read too.
   state = fullVault();
+  state.applications[0]!.url = "https://careers.litware.example/platform-engineer";
   installFakeApi(state);
-  page = renderWithSession(<ResumePage id="res-ready" />, state.me);
-  await screen.findByRole("heading", { name: "Prepare your application" });
+  goTo("#/jobs/app-litware/fit");
+  const app = render(<App />);
+  await screen.findByRole("region", { name: "Job description" });
+  await userEvent.click(screen.getByRole("button", { name: "Edit details" }));
   for (const details of document.querySelectorAll("details")) details.open = true;
-  take("a resume");
-  page.unmount();
+  take("a job, Fit");
+  act(() => goTo("#/jobs/app-litware/resume"));
+  await screen.findByRole("article", { name: "Resume preview" });
+  // A backed line's card, and a changed one's.
+  await userEvent.click(document.querySelector<HTMLButtonElement>('[data-note-for="line-migration"] button')!);
+  await screen.findByRole("region", { name: "Where this line came from" });
+  take("a job, Resume, a backed line");
+  await userEvent.click(document.querySelector<HTMLButtonElement>('[data-note-for="line-latency"] button')!);
+  take("a job, Resume, a corrected line");
+  act(() => goTo("#/jobs/app-litware/letter"));
+  await screen.findByText("Where these sentences came from");
+  for (const details of document.querySelectorAll("details")) details.open = true;
+  take("a job, Cover letter");
+  act(() => goTo("#/jobs/app-litware/interview"));
+  await screen.findByRole("button", { name: "Cancel this document" });
+  for (const details of document.querySelectorAll("details")) details.open = true;
+  take("a job, Interview");
+  act(() => goTo("#/jobs/app-litware/application"));
+  await screen.findByRole("button", { name: "Approve kit" });
+  await screen.findByText("Asked every time");
+  take("a job, Application");
+  app.unmount();
 
   state = fullVault();
   installFakeApi(state);
@@ -124,15 +138,17 @@ describe("the interface's words", () => {
   it("labels use the plain words", () => {
     // Enough of every screen was read for the check to mean something.
     expect(seen.size).toBeGreaterThan(150);
-    for (const label of ["That’s right", "Fix it", "Leave it out", "Your files", "To check", "Left out", "Backed"]) {
+    for (const label of ["That’s right", "Fix it", "Leave it out", "Your files", "To check", "Backed"]) {
       expect([...seen.keys()], label).toContain(label);
     }
+    // Left out names the Facts filter, with its count beside it. A resume says what was left out in its one sentence.
+    expect([...seen.keys()].filter((label) => /^Left out \d+$/.test(label)), "Left out").not.toEqual([]);
     const earlier = [...seen].filter(([label]) => EARLIER.test(label)).map(([label, where]) => `${where}: ${label}`);
     expect(earlier).toEqual([]);
   });
 
   it("keeps every deferred label on its list", () => {
-    const unlisted = [...seen].filter(([label]) => LATER.test(label) && !(label in DEFERRED)).map(([label, where]) => `${where}: ${label}`);
+    const unlisted = [...seen].filter(([label]) => LATER.test(label) && !(label in DEFERRED) && !BOARD_NAMES.has(label)).map(([label, where]) => `${where}: ${label}`);
     expect(unlisted).toEqual([]);
     // The word list names each one, in quotation marks, with its stage.
     const doc = readFileSync(resolve(process.cwd(), "docs/redesign-words.md"), "utf8");

@@ -2,11 +2,8 @@ import { PlaceholderSection } from "../../components/Placeholder";
 import { SavedAnswers } from "../../components/SavedAnswers";
 import { PageHeader } from "../../components/ui";
 
-// Jobs' pages made from what is built today, until the Jobs stage builds them. Saved answers are
-// on Account too until then.
-
 /** Jobs › Applications › Rules and answers: the rules to come, then the saved answers that work now. */
-export function RulesInterim() {
+export function RulesPage() {
   return (
     <>
       <PageHeader title="Rules and answers">

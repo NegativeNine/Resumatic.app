@@ -162,6 +162,8 @@ export function CoachSuggestion({ comment, quote, ownerName }: { comment: ShareC
  * lines, where it stands, and what can be done. `busy` turns Accept off while any check is being
  * started or is running, because Resumatic makes one thing at a time. `onStarting` says when this
  * card starts one. `onChanged` reloads the threads and settles once they show the change.
+ * `emphasis` is "plain" where the card sits on a page whose one brand button is something else,
+ * such as a resume's line card beside its downloads.
  */
 export function OwnerSuggestion({
   comment,
@@ -170,6 +172,7 @@ export function OwnerSuggestion({
   busy,
   onStarting,
   onChanged,
+  emphasis = "brand",
 }: {
   comment: ShareComment;
   quote: string;
@@ -177,6 +180,7 @@ export function OwnerSuggestion({
   busy: boolean;
   onStarting: (starting: boolean) => void;
   onChanged: () => Promise<unknown>;
+  emphasis?: "brand" | "plain";
 }) {
   const { me, refreshMe } = useSession();
   const accept = useAction();
@@ -254,7 +258,7 @@ export function OwnerSuggestion({
       {(state === "waiting" || state === "stale") && (
         <div className="actions">
           {state === "waiting" && (
-            <button type="button" className="rs-btn rs-btn--primary rs-btn--sm" disabled={busy || pending} onClick={() => void start()}>
+            <button type="button" className={emphasis === "brand" ? "rs-btn rs-btn--primary rs-btn--sm" : "rs-btn rs-btn--sm"} disabled={busy || pending} onClick={() => void start()}>
               {accept.pending ? "Starting…" : "Accept and check"}
             </button>
           )}

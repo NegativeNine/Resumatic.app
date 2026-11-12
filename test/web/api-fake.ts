@@ -653,7 +653,7 @@ export class FakeApi {
       /^\/api\/applications\/([^/]+)$/,
       (_call, [id]) => {
         const application = this.state.applications.find((a) => a.id === id);
-        if (!application) return notFound("no such application");
+        if (!application) return notFound("This job can't be found. It may have been deleted.");
         return ok({ ...application, jdText: this.posting(id), canDelete: application.resumes.length === 0 });
       },
     ],
@@ -662,7 +662,7 @@ export class FakeApi {
       /^\/api\/applications\/([^/]+)$/,
       (_call, [id]) => {
         const application = this.state.applications.find((a) => a.id === id);
-        if (!application) return notFound("no such application");
+        if (!application) return notFound("This job can't be found. It may have been deleted.");
         if (application.resumes.length > 0)
           return { status: 409, body: { error: "conflict", message: "This job has resumes or documents, so it can’t be deleted. Mark it Closed instead." } };
         this.state.applications.splice(this.state.applications.indexOf(application), 1);
@@ -674,7 +674,7 @@ export class FakeApi {
       /^\/api\/applications\/([^/]+)$/,
       (call, [id]) => {
         const application = this.state.applications.find((a) => a.id === id);
-        if (!application) return notFound("no such application");
+        if (!application) return notFound("This job can't be found. It may have been deleted.");
         const { expectedRevision: _revision, jdText, ...patch } = call.body as { expectedRevision?: number; jdText?: string; title?: string; company?: string; url?: string };
         if (jdText !== undefined) this.postings.set(id, jdText);
         // As the server does: an empty name or link clears it.
@@ -688,7 +688,7 @@ export class FakeApi {
       /^\/api\/applications\/([^/]+)\/resumes$/,
       (_call, [applicationId]) => {
         const application = this.state.applications.find((a) => a.id === applicationId);
-        if (!application) return notFound("no such application");
+        if (!application) return notFound("This job can't be found. It may have been deleted.");
         const quota = this.state.me.quota;
         if (quota.used >= quota.limit) {
           return { status: 429, body: { error: "quota", message: `You’ve used all ${quota.limit} tailored resumes for Nov 2026. You can tailor more from 1 Dec 2026.` } };
@@ -772,6 +772,64 @@ export class FakeApi {
     // stage 4: facts
 
     // stage 5: jobs
+    // A document's own status, as a line check reads it. With `lineChecks` set, a running line check
+    // ends when its status is read: passed, with the line saved as checked in a new version, or failed.
+    [
+      "GET",
+      /^\/api\/documents\/([^/]+)$/,
+      (_call, [id]) => {
+        const doc = (this.state.documents ?? []).find((held) => held.id === id);
+        if (!doc) return notFound("no such document");
+        const check = [...this.calls].reverse().find((call) => call.method === "POST" && /\/documents$/.test(call.path) && (call.body as { manualText?: string })?.manualText !== undefined);
+        const asked = check?.body as { resumeId: string; lineIds: string[]; manualText: string; manualFactIds?: string[] } | undefined;
+        if (doc.state === "running" && doc.kind === "refine" && this.state.lineChecks && asked) {
+          doc.state = this.state.lineChecks === "pass" ? "ready" : "failed";
+          doc.error = this.state.lineChecks === "pass" ? null : "invalid";
+          const resume = this.state.resumes[asked.resumeId];
+          const line = resume?.body && [...(resume.body.summary ? [resume.body.summary] : []), ...resume.body.sections.flatMap((s) => s.lines)].find((l) => l.id === asked.lineIds[0]);
+          if (this.state.lineChecks === "pass" && resume && line) {
+            // As the vault does: the owner's checked wording is saved as backed, with no finding.
+            line.text = asked.manualText;
+            line.status = "kept";
+            if (asked.manualFactIds) line.factIds = asked.manualFactIds;
+            delete line.finding;
+            resume.version += 1;
+          }
+        }
+        return ok(doc);
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/runs\/([^/]+)\/cancel$/,
+      (_call, [id]) => {
+        const doc = (this.state.documents ?? []).find((held) => held.id === id);
+        if (!doc || doc.state !== "running") return conflict("This run has already finished.");
+        doc.cancellationPending = true;
+        return { status: 202 };
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/runs\/([^/]+)\/retry$/,
+      (_call, [runId]) => {
+        const failed = (this.state.documents ?? []).find((held) => held.retryRunId === runId && held.state === "failed");
+        if (!failed) return notFound("no such run");
+        const id = this.id("doc");
+        (this.state.documents ??= []).unshift({ ...failed, id, state: "running", error: null, retryRunId: undefined, createdAt: Date.now(), result: null });
+        return { status: 202, body: { runId: id, targetId: id } };
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/resumes\/([^/]+)\/cancel$/,
+      (_call, [id]) => {
+        const resume = this.state.resumes[id!];
+        if (!resume || resume.state !== "running") return conflict("This resume has already finished.");
+        resume.cancellationPending = true;
+        return { status: 202 };
+      },
+    ],
 
     // stage 6: sharing and account
 

@@ -1,7 +1,8 @@
 import { screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
-import { RulesInterim } from "../../src/web/pages/interim/jobs";
+import { JobPage } from "../../src/web/pages/jobs/JobPage";
+import { RulesPage } from "../../src/web/pages/jobs/RulesPage";
 import { CoachesInterim, RecruitersInterim } from "../../src/web/pages/interim/sharing";
 import { PLACEHOLDERS, PLACEHOLDER_SECTIONS, type PlaceholderName, type PlaceholderSectionName } from "../../src/web/placeholders";
 import { parseRoute, ROUTES, type RouteParams } from "../../src/web/router";
@@ -17,7 +18,8 @@ import { renderWithSession } from "./render";
 
 /** The real page each placeholder section is shown on. */
 const SECTION_PAGES: Record<PlaceholderSectionName, () => ReactNode> = {
-  rules: () => <RulesInterim />,
+  rules: () => <RulesPage />,
+  sending: () => <JobPage id="app-litware" tab="application" />,
   liveAccess: () => <CoachesInterim />,
   recruitersVisibility: () => <RecruitersInterim />,
 };
@@ -77,7 +79,7 @@ describe("placeholders", () => {
       const copy = PLACEHOLDER_SECTIONS[name];
       const shown = renderWithSession(<main>{SECTION_PAGES[name]()}</main>, state.me);
       // The real page is there around it, with its own heading.
-      expect(screen.getByRole("heading", { level: 1 }), name).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { level: 1 }), name).toBeInTheDocument();
       const section = await screen.findByRole("region", { name: copy.title });
       expect(within(section).getByRole("heading", { level: 2, name: copy.title }), name).toBeInTheDocument();
       expect(section.querySelector(".rs-mark--note"), name).toHaveTextContent("Not available yet");

@@ -61,7 +61,7 @@ describe("the card preview on Account", () => {
     const api = installFakeApi(state);
     renderWithSession(<AccountPage />, state.me);
     await screen.findByText("Web platform development software");
-    expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent).slice(0, 4)).toEqual(["Profile", "Job preferences", "Card preview", "Saved answers"]);
+    expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent).slice(0, 3)).toEqual(["Profile", "Job preferences", "Card preview"]);
     expect(api.callsTo("GET", ROUTE)).toHaveLength(1);
   });
 
