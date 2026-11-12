@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FactView, ReviewState, RoleView } from "../../src/shared/api";
-import { countByState, groupByRole, groupFacts, sourceReviewSummaries, type Vault } from "../../src/web/vault";
+import { countByState, groupByRole, groupFacts, proposedBySource, sourceReviewSummaries, type Vault } from "../../src/web/vault";
 
 const role = (id: string, state: ReviewState): RoleView => ({
   id, state, kind: "job", org: id, title: null, startDate: null, endDate: null, quote: null, sourceId: null,
@@ -61,6 +61,33 @@ describe("duplicate review grouping", () => {
     expect(countByState(vault)).toEqual({ proposed: 2, confirmed: 1, rejected: 0 });
     expect(sourceReviewSummaries(vault).get("s1")).toMatchObject({ proposedRoles: 1, proposedFacts: 1, visibleItems: 3 });
     expect(sourceReviewSummaries(vault).get("s2")).toMatchObject({ proposedRoles: 1, proposedFacts: 1, visibleItems: 2 });
+  });
+
+  it("proposedBySource sums to the proposed count, a duplicate counted once under the file shown first", () => {
+    const first: RoleView = { ...role("r1", "proposed"), org: "Acme", title: "Engineer", startDate: "2021-01", sourceId: "s1", quote: "Acme Engineer" };
+    const copy = { ...first, id: "r2", sourceId: "s2" };
+    const other: RoleView = { ...first, id: "r3", org: "Initrode", sourceId: "s2" };
+    const one: FactView = { ...fact("f1", "r1", "proposed"), origin: "extracted", text: "Led a team", quote: "Led a team", sourceId: "s1" };
+    const again = { ...one, id: "f2", roleId: "r2", sourceId: "s2" };
+    const own: FactView = { ...one, id: "f3", roleId: "r3", text: "Ran the cluster", quote: "Ran the cluster", sourceId: "s2" };
+    // A fact of a confirmed role is to check on its own, and one from no file counts under no file.
+    const confirmedRole: RoleView = { ...role("r4", "confirmed"), sourceId: "s2" };
+    const under = { ...fact("f4", "r4", "proposed"), sourceId: "s2" };
+    const typed = fact("f5", null, "proposed");
+    const done = { ...fact("f6", "r1", "confirmed"), sourceId: "s1" };
+    const vault: Vault = { sources: [], roles: [first, copy, other, confirmedRole], facts: [one, again, own, under, typed, done] };
+    const bySource = proposedBySource(vault);
+    expect([...bySource]).toEqual([
+      ["s1", { roles: 1, facts: 1 }],
+      ["s2", { roles: 1, facts: 2 }],
+      [null, { roles: 0, facts: 1 }],
+    ]);
+    const total = [...bySource.values()].reduce((sum, counts) => sum + counts.roles + counts.facts, 0);
+    expect(total).toBe(countByState(vault).proposed);
+    expect(total).toBe(6);
+    // Raw counts per file would count the role and the fact read from both files twice.
+    expect(sourceReviewSummaries(vault).get("s2")).toMatchObject({ proposedRoles: 2, proposedFacts: 3 });
+    expect(proposedBySource({ roles: [], facts: [] })).toEqual(new Map());
   });
 });
 const fact = (id: string, roleId: string | null, state: ReviewState): FactView => ({

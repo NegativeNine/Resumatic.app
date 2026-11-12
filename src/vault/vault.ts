@@ -135,6 +135,9 @@ import { RunStore } from "./runs";
 import { RecordStore } from "./record";
 import { readCardMaterial } from "./card";
 import { CARD_PREVIEW_OFF, type CardMaterial } from "../shared/card";
+import { MAX_TODAY_LIST, MAX_TODAY_RECENT, TODAY_RECENT_MS, type Today } from "../shared/today";
+import { proposedBySource } from "../shared/review-groups";
+import { TodayStore, todayView, type KitCount } from "./today";
 import { IDENTICAL_ROLE_METHOD, IDENTICAL_WORDING_METHOD, MAX_OFFER_PAIRS, OFFERS_PER_FACT, OFFER_MIN_COSINE, identicalMatches, type JudgedOffer, type OfferPair } from "../pipeline/match";
 import { roleKey, sameWording, stampProblem } from "../shared/record";
 import { MAX_TAGS_PER_SAVE, MAX_TAG_FACTS, MAX_TAG_ROLES, TAG_JUDGE_METHOD, TAG_RULE_METHOD, TAG_VECTOR_METHOD, skillAsWritten, tagStamp, type HeldTag, type ProposedTag, type TagMade, type TagSubjects } from "../pipeline/tag";
@@ -1303,6 +1306,18 @@ export class Vault extends DurableObject<Env> {
     else if (!passes(() => this.kitResume(applicationId, resume))) problems.push({ code: "resume_refused" });
     if (letter && !passes(() => this.kitDocument(applicationId, letter, "letter"))) problems.push({ code: "letter_refused" });
     if (prep && !passes(() => this.kitDocument(applicationId, prep, "prep"))) problems.push({ code: "prep_refused" });
+    const { refused, unanswered } = this.kitQuestionProblems(applicationId);
+    if (refused.length) problems.push({ code: "refused_kind", questionIds: refused });
+    if (unanswered.length) problems.push({ code: "unanswered", questionIds: unanswered });
+    return problems;
+  }
+
+  /**
+   * Which of a kit's questions have an answer it can't use, and which have none it can, by ID. The
+   * kit's page and Today both count from this, so they agree. It reads the questions alone: no
+   * resume, letter or preparation is checked.
+   */
+  private kitQuestionProblems(applicationId: string): { refused: string[]; unanswered: string[] } {
     const refused: string[] = [];
     const unanswered: string[] = [];
     for (const question of this.kits.questions(applicationId)) {
@@ -1313,9 +1328,7 @@ export class Vault extends DurableObject<Env> {
         else if (!saved || question.confirmedRevision !== saved.revision) unanswered.push(question.id);
       } else if (question.typedAnswer === null) unanswered.push(question.id);
     }
-    if (refused.length) problems.push({ code: "refused_kind", questionIds: refused });
-    if (unanswered.length) problems.push({ code: "unanswered", questionIds: unanswered });
-    return problems;
+    return { refused, unanswered };
   }
 
   /**
@@ -1732,6 +1745,51 @@ export class Vault extends DurableObject<Env> {
       return { sources: this.readSources(), roles: this.readRoles(), facts: this.readFacts() };
     });
     return new Response(reviewViewStream(view), { headers: { "content-type": "application/json", "cache-control": "private, no-store" } });
+  }
+
+  // ---------------------------------------------------------------- today
+  // What waits for the owner in each room, worked out from their own vault on every request and
+  // stored nowhere. It is read after the same reconciliation as the review screen, in one
+  // transaction, and holds counts, IDs and names: no fact, comment, question, answer or stored
+  // error. It loads with every room, so it reads each file's name and state alone, and each kit's
+  // questions for two counts per job.
+
+  private get todayStore(): TodayStore {
+    return new TodayStore(this.sql);
+  }
+
+  async today(who: Who): Promise<Today> {
+    this.requireOwner(who);
+    await this.rearmPendingRuns();
+    this.requireOwner(who);
+    await this.reconcileStaleSources();
+    this.requireOwner(who);
+    return this.ctx.storage.transactionSync(() => {
+      this.requireOwner(who);
+      const now = Date.now();
+      const since = now - TODAY_RECENT_MS;
+      const kits: KitCount[] = [];
+      for (const applicationId of this.kits.applicationsWithQuestions()) {
+        const { refused, unanswered } = this.kitQuestionProblems(applicationId);
+        if (refused.length || unanswered.length) kits.push({ applicationId, unanswered: unanswered.length, sensitive: refused.length });
+      }
+      return todayView(
+        {
+          check: proposedBySource({ roles: this.readRoles(), facts: this.readFacts() }),
+          sourceNames: this.todayStore.sourceNames(),
+          unreadable: this.todayStore.unreadable(),
+          comments: this.shareComments.unseenByCopy(),
+          suggestions: this.shareComments.waitingSuggestionsByCopy(),
+          kits,
+          jobNames: this.todayStore.jobNames(kits.slice(0, MAX_TODAY_LIST).map((kit) => kit.applicationId)),
+          working: this.todayStore.working(MAX_TODAY_LIST),
+          resumesReady: this.todayStore.resumesReady(since, MAX_TODAY_RECENT),
+          copiesOpened: this.shares.recentlyOpened(since, MAX_TODAY_RECENT),
+          coachComments: this.shareComments.recentByCopy(since, MAX_TODAY_RECENT),
+        },
+        now,
+      );
+    });
   }
 
   private readSources(): SourceView[] {

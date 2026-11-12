@@ -590,6 +590,9 @@ api.put("/preferences", JSON_LIMIT, async (c) => {
 api.get("/v2/card-preview", async (c) =>
   c.json(await cardPreviewFor(c.env, async () =>
     unwrapResult(await durableReadResult(() => myVault(c), (v) => v.cardMaterial(c.get("who")))), Date.now())));
+// What waits for the owner, from their own vault: the request names nothing.
+api.get("/v2/today", async (c) =>
+  c.json(unwrapResult(await durableReadResult(() => myVault(c), (v) => v.today(c.get("who"))))));
 // Email notices belong to the session's own vault. The kind comes from the path, and the address a
 // notice is turned on with only from the verified session, never from the request. Neither route
 // reaches the Directory: only the Vault's alarm asks it for the address a notice goes to.

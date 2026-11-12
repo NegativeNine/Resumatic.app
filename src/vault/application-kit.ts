@@ -269,6 +269,16 @@ export class ApplicationKitStore {
     return row ? kitRecord(row) : null;
   }
 
+  /** The jobs whose kit holds a question, newest job first. A question left by a job that has gone is not one. */
+  applicationsWithQuestions(): string[] {
+    return this.sql
+      .exec<{ application_id: string }>(
+        `SELECT DISTINCT q.application_id FROM kit_questions q JOIN applications a ON a.id = q.application_id ORDER BY a.created_at DESC`,
+      )
+      .toArray()
+      .map((row) => row.application_id);
+  }
+
   /** A kit's questions, in order. */
   questions(applicationId: string): KitQuestionRecord[] {
     return this.sql.exec<QuestionRow>(`SELECT ${QUESTION_COLUMNS} FROM kit_questions WHERE application_id = ? ORDER BY position`, applicationId).toArray().map(questionRecord);

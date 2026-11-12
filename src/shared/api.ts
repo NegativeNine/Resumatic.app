@@ -10,6 +10,7 @@
 // API (session cookie required, else 401; never reaches the Directory):
 //   GET    /api/health                 { ok: true }            (no session needed)
 //   GET    /api/me                     Me
+//   GET    /api/v2/today               Today   (types in ./today)
 //   GET    /api/profile                Profile
 //   PUT    /api/profile                Partial<Profile> -> Profile
 //   GET    /api/preferences            Preferences

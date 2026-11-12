@@ -17,6 +17,7 @@ import type { RenderData, Who } from "../shared/types";
 import { sharedDocument, type DocumentVersion } from "./document-shares";
 import type { Withheld } from "./sensitive";
 import { assertGroundedResume, type ResumeVersion } from "./snapshots";
+import type { CopyOpened } from "./today";
 
 export { SHARE_READ_INTERVAL_MS, SHARE_TTL_MS };
 export const MAX_SHARE_FACTS = 100;
@@ -639,6 +640,21 @@ export class ShareStore {
       now,
       now - SHARE_READ_INTERVAL_MS,
     );
+  }
+
+  /**
+   * The copies opened since `since`, the latest first, at most `limit`, for Today: who each was for
+   * and when, and nothing a copy holds. It checks nobody, so call it only for the owner.
+   */
+  recentlyOpened(since: number, limit: number): CopyOpened[] {
+    return this.sql
+      .exec<{ id: string; label: string | null; coach_name: string | null; coach_email: string | null; last_read_at: number }>(
+        `SELECT id, label, coach_name, coach_email, last_read_at FROM share_grants WHERE last_read_at >= ? ORDER BY last_read_at DESC LIMIT ?`,
+        since,
+        limit,
+      )
+      .toArray()
+      .map((row) => ({ grantId: row.id, label: row.label ?? null, coachName: row.coach_name ?? null, coachEmail: row.coach_email ?? null, at: row.last_read_at }));
   }
 
   /** Call from the Vault alarm; access expiry is enforced even if alarm cleanup is delayed. */
