@@ -21,6 +21,7 @@ import { InviteRevocation, type InviteRevocationStatus } from "./invite-revocati
 import { InviteOrphanInspection } from "./invite-orphan-inspection";
 import { OperatorSpendStore } from "./operator-spend";
 import type { ModelAttempt } from "../ai/usage";
+import { sessionEmail } from "../worker/session";
 
 /** How soon a failed deletion is retried. */
 const RETRY_MS = 60_000;
@@ -1364,6 +1365,25 @@ export class Directory extends DurableObject<Env> {
       return next;
     });
   }
+  /**
+   * The address an email notice for this vault goes to: its owner's sign-in address, while both
+   * the account and this vault are active. Null for a deleting account, a retired vault (cutover
+   * points the account at its replacement) or a vault of another account. Only a Vault's alarm
+   * calls this, never a request, and it writes nothing.
+   */
+  async noticeAddress(userId: string, vaultId: string): Promise<string | null> {
+    if (typeof userId !== "string" || !userId || typeof vaultId !== "string" || !vaultId) return null;
+    const row = this.sql
+      .exec<{ email: string }>(
+        `SELECT u.email FROM users u JOIN vaults v ON v.user_id = u.user_id
+         WHERE u.user_id = ? AND u.state = 'active' AND v.vault_id = ? AND v.state = 'active'`,
+        userId,
+        vaultId,
+      )
+      .toArray()[0];
+    return row ? sessionEmail(row.email) : null;
+  }
+
   async hasVault(vaultId: string): Promise<boolean> {
     return !!this.sql
       .exec(

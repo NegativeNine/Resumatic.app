@@ -57,6 +57,18 @@ interface ResumaticSecrets {
    * default. It does nothing useful without a wholly loaded taxonomy bound as TAXONOMY.
    */
   CARD_PREVIEW_ENABLED?: string;
+  /**
+   * "true" lets an owner turn on email notices under Account: content-free notices of a coach's
+   * comment or suggested wording, and a reminder of facts waiting for review, sent from their own
+   * Vault's alarm. Off unless exactly "true", and offered only with the EMAIL binding, a
+   * well-formed EMAIL_FROM and an https APP_ORIGIN. Refused in production configuration until the
+   * DPA names Cloudflare Email Service and sending from an EU region is confirmed.
+   */
+  EMAIL_ENABLED?: string;
+  /** The address notices are sent from, on a sender domain onboarded to Email Sending, such as notices@notices.example.com. */
+  EMAIL_FROM?: string;
+  /** Cloudflare's send_email binding. Declared in an environment's own configuration, never in the committed one. */
+  EMAIL?: SendEmail;
   /** The combined ESCO and O*NET taxonomy, in a D1 database of its own. Optional: nothing reads it where it isn't bound. */
   TAXONOMY?: D1Database;
   /** The taxonomy's concepts as vectors, in a Vectorize index of their own. Optional: nothing reads it where it isn't bound. */

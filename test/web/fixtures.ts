@@ -1,5 +1,6 @@
 import type { ApplicationView, FactView, Me, ResumeView, RoleView, SourceView } from "../../src/shared/api";
 import type { DocumentView } from "../../src/shared/documents";
+import type { EmailNotices } from "../../src/shared/email-notices";
 import type { Preferences } from "../../src/shared/preferences";
 import type { CardPreview } from "../../src/shared/card";
 import type { McpGrant } from "../../src/shared/mcp";
@@ -15,6 +16,8 @@ export interface Fixtures {
   preferences?: Preferences;
   /** The owner's card preview. Absent: a ready card with nothing on it, as every vault has today. */
   cardPreview?: CardPreview;
+  /** Which email notices are on, and the address they go to. Absent: every kind off, to the session's address. */
+  emailNotices?: EmailNotices;
   sources: SourceView[];
   roles: RoleView[];
   facts: FactView[];
@@ -45,9 +48,9 @@ export function emptyVault(): Fixtures {
 
 /** Sam’s vault with every optional screen filled in: documents in each state, share links, apps, plans, a card. */
 export function fullVault(): Fixtures {
-  const { shared: _shared, ...extras } = structuredClone(full) as unknown as Required<Pick<Fixtures, "documents" | "shares" | "mcpGrants" | "billing" | "cardPreview">> & { shared: SharedView };
+  const { shared: _shared, ...extras } = structuredClone(full) as unknown as Required<Pick<Fixtures, "documents" | "shares" | "mcpGrants" | "billing" | "cardPreview" | "emailNotices">> & { shared: SharedView };
   const state = { ...fixtures(), ...extras };
-  state.me.capabilities = { ocr: false, ...state.me.capabilities, connectedApps: true, cardPreview: true };
+  state.me.capabilities = { ocr: false, ...state.me.capabilities, connectedApps: true, cardPreview: true, emailNotices: true };
   return state;
 }
 

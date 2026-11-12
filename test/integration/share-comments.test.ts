@@ -731,7 +731,7 @@ describe("comments and a vault's own storage", () => {
     const replacement = vault(env, targetVaultId);
     for (const object of [source, replacement, directory(env)]) await fence(object, [old.vid, targetVaultId]);
     const manifest = await source.transferManifest(operation);
-    expect(manifest.tables.at(-1)).toEqual({ name: "share_comments", count: 2 });
+    expect(manifest.tables.find((table) => table.name === "share_comments")).toEqual({ name: "share_comments", count: 2 });
     await replacement.importManifest(manifest);
     for (const table of manifest.tables) {
       const page = await source.transferPage(operation, table.name);

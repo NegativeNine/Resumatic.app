@@ -79,6 +79,23 @@ Before the production guard is lifted, all of these must hold: the precision of 
 ### Card preview
 
 `CARD_PREVIEW_ENABLED=true` shows each signed-in person, under Account, the card a recruiter would see if they were ever found: built from their confirmed tags, shown to nobody else and stored nowhere ([visibility-design.md](visibility-design.md)). Both the Worker and the Vault must have it, so a mixed rollout never offers the section. It is absent from every environment, and `scripts/validate-config.mjs` refuses it in production configuration (`CARD_PREVIEW_ROLLOUT_UNVERIFIED`) until tags are measured, owner review exists and the sharing rules are decided. Without a wholly loaded taxonomy bound as `TAXONOMY`, the route answers that the preview is unavailable and reads nothing from the vault. With one, a load makes at most 37 D1 statements, by construction and not yet measured: one read of the taxonomy's version, one batch of occupations, one of skills, and at most 17 `fromAny` and 17 `concepts` statements for the walk up the skill groups. It calls no model and spends nothing. A 500 from `/api/v2/card-preview` where the switch is on is a fault in the taxonomy's D1 database, or a Vault without `cardMaterial` in a mixed rollout; it is not a fault in the person's vault, whose own refusals carry their usual codes.
+### Email notices
+
+Only from the integrated build whose vault migration order is final; this feature's branch is never deployed to a shared environment on its own.
+
+`EMAIL_ENABLED=true` lets an owner turn on email notices under Account: a notice that a coach has commented or suggested wording, and a weekly reminder while facts wait for review. Each holds fixed words and a link to `APP_ORIGIN`, and goes from the owner's own Vault alarm to the sign-in address the Directory holds for them. It is absent from every environment, so nothing is offered and nothing is sent. The app offers notices only when all four hold: `EMAIL_ENABLED` is exactly `"true"`, the `EMAIL` send_email binding is present, `EMAIL_FROM` is a well-formed address, and `APP_ORIGIN` is an https origin. `scripts/validate-config.mjs` refuses the switch in production configuration (`EMAIL_ROLLOUT_UNVERIFIED`), and anywhere it is on asks for the other three (`vars.EMAIL_FROM`, `EMAIL_BINDING`, `APP_ORIGIN_HTTPS_ORIGIN`).
+
+To try it in staging:
+
+1. Email Sending (beta) needs Workers Paid to send to arbitrary recipients.
+2. In the dashboard, Email Service → Email Sending, onboard a sender subdomain such as `notices.example.com`, add every DNS record it lists, and wait for "verified".
+3. In the staging overlay, add `"send_email": [{ "name": "EMAIL" }]`, `EMAIL_FROM` (an address on that domain), `APP_ORIGIN` (the staging https origin) and `EMAIL_ENABLED: "true"`.
+4. Run `node scripts/validate-config.mjs --environment staging` and expect no `EMAIL_*` entry.
+5. Deploy. Sign in through test login with an inbox you control and turn notices on. Have a second test account comment, and expect one email about 15 minutes later. Check the `email_notice` metric rows.
+6. Setting `EMAIL_ENABLED` to `"false"` drops everything queued at the next alarm.
+7. Production is refused (`EMAIL_ROLLOUT_UNVERIFIED`) until the DPA names Cloudflare Email Service and EU-region sending is confirmed.
+
+Each notice writes one `email_notice` data point: the kind, a code from a fixed list and the outcome (`ok`, `retry`, `failed` or `paused`), with the attempt number. A failure also logs `email notice failed` with the code and kind. Neither holds an address or the provider's words.
 
 ## Billing configuration
 

@@ -4,6 +4,7 @@ import { api, ApiError } from "../api";
 import { ActionError, Field, Glyph, PageHeader } from "../components/ui";
 import { BillingTools, CoachSharingTools } from "../components/AccountTools";
 import { ConnectedApps } from "../components/ConnectedApps";
+import { EmailNotices } from "../components/EmailNotices";
 import { JobPreferences } from "../components/Preferences";
 import { CardPreviewSection } from "../components/CardPreview";
 import { OwnerComments } from "../components/ShareComments";
@@ -30,6 +31,7 @@ export function AccountPage() {
         <BillingTools />
         <CoachSharingTools />
         <OwnerComments />
+        {me.capabilities?.emailNotices && <EmailNotices />}
         {me.capabilities?.connectedApps && <ConnectedApps />}
         <SignOutCard />
         <section className="card" aria-labelledby="data-heading">

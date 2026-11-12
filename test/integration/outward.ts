@@ -26,9 +26,17 @@ export interface OutwardCopy {
   coach?: User;
 }
 
+/** What a test gathers from: the owner, their copies, what models were sent, and the email notices a recording binding took. */
+export interface OutwardGiven {
+  owner: User;
+  copies: readonly OutwardCopy[];
+  inputs: readonly string[];
+  notices?: readonly { subject: string; text?: string }[];
+}
+
 /** One thing sent out, and where it went. */
 export interface OutwardPart {
-  surface: "copy by its link" | "copy as its coach" | "coach's client list" | "coach's comments" | "list_facts" | "search_facts" | "list_jobs" | "get_resume" | "preview_fit" | "PDF" | "Word" | "print preview" | "model input" | "card preview";
+  surface: "copy by its link" | "copy as its coach" | "coach's client list" | "coach's comments" | "list_facts" | "search_facts" | "list_jobs" | "get_resume" | "preview_fit" | "PDF" | "Word" | "print preview" | "model input" | "card preview" | "email notice";
   text: string;
 }
 
@@ -56,7 +64,7 @@ function wordText(bytes: Uint8Array): string {
 }
 
 /** Everything the vault sends outward, each part with the surface it left by. A refusal contributes nothing. */
-export async function outwardParts({ owner, copies, inputs }: { owner: User; copies: readonly OutwardCopy[]; inputs: readonly string[] }): Promise<OutwardPart[]> {
+export async function outwardParts({ owner, copies, inputs, notices = [] }: OutwardGiven): Promise<OutwardPart[]> {
   const parts: OutwardPart[] = [];
   const add = (surface: OutwardPart["surface"], text: string) => parts.push({ surface, text });
 
@@ -158,10 +166,12 @@ export async function outwardParts({ owner, copies, inputs }: { owner: User; cop
   if (card.status === 200) add("card preview", await card.text());
 
   for (const input of inputs) add("model input", input);
+  // Every email notice the deployment's binding was given, subject and text.
+  for (const notice of notices) add("email notice", `${notice.subject}\n${notice.text ?? ""}`);
   return parts;
 }
 
 /** Everything the vault sends outward, as one text. */
-export async function outward(given: { owner: User; copies: readonly OutwardCopy[]; inputs: readonly string[] }): Promise<string> {
+export async function outward(given: OutwardGiven): Promise<string> {
   return (await outwardParts(given)).map((part) => part.text).join("\n");
 }

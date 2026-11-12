@@ -7,6 +7,9 @@ import { COACH_CLIENT_KEPT_MS, SHARE_READ_INTERVAL_MS, SHARE_SESSION_TTL_MS, SHA
 import { LegalPage, TAXONOMY_NOTICES } from "../../src/web/pages/LegalPage";
 
 const MINUTE = 60_000;
+/** What the notice says of email, in the item about a coach's comments. */
+const EMAIL_SENTENCES =
+  "We send email only if you turn on email notices under Account. A notice says only that there’s something new to see, with a link to Resumatic: it holds no career details, comment, suggested wording or coach’s name, and it’s sent through Cloudflare’s email service to the address you sign in with. A count of new comments shows the next time you open Resumatic.";
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
@@ -75,9 +78,10 @@ describe("the privacy notice", () => {
     // Never a model's input, said where the notice says what models are sent.
     const ai = screen.getByRole("heading", { level: 2, name: "How AI is used" }).closest("section")!.querySelector("p")!.textContent!.replace(/\s+/g, " ").trim();
     expect(ai.endsWith("a line those facts do not support is never shown to you. Comments on a shared copy are never sent to a language model or used to write or check a resume.")).toBe(true);
-    // Who can comment, who can't, where the owner answers, and that nothing is sent to tell them.
+    // Who can comment, who can't, where the owner answers, and that email is sent only if they ask for it.
     expect(items("Sharing a copy").at(-2)).toBe(
-      "The coach you name can comment on a line or a fact in the copy once they have added it to their client list. Nobody else with the link can read or write comments. You answer and delete them under Account, where they stay after the copy ends until you delete them. We don’t send email: a count of new comments shows the next time you open Resumatic.",
+      "The coach you name can comment on a line or a fact in the copy once they have added it to their client list. Nobody else with the link can read or write comments. You answer and delete them under Account, where they stay after the copy ends until you delete them. " +
+        EMAIL_SENTENCES,
     );
     // The coach is told, where they will look, that their words are kept in someone else's account.
     const sharing = section("Sharing a copy");
@@ -86,6 +90,19 @@ describe("the privacy notice", () => {
     );
     // A connected app is given none of it.
     expect(section("Connecting an app")).toContain("or a resume that uses one. It never receives a coach’s comments or suggested wording either. Its access lasts an hour");
+  });
+
+  it("says email is sent only if the owner turns notices on, what a notice holds, and what is kept for it", () => {
+    render(<LegalPage doc="privacy" />);
+    const items = (title: string) => [...screen.getByRole("heading", { level: 2, name: title }).closest("section")!.querySelectorAll("li")].map((item) => item.textContent!.replace(/\s+/g, " ").trim());
+    // The sentence is true wherever the page is read, signed in or not, and whatever the deployment offers.
+    expect(items("Sharing a copy").at(-2)!.endsWith(EMAIL_SENTENCES)).toBe(true);
+    expect(section("Sharing a copy")).not.toContain("We don’t send email");
+    // What is kept: which are on, when each last went, and a one-way code, never the address itself.
+    const kept = items("What we keep");
+    const notices = "If you turn on email notices: which ones are on, when each was last sent, and a one-way code made from the address you sign in with, so a notice goes only to that address.";
+    expect(kept).toContain(notices);
+    expect(kept[kept.indexOf(notices) + 1]).toBe("The apps you connect, what you allowed each one to do and when its access ends.");
   });
 
   it("says what a coach's suggested wording can change, who is told what, and when it reaches a model", () => {
