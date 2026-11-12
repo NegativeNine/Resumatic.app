@@ -52,7 +52,7 @@ interface ResumaticSecrets {
    */
   TAG_SHADOW_ENABLED?: string;
   /**
-   * "true" shows the owner, under Account, the card a recruiter would see if they were ever found:
+   * "true" shows the owner, under Sharing › Recruiters, the card a recruiter would see if they were ever found:
    * built from confirmed tags only, shown to nobody else, published nowhere. Off everywhere by
    * default. It does nothing useful without a wholly loaded taxonomy bound as TAXONOMY.
    */

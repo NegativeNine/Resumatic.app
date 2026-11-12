@@ -2,11 +2,13 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
+import { AccountPage } from "../../src/web/pages/AccountPage";
 import { FactsReview } from "../../src/web/pages/facts/FactsReview";
 import { FactsSkills } from "../../src/web/pages/facts/FactsSkills";
 import { JobPage } from "../../src/web/pages/jobs/JobPage";
 import { RulesPage } from "../../src/web/pages/jobs/RulesPage";
-import { CoachesInterim, RecruitersInterim } from "../../src/web/pages/interim/sharing";
+import { SharingCoaches } from "../../src/web/pages/sharing/SharingCoaches";
+import { SharingRecruiters } from "../../src/web/pages/sharing/SharingRecruiters";
 import { PLACEHOLDERS, PLACEHOLDER_SECTIONS, type PlaceholderName, type PlaceholderSectionName } from "../../src/web/placeholders";
 import { parseRoute, ROUTES, type RouteParams } from "../../src/web/router";
 import { SCREENS } from "../../src/web/screens";
@@ -23,8 +25,11 @@ import { renderWithSession } from "./render";
 const SECTION_PAGES: Record<PlaceholderSectionName, () => ReactNode> = {
   rules: () => <RulesPage />,
   sending: () => <JobPage id="app-litware" tab="application" />,
-  liveAccess: () => <CoachesInterim />,
-  recruitersVisibility: () => <RecruitersInterim />,
+  liveAccess: () => <SharingCoaches />,
+  recruitersVisibility: () => <SharingRecruiters />,
+  recruitersRequests: () => <SharingRecruiters />,
+  moreNotices: () => <AccountPage />,
+  accountRegion: () => <AccountPage />,
   factsCheckKinds: () => <FactsReview />,
   factsSplit: () => <FactsReview />,
   factsSkillYears: () => <FactsSkills />,
@@ -99,6 +104,8 @@ describe("placeholders", () => {
       // The real page is there around it, with its own heading.
       expect(await screen.findByRole("heading", { level: 1 }), name).toBeInTheDocument();
       await SECTION_REACH[name]?.();
+      // A section behind More choices is searched for with the row open, as a person would find it.
+      for (const details of document.querySelectorAll("details")) details.open = true;
       const section = await screen.findByRole("region", { name: copy.title });
       expect(within(section).getByRole("heading", { level: 2, name: copy.title }), name).toBeInTheDocument();
       expect(section.querySelector(".rs-mark--note"), name).toHaveTextContent("Not available yet");

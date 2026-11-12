@@ -6,6 +6,7 @@ import { vault } from "../../src/shared/stubs";
 import { fromBase64url } from "../../src/worker/crypto";
 import { call, signIn, type User } from "./support";
 import { app } from "../../src/worker/routes";
+import { ARCHIVE_FILE_MISSING, ARCHIVE_TOO_LARGE, ARCHIVE_TOO_MANY_FILES } from "../../src/render/archive";
 
 function identity(user: User) {
   const payload = user.cookie.slice("__Host-session=".length).split(".")[0]!;
@@ -173,14 +174,16 @@ describe("portable vault archive", () => {
     await env.FILES.delete(file.key);
     const response = await user.fetch("/api/export/archive");
     expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ error: "conflict" });
+    expect(await response.json()).toEqual({ error: "conflict", message: ARCHIVE_FILE_MISSING });
   });
 
   it("rejects an original that exceeds its per-file limit", async () => {
     const user = await signIn();
     const file = await source(user);
     await env.FILES.put(file.key, new Uint8Array(10 * 1024 * 1024 + 1));
-    expect((await user.fetch("/api/export/archive")).status).toBe(413);
+    const response = await user.fetch("/api/export/archive");
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({ error: "too_large", message: ARCHIVE_TOO_LARGE });
   });
 
   it("rejects more than 128 sources before R2 preflight", async () => {
@@ -195,7 +198,7 @@ describe("portable vault archive", () => {
     });
     const response = await user.fetch("/api/export/archive");
     expect(response.status).toBe(413);
-    expect(await response.json()).toMatchObject({ error: "too_large" });
+    expect(await response.json()).toEqual({ error: "too_large", message: ARCHIVE_TOO_MANY_FILES });
   });
 
   it("does not produce a valid archive when a source changes after metadata preflight", async () => {

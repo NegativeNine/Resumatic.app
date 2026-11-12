@@ -181,7 +181,7 @@ it("the app's own stylesheets use no raw colour", () => {
     ...readdirSync(resolve(root, "src/web/components"))
       .filter((name) => name.endsWith(".css"))
       .map((name) => `src/web/components/${name}`),
-    // Each room's own stylesheet, from stage 3 on.
+    // Each room's own stylesheet, from stage 3 on, as styles/README.md puts them.
     ...readdirSync(resolve(root, "src/web/styles/rooms"))
       .filter((name) => name.endsWith(".css"))
       .map((name) => `src/web/styles/rooms/${name}`),

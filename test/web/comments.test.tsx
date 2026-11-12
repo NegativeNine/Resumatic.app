@@ -7,7 +7,7 @@ import type { Me } from "../../src/shared/api";
 import type { CommentThread, OwnerCommentThread, ShareComment, SharedView, ShareTarget } from "../../src/shared/sharing";
 import { OwnerComments } from "../../src/web/components/ShareComments";
 import { ShareSnapshotContent } from "../../src/web/components/ShareSnapshotContent";
-import { AccountPage } from "../../src/web/pages/AccountPage";
+import { SharingCoaches } from "../../src/web/pages/sharing/SharingCoaches";
 import { SharePage } from "../../src/web/pages/SharePage";
 import { SessionContext } from "../../src/web/session";
 import { FakeApi, installFakeApi } from "./api-fake";
@@ -545,8 +545,8 @@ describe("an owner reading what their coach wrote", () => {
   it("shows no card without threads, or against a server without the route", async () => {
     const state = fullVault();
     const api = installFakeApi(state);
-    const first = renderWithSession(<AccountPage />, state.me);
-    await screen.findByRole("heading", { name: "Share with a coach" });
+    const first = renderWithSession(<SharingCoaches />, state.me);
+    await screen.findByRole("heading", { name: "Copies you’ve shared" });
     await waitFor(() => expect(api.callsTo("GET", /^\/api\/shares\/comments$/)).toHaveLength(1));
     expect(screen.queryByRole("heading", { name: "Comments from your coach" })).toBeNull();
     expect(api.callsTo("POST", /\/seen$/)).toEqual([]);
@@ -554,8 +554,8 @@ describe("an owner reading what their coach wrote", () => {
 
     // A server from before comments answers "no such route". That is nothing to show, and no error.
     api.fail("GET", /^\/api\/shares\/comments$/, 404, "not_found", "no such route", false);
-    const { ended } = renderWithSession(<AccountPage />, state.me);
-    await screen.findByRole("heading", { name: "Share with a coach" });
+    const { ended } = renderWithSession(<SharingCoaches />, state.me);
+    await screen.findByRole("heading", { name: "Copies you’ve shared" });
     await waitFor(() => expect(api.callsTo("GET", /^\/api\/shares\/comments$/)).toHaveLength(2));
     await screen.findByText("Dana Okafor");
     expect(screen.queryByRole("heading", { name: "Comments from your coach" })).toBeNull();
@@ -571,11 +571,11 @@ describe("an owner reading what their coach wrote", () => {
       onAFact(),
     ];
     installFakeApi(state);
-    renderWithSession(<AccountPage />, state.me);
+    renderWithSession(<SharingCoaches />, state.me);
     const section = await screen.findByRole("region", { name: "Comments from your coach" });
-    // Directly after the card for sharing, and before whatever follows it.
+    // Directly after the copies shared, and before whatever follows them.
     const headings = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
-    expect(headings.indexOf("Comments from your coach")).toBe(headings.indexOf("Share with a coach") + 1);
+    expect(headings.indexOf("Comments from your coach")).toBe(headings.indexOf("Copies you’ve shared") + 1);
     expect(within(section).getByText("What your coach wrote on copies you shared. These are their words, not your facts: Resumatic never uses a comment to write or check a resume. They stay here after a copy ends, until you delete them.")).toBeInTheDocument();
     expect(within(section).getAllByRole("article").map((thread) => within(thread).getByRole("heading", { level: 3 }).textContent)).toEqual([
       `On “${LED_LINE}”`,
@@ -627,7 +627,7 @@ describe("an owner reading what their coach wrote", () => {
   it("says on the share form that the coach it names can comment, and nobody else", async () => {
     const state = fullVault();
     installFakeApi(state);
-    renderWithSession(<AccountPage />, state.me);
+    renderWithSession(<SharingCoaches />, state.me);
     await userEvent.click(await screen.findByRole("button", { name: "Choose what to share" }));
     expect(await screen.findByRole("textbox", { name: /^Your coach’s sign-in address/ })).toHaveAccessibleDescription(
       "If your coach has a Resumatic account, this lets them keep the copy in their client list, open it without the link and comment on it. Anyone with the link can still read it. Only your coach can comment.",
@@ -656,7 +656,7 @@ describe("an owner reading what their coach wrote", () => {
     // Something new waits for the person, so it is amber.
     for (const mark of within(thread(LED_LINE)).getAllByText("New")) expect(mark).toHaveClass("rs-mark", "rs-mark--needs-you");
     expect(within(thread(LED)).queryByText("New")).toBeNull();
-    // Told once, naming what was shown as new, and the count beside Account is read again afterwards.
+    // Told once, naming what was shown as new, and the count on the Coaches tab is read again afterwards.
     await waitFor(() => expect(refreshed).toHaveBeenCalledTimes(1));
     expect(api.callsTo("POST", /^\/api\/v2\/shares\/comments\/seen$/).map((call) => call.body)).toEqual([{ ids: ["c1", "c3"] }]);
     expect(state.me.newFromCoach).toBe(0);

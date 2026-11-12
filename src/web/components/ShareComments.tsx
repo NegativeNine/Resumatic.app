@@ -19,7 +19,7 @@ import { CoachSuggestion, OwnerSuggestion, SuggestWording } from "./SuggestedWor
 import { ActionError, Badge, CharCount, ErrorNote, Field, Loading, Success } from "./ui";
 
 // Comments on a shared copy: the coach's side, beside the copy they are reading, and the owner's
-// side, on Account. A comment is another person's words. It is shown as text and nothing else:
+// side, on Sharing › Coaches. A comment is another person's words. It is shown as text and nothing else:
 // no markup, no links, and nothing a comment says changes what the page does.
 
 /**
@@ -377,9 +377,9 @@ export function CoachComments({
 }
 
 /**
- * What a coach wrote on the copies this person shared, on Account. Nothing is shown until there is
- * a thread. The comments are marked seen once they are on the page, which clears the count beside
- * Account in the menu.
+ * What a coach wrote on the copies this person shared, on Sharing › Coaches. Nothing is shown until
+ * there is a thread. The comments are marked seen once they are on the page, which clears the count
+ * on Sharing and its Coaches tab. Sharing › Overview never shows it, so it never clears that count.
  */
 export function OwnerComments() {
   const { refreshMe } = useSession();

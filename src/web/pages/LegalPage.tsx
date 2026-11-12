@@ -170,8 +170,8 @@ function Privacy() {
           </li>
           <li>
             The coach you name can comment on a line or a fact in the copy once they have added it to their client
-            list. Nobody else with the link can read or write comments. You answer and delete them under Account,
-            where they stay after the copy ends until you delete them. We send email only if you turn on email notices
+            list. Nobody else with the link can read or write comments. You answer and delete them under Sharing ›
+            Coaches, where they stay after the copy ends until you delete them. We send email only if you turn on email notices
             under Account. A notice says only that there’s something new to see, with a link to Resumatic: it holds no
             career details, comment, suggested wording or coach’s name, and it’s sent through Cloudflare’s email service
             to the address you sign in with. A count of new comments shows the next time you open Resumatic.
@@ -218,7 +218,7 @@ function Privacy() {
           never receives a fact you keep private, or a resume that uses one. It never receives a coach’s
           comments or suggested wording either. Its
           access lasts an hour, or up to thirty days if you allow it to continue, and you can revoke it at any time
-          under <a href={href.account}>Account</a>. What an app has already read is then held by the company that
+          under <a href={href.apps}>Sharing › Connected apps</a>. What an app has already read is then held by the company that
           runs it, under that company’s terms, and revoking access does not remove it from there.
         </p>
       </Section>
@@ -226,7 +226,8 @@ function Privacy() {
         <ul>
           <li>
             <strong>See and correct it:</strong> every fact, role, profile detail and job preference can be edited,
-            rejected or cleared under <a href={href.facts}>Facts</a> and <a href={href.account}>Account</a>.
+            rejected or cleared under <a href={href.facts}>Facts</a>, <a href={href.account}>Account</a> and{" "}
+            <a href={href.recruiters}>Sharing › Recruiters</a>.
           </li>
           <li>
             <strong>Keep a fact to yourself:</strong> choose Keep private on a fact under <a href={href.factsAll}>Facts</a>{" "}

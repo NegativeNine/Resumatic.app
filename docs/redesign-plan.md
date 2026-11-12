@@ -233,6 +233,56 @@ Open questions for the owner, each built as stated:
 4. Experience questions sit on Fit.
 5. The unused `app.css` rules go after stage 7 merges.
 
+### Stage 6: Sharing and Account
+
+Stage 6 changes the client and the words only. It adds no table, endpoint, Vault method, switch or model call, and no migration. Sharing gets its four pages, Account its own layout, and `src/web/pages/interim/sharing.tsx` is gone. The server's sharing and account messages use the plain words (section 3 of `docs/redesign-words.md` lists what changed).
+
+**The screens, and what each reads.** Every read is the owner's own session route; no identity comes from the client.
+
+| Address | Screen | Reads |
+| --- | --- | --- |
+| `#/sharing` | `SharingOverview`: three ways (Coaches, Recruiters, Connected apps) with what each holds now, then what never leaves the record | `/api/shares`; `/api/mcp/grants` only where connected apps are on; Today from `TodayContext` (the shell's own read). Never preferences, the preview or a comment thread, and it never posts `/seen` |
+| `#/sharing/coaches` | `SharingCoaches`: the copies shared, the comments and live access (a placeholder), beside the form for a new copy | `/api/shares`, `/api/shares/comments`; the form, once opened, reads facts, jobs, roles and the shareable documents |
+| `#/sharing/recruiters` | `SharingRecruiters`: "Can recruiters find you?" (a placeholder) and what a recruiter would see (where the preview is on), beside "Requests to meet you" (a placeholder) and what you're looking for | `/api/v2/card-preview` where it is on, `/api/preferences` |
+| `#/sharing/recruiters/request/:id` | the `introRequest` placeholder, now with a way back to Recruiters | nothing |
+| `#/sharing/apps` | `SharingApps`: `ConnectedApps` as before, its heading "Your apps"; not found where apps are off | `/api/mcp/grants` |
+| `#/account`, `#/account/:section` | `AccountPage`: the sections listed beside them, then Profile, Plan, Notifications (where email is on, with More choices), Appearance, Your data, where the record is kept (a placeholder), Signing in, and Delete account last | `/api/billing`, `/api/email-notices` where email is on |
+
+Overview counts what waits on Coaches exactly as the Coaches tab does: Today's `counts.sharing` once Today has loaded, otherwise the session's `newFromCoach`. Its words come from Today's `comments` and `suggestions` items. A copy is open when it isn't revoked, hasn't expired and can be delivered; an app is connected, waiting or ended by `ConnectedApps`' own rules. Stage 2's shell test that reached a comment from the header in one click now reaches it in two: Sharing says it waits, and its Coaches tab shows it.
+
+Decisions, each with the alternative rejected:
+
+1. **Overview summarises; it doesn't embed `OwnerComments`.** `OwnerComments` marks comments seen on render, which would clear the count while the person sees only a summary.
+2. **Overview reads only routes that already exist** (`/api/shares`, `/api/mcp/grants`, and Today from `TodayContext`). Reading `api.facts` for one number on every visit was rejected, and so was `api.preferences`, which the reach test forbids.
+3. **`api.mcpGrants` is added, and `ConnectedApps` keeps its raw `fetch`.** Rewriting it was rejected: its list is shown as today, and it is a listed older exception. Overview reuses its active, pending and inactive rules, so the two never disagree.
+4. **The share tools move to `components/sharing/Copies.tsx`, split into `CopyList` and `NewCopy`, with their state on the page.** Keeping `CoachSharingTools` whole was rejected: the board puts the list and the form in different columns.
+5. **The share form stays behind "Choose what to share".** Opening it at once, as the board shows, was rejected because it fires four requests on every visit. The control names the tests and the smoke check pin are kept.
+6. **The recruiter placeholders are two sections in view, not `MoreChoices`.** A disclosure hiding only "Not available yet" adds a control for nothing, and the MoreChoices rule keeps protections (blocks, caps) in view.
+7. **Notifications' More choices holds a placeholder.** Every notice that works stays in view. Dropping the row was rejected because the board has it; inventing frequency selects was rejected because none is built.
+8. **Where the record is kept is a placeholder whose words match the privacy notice** ("created … near where you first sign in"). A present-tense "is kept near" was rejected: a fenced vault replacement creates the new vault without the location hint.
+9. **Signing in keeps its own section, before Delete account.** Putting it under Your data was rejected because the `signing-in` anchor exists; putting it last was rejected because Delete sits last.
+10. **The card preview's noun is "anonymous profile", and its heading "What a recruiter would see".** `docs/redesign-words.md` assigned this rename to stage 6.
+11. **The archive messages are constants in `src/render/archive.ts`**, so the route, the Vault and the tests share one sentence.
+12. **The consent page points to "Sharing › Connected apps"**, because apps no longer live on Account.
+13. **Moved copy uses stage 4's word "private".**
+14. **The router and stage 2's anchors are untouched. `AccountPage` learns its section from a prop given in `screens.tsx`.** Reading `location.hash` inside the page was rejected: it duplicates the router's parsing.
+15. **Room styles go in `styles/rooms/sharing.css` and `rooms/account.css`, and the raw-colour test reads `styles/rooms/*.css`.** Moving them into `app.css`'s stage 6 block was rejected: that block is for shared rules.
+16. **Overview marks follow the shell: no count at zero.** "{n} connected" is `backed`, as `ConnectedApps`' "Connected" is; `status` is reserved to a job's tracking.
+17. **"Suggested wording" stays uncountable.** It is counted in lines of suggested wording, because `count` would print "wordings".
+18. **Notices and the link hint name places, not "here" or "below".** Both moved, and the old words now point the wrong way.
+
+Also settled here, where the design left it open: Account says in one line, beside its list of sections, that saved answers are under Jobs › Rules and answers; Plan keeps its renewal date after the plan words; and Overview names a copy that names nobody "A link".
+
+Open questions for the owner, each built as stated; only the answer would change it:
+
+1. Account shows "Where your record is kept" as a placeholder because the board marks EU residency Later. Keep it or drop it?
+2. Notifications' More choices holds only a placeholder. Is a row with nothing to choose acceptable?
+3. Blocks, the weekly cap and pausing are in view under "Can recruiters find you?", not inside More choices as the board draws them. Is that right?
+4. Sign out everywhere stays in its own "Signing in" section, before Delete account. Is that right?
+5. Overview doesn't count private facts, which would cost a facts read per visit. Should it?
+6. Is "anonymous profile" the right word before anything is published?
+7. The placeholder for more email notices names no reason for waiting. What does it wait for?
+
 ---
 
 Nov 7, 2026. Revised after PR #2 (the job seeker roadmap) merged, which changed 42 of the web app's files. The redesign is rebuilt on that `main` (`215a3e3`).

@@ -4,7 +4,6 @@ import { PlaceholderPage } from "./components/Placeholder";
 import { EmptyState, PageHeader } from "./components/ui";
 import { AccountPage } from "./pages/AccountPage";
 import { ClientsPage } from "./pages/ClientsPage";
-import { AppsInterim, CoachesInterim, RecruitersInterim, SharingInterim } from "./pages/interim/sharing";
 import { JobsPage } from "./pages/JobsPage";
 import { JobPage } from "./pages/jobs/JobPage";
 import { RulesPage } from "./pages/jobs/RulesPage";
@@ -13,6 +12,10 @@ import { FactsRecord } from "./pages/facts/FactsRecord";
 import { FactsReview } from "./pages/facts/FactsReview";
 import { FactsSkills } from "./pages/facts/FactsSkills";
 import { FactsSources } from "./pages/facts/FactsSources";
+import { SharingApps } from "./pages/sharing/SharingApps";
+import { SharingCoaches } from "./pages/sharing/SharingCoaches";
+import { SharingOverview } from "./pages/sharing/SharingOverview";
+import { SharingRecruiters } from "./pages/sharing/SharingRecruiters";
 import { TodayPage } from "./pages/today/TodayPage";
 import { PLACEHOLDERS, type PlaceholderName } from "./placeholders";
 import { href, NOT_FOUND_ROUTE, routeNeeds, type Route, type RouteName } from "./router";
@@ -54,12 +57,12 @@ export const SCREENS: { [K in RouteName]: Screen } = {
   resume: { title: "Jobs", render: (route) => <JobPage id={route.params.id} tab="resume" resumeId={route.params.resumeId!} /> },
 
   // stage 6: sharing and account
-  sharing: { title: "Sharing", render: () => <SharingInterim /> },
-  sharingCoaches: { title: "Coaches", render: () => <CoachesInterim /> },
-  sharingRecruiters: { title: "Recruiters", render: () => <RecruitersInterim /> },
+  sharing: { title: "Sharing", render: () => <SharingOverview /> },
+  sharingCoaches: { title: "Coaches", render: () => <SharingCoaches /> },
+  sharingRecruiters: { title: "Recruiters", render: () => <SharingRecruiters /> },
   introRequest: placeholder("introRequest"),
-  sharingApps: { title: "Connected apps", render: () => <AppsInterim /> },
-  account: { title: "Account", render: () => <AccountPage /> },
+  sharingApps: { title: "Connected apps", render: () => <SharingApps /> },
+  account: { title: "Account", render: (route) => <AccountPage section={route.params.section} /> },
 
   // stage 7: outside
   coachingClients: { title: "Clients", render: () => <ClientsPage /> },

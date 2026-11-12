@@ -855,6 +855,28 @@ export class FakeApi {
     ],
 
     // stage 6: sharing and account
+    // Revoking a copy or an app ends it at once and keeps it in the list, as the Worker does.
+    [
+      "DELETE",
+      /^\/api\/shares\/([^/]+)$/,
+      (_call, [id]) => {
+        const grant = (this.state.shares ?? []).find((share) => share.id === id);
+        if (!grant) return { status: 404, body: { error: "not_found", message: "no such share" } };
+        grant.revokedAt ??= Date.now();
+        return { status: 204 };
+      },
+    ],
+    [
+      "DELETE",
+      /^\/api\/mcp\/grants\/([^/]+)$/,
+      (_call, [id]) => {
+        const grant = (this.state.mcpGrants ?? []).find((app) => app.id === id);
+        if (!grant) return { status: 404, body: { error: "not_found", message: "no such grant" } };
+        grant.revokedAt ??= Date.now();
+        grant.state = "revoked";
+        return { status: 204 };
+      },
+    ],
 
     // stage 7: outside
   ];

@@ -1,0 +1,35 @@
+/*
+ * Sharing's own rules: the overview's three ways, the two columns of Coaches, and the short
+ * term-and-answer lists the overview reads from. Tokens only: no raw colour (test/web/tokens.test.ts).
+ */
+
+/* Overview: the three ways side by side, one under another where there isn't room. */
+.app-sharing-ways { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-6); align-items: start; }
+.app-sharing-way { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.app-sharing-way .rs-h2, .app-sharing-never .rs-h2 { margin: 0; }
+.app-sharing-way__text { margin: 0; font-size: 15px; line-height: 23px; }
+.app-sharing-way__links { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: var(--space-1) 0 0; padding-top: var(--space-4); border-top: 1px solid var(--rule); }
+.app-sharing-way .app-msg-block { margin: 0; }
+
+.app-sharing-never { margin-top: var(--space-6); max-width: 760px; }
+.app-sharing-never__rows { margin-top: var(--space-3); }
+.app-sharing-never .app-q .rs-meta { margin: 0; }
+.app-sharing-never__notice { margin: var(--space-3) 0 0; }
+
+/* A term and what it holds now, as the overview lists them. */
+.app-kv { display: grid; grid-template-columns: minmax(0, 6.5rem) minmax(0, 1fr); gap: 6px var(--space-4); margin: 0; font-size: 14px; line-height: 20px; }
+.app-kv dt { color: var(--ink-muted); }
+.app-kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.app-kv__line { display: block; }
+.app-kv .rs-loading { margin: 0; }
+
+/* Coaches: the copies and comments, then the form for a new copy. */
+.app-sharing-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-6); align-items: start; }
+
+@media (max-width: 1100px) {
+  .app-sharing-ways { grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); }
+}
+
+@media (max-width: 900px) {
+  .app-sharing-cols { grid-template-columns: minmax(0, 1fr); }
+}

@@ -55,7 +55,7 @@ export function ConnectedApps() {
   const address = typeof window === "undefined" ? "/mcp" : `${window.location.origin}/mcp`;
   return (
     <section className="card" aria-labelledby={`${id}-title`}>
-      <h2 id={`${id}-title`}>Connected apps</h2>
+      <h2 id={`${id}-title`}>Your apps</h2>
       <p className="card-text">
         Connect an AI tool with the address below. Each app asks for its permissions, and its access ends after
         30 days.

@@ -10,7 +10,7 @@ import { renderWithSession } from "./render";
 
 const ROUTE = /^\/api\/email-notices/;
 const ADDRESS = "sam.rivera@example.com";
-const LABELS = ["A coach comments on a copy you shared", "A coach suggests wording for a line", "Facts have waited 3 days for review"];
+const LABELS = ["A coach comments on a copy you shared", "A coach suggests wording for a line", "Facts have waited 3 days for you to check them"];
 const CONTENT =
   "A notice says only that there’s something new to see, with a link to Resumatic. It never holds a comment, suggested wording, a fact, a job or anyone’s name.";
 const REFUSED = "This notice couldn’t be changed. Try again.";
@@ -28,7 +28,7 @@ function open(change: (state: Fixtures) => void = () => {}, page = false) {
   return { state, api, session };
 }
 
-const card = async () => (await screen.findByRole("heading", { name: "Email notices", level: 2 })).closest("section")!;
+const card = async () => (await screen.findByRole("heading", { name: "Notifications", level: 2 })).closest("section")!;
 const box = (name: string) => screen.getByRole("checkbox", { name });
 
 describe("email notices on Account", () => {
@@ -38,8 +38,9 @@ describe("email notices on Account", () => {
     const api = installFakeApi(state);
     renderWithSession(<AccountPage />, state.me);
     await screen.findByRole("heading", { name: "Account", level: 1 });
-    await screen.findByRole("button", { name: "Save preferences" });
-    expect(screen.queryByRole("heading", { name: "Email notices" })).toBeNull();
+    await screen.findByRole("button", { name: "Save profile" });
+    expect(screen.queryByRole("heading", { name: "Notifications" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Notifications" })).toBeNull();
     expect(api.callsTo("GET", ROUTE)).toEqual([]);
   });
 
@@ -85,8 +86,8 @@ describe("email notices on Account", () => {
   });
 
   it("shows the failing and paused sentences", async () => {
-    const FAILING = "The last email notice couldn’t be sent. Your notices stay on, and anything new still shows here when you sign in.";
-    const PAUSED = "Email notices are paused because the address you sign in with has changed. Anything new still shows here when you sign in.";
+    const FAILING = "The last email notice couldn’t be sent. Your notices stay on, and anything new still shows in Resumatic when you sign in.";
+    const PAUSED = "Email notices are paused because the address you sign in with has changed. Anything new still shows in Resumatic when you sign in.";
     const failing = open((state) => {
       state.emailNotices = settings({ comment: true, status: "failing" });
     });

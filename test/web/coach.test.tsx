@@ -4,7 +4,7 @@ import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CoachClient } from "../../src/shared/sharing";
 import { ShareSnapshotContent } from "../../src/web/components/ShareSnapshotContent";
-import { AccountPage } from "../../src/web/pages/AccountPage";
+import { SharingCoaches } from "../../src/web/pages/sharing/SharingCoaches";
 import { ClientsPage } from "../../src/web/pages/ClientsPage";
 import { installFakeApi } from "./api-fake";
 import { fixtures, fullVault, sharedView } from "./fixtures";
@@ -101,7 +101,7 @@ describe("naming a coach on a link", () => {
     state.shares![1]!.coach = { email: "dana@example.test", name: "Dana Okafor", joinedAt: Date.UTC(2026, 10, 8, 15) };
     state.shares![1]!.revokedAt = null;
     const api = installFakeApi(state);
-    renderWithSession(<AccountPage />, state.me);
+    renderWithSession(<SharingCoaches />, state.me);
     await userEvent.click(await screen.findByRole("button", { name: "Choose what to share" }));
     const address = screen.getByRole("textbox", { name: /^Your coach’s sign-in address/ });
     expect(address).toHaveAccessibleDescription(/Anyone with the link can still read it\./);
@@ -124,7 +124,7 @@ describe("naming a coach on a link", () => {
   it("leaves the address out when it’s empty", async () => {
     const state = fullVault();
     const api = installFakeApi(state);
-    renderWithSession(<AccountPage />, state.me);
+    renderWithSession(<SharingCoaches />, state.me);
     await userEvent.click(await screen.findByRole("button", { name: "Choose what to share" }));
     await userEvent.click(within(await screen.findByRole("group", { name: /^Confirmed facts/ })).getAllByRole("checkbox")[0]!);
     await userEvent.type(screen.getByRole("textbox", { name: /^Your coach’s sign-in address/ }), "   ");

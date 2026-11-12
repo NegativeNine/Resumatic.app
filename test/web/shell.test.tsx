@@ -129,6 +129,36 @@ describe("the header", () => {
     expect(screen.getByText("How long did it take?")).toBeInTheDocument();
   });
 
+  it("reaches a waiting coach comment from the header through Sharing: the overview says it waits, and its Coaches tab shows it", async () => {
+    const state = fullVault();
+    state.today = { ...waiting(), waiting: waiting().waiting.filter((item) => item.kind === "comments"), counts: { facts: 0, jobs: 0, sharing: 2, today: 2 } };
+    state.shareComments = [
+      {
+        target: { kind: "fact", factId: "fact-migration" },
+        quote: "Led the migration",
+        grantId: "sh-1",
+        coachEmail: "dana@example.test",
+        open: true,
+        comments: [{ id: "c1", author: "coach", body: "How long did it take?", createdAt: 1794051720000, name: "Dana Okafor", seen: false }],
+      },
+    ];
+    installFakeApi(state);
+    goTo("#/facts/check");
+    renderWithSession(<Routed />, state.me);
+    // Only Today carries a count in the first row, so Sharing is reached by its name.
+    await userEvent.click(await within(rooms()).findByRole("link", { name: "Sharing" }));
+    expect(window.location.hash).toBe("#/sharing");
+    // The overview counts it, and leaves it new: it never shows a comment, so it never marks one seen.
+    const coaches = await screen.findByRole("region", { name: "Coaches" });
+    expect(await within(coaches).findByText("2 waiting for you")).toBeInTheDocument();
+    expect(screen.queryByText("How long did it take?")).toBeNull();
+    // The Coaches tab carries the same count, and shows the comment.
+    await userEvent.click(screen.getByRole("link", { name: "Coaches, 2 waiting for you" }));
+    expect(window.location.hash).toBe("#/sharing/coaches");
+    expect(await screen.findByRole("region", { name: "Comments from your coach" })).toBeInTheDocument();
+    expect(screen.getByText("How long did it take?")).toBeInTheDocument();
+  });
+
   it("counts a coach's comment on Today from the session when the Today API fails", async () => {
     for (const [status, error] of [[404, "not_found"], [500, "internal"], [503, "unavailable"]] as const) {
       const api = installFakeApi(withToday());

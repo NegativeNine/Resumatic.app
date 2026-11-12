@@ -14,8 +14,11 @@ import { FactsRecord } from "../../src/web/pages/facts/FactsRecord";
 import { FactsReview } from "../../src/web/pages/facts/FactsReview";
 import { FactsSkills } from "../../src/web/pages/facts/FactsSkills";
 import { FactsSources } from "../../src/web/pages/facts/FactsSources";
+import { SharingApps } from "../../src/web/pages/sharing/SharingApps";
+import { SharingCoaches } from "../../src/web/pages/sharing/SharingCoaches";
+import { SharingOverview } from "../../src/web/pages/sharing/SharingOverview";
+import { SharingRecruiters } from "../../src/web/pages/sharing/SharingRecruiters";
 import { TodayPage } from "../../src/web/pages/today/TodayPage";
-import { AppsInterim, CoachesInterim, RecruitersInterim, SharingInterim } from "../../src/web/pages/interim/sharing";
 import { PlaceholderPage } from "../../src/web/components/Placeholder";
 import { Shell } from "../../src/web/components/Shell";
 import { PLACEHOLDERS, type PlaceholderName } from "../../src/web/placeholders";
@@ -160,23 +163,15 @@ describe("accessibility", () => {
     expect(await violations(true)).toEqual([]);
   });
 
-  it("Account, with plans, share links, connected apps and the card preview", async () => {
+  it("Account, with every section and its More choices open", async () => {
     const state = fullVault();
+    state.me.signInEmail = "sam.rivera@example.com";
     installFakeApi(state);
-    renderWithSession(<AccountPage />, state.me);
-    await screen.findByText("Dana Okafor");
-    await screen.findByText("Career Notebook");
+    renderWithSession(<AccountPage section="plan" />, state.me);
     await screen.findByRole("combobox", { name: "Choose a plan" });
-    // The job preferences card loads by itself, so its form is waited for too.
-    await screen.findByRole("button", { name: "Save preferences" });
-    // So does the card preview, with an occupation, a band and two skill groups.
-    await screen.findByText("Web platform development software");
-    // So does the email notices card.
+    // The email notices load by themselves, so their form is waited for too.
     await screen.findByRole("checkbox", { name: "A coach comments on a copy you shared" });
-    expect(await violations()).toEqual([]);
-    // The form for a new link: what to share, who it’s for and what the copy should say.
-    await userEvent.click(screen.getByRole("button", { name: "Choose what to share" }));
-    await screen.findByRole("checkbox", { name: "Say which job each resume and document is for" });
+    for (const details of document.querySelectorAll("details")) details.open = true;
     expect(await violations()).toEqual([]);
   });
 
@@ -248,14 +243,34 @@ describe("accessibility", () => {
     }
   });
 
-  it("the interim Sharing pages", async () => {
+  it("the Sharing pages", async () => {
     const state = fullVault();
     installFakeApi(state);
+    // The overview in its shell, so the whole page is in its landmarks and the region rule is on.
+    const overview = renderWithSession(
+      <Shell route={parseRoute("#/sharing")} title="Sharing">
+        <SharingOverview />
+      </Shell>,
+      state.me,
+    );
+    await screen.findByText("1 connected");
+    await screen.findByText(/^Dana Okafor: /);
+    await screen.findByText("2 new comments and 1 line of suggested wording.");
+    expect(await violations(true), "Overview").toEqual([]);
+    overview.unmount();
+    // Coaches, with the form for a new copy open.
+    const coaches = renderWithSession(<SharingCoaches />, state.me);
+    await screen.findByText("Dana Okafor");
+    await userEvent.click(screen.getByRole("button", { name: "Choose what to share" }));
+    await screen.findByRole("checkbox", { name: "Say which job each resume and document is for" });
+    expect(await violations(), "Coaches").toEqual([]);
+    coaches.unmount();
     const pages: [string, () => React.ReactNode, () => Promise<unknown>][] = [
-      ["Sharing", () => <SharingInterim />, () => screen.findByRole("heading", { name: "Sharing", level: 1 })],
-      ["Coaches", () => <CoachesInterim />, () => screen.findByText("Dana Okafor")],
-      ["Recruiters", () => <RecruitersInterim />, () => screen.findByText("Web platform development software")],
-      ["Connected apps", () => <AppsInterim />, () => screen.findByText("Career Notebook")],
+      ["Recruiters", () => <SharingRecruiters />, async () => {
+        await screen.findByText("Web platform development software");
+        await screen.findByRole("button", { name: "Save preferences" });
+      }],
+      ["Connected apps", () => <SharingApps />, () => screen.findByText("Career Notebook")],
     ];
     for (const [name, page, loaded] of pages) {
       const shown = renderWithSession(<>{page()}</>, state.me);

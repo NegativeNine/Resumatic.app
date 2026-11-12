@@ -187,8 +187,8 @@ describe("what can reach job preferences", () => {
     // The route is written out in the client, and in the contract's list of routes, and nowhere else.
     expect(naming("/api/preferences")).toEqual(["src/shared/api.ts", "src/web/api.ts"]);
     expect(naming('"/preferences"')).toEqual([ROUTES]);
-    // The card is on Account and on Sharing › Recruiters until stage 6 puts it on one page.
-    expect(naming("JobPreferences")).toEqual(["src/web/components/Preferences.tsx", "src/web/pages/AccountPage.tsx", "src/web/pages/interim/sharing.tsx"]);
+    // The card is on Sharing › Recruiters alone.
+    expect(naming("JobPreferences")).toEqual(["src/web/components/Preferences.tsx", "src/web/pages/sharing/SharingRecruiters.tsx"]);
     expect(naming("preferences-save")).toEqual(["src/web/components/Preferences.tsx"]);
   });
 
