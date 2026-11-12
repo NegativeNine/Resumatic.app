@@ -9,6 +9,7 @@ import { LegalPage } from "../../src/web/pages/LegalPage";
 import { ResumePage } from "../../src/web/pages/ResumePage";
 import { SignedOut } from "../../src/web/pages/SignedOut";
 import { SourcesPage } from "../../src/web/pages/SourcesPage";
+import { TodayPage } from "../../src/web/pages/today/TodayPage";
 import { RulesInterim } from "../../src/web/pages/interim/jobs";
 import { AppsInterim, CoachesInterim, RecruitersInterim, SharingInterim } from "../../src/web/pages/interim/sharing";
 import { PlaceholderPage } from "../../src/web/components/Placeholder";
@@ -108,14 +109,54 @@ describe("accessibility", () => {
     installFakeApi(state);
     renderWithSession(
       <Shell route={parseRoute("#/sharing/coaches")} title="Coaches">
-        <PlaceholderPage name="today" />
+        <TodayPage />
       </Shell>,
       state.me,
     );
-    await screen.findByRole("link", { name: "Facts, 6 waiting for you" });
-    await screen.findByRole("link", { name: "Coaches, 2 waiting for you" });
+    await screen.findByRole("link", { name: "Today, 11 waiting for you" });
+    await screen.findByRole("link", { name: "Coaches, 3 waiting for you" });
+    await screen.findByRole("heading", { name: "Where things stand" });
     await userEvent.click(screen.getByRole("button", { name: /account and workspaces$/ }));
     // The whole page is in its landmarks here, so the region rule is on.
+    expect(await violations(true)).toEqual([]);
+  });
+
+  it("Today, with something in every section", async () => {
+    const state = fullVault();
+    // More waits than the lists show, so the closing line is drawn too.
+    state.today!.counts.today += 3;
+    state.today!.working.push(
+      { kind: "reading", sourceId: "src-new", filename: "linkedin-export.zip", startedAt: 1794044520000 },
+      { kind: "document", documentId: "doc-new", documentKind: "letter", startedAt: 1794044520000, applicationId: "app-litware", title: "Platform Engineer", company: "Litware" },
+    );
+    installFakeApi(state);
+    renderWithSession(
+      <Shell route={parseRoute("#/today")} title="Today">
+        <TodayPage />
+      </Shell>,
+      state.me,
+    );
+    await screen.findByRole("heading", { name: "See why sam-rivera-cv.docx couldn’t be read" });
+    await screen.findByText(/More are waiting than this list shows/);
+    await screen.findByRole("heading", { name: "Resumatic is working on" });
+    await screen.findByRole("heading", { name: /^Since / });
+    await screen.findByRole("heading", { name: "By email" });
+    expect(await violations(true)).toEqual([]);
+  });
+
+  it("Today, the first time", async () => {
+    const state = emptyVault();
+    installFakeApi(state);
+    renderWithSession(
+      <Shell route={parseRoute("#/today")} title="Today">
+        <TodayPage />
+      </Shell>,
+      state.me,
+    );
+    await screen.findByRole("heading", { name: "1. Add the resume you have" });
+    expect(await violations(true)).toEqual([]);
+    // With the paste panel open too.
+    await userEvent.click(screen.getByRole("button", { name: "Paste text" }));
     expect(await violations(true)).toEqual([]);
   });
 

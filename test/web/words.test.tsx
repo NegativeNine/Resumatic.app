@@ -8,8 +8,11 @@ import { AccountPage } from "../../src/web/pages/AccountPage";
 import { JobsPage } from "../../src/web/pages/JobsPage";
 import { ResumePage } from "../../src/web/pages/ResumePage";
 import { SourcesPage } from "../../src/web/pages/SourcesPage";
+import { TodayPage } from "../../src/web/pages/today/TodayPage";
+import { Shell } from "../../src/web/components/Shell";
+import { parseRoute } from "../../src/web/router";
 import { installFakeApi } from "./api-fake";
-import { fullVault, sharedView } from "./fixtures";
+import { emptyVault, fullVault, sharedView } from "./fixtures";
 import { renderWithSession } from "./render";
 
 // The plain words (voice and writing): every label the interface writes itself uses them. A label
@@ -61,7 +64,7 @@ function labels(): string[] {
   return [...texts, ...aria].filter(Boolean);
 }
 
-/** Facts in each filter, Jobs with a workspace open, a resume, Account and a shared copy, with fullVault(). */
+/** Facts in each filter, Jobs with a workspace open, a resume, Account, a shared copy and Today, with fullVault(); and Today the first time. */
 async function everyScreen(): Promise<Map<string, string>> {
   const seen = new Map<string, string>();
   const take = (where: string) => {
@@ -112,6 +115,22 @@ async function everyScreen(): Promise<Map<string, string>> {
   const copy = render(<ShareSnapshotContent view={sharedView()} />);
   take("a shared copy");
   copy.unmount();
+
+  // Today, in the shell whose Today it reads: with something in each list, and the first time.
+  state = fullVault();
+  installFakeApi(state);
+  page = renderWithSession(<Shell route={parseRoute("#/today")} title="Today"><TodayPage /></Shell>, state.me);
+  await screen.findByRole("heading", { name: "Where things stand" });
+  await screen.findByRole("heading", { name: "Resumatic is working on" });
+  take("Today");
+  page.unmount();
+
+  state = emptyVault();
+  installFakeApi(state);
+  page = renderWithSession(<Shell route={parseRoute("#/today")} title="Today"><TodayPage /></Shell>, state.me);
+  await screen.findByRole("heading", { name: "1. Add the resume you have" });
+  take("Today, the first time");
+  page.unmount();
   return seen;
 }
 
@@ -124,7 +143,7 @@ describe("the interface's words", () => {
   it("labels use the plain words", () => {
     // Enough of every screen was read for the check to mean something.
     expect(seen.size).toBeGreaterThan(150);
-    for (const label of ["That’s right", "Fix it", "Leave it out", "Your files", "To check", "Left out", "Backed"]) {
+    for (const label of ["That’s right", "Fix it", "Leave it out", "Your files", "To check", "Left out", "Backed", "Where things stand", "1. Add the resume you have"]) {
       expect([...seen.keys()], label).toContain(label);
     }
     const earlier = [...seen].filter(([label]) => EARLIER.test(label)).map(([label, where]) => `${where}: ${label}`);

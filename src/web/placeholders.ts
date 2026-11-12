@@ -24,12 +24,6 @@ const BACK_TO_SEEKING = { label: "Back to looking for work", to: href.home };
 
 export const PLACEHOLDERS = {
   // stage 3: today
-  today: {
-    title: "Today",
-    lede: "What is waiting for you, with the next step first.",
-    note: "Today will gather what each room is waiting on. Until it opens, each room shows its own.",
-    back: { label: "Check your facts", to: href.facts },
-  },
 
   // stage 4: facts
   factsSkills: {

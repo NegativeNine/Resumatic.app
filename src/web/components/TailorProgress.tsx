@@ -1,6 +1,7 @@
 import { Tick } from "./ui";
 
-const STEPS = [
+/** Tailoring's five steps, in order. Today names the one in progress as this page does. */
+export const STEPS = [
   { id: "analyze", label: "Read the job description" },
   { id: "select", label: "Choose your most relevant confirmed facts" },
   { id: "write", label: "Write lines from those facts" },

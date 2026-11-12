@@ -100,13 +100,14 @@ export function Shell({
     main.current?.focus({ preventScroll: true });
   }, [key, section]);
 
-  // Until Today opens, each room counts what waits in it. A coach's comment is counted from the
-  // session until Today has loaded, or when it can't be, so it is never left uncounted.
+  // Until Today opens, each room counts what waits in it; once it opens, Today counts it all. A
+  // coach's comment is counted from the session until Today has loaded, or when it can't be, so it
+  // is never left uncounted.
   const sharing = today ? today.counts.sharing : (me.newFromCoach ?? 0);
   const toCheck = today ? today.waiting.reduce((sum, item) => (item.kind === "check" ? sum + item.roles + item.facts : sum), 0) : 0;
   const roomCount = (key: NavItem["key"]): number => {
     if (route.workspace !== "seeking") return 0;
-    if (TODAY_OPEN) return key === "today" ? (today?.counts.today ?? 0) : 0;
+    if (TODAY_OPEN) return key === "today" ? (today ? today.counts.today : sharing) : 0;
     if (key === "facts") return today?.counts.facts ?? 0;
     if (key === "jobs") return today?.counts.jobs ?? 0;
     if (key === "sharing") return sharing;
@@ -119,7 +120,7 @@ export function Shell({
   const tabs = room ? ROOM_TABS[room.key as keyof typeof ROOM_TABS]?.filter((item) => hasCapability(me, item)) : undefined;
 
   return (
-    <TodayContext value={{ today, reload }}>
+    <TodayContext value={{ today, last: loaded.data, error: loaded.error, reload }}>
       <a
         className="skip-link"
         href="#main"

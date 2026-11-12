@@ -571,7 +571,9 @@
     "waiting": [
       { "kind": "check", "sourceId": "src-2024", "filename": "sam-rivera-2024.pdf", "roles": 1, "facts": 4 },
       { "kind": "unreadable", "sourceId": "src-cv", "filename": "sam-rivera-cv.docx", "createdAt": 1793958120000 },
-      { "kind": "comments", "grantId": "sh-1", "coachName": "Dana Okafor", "coachEmail": "dana.okafor@example.com", "count": 2, "latest": 1794051720000 }
+      { "kind": "comments", "grantId": "sh-1", "coachName": "Dana Okafor", "coachEmail": "dana.okafor@example.com", "count": 2, "latest": 1794051720000 },
+      { "kind": "suggestions", "grantId": "sh-1", "coachName": "Dana Okafor", "coachEmail": "dana.okafor@example.com", "count": 1, "latest": 1794051720000 },
+      { "kind": "kit", "applicationId": "app-litware", "title": "Platform Engineer", "company": "Litware", "unanswered": 2, "sensitive": 0 }
     ],
     "working": [
       { "kind": "tailoring", "resumeId": "res-running", "step": "select", "startedAt": 1794044520000, "applicationId": "app-litware", "title": "Platform Engineer", "company": "Litware" }
@@ -580,7 +582,16 @@
       { "kind": "copyOpened", "grantId": "sh-1", "label": "Dana Okafor", "coachName": "Dana Okafor", "coachEmail": "dana.okafor@example.com", "at": 1794051720000 },
       { "kind": "resumeReady", "resumeId": "res-ready", "version": 2, "at": 1794044520000, "applicationId": "app-litware", "title": "Platform Engineer", "company": "Litware" }
     ],
-    "counts": { "today": 8, "facts": 6, "jobs": 0, "sharing": 2 },
-    "since": 1792842120000
+    "counts": { "today": 11, "facts": 6, "jobs": 2, "sharing": 3 },
+    "since": 1792842120000,
+    "standing": {
+      "files": 2,
+      "confirmed": 9,
+      "leftOut": 1,
+      "jobs": { "saved": 3, "applied": 0, "interview": 0, "offer": 0, "closed": 0 },
+      "copies": 1,
+      "coachCopies": 0,
+      "apps": 1
+    }
   }
 }

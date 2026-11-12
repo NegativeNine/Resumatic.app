@@ -121,7 +121,7 @@ const SEND_FAILED = "That didn’t go through. Check your connection, then try a
  * would read as the reader's own (“You”) or as the product's are no name at all, so the caller
  * falls back to what it says without one.
  */
-function chosenName(name: string | null | undefined): string | null {
+export function chosenName(name: string | null | undefined): string | null {
   const trimmed = name?.trim() ?? "";
   return trimmed && !["you", "resumatic"].includes(trimmed.toLowerCase()) ? trimmed : null;
 }

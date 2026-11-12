@@ -8,7 +8,7 @@ import { useEffect, useMemo, useSyncExternalStore } from "react";
  * Whether Today is open. While it is closed, signing in lands on To check and each room carries its
  * own count in the first row; once it opens, Today is where people land and carries the one count.
  */
-export const TODAY_OPEN = false;
+export const TODAY_OPEN = true;
 
 /** Where an empty address goes: where signing in lands. */
 export const DEFAULT_HASH = TODAY_OPEN ? "#/today" : "#/facts/check";
