@@ -63,6 +63,7 @@ import {
 import { AppError, errorCode, errorDetail, httpStatus } from "../shared/errors";
 import { MAX_SHARE_LABEL_CHARS, type CoachClient, type SharedView } from "../shared/sharing";
 import type { CommentThread, NewSuggestion, OwnerCommentThread } from "../shared/sharing";
+import { SHARE_LINK_GONE } from "../shared/sharing";
 import { MAX_VAULT_COMMENTS } from "../vault/share-comments";
 import { hintFor, type CfLocation } from "../shared/location";
 import { PREFERENCES_REFUSED, cleanPreferences } from "../shared/preferences";
@@ -1767,6 +1768,15 @@ api.post("/coach/clients/:grantId/suggestions", JSON_LIMIT, async (c) => {
   const key = requestKey(c);
   return c.json(await unlessEnded(vault(c.env, entry.ownerVault).suggestOnShare(entry.grantId, account, input as NewSuggestion, key)), 201);
 });
+// The copy itself, read in the app from the coach's list. It is reached as the comments are, and
+// sets no cookie: every read is decided again from the current session, the coach's own list and
+// the owner's vault, so a sign-out everywhere or the copy ending stops it at once. A copy that has
+// ended is a 409; only the caller's own account being gone is a 410.
+api.get("/coach/clients/:grantId/copy", async (c) => {
+  const { entry, account } = await coachCopy(c);
+  const view: SharedView = await unlessEnded(vault(c.env, entry.ownerVault).readShareForCoach(entry.grantId, account));
+  return c.json(view);
+});
 app.post("/share/session", JSON_LIMIT, async (c) => {
   const { token } = await jsonBody(
     c,
@@ -1774,7 +1784,7 @@ app.post("/share/session", JSON_LIMIT, async (c) => {
   );
   const claims = await readShareToken(c.env.SESSION_KEY, token);
   if (!claims)
-    throw new AppError("gone", "this share link is unavailable or expired");
+    throw new AppError("gone", SHARE_LINK_GONE);
   await vault(c.env, claims.vid).readShare({
     grantId: claims.grantId,
     epoch: claims.epoch,
@@ -1805,7 +1815,7 @@ app.get("/share/snapshot", async (c) => {
     !claims ||
     (wanted !== undefined && claims.grantId.toLowerCase() !== wanted.toLowerCase())
   )
-    throw new AppError("gone", "this share link is unavailable or expired");
+    throw new AppError("gone", SHARE_LINK_GONE);
   // The owner looking at their own copy, signed in in the same browser, isn't the copy being opened.
   const own = await readSession(c.env.SESSION_KEY, getCookie(c, SESSION_COOKIE));
   const view = await vault(c.env, claims.vid).readShare(

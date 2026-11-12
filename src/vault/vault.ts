@@ -4332,6 +4332,21 @@ export class Vault extends DurableObject<Env> {
     return this.shares.openForCoach(grantId, coach);
   }
 
+  /**
+   * The copy itself, for the account that took it up, read in the app with no link and no cookie.
+   * One transaction with nothing awaited checks the open vault, the account against the grant, the
+   * live grant and its epoch, and that every part rebuilds exactly with nothing marked sensitive,
+   * then notes that the copy was opened, as a read through the link does. Every failure is the one
+   * `gone` a dead link gives.
+   */
+  async readShareForCoach(grantId: string, coach: CoachAccount) {
+    return this.ctx.storage.transactionSync(() => {
+      const { view } = this.shares.copyForCoach(grantId, coach);
+      this.shares.recordRead(grantId);
+      return { ...view, reviewer: "joined" as const };
+    });
+  }
+
   async coachShareStatus(grantId: string, coach: CoachAccount) {
     return this.shares.coachStatus(grantId, coach);
   }

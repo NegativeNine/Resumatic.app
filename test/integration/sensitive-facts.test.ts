@@ -6,7 +6,7 @@ import { extractFacts } from "../../src/pipeline/distill";
 import { setPdfRenderer } from "../../src/render/pdf";
 import { MAX_SENSITIVE_IDS, type FactView, type Me, type ResumeLine, type ResumeView } from "../../src/shared/api";
 import type { DocumentView, NewDocument } from "../../src/shared/documents";
-import type { CoachClient, ShareableDocument, ShareGrant, SharedView } from "../../src/shared/sharing";
+import { SHARE_LINK_GONE, type CoachClient, type ShareableDocument, type ShareGrant, type SharedView } from "../../src/shared/sharing";
 import { directory, vault } from "../../src/shared/stubs";
 import type { FactRecord } from "../../src/shared/types";
 import { MIGRATIONS, SCHEMA_VERSION, migrate } from "../../src/vault/schema";
@@ -1096,13 +1096,13 @@ describe("shared copies and a marked fact", () => {
     for (const copy of [withFact, withResume]) {
       const gone = await exchange(copy);
       expect(gone.status).toBe(410);
-      expect(await gone.json()).toEqual({ error: "gone", message: "this share link is unavailable or expired" });
+      expect(await gone.json()).toEqual({ error: "gone", message: SHARE_LINK_GONE });
       expect(gone.headers.getSetCookie()).toEqual([]);
     }
     // A reader who opened the link before the mark holds a session still. It reads nothing now.
     const late = await call(`/share/snapshot?g=${withFact.grant.id}`, { cookie: link });
     expect(late.status).toBe(410);
-    expect(await late.json()).toEqual({ error: "gone", message: "this share link is unavailable or expired" });
+    expect(await late.json()).toEqual({ error: "gone", message: SHARE_LINK_GONE });
     // The coach is told the copy has ended, as for any copy that has. Their own account is untouched.
     const ended = await fromList();
     expect(ended.status).toBe(409);
