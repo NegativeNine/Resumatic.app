@@ -133,11 +133,11 @@ export function ResumeSheet({
         )}
         {sensitive && (
           <p className="notice" role="status">
-            This version uses a fact you’ve marked sensitive, or was checked against the line of an upload one was
+            This version uses a fact you keep private, or was checked against the line of an upload one was
             read from, so it can’t be downloaded or shared, and connected apps can’t read it.{" "}
             {readOnly
               ? "Your text is still here. Select Latest to change it."
-              : "Remove the lines and skills marked ‘Sensitive fact’, or tailor a new version. Your text is still here."}
+              : "Remove the lines and skills marked ‘Private fact’, or tailor a new version. Your text is still here."}
           </p>
         )}
         {!readOnly && needsEvidence && resume.provenance === "snapshot" && resume.needsGroundingReview && (
@@ -253,7 +253,7 @@ export function ResumeSheet({
                         <li key={index}>
                           <span>
                             {skill}
-                            {sensitive?.skills.includes(skill) && <> <Badge tone="note">Sensitive fact</Badge></>}
+                            {sensitive?.skills.includes(skill) && <> <Badge tone="note">Private fact</Badge></>}
                           </span>
                           <button
                             type="button"

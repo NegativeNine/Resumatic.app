@@ -322,7 +322,7 @@ describe("account tools", () => {
     renderWithSession(<AccountPage />, state.me);
     await userEvent.click(await screen.findByRole("button", { name: "Choose what to share" }));
     const facts = await screen.findByRole("group", { name: /^Confirmed facts/ });
-    expect(within(facts).getByText("Facts you’ve marked sensitive aren’t listed.")).toBeInTheDocument();
+    expect(within(facts).getByText("Facts you keep private aren’t listed.")).toBeInTheDocument();
     expect(within(facts).queryByRole("checkbox", { name: marked.text })).toBeNull();
     // The other confirmed facts are all there to choose, and only they can be sent.
     const offered = within(facts).getAllByRole("checkbox");
@@ -342,7 +342,7 @@ describe("account tools", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Choose what to share" }));
     const facts = await screen.findByRole("group", { name: /^Confirmed facts/ });
     // The form, not the page: the card preview says, of every card, that a marked fact never reaches it.
-    expect(within(facts.closest("section")!).queryByText(/marked sensitive/)).toBeNull();
+    expect(within(facts.closest("section")!).queryByText(/keep private/)).toBeNull();
   });
 
   it("won’t offer a document that uses a fact marked sensitive, and says to create a new one", async () => {
@@ -355,11 +355,11 @@ describe("account tools", () => {
     const group = await screen.findByRole("group", { name: /^Cover letters and interview preparation/ });
     const letter = within(group).getByRole("checkbox", { name: /^Cover letter for Platform Engineer at Litware, / });
     expect(letter).toBeDisabled();
-    expect(letter.closest("li")!.textContent).toMatch(/\. Uses a fact you’ve marked sensitive\. Create a new one to share it\.$/);
+    expect(letter.closest("li")!.textContent).toMatch(/\. Uses a fact you keep private\. Create a new one to share it\.$/);
     // Each document gives its own reason: the other was written before documents could be shared.
     const preparation = within(group).getByRole("checkbox", { name: /^Interview preparation for/ });
     expect(preparation.closest("li")!.textContent).toMatch(/\. Written before documents could be shared\. Write a new one to share it\.$/);
-    expect(preparation.closest("li")!.textContent).not.toContain("marked sensitive");
+    expect(preparation.closest("li")!.textContent).not.toContain("keep private");
   });
 
   it("says a closed link stays closed while a fact it holds is marked sensitive", async () => {
@@ -369,7 +369,7 @@ describe("account tools", () => {
     renderWithSession(<AccountPage />, state.me);
     const closed = (await screen.findByText("Dana Okafor")).closest("li")!;
     expect(within(closed).getByRole("status")).toHaveTextContent(
-      "This link is currently unavailable. If it includes a resume, review that version before creating a new link. If it holds a fact you’ve marked sensitive, it stays closed while the fact is marked. You can still revoke this one.",
+      "This link is currently unavailable. If it includes a resume, review that version before creating a new link. If it holds a fact you keep private, it stays closed while the fact is private. You can still revoke this one.",
     );
     expect(within(closed).queryByText("Active")).toBeNull();
     expect(within(closed).getByRole("button", { name: "Revoke link" })).toBeEnabled();

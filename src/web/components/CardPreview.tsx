@@ -26,7 +26,7 @@ export function CardPreviewSection() {
       <p className="card-text meta">
         If you ever chose to be found, recruiters would see a card like this instead of your resume. It’s built only from
         tags you’ve confirmed on your jobs and facts. It never holds your name, employers, dates or your own words, or
-        anything from a fact you’ve marked sensitive.
+        anything from a fact you keep private.
       </p>
       <Message tone="info" live={false}>
         Only you can see this. Nothing is published: there’s no way to make a card visible to anyone, and this preview
