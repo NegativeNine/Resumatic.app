@@ -367,7 +367,128 @@ describe("a copy that names its coach", () => {
     expect((await share(sam, { factIds: [factId], coachEmail: "   " })).grant.coach).toBeNull();
     expect(await grants(sam)).toHaveLength(2);
   });
+
+  it("reads in the app from the coach's list and the session alone, sets no cookie, and tells its owner it was opened", async () => {
+    const { sam, dana, shared } = await coached();
+    // Taking it up reads the copy but isn't opening it.
+    expect((await grants(sam))[0]!.lastReadAt).toBeNull();
+
+    // The coach's own session and nothing else: no link, no copy's cookie.
+    const read = await inApp(dana, shared.grant.id);
+    expect(read.status).toBe(200);
+    expect(read.headers.getSetCookie()).toEqual([]);
+    const view = (await read.json()) as SharedView;
+    expect(view).toMatchObject({ grantId: shared.grant.id, expiresAt: shared.grant.expiresAt, reviewer: "joined", snapshot: { owner: { name: "Sam Rivera" } } });
+    expect(view.snapshot.facts.map((fact) => fact.text)).toEqual([FACT]);
+    // Where the copy is kept never leaves the server.
+    expect(JSON.stringify(view)).not.toContain(sessionOf(sam).vid);
+    // The owner sees it opened, as when it is opened through the link.
+    expect((await grants(sam))[0]!.lastReadAt).toEqual(expect.any(Number));
+    // It is the copy the link gives, to the coach whose list holds it.
+    const linked = await call(`/share/snapshot?g=${shared.grant.id}`, { cookie: jar(await open(shared), dana.cookie) });
+    expect(await linked.json()).toEqual(view);
+  });
+
+  it("is not read for an account whose list doesn't hold it (404)", async () => {
+    const { dana, shared } = await coached();
+    const mallory = await signIn();
+    const stranger = await inApp(mallory, shared.grant.id);
+    expect(stranger.status).toBe(404);
+    expect(await stranger.json()).toEqual({ error: "not_found", message: "no such client" });
+    // Nor for the coach once it is off their list, while the copy itself is still live.
+    expect((await dana.send("DELETE", `/api/coach/clients/${shared.grant.id}`)).status).toBe(204);
+    const removed = await inApp(dana, shared.grant.id);
+    expect(removed.status).toBe(404);
+    expect(await removed.json()).toEqual({ error: "not_found", message: "no such client" });
+    expect(removed.headers.getSetCookie()).toEqual([]);
+  });
+
+  it("is not read through a list row forged in another account's vault (409)", async () => {
+    const { sam, shared } = await coached();
+    const mallory = await signIn();
+    // A list row that names the copy and where it is kept opens nothing: the owner's vault decides.
+    await runInDurableObject(vaultOf(mallory), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO coach_clients (grant_id, owner_vault, owner_name, added_at, expires_at) VALUES (?, ?, 'Sam Rivera', ?, ?)`,
+        shared.grant.id, sessionOf(sam).vid, Date.now(), shared.grant.expiresAt,
+      );
+    });
+    const forced = await inApp(mallory, shared.grant.id);
+    expect(forced.status).toBe(409);
+    expect(await forced.json()).toEqual({ error: "conflict", message: "this copy has ended; the person who shared it can share again" });
+    expect(forced.headers.getSetCookie()).toEqual([]);
+    expect((await mallory.send("GET", "/api/me")).status).toBe(200);
+    // It was refused, so nobody opened it.
+    expect((await grants(sam))[0]!.lastReadAt).toBeNull();
+  });
+
+  it("is answered 409, never 410, once revoked, expired, epoch-changed or holding a fact marked sensitive", async () => {
+    const endings: [string, (copy: { sam: User; factId: string; grantId: string }) => Promise<unknown>][] = [
+      ["revoked", ({ sam, grantId }) => sam.send("DELETE", `/api/shares/${grantId}`)],
+      [
+        "expired",
+        ({ sam, grantId }) =>
+          runInDurableObject(vaultOf(sam), (_instance, state) => {
+            state.storage.sql.exec(`UPDATE share_grants SET expires_at = ? WHERE id = ?`, Date.now() - 1, grantId);
+          }),
+      ],
+      [
+        "epoch-changed",
+        ({ sam }) =>
+          runInDurableObject(vaultOf(sam), (_instance, state) => {
+            state.storage.sql.exec(`INSERT INTO meta (key, value) VALUES ('security_epoch', 'a-later-epoch') ON CONFLICT (key) DO UPDATE SET value = excluded.value`);
+          }),
+      ],
+      ["holding a fact marked sensitive", ({ sam, factId }) => sam.send("POST", "/api/facts/sensitive", { ids: [factId], sensitive: true })],
+    ];
+    for (const [ending, end] of endings) {
+      const { sam, dana, factId, shared } = await coached();
+      expect((await inApp(dana, shared.grant.id)).status, ending).toBe(200);
+      const done = await end({ sam, factId, grantId: shared.grant.id });
+      if (done instanceof Response) expect(done.status, ending).toBe(204);
+      const ended = await inApp(dana, shared.grant.id);
+      expect(ended.status, ending).toBe(409);
+      expect(await ended.json(), ending).toEqual({ error: "conflict", message: "this copy has ended; the person who shared it can share again" });
+      expect(ended.headers.getSetCookie(), ending).toEqual([]);
+      // A client's copy ending is never the coach's own account ending.
+      expect((await dana.send("GET", "/api/me")).status, ending).toBe(200);
+    }
+  });
+
+  it("refuses a session from before coaches had an address (409)", async () => {
+    const { dana, shared } = await coached();
+    const { email: _email, ...old } = sessionOf(dana);
+    const earlier = new User(dana.email, `__Host-session=${await createSession(env.SESSION_KEY, old)}`);
+    const refused = await inApp(earlier, shared.grant.id);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: "conflict", message: "sign out and in again to use this account as a coach" });
+    expect((await earlier.send("GET", "/api/me")).status).toBe(200);
+  });
+
+  it("refuses a signed-out caller (401)", async () => {
+    const { dana, shared } = await coached();
+    expect((await call(`/api/coach/clients/${shared.grant.id}/copy`)).status).toBe(401);
+    // The copy's own cookie is no way in: only the session is read.
+    expect((await call(`/api/coach/clients/${shared.grant.id}/copy`, { cookie: await open(shared) })).status).toBe(401);
+    // A session ended everywhere reads nothing more, at once.
+    expect((await inApp(dana, shared.grant.id)).status).toBe(200);
+    expect((await dana.send("POST", "/api/account/sign-out-everywhere")).status).toBe(204);
+    expect((await inApp(dana, shared.grant.id)).status).toBe(401);
+  });
 });
+
+/** Someone's copy, naming a coach who has taken it up into their list. */
+async function coached() {
+  const { user: sam, factId } = await owner();
+  const address = uniqueEmail();
+  const shared = await share(sam, { factIds: [factId], coachEmail: address });
+  const dana = await signIn(address);
+  expect((await takeUp(shared.grant.id, jar(await open(shared), dana.cookie))).status).toBe(204);
+  return { sam, dana, factId, shared };
+}
+
+/** Reads a client's copy as the app does, with the reader's session and nothing else. */
+const inApp = (user: User, grantId: string) => user.fetch(`/api/coach/clients/${grantId}/copy`);
 
 describe("an entry in a coach's list", () => {
   it("is cleared from storage thirty days after its copy's last day, in an account that does nothing else", async () => {
@@ -449,7 +570,7 @@ describe("an entry in a coach's list", () => {
 });
 
 describe("a coach's vault moved to a replacement", () => {
-  it("takes the client list with it, and the copies open as they did", async () => {
+  it("takes the client list with it, and the copies open as they did, and reads in the app after the move", async () => {
     const { user: sam, factId } = await owner();
     const address = uniqueEmail();
     const shared = await share(sam, { factIds: [factId], coachEmail: address });
@@ -491,6 +612,10 @@ describe("a coach's vault moved to a replacement", () => {
     expect(copy.view).toMatchObject({ reviewer: "joined", snapshot: { owner: { name: "Sam Rivera" } } });
     // Where the copy is kept still never leaves the server.
     expect(JSON.stringify(await moved.json("/api/export"))).not.toContain(sessionOf(sam).vid);
+    // …and reads in the app after the move, from the moved list and the new session alone.
+    const inTheApp = await inApp(moved, shared.grant.id);
+    expect(inTheApp.status).toBe(200);
+    expect(await inTheApp.json()).toMatchObject({ grantId: shared.grant.id, reviewer: "joined", snapshot: { owner: { name: "Sam Rivera" } } });
   });
 });
 

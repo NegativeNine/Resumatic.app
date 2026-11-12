@@ -42,8 +42,6 @@ const LATER = /\b(postings?|snapshots?|[Cc]ard|[Ss]ensitive|[Aa]pplications?)\b/
  * removes its own entries here and from docs/redesign-words.md when it renames them.
  */
 const DEFERRED: Readonly<Record<string, string>> = {
-  // Stage 7, outside: snapshot becomes shared copy.
-  "Shared career snapshot": "stage 7",
 };
 
 /**

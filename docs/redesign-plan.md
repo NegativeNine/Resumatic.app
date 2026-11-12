@@ -283,6 +283,62 @@ Open questions for the owner, each built as stated; only the answer would change
 6. Is "anonymous profile" the right word before anything is published?
 7. The placeholder for more email notices names no reason for waiting. What does it wait for?
 
+### Stage 7: outside the rooms
+
+Coaching, hiring, the shared copy, sign-in, the landing page and the states. A coach's clients are listed under Coaching › Clients, and each live copy opens on a page of its own in the app (`#/coaching/clients/:id`) through a new session-only route, `GET /api/coach/clients/:grantId/copy`. The shared copy at `/share` is headed by whose copy it is and its job, and its failures are framed cards chosen by the step that failed. Signed out, the site's root is a landing page, `#/sign-in` and every deep link show sign-in, and the privacy notice and terms stay readable. The coaching organisation and the four hiring pages are placeholders that say what each waits for, reached only from the account menu's Workspaces entry "Hiring · Not open yet". The invite email's lockup and the connect sign-in page draw the plain identity. There is no migration, no new switch and no model call.
+
+Decisions, each with the alternative rejected:
+
+1. **A new session-only route reads the in-app copy,** `GET /api/coach/clients/:grantId/copy`, with a Vault method (`readShareForCoach`) that checks and reads in one transaction. `POST …/open` followed by `/share/snapshot?g=` was rejected: a dead copy answers 410 there and `useResource` would sign the coach out, the cookie outlives "sign out everywhere", and it takes two requests.
+2. **Open becomes a link.** `POST …/open` and `api.openCoachClient` stay for pages from before, during a mixed rollout. Removing them was rejected.
+3. **`SharedCopy` is extracted and reused, and `CoachComments` is reused unchanged.** Rendering `ShareSnapshotContent` in the shell (two `main`s and two headers) and editing `ShareComments.tsx`, which stage 6 owns, were rejected.
+4. **The parts are stacked, with no "In this copy" tabs.** Fragment links (`/share` reads a fragment as a link token) and a tablist (it hides parts from print and from find-in-page) were rejected.
+5. **No new fields go on the client list.** Adding job or reply counts, which is Vault work the brief doesn't ask for, was rejected.
+6. **Unknown-session rows keep today's silence.** Branching on `active` alone was rejected: `/api/coach/clients` returns `active: false` for every row when the session has no email, so the row would say a live copy had ended.
+7. **`CoachCopy` classifies errors inside its loader.** It matches 404 by the route's message "no such client" (as `CoachComments` does) and 409 by status, and rethrows the rest. A plain `useResource(() => api.coachCopy(id))` was rejected: it keeps only `describeError`'s string, so a 409 would become a retryable error and a "no such route" 404 during a rollout would say the copy isn't listed.
+8. **A comment refusal in the app is re-decided by reading the copy again.** Matching `CoachComments`' sentences to infer the status was rejected: it ties this stage to stage 6's wording, and `onEnded` carries no status. The reload goes through `useResource`, which ends the session on 401 and 410.
+9. **The landing page lives outside `ROUTES` and `SCREENS`.** A landing route was rejected: both are signed-in screens, and `canonicalHash` rewrites the empty address.
+10. **What the landing page leaves out, and why:** the invitation form (no waitlist exists, and the form would collect addresses); plans (there are no prices and no 30-day pass); testimonials (no quote has consent); the "general assistant" row (`MCP_ENABLED` can't be read signed out); and the "For coaches" anchor (a fragment is a route).
+11. **Unknown sign-in codes are not echoed.** Keeping the filtered echo was rejected.
+12. **Share cards are chosen by the failing step, never by parsing the message.** An expired link usually fails `readShareToken` as gone, not as expired.
+13. **States go in a new `src/web/components/States.tsx`** (`StateCard`, `Stopped`). Editing `ui.tsx`, which stages 3 to 6 may change at the same time, and a `Working` component (`Loading` and the run marks cover it) were rejected.
+14. **The email lockup is drawn by a committed script** (`scripts/draw-email-lockup.mjs`) from `Lockup.tsx`'s wordmark path, `tokens.css` and `favicon.svg`. Copying `resumatic-lockup.svg`, which isn't on disk, was rejected.
+15. **The connect sign-in page gets an inline SVG lockup with fill attributes and no styles.** Changing its policy, `default-src 'none'`, was rejected.
+16. **The phone bar keeps four rooms, and Account stays in the name menu.** Five items were rejected. This settles stage 2's open question 4.
+
+**States.** One pattern for each, across every room:
+
+| State | Pattern |
+| --- | --- |
+| Working | `Loading` for a read, and a run's `rs-mark--working` with its status line |
+| Failing | `ErrorNote` with "Try again" for a failed load, and `ActionError` under the control |
+| Stopping | `Stopped`, for a limit or a refusal, with at most one action |
+| Ended or unavailable | `StateCard` |
+| Empty | `EmptyState` with a title and the next step's link |
+
+Room stages replace their own framed and refused states with these at integration.
+
+**The landing page's copy needs the owner's review before production.** Every claim on it was checked against the code at this branch; prices, plans, testimonials and an invitation request are left out.
+
+Where the build departs from the stage's design:
+
+- **`share.css` is imported by the pages that show a copy** (`SharePage` and `CoachCopy`), not by `ShareSnapshotContent`, which a Node unit test (`test/unit/share-dates.test.ts`) renders and whose type check has no CSS imports. The file is `src/web/components/share.css`.
+- **In the app, a copy that is not in the list or has ended is the page itself,** so its `StateCard` is `level={1}`, as on `/share`.
+- **After a refused comment, a copy that still opens keeps the refusal in place of the threads.** `useCoachCommenting` starts over when the copy is read again, so `CoachCopy` keeps the sentence itself.
+- **The connect sign-in page's lockup is a constant in `mcp.ts`.** The Worker can't import `Lockup.tsx`, so `scripts/email-lockup.test.mjs` holds the two drawings together.
+- **A live copy whose owner gave no name is opened with "Open their copy",** described by the row's heading ("A client who didn’t give their name"), because "Open {name}’s copy" can't be made from that heading.
+- **`CoachCopy` reads the copy only when asked:** when the page opens, on Try again and after a refused comment. `useResource` also reloads when the coach's own vault reports a change, but those changes say nothing about a copy kept in the client's vault, and reading it then would tell the owner of a read nobody made and start the comments over. Every other reload answers with the last read asked for.
+- **The old `.app-clients` rules stay in `app.css`, unused,** so this stage changes that file only in its block. They can go after the merge.
+- **The empty client list closes its address with a comma** ("names your sign-in address, dana@example.test, on a copy"), so the sentence reads as English.
+
+Open questions for the owner, each built as stated:
+
+1. The landing page's copy needs your review before production, including the labelled example line.
+2. Should the landing page name support@resumatic.app as the way to ask for an invitation? It names nothing today.
+3. If production turns on `MCP_ENABLED`, should the "general assistant" comparison row return?
+4. Coach-comment and review emails link to `/`, so a signed-out reader lands on the landing page. Should stage 6 link them to `/#/sign-in`?
+5. Plans and testimonials stay off the landing page until prices, the 30-day pass and a consented quote exist. Is that right?
+
 ---
 
 Nov 7, 2026. Revised after PR #2 (the job seeker roadmap) merged, which changed 42 of the web app's files. The redesign is rebuilt on that `main` (`215a3e3`).

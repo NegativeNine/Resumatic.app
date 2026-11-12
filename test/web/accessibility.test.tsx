@@ -19,6 +19,11 @@ import { SharingCoaches } from "../../src/web/pages/sharing/SharingCoaches";
 import { SharingOverview } from "../../src/web/pages/sharing/SharingOverview";
 import { SharingRecruiters } from "../../src/web/pages/sharing/SharingRecruiters";
 import { TodayPage } from "../../src/web/pages/today/TodayPage";
+import { CoachClients } from "../../src/web/pages/outside/CoachClients";
+import { CoachCopy } from "../../src/web/pages/outside/CoachCopy";
+import { Landing } from "../../src/web/pages/outside/Landing";
+import { signInErrorMessage } from "../../src/web/errors";
+import type { CoachClient } from "../../src/shared/sharing";
 import { PlaceholderPage } from "../../src/web/components/Placeholder";
 import { Shell } from "../../src/web/components/Shell";
 import { PLACEHOLDERS, type PlaceholderName } from "../../src/web/placeholders";
@@ -283,7 +288,7 @@ describe("accessibility", () => {
   it("the shared copy a coach reads", async () => {
     const view = sharedView();
     const unnamed = render(<ShareSnapshotContent view={view} />);
-    expect(screen.getByRole("heading", { name: "Shared career snapshot" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "A shared copy" })).toBeInTheDocument();
     expect(await violations()).toEqual([]);
     unnamed.unmount();
     // The same copy with its owner’s name and the job its resume is for.
@@ -306,10 +311,95 @@ describe("accessibility", () => {
     const signIn = render(<SignedOut note={null} error="Sign-in was cancelled. You can try again whenever you’re ready." />);
     expect(await violations()).toEqual([]);
     signIn.unmount();
+    // Every refusal the callback can send, an unknown code, and the notes, each alone above the button.
+    for (const code of ["unauthenticated", "conflict", "forbidden", "unavailable", "access_denied", "something-else"]) {
+      const refused = render(<SignedOut note={null} error={signInErrorMessage(code)} />);
+      expect(await violations(true), code).toEqual([]);
+      refused.unmount();
+    }
+    for (const note of ["You’ve signed out.", "Your session has ended. Sign in again to carry on.", "This account has been deleted."]) {
+      const noted = render(<SignedOut note={note} error={null} />);
+      expect(await violations(true), note).toEqual([]);
+      noted.unmount();
+    }
     for (const doc of ["privacy", "terms"] as const) {
       const page = render(<LegalPage doc={doc} />);
       expect(await violations()).toEqual([]);
       page.unmount();
     }
   });
+
+  it("the landing page, signed out", async () => {
+    render(<Landing />);
+    // The whole page is in its landmarks, so the region rule is on.
+    expect(await violations(true)).toEqual([]);
+  });
+
+  it("a coach's clients in every state", async () => {
+    const state = fullVault();
+    state.me.signInEmail = "dana@example.test";
+    const added = Date.UTC(2026, 10, 8, 15);
+    const client = (extra: Partial<CoachClient>): CoachClient => ({
+      grantId: crypto.randomUUID(), ownerName: "Sam Rivera", addedAt: added, expiresAt: added + 5 * 86_400_000, active: true, factCount: 3, resumeCount: 1, documentCount: 1, ...extra,
+    });
+    state.clients = [client({}), client({ ownerName: null }), client({ ownerName: "Alex Kim", active: false, factCount: 0, resumeCount: 0, documentCount: 0 })];
+    const api = installFakeApi(state);
+    const every = renderWithSession(<main><CoachClients /></main>, state.me);
+    await screen.findByText("Ended");
+    // A row asking whether to remove it.
+    await userEvent.click(screen.getByRole("button", { name: "Remove Alex Kim from my list" }));
+    expect(await violations(true)).toEqual([]);
+    every.unmount();
+    // A session from before coaches had an address.
+    api.coachNeedsSignIn = true;
+    const unknown = renderWithSession(<main><CoachClients /></main>, state.me);
+    await screen.findByText(/^Sign out and in again/);
+    expect(await violations(true)).toEqual([]);
+    unknown.unmount();
+    // And none at all.
+    state.clients = [];
+    api.coachNeedsSignIn = false;
+    renderWithSession(<main><CoachClients /></main>, state.me);
+    await screen.findByText("No clients yet");
+    expect(await violations(true)).toEqual([]);
+  });
+
+  it("a client's copy with comments", async () => {
+    const state = fullVault();
+    const grantId = "0653389a-0d6d-4e90-94eb-23cc98b95c19";
+    state.clients = [{ grantId, ownerName: null, addedAt: 1, expiresAt: 2, active: true, factCount: 3, resumeCount: 1, documentCount: 0 }];
+    state.coachComments = [{ target: { kind: "fact", factId: "f1" }, quote: "Led the migration of 40 services from Heroku to Kubernetes.", comments: [{ id: "c1", author: "coach", body: "Say what it saved.", createdAt: 1 }] }];
+    installFakeApi(state);
+    renderWithSession(<main><CoachCopy grantId={grantId} /></main>, state.me);
+    await screen.findByRole("article", { name: /^On “Led the migration/ });
+    await userEvent.click(screen.getAllByRole("button", { pressed: false })[0]!);
+    expect(await violations(true)).toEqual([]);
+  });
+
+  it("the shared copy's framed cards", async () => {
+    const cards: [string, (seen: { method: string }) => { status: number; body?: unknown }][] = [
+      ["This link isn’t available", (seen) => (seen.method === "POST" ? { status: 410, body: { error: "gone" } } : { status: 200 })],
+      ["This copy isn’t open any more", (seen) => (seen.method === "POST" ? { status: 200, body: { grantId: "g" } } : { status: 410, body: { error: "gone" } })],
+      ["This copy couldn’t be opened", () => ({ status: 503, body: { error: "unavailable" } })],
+    ];
+    for (const [title, answer] of cards) {
+      vi.resetModules();
+      window.history.replaceState(null, "", "/share#synthetic-token");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+          const reply = answer({ method: (init?.method ?? "GET").toUpperCase() });
+          return new Response(reply.body === undefined ? null : JSON.stringify(reply.body), { status: reply.status });
+        }),
+      );
+      const rtl = await import("@testing-library/react");
+      const { SharePage } = await import("../../src/web/pages/SharePage");
+      const page = rtl.render(<SharePage />);
+      await rtl.screen.findByRole("heading", { level: 1, name: title });
+      const results = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
+      expect(results.violations.map((v) => v.id), title).toEqual([]);
+      page.unmount();
+    }
+  });
 });
+

@@ -19,7 +19,6 @@ export interface PlaceholderSectionCopy {
   note: string;
 }
 
-const HIRING_CLOSED = "The hiring workspace isn’t open yet. It opens later, for verified employers.";
 const BACK_TO_SEEKING = { label: "Back to looking for work", to: href.home };
 
 export const PLACEHOLDERS = {
@@ -57,31 +56,32 @@ export const PLACEHOLDERS = {
   // stage 7: outside
   coachingOrganisation: {
     title: "Organisation",
-    lede: "Coaches who work together, and the seats they share.",
-    note: "Coaching organisations and seats open later.",
+    lede: "A coaching practice shares one client list, so a colleague can pick up where you left off.",
+    note: "Coaching organisations and seats open later. A client will still choose who may read their copy.",
+    back: { label: "Back to your clients", to: href.clients },
   },
   hiringOpenings: {
     title: "Openings",
     lede: "An opening is what you list, search and request against. Every one names its pay.",
-    note: HIRING_CLOSED,
+    note: "The hiring workspace isn’t open yet. Openings wait for organisation verification, legal sign-off and the result of a paid pilot.",
     back: BACK_TO_SEEKING,
   },
   hiringCandidates: {
     title: "Candidates",
     lede: "People whose confirmed facts fit an opening. You see an anonymous profile. They decide whether you see more.",
-    note: HIRING_CLOSED,
+    note: "The hiring workspace isn’t open yet. Searching for candidates waits for legal sign-off and the result of a paid pilot.",
     back: BACK_TO_SEEKING,
   },
   hiringIntroductions: {
     title: "Introductions",
     lede: "Requests you’ve sent, and the people who said yes. A credit is charged only for a yes.",
-    note: "The hiring workspace isn’t open yet. Introductions open first, arranged by hand for a small pilot.",
+    note: "The hiring workspace isn’t open yet. Introductions open first, arranged by hand in a small paid pilot, once it has legal sign-off.",
     back: BACK_TO_SEEKING,
   },
   hiringOrganisation: {
     title: "Organisation",
     lede: "Who your organisation is to a candidate, who can act for it, and what it has paid for.",
-    note: HIRING_CLOSED,
+    note: "The hiring workspace isn’t open yet. Organisations wait for verification checks and legal sign-off.",
     back: BACK_TO_SEEKING,
   },
 } satisfies Record<string, PlaceholderCopy>;

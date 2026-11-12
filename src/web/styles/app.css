@@ -1131,3 +1131,7 @@ button.rs-who { background: none; border: 0; cursor: pointer; }
 /* stage 6: sharing and account */
 
 /* stage 7: outside */
+
+/* A state in place of what a page would show (States.tsx): what happened, what to do, at most one way on. */
+.app-state-card { display: grid; justify-items: start; gap: var(--space-3); max-width: 70ch; }
+.app-state-card > h1, .app-state-card > h2, .app-state-card > p, .app-state-card > .rs-loading { margin: 0; }

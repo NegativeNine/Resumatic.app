@@ -6,15 +6,27 @@ import { ShareSnapshotContent } from "../../src/web/components/ShareSnapshotCont
 import { sharedView } from "./fixtures";
 
 describe("signing in", () => {
-  it("puts notes and errors above the button", () => {
-    render(<SignedOut note="You’ve signed out." error="Sign-in was cancelled. You can try again whenever you’re ready." />);
+  it("leads with the result, and puts one note or refusal above the button", () => {
+    const note = render(<SignedOut note="You’ve signed out." error={null} />);
     const button = screen.getByRole("link", { name: "Sign in with Google" });
     expect(button.textContent).toBe("Sign in with Google");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("A tailored resume you can stand behind.");
+    expect(
+      screen.getByText("Resumatic writes a resume for each job using only what you’ve really done, and shows where every line came from."),
+    ).toHaveClass("rs-lede");
+    expect(document.querySelector(".rs-signin__fine")!.textContent).toBe(
+      "Private beta, by invitation. You can download or delete your data at any time. By signing in you agree to the beta terms. The privacy notice explains how your data is used.",
+    );
     const status = screen.getByRole("status");
-    const alert = screen.getByRole("alert");
     expect(status.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(alert.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Tailored resumes, built only from what you’ve done.");
+    expect(screen.queryByRole("alert")).toBeNull();
+    note.unmount();
+    render(<SignedOut note={null} error="Sign-in was cancelled. You can try again whenever you’re ready." />);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveClass("rs-msg--error");
+    expect(alert.compareDocumentPosition(screen.getByRole("link", { name: "Sign in with Google" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(document.title).toBe("Sign in – Resumatic");
   });
 });
 
@@ -37,7 +49,7 @@ describe("the shared copy", () => {
     expect(within(fact).getByText("Senior Backend Engineer, Northwind Logistics")).toBeInTheDocument();
     expect(document.body.textContent).not.toContain(".,");
     expect(document.querySelector(".rs-sheet h1")?.textContent).toBe("Sam Rivera");
-    expect(screen.getByText(/A fixed copy, chosen by its owner on 6 Nov 2026\. This link works until 13 Nov 2026\./)).toBeInTheDocument();
+    expect(screen.getByText(/^A copy made 6 Nov 2026\. It ends 13 Nov 2026\. Its owner’s own record may have changed since\.$/)).toBeInTheDocument();
   });
 
   it("says whose copy it is and which job each resume is for, when the copy carries them", () => {
@@ -46,8 +58,9 @@ describe("the shared copy", () => {
     view.snapshot.owner = { name: "Sam Rivera" };
     view.snapshot.resumes[0]!.job = { title: "Platform Engineer", company: "Litware" };
     render(<ShareSnapshotContent view={view} />);
-    expect(document.querySelector(".rs-lede")!.textContent).toBe(
-      "From Sam Rivera. A fixed copy, chosen on 6 Nov 2026. This link works until 13 Nov 2026.",
+    expect(screen.getByRole("heading", { level: 1, name: "Sam Rivera, for Platform Engineer at Litware" })).toBeInTheDocument();
+    expect(document.querySelector(".app-share__made")!.textContent).toBe(
+      "A copy made 6 Nov 2026. It ends 13 Nov 2026. Sam Rivera’s own record may have changed since.",
     );
     // A reader is told what opening the copy shows its owner, and where the rest is written down.
     const notice = screen.getByText(/^Sam Rivera can see when this copy was last opened, but not who opened it\./);
@@ -70,7 +83,7 @@ describe("the shared copy", () => {
     view.snapshot.owner = null;
     view.snapshot.resumes[0]!.job = { title: null, company: null };
     const second = render(<ShareSnapshotContent view={view} />);
-    expect(document.querySelector(".rs-lede")!.textContent).toMatch(/^A fixed copy, chosen by its owner on /);
+    expect(document.querySelector(".app-share__made")!.textContent).toMatch(/^A copy made .+ Its owner’s own record may have changed since\.$/);
     expect(document.body.textContent).not.toContain("Tailored for");
     second.unmount();
     view.snapshot.resumes[0]!.job = { title: null, company: "Litware" };

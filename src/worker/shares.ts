@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AppError } from "../shared/errors";
-import { SHARE_SESSION_TTL_MS } from "../shared/sharing";
+import { SHARE_LINK_EXPIRED, SHARE_LINK_GONE, SHARE_SESSION_TTL_MS } from "../shared/sharing";
 import { signToken, verifyToken } from "./crypto";
 
 export const SHARE_COOKIE = "__Host-share";
@@ -11,7 +11,7 @@ export const SHARE_COOKIE = "__Host-share";
  */
 export function shareCookieName(grantId: string): string {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(grantId))
-    throw new AppError("gone", "this share link is unavailable or expired");
+    throw new AppError("gone", SHARE_LINK_GONE);
   return `${SHARE_COOKIE}-${grantId.toLowerCase()}`;
 }
 export { SHARE_SESSION_TTL_MS };
@@ -63,7 +63,7 @@ export async function createShareSession(
 ): Promise<string> {
   configured(secret);
   if (link.kind !== "coach-link" || link.exp <= now)
-    throw new AppError("gone", "this share link has expired");
+    throw new AppError("gone", SHARE_LINK_EXPIRED);
   const exp = Math.min(link.exp, now + SHARE_SESSION_TTL_MS);
   const token = await signToken(secret, {
     ...link,

@@ -12,6 +12,7 @@ import {
   type RouteName,
   type RouteParams,
 } from "../../src/web/router";
+import { signedOutPage, type SignedOutPage } from "../../src/web/pages/outside/signed-out";
 
 /** A value for each parameter an address can carry. */
 const SAMPLE: Required<RouteParams> = { id: "job 1/2", resumeId: "res-1", jobTab: "letter", section: "plan" };
@@ -171,5 +172,38 @@ describe("the route table", () => {
     // Tabs of a room are screens of their own.
     expect(routeKey(parseRoute(href.facts))).not.toBe(routeKey(parseRoute(href.factsAll)));
     expect(routeKey(parseRoute(href.client("g1")))).toBe("coachingClient/g1");
+  });
+});
+
+describe("signed out and signing in", () => {
+  it("#/sign-in is an alias for where signing in lands", () => {
+    expect(canonicalHash("#/sign-in")).toBe(DEFAULT_HASH);
+    expect(canonicalHash("#/sign-in")).toBe(href.home);
+    expect(parseRoute("#/sign-in").name).toBe("today");
+    // It isn't a page of its own once signed in.
+    expect(ROUTES.flatMap((entry) => entry.paths)).not.toContain("#/sign-in");
+  });
+
+  it("shows a signed-out visitor the landing page only at the root with nothing to say, and reads the address as it is", () => {
+    const pages: [string, boolean, SignedOutPage][] = [
+      ["", false, "landing"],
+      ["#", false, "landing"],
+      ["#/", false, "landing"],
+      ["", true, "sign-in"],
+      ["#/", true, "sign-in"],
+      ["#/sign-in", false, "sign-in"],
+      ["#/sign-in", true, "sign-in"],
+      ["#/jobs", false, "sign-in"],
+      ["#/jobs/app-litware/fit", false, "sign-in"],
+      ["#/facts/check", false, "sign-in"],
+      ["#/coaching/clients/0653389a", false, "sign-in"],
+      ["#/privacy", false, "privacy"],
+      ["#/privacy", true, "privacy"],
+      ["#/terms", false, "terms"],
+      ["#/terms", true, "terms"],
+      ["#/privacy/extra", false, "sign-in"],
+      ["#/constructor", false, "sign-in"],
+    ];
+    for (const [hash, hasMessage, page] of pages) expect(signedOutPage(hash, hasMessage), `${hash} ${hasMessage}`).toBe(page);
   });
 });

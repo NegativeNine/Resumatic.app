@@ -2,13 +2,13 @@ import type { ReactNode } from "react";
 import { formatDate } from "../format";
 import { presentResumeBullet } from "../../shared/resume-presentation";
 import { formatRoleDates } from "../../shared/sheet";
-import type { SharedDocument, SharedJob, SharedLine, SharedResume, SharedView, ShareTarget } from "../../shared/sharing";
+import type { SharedDocument, SharedJob, SharedLine, SharedResume, SharedView, ShareSnapshot, ShareTarget } from "../../shared/sharing";
 import { Lockup } from "./Lockup";
 import { Badge, Glyph, type MarkTone } from "./ui";
 
 /**
- * The frame around a shared copy: the lockup, then the page. The reader has no account here.
- * `wide` makes room for the comments beside the copy.
+ * The frame around a shared copy: the lockup and what the copy is, then the page. The reader has no
+ * account here. `wide` makes room for the comments beside the copy.
  */
 export function ShareFrame({ children, wide }: { children: ReactNode; wide?: boolean }) {
   return (
@@ -17,13 +17,40 @@ export function ShareFrame({ children, wide }: { children: ReactNode; wide?: boo
         <span className="rs-brand app-share__brand">
           <Lockup />
         </span>
-        <span className="rs-meta">Shared copy, read only</span>
+        <Badge tone="note">Shared copy, read only</Badge>
       </header>
       <main className={wide ? "app-share__main app-share__main--comments" : "app-share__main"} id="main">
         {children}
       </main>
     </div>
   );
+}
+
+/** "Platform Engineer at Litware", or null when the job names neither. */
+function jobName(job: SharedJob | null | undefined): string | null {
+  return [job?.title, job?.company].filter(Boolean).join(" at ") || null;
+}
+
+/**
+ * What a copy is called: whose it is and the job it is for, as far as the copy says. The job is
+ * named only when every resume and document in the copy is for that same job; a copy of several
+ * jobs, or of facts alone, names none.
+ */
+export function copyHeading(snapshot: ShareSnapshot): string {
+  const owner = snapshot.owner?.name || null;
+  const parts = [...snapshot.resumes, ...(snapshot.documents ?? [])];
+  const jobs = parts.map((part) => jobName(part.job));
+  const job = jobs.length > 0 && jobs.every((name) => name !== null && name === jobs[0]) ? jobs[0]! : null;
+  if (owner && job) return `${owner}, for ${job}`;
+  if (owner) return owner;
+  if (job) return `A shared copy, for ${job}`;
+  return "A shared copy";
+}
+
+/** When the copy was made and when it ends, and that its owner's record may have moved on since. */
+export function copyMade(view: SharedView): string {
+  const owner = view.snapshot.owner?.name || "Its owner";
+  return `A copy made ${formatDate(view.snapshot.createdAt)}. It ends ${formatDate(view.expiresAt)}. ${owner}\u2019s own record may have changed since.`;
 }
 
 /**
@@ -72,17 +99,41 @@ const RESUME_CHECK: Readonly<Record<SharedResume["verification"], { tone: MarkTo
   unverified: { tone: "note", text: "Lines haven\u2019t been checked" },
 };
 
-/** Kept separate so the same read-only snapshot can be tested without a browser session. */
-/** `notice` is said under the heading, before the copy: what a named coach can do with it, say. */
 /**
- * `comments` is given only for the coach the copy names, once the copy is in their list. Each
- * resume line and each fact is then a button to choose, and the threads sit beside the copy.
- * Without it the copy is text to read, exactly as every other reader has it.
+ * The shared copy at /share, in its own frame: what it is and whose, when it was made and ends,
+ * then the copy. Kept separate from the page so the same read-only copy can be tested without a
+ * browser session. `notice` is said under the heading, before the copy: what a named coach can do
+ * with it, say. `comments` is as `SharedCopy` takes it.
  */
 export function ShareSnapshotContent({ view, notice, comments }: { view: SharedView; notice?: ReactNode; comments?: ShareCommenting }) {
+  const owner = view.snapshot.owner?.name || null;
+  return (
+    <ShareFrame wide={comments !== undefined}>
+      <h1 className="app-share__title">{copyHeading(view.snapshot)}</h1>
+      <p className="rs-meta app-share__made">{copyMade(view)}</p>
+      <p className="rs-meta app-share__opened">
+        {owner ?? "Its owner"} can see when this copy was last opened, but not who opened it.{" "}
+        {/* An address from the site's root: on this page a bare fragment would be read as a share link. */}
+        <a className="rs-link" href="/#/privacy">
+          Privacy notice
+        </a>
+      </p>
+      {notice && <div className="app-share__notice">{notice}</div>}
+      <SharedCopy view={view} comments={comments} />
+    </ShareFrame>
+  );
+}
+
+/**
+ * What a copy holds, as text to read: its facts, each resume version and each document, one after
+ * another, so all of it prints and can be found on the page. `comments` is given only for the coach
+ * the copy names, once the copy is in their list: each resume line and each fact is then a button to
+ * choose, and the threads sit beside the copy. Without it the copy is text to read, exactly as
+ * every other reader has it. It is the same at /share and in the app.
+ */
+export function SharedCopy({ view, comments }: { view: SharedView; comments?: ShareCommenting }) {
   const { facts, resumes } = view.snapshot;
   const documents = view.snapshot.documents ?? [];
-  const owner = view.snapshot.owner?.name || null;
   /** Lines and facts are buttons only while one can be chosen. */
   const choosing = comments?.onSelect ? comments : undefined;
   /** Several letters, say, are told apart by number when nothing else does it. */
@@ -116,39 +167,16 @@ export function ShareSnapshotContent({ view, notice, comments }: { view: SharedV
       ))}
     </>
   );
-  return (
-    <ShareFrame wide={comments !== undefined}>
-      <h1>Shared career snapshot</h1>
-      <p className="rs-lede">
-        {owner ? (
-          <>
-            From <strong>{owner}</strong>. A fixed copy, chosen on {formatDate(view.snapshot.createdAt)}.
-          </>
-        ) : (
-          <>A fixed copy, chosen by its owner on {formatDate(view.snapshot.createdAt)}.</>
-        )}{" "}
-        This link works until {formatDate(view.expiresAt)}.
-      </p>
-      <p className="rs-meta app-share__opened">
-        {owner ?? "Its owner"} can see when this copy was last opened, but not who opened it.{" "}
-        {/* An address from the site's root: on this page a bare fragment would be read as a share link. */}
-        <a className="rs-link" href="/#/privacy">
-          Privacy notice
-        </a>
-      </p>
-      {notice && <div className="app-share__notice">{notice}</div>}
-      {comments ? (
-        <div className="app-share__columns">
-          <div className="app-share__copy">{copy}</div>
-          <aside className="app-share__aside" aria-labelledby="share-comments">
-            <h2 id="share-comments">Comments</h2>
-            {comments.aside}
-          </aside>
-        </div>
-      ) : (
-        copy
-      )}
-    </ShareFrame>
+  return comments ? (
+    <div className="app-share__columns">
+      <div className="app-share__copy">{copy}</div>
+      <aside className="app-share__aside" aria-labelledby="share-comments">
+        <h2 id="share-comments">Comments</h2>
+        {comments.aside}
+      </aside>
+    </div>
+  ) : (
+    copy
   );
 }
 

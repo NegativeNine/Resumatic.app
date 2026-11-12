@@ -245,3 +245,13 @@ export function unchangedWording(snapshot: ShareSnapshot, target: ShareTarget, t
   const resume = snapshot.resumes.find((held) => held.id === target.resumeId && held.version === target.version);
   return (resume?.summary?.id === target.lineId ? text : presentResumeBullet(text)) === quote;
 }
+
+/**
+ * What a link or a copy that can't be read says, whatever the reason: revoked, expired, a changed
+ * security epoch, a fact marked sensitive since, or a part that no longer rebuilds exactly. The
+ * reader is told nothing about which it was. Under /api a coach is told a copy has ended instead,
+ * as a 409, because a 410 there means the caller's own account is gone.
+ */
+export const SHARE_LINK_GONE = "This link has expired or been turned off. Ask the person who sent it for a new one.";
+/** What a link whose last moment has passed says when it is exchanged for a session. */
+export const SHARE_LINK_EXPIRED = "This link has expired. Ask the person who sent it for a new one.";

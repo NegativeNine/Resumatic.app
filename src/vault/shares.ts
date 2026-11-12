@@ -2,6 +2,7 @@ import type { FactView, ResumeLine, RoleView } from "../shared/api";
 import { AppError } from "../shared/errors";
 import {
   MAX_SHARE_LABEL_CHARS,
+  SHARE_LINK_GONE,
   SHARE_READ_INTERVAL_MS,
   SHARE_TTL_MS,
   type CoachClient,
@@ -438,7 +439,7 @@ export class ShareStore {
       row.epoch !== this.auth.currentEpoch() ||
       !row.snapshot
     )
-      throw new AppError("gone", "this share link is unavailable or expired");
+      throw new AppError("gone", SHARE_LINK_GONE);
     let snapshot: ShareSnapshot;
     try {
       snapshot = JSON.parse(row.snapshot) as ShareSnapshot;
@@ -484,7 +485,7 @@ export class ShareStore {
         if (owner !== null && (typeof owner?.name !== "string" || !owner.name || owner.name.length > 200)) throw new Error();
       }
     } catch {
-      throw new AppError("gone", "this share link is unavailable or expired");
+      throw new AppError("gone", SHARE_LINK_GONE);
     }
     return {
       grantId: row.id,
@@ -499,7 +500,7 @@ export class ShareStore {
       .exec<GrantRow>(`SELECT * FROM share_grants WHERE id = ? AND epoch = ? AND revoked_at IS NULL AND expires_at > ? LIMIT 1`, claims.grantId, claims.epoch, now)
       .toArray()[0];
     // A copy from before the account's sessions were last ended is closed to everyone, as it is to its link.
-    if (!row || row.snapshot === null || row.epoch !== this.auth.currentEpoch()) throw new AppError("gone", "this share link is unavailable or expired");
+    if (!row || row.snapshot === null || row.epoch !== this.auth.currentEpoch()) throw new AppError("gone", SHARE_LINK_GONE);
     return row;
   }
 
@@ -567,7 +568,7 @@ export class ShareStore {
   copyForCoach(grantId: string, coach: CoachAccount, now = Date.now()): { view: SharedView; coach: { email: string; name: string | null } } {
     this.auth.requireOpen();
     const row = this.joined(grantId, coach, now);
-    if (!row || !row.coach_email) throw new AppError("gone", "this share link is unavailable or expired");
+    if (!row || !row.coach_email) throw new AppError("gone", SHARE_LINK_GONE);
     // The copy has to be one that can be delivered, as when a link is exchanged.
     const view = this.read({ grantId: row.id, epoch: row.epoch }, now);
     return { view, coach: { email: row.coach_email, name: row.coach_name ?? null } };

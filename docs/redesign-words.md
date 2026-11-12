@@ -51,7 +51,6 @@ The interface's own labels that keep an earlier word, each with the stage that r
 
 | Label | Where | Stage |
 | --- | --- | --- |
-| “Shared career snapshot” | ShareSnapshotContent | 7, outside: snapshot becomes shared copy |
 
 Sentences that hold one of these words and none of stage 1's five nouns are unchanged as well, such as the sensitive notices on a resume. Their room's stage changes them with the labels. Stage 5 renamed the Jobs room's labels and the posting reader's messages, and took its rows out of this list.
 
@@ -96,6 +95,8 @@ No server message is assigned to Today. Its first run shows the facts room’s u
 | `src/worker/shares.ts:14, src/worker/routes.ts:1774 and 1805, src/vault/shares.ts:440, 486, 501 and 569` | gone (410 under /share) | this share link is unavailable or expired | This link has expired or been turned off. Ask the person who sent it for a new one. | outside |
 | `src/worker/shares.ts:66` | gone (410 under /share) | this share link has expired | This link has expired. Ask the person who sent it for a new one. | outside |
 
+Stage 7 changed every row marked outside. The two sentences are `SHARE_LINK_GONE` and `SHARE_LINK_EXPIRED` (`src/shared/sharing.ts:255` and `257`), thrown at `src/worker/shares.ts:14` and `66`, `src/worker/routes.ts:1787` and `1818`, and `src/vault/shares.ts:442`, `488`, `503` and `571`. `SharePage` still shows its own fixed sentences, chosen by the step that failed, never by these.
+
 ### Workflow details, fallbacks and stored messages
 
 - **`SAFE_DETAILS`** (`src/workflows/steps.ts:33`). One qualified: “The import source changed. Upload it again.”, thrown at `src/workflows/distill.ts:147`. Stage 4 changed it to “The file changed while it was being read. Upload it again.” The old import sentence stays one release for runs in flight; EARLIER rewords it. The others use no earlier word in the sense above (“review again” is the verb).
@@ -109,6 +110,8 @@ No server message is assigned to Today. Its first run shows the facts room’s u
 | --- | --- | --- | --- |
 | `src/worker/mcp.ts:280` the connect sign-in page | Sign in to connect an app; Continue with Google | No earlier word. It takes the plain identity's lockup and type with the sign-in sheet. | outside |
 
+Stage 7 changed every row marked outside. The connect sign-in page (`src/worker/mcp.ts:288`) shows the lockup as inline SVG drawn with attributes (`SIGN_IN_LOCKUP`, `src/worker/mcp.ts:99`), under its unchanged policy, and its link reads “Sign in with Google”. The page has no style sheet, so it doesn't take the sign-in sheet's type.
+
 ### Email
 
 | Where | Current text | Proposed text | Room |
@@ -120,6 +123,8 @@ No server message is assigned to Today. Its first run shows the facts room’s u
 | `docs/beta/invite-email.md`, your data | Your career data is kept in its own database, separate from every other user's. | Your record is kept in its own database, separate from everyone else’s. | outside |
 | `docs/beta/invite-email.md`, during the beta | During the beta you can tailor [20] resumes a month. | During the beta you get [20] documents a month: each tailored resume, cover letter or interview preparation is one. | outside |
 | `docs/beta/invite-email.md` and `public/email/resumatic-lockup.png` | The turnstile lockup | The green tile and the wordmark, redrawn from the system's `resumatic-lockup.svg` | outside |
+
+Stage 7 changed every row marked outside: steps 2 to 5, “Your data” and “During the beta” in `docs/beta/invite-email.md` read as proposed, and `public/email/resumatic-lockup.png` is the green tile and the wordmark, drawn by `scripts/draw-email-lockup.mjs` from `src/web/components/Lockup.tsx`, `public/favicon.svg` and `src/web/styles/tokens.css` (the system's `resumatic-lockup.svg` isn't in the repository).
 
 ## 4. Not shown to people, and why
 

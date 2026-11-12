@@ -29,4 +29,12 @@ describe("describeError", () => {
       expect(message).toMatch(/\.$/);
     }
   });
+
+  it("never echoes an unknown sign-in code", () => {
+    for (const code of ["server_error", "invalid_grant", "Your-account-is-suspended", "<b>hi</b>", "x".repeat(64), "", "constructor", "__proto__", "toString"])
+      expect(signInErrorMessage(code), code).toBe("Sign-in didn’t work. Try again.");
+    // The codes the callback sends keep their own sentences.
+    expect(signInErrorMessage("access_denied")).toBe("Sign-in was cancelled. You can try again whenever you’re ready.");
+    expect(signInErrorMessage("forbidden")).toMatch(/^This Google account can’t sign in yet\./);
+  });
 });

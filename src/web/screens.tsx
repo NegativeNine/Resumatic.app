@@ -3,7 +3,8 @@ import type { Me } from "../shared/api";
 import { PlaceholderPage } from "./components/Placeholder";
 import { EmptyState, PageHeader } from "./components/ui";
 import { AccountPage } from "./pages/AccountPage";
-import { ClientsPage } from "./pages/ClientsPage";
+import { CoachClients } from "./pages/outside/CoachClients";
+import { CoachCopy } from "./pages/outside/CoachCopy";
 import { JobsPage } from "./pages/JobsPage";
 import { JobPage } from "./pages/jobs/JobPage";
 import { RulesPage } from "./pages/jobs/RulesPage";
@@ -65,8 +66,8 @@ export const SCREENS: { [K in RouteName]: Screen } = {
   account: { title: "Account", render: (route) => <AccountPage section={route.params.section} /> },
 
   // stage 7: outside
-  coachingClients: { title: "Clients", render: () => <ClientsPage /> },
-  coachingClient: { title: "Clients", render: () => <ClientsPage /> },
+  coachingClients: { title: "Clients", render: () => <CoachClients /> },
+  coachingClient: { title: "A client’s copy", render: (r) => <CoachCopy key={r.params.id} grantId={r.params.id!} /> },
   coachingOrganisation: placeholder("coachingOrganisation"),
   hiringOpenings: placeholder("hiringOpenings"),
   hiringCandidates: placeholder("hiringCandidates"),

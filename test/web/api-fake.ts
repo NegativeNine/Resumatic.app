@@ -879,6 +879,17 @@ export class FakeApi {
     ],
 
     // stage 7: outside
+    // A client's copy, read in the app: sharedView() for a copy in the list that is live, as the Worker answers.
+    [
+      "GET",
+      /^\/api\/coach\/clients\/([^/]+)\/copy$/,
+      (_call, [grantId]) => {
+        const client = (this.state.clients ?? []).find((held) => held.grantId === grantId);
+        if (!client) return notFound("no such client");
+        if (!client.active) return conflict("this copy has ended; the person who shared it can share again");
+        return ok({ ...sharedView(), grantId, reviewer: "joined" });
+      },
+    ],
   ];
 
   // stage 3: today

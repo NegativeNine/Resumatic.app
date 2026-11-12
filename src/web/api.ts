@@ -473,4 +473,10 @@ export const api = {
   mcpGrants: () => request<{ grants: McpGrant[] }>("GET", "/api/mcp/grants"),
 
   // stage 7: outside
+  /**
+   * A client's copy, read in the app from this account's client list. A copy that has ended is a
+   * 409 and one not in the list a 404 ("no such client"); only this account being gone is a 410.
+   * The type is imported in place so that this stage changes nothing outside its block.
+   */
+  coachCopy: (grantId: string) => request<import("../shared/sharing").SharedView>("GET", `/api/coach/clients/${encodeURIComponent(grantId)}/copy`),
 };

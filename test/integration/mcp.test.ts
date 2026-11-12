@@ -460,3 +460,39 @@ describe("a connected app's fit preview", () => {
     await waitOnExecutionContext(f.ctx);
   });
 });
+
+describe("connecting an app while signed out", () => {
+  it("asks a signed-out person to sign in to connect an app, with the lockup inline and no style, script or image, under the same CSP", async () => {
+    const f = await fixture();
+    const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(f.verifier)));
+    const challenge = btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+    const parameters = new URLSearchParams({
+      client_id: f.client.client_id,
+      redirect_uri: "https://client.example.test/callback",
+      response_type: "code",
+      scope: "vault:read",
+      state: "client-state",
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+      resource: "https://resumatic.test/mcp",
+    });
+    // No session cookie: the page asks them to sign in, and comes back here after.
+    const page = await f.call(`/oauth/authorize?${parameters}`);
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-security-policy")).toBe("default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+    expect(page.headers.get("cache-control")).toBe("no-store");
+    expect(page.headers.getSetCookie()).toEqual([]);
+    const html = await page.text();
+    expect(html).toContain("<h1>Sign in to connect an app</h1>");
+    const link = html.match(/<a href="([^"]+)">([^<]+)<\/a>/)!;
+    expect(link[2]).toBe("Sign in with Google");
+    expect(new URL(link[1]!, "https://resumatic.test").searchParams.get("returnTo")).toBe(`/oauth/authorize?${parameters}`);
+    // The lockup is drawn inline, named once, by attributes the policy needs nothing for.
+    const lockup = html.match(/<svg [^>]*>[\s\S]*?<\/svg>/)![0];
+    expect(lockup).toMatch(/^<svg role="img" aria-label="Resumatic" /);
+    expect(lockup).toContain('fill="#0c7a49"');
+    expect(lockup).toContain('d="M6.6 12.7l3.5 3.6 7.3-8.5"');
+    expect(html).not.toMatch(/<style|style=|<script|<img|<image|<link|url\(|https?:\/\/(?!resumatic\.test)/i);
+    await waitOnExecutionContext(f.ctx);
+  });
+});
