@@ -7,7 +7,6 @@ import { ConnectedApps } from "../components/ConnectedApps";
 import { EmailNotices } from "../components/EmailNotices";
 import { JobPreferences } from "../components/Preferences";
 import { CardPreviewSection } from "../components/CardPreview";
-import { SavedAnswers } from "../components/SavedAnswers";
 import { OwnerComments } from "../components/ShareComments";
 import { useAction } from "../hooks";
 import { ACCOUNT_ANCHORS, href, type AccountSection } from "../router";
@@ -28,7 +27,6 @@ export function AccountPage() {
         <Anchor section="profile"><ProfileForm /></Anchor>
         <JobPreferences />
         {me.capabilities?.cardPreview && <CardPreviewSection />}
-        <SavedAnswers />
         <Anchor section="appearance"><Appearance /></Anchor>
         <Anchor section="plan"><BillingTools /></Anchor>
         <CoachSharingTools />

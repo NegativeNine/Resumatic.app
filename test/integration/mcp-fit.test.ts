@@ -24,7 +24,7 @@ import { JOB_DESCRIPTION, eventually, fakeModels, signIn, type FakeModelOptions,
 
 const GO = "Built a Go service that processes 2 million events per day";
 const MENTORED = "Mentored 2 junior engineers";
-const DENIED = /connected app|forbidden|wrong account|no such application|invalid request key|request key already used|no longer exists|being deleted/;
+const DENIED = /connected app|forbidden|wrong account|no such application|job can't be found|invalid request key|request key already used|no longer exists|being deleted/;
 /** Workflows are slower while other suites share the machine. */
 const WAIT = 60_000;
 

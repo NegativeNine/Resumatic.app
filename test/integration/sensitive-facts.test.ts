@@ -25,7 +25,7 @@ const REACT = "Implemented React dashboards for the sales team";
 const SKILLS = "Go, TypeScript, Kubernetes, PostgreSQL";
 /** What a run that captured a marked fact is told, and what a version that uses one is told. */
 const FACTS_CHANGED = "Your facts changed while this draft was being made. Create it again.";
-const USES_SENSITIVE = "This version uses a fact you marked sensitive. Remove those lines or tailor a new version, then try again.";
+const USES_SENSITIVE = "This version uses a fact you keep private. Remove those lines or tailor a new version, then try again.";
 /** Workflows are slower while other suites share the machine. */
 const WAIT = 60_000;
 
@@ -829,11 +829,11 @@ describe("a resume version that uses a marked fact", () => {
     const line = lineOf(clean, GO_SERVICE).id;
     expect(await refusal(await refine({ lineIds: [line], manualText: "Mentored 2 junior engineers", manualFactIds: [mentored!.id] }, clean.version))).toEqual([
       422,
-      { error: "invalid", message: "Choose facts that aren't marked sensitive." },
+      { error: "invalid", message: "Choose facts you don't keep private." },
     ]);
     expect(await refusal(await refine({ lineIds: [line], manualText: "Built a Go service", manualFactIds: [go.id, mentored!.id] }, clean.version))).toEqual([
       422,
-      { error: "invalid", message: "Choose facts that aren't marked sensitive." },
+      { error: "invalid", message: "Choose facts you don't keep private." },
     ]);
     // Nothing was started by any of that.
     expect({ documents: await count(user, "documents"), runs: await count(user, "runs"), write: options.calls.write }).toEqual(before);
@@ -891,7 +891,7 @@ describe("an older version under review", () => {
     expect(held.sensitiveUse).toEqual({ lineIds: [line.id], skills: [] });
     // Nor can the line be checked against the marked fact again.
     const again = await check(line, [mentored!.id]);
-    expect([again.status, await again.json()]).toEqual([422, { error: "invalid", message: "Choose facts that aren't marked sensitive." }]);
+    expect([again.status, await again.json()]).toEqual([422, { error: "invalid", message: "Choose facts you don't keep private." }]);
     expect((await resumeOf(user, resume.id)).version).toBe(reviewed.version);
 
     // Unmarked, the check counts again, because nothing was rewritten, and the version can be finished.

@@ -304,7 +304,7 @@ describe("work made while a fact was marked, once it is unmarked", () => {
     expect(mergeRefinementEvidence(base(["Go"]), reworded(["Go"]), [during], []).evidence).toEqual({ go: during });
     // Unmarked, one version would need the fact twice over: as the printed skill was checked, and
     // as the new wording was. It keeps one record for a fact, so the rewording is refused.
-    expect(() => mergeRefinementEvidence(base(["Go"]), reworded(["Go"]), [after], [])).toThrow("conflict: the resume or its supporting evidence changed");
+    expect(() => mergeRefinementEvidence(base(["Go"]), reworded(["Go"]), [after], [])).toThrow("conflict: The resume or the facts behind it changed");
     // With the skill taken off the version, the line is bound to the fact as it is now.
     expect(mergeRefinementEvidence(base([]), reworded([]), [after], []).evidence).toEqual({ go: after });
   });

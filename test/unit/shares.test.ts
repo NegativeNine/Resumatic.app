@@ -748,12 +748,12 @@ describe("a fact its owner has marked sensitive", () => {
     try {
       security.withheld = marked(["f1"], [QUOTE]);
       expect(() => shares.create(who, { ...selection(), resumes: [] }, now + 10_000, now)).toThrow("A fact marked sensitive can't be shared. Unmark it, or leave it out.");
-      expect(() => shares.create(who, { ...selection(), facts: [] }, now + 10_000, now)).toThrow("This version uses a fact you marked sensitive");
+      expect(() => shares.create(who, { ...selection(), facts: [] }, now + 10_000, now)).toThrow("This version uses a fact you keep private");
       expect(() => shares.create(who, { ...none, documents: [chosen] }, now + 10_000, now)).toThrow("can't be shared as it is");
       expect(() => shares.create(who, { ...selection(), documents: [chosen] }, now + 10_000, now)).toThrow();
       // The gate itself, given the marks, refuses in the same words. Given none, it is as it was.
       expect(() => snapshotSelection(selection(), now, marked(["f1"]))).toThrow("A fact marked sensitive can't be shared");
-      expect(() => snapshotSelection({ ...selection(), facts: [] }, now, marked(["f1"]))).toThrow("marked sensitive");
+      expect(() => snapshotSelection({ ...selection(), facts: [] }, now, marked(["f1"]))).toThrow("you keep private");
       expect(() => snapshotSelection(selection(), now, unmarked)).not.toThrow();
       // Nothing was made beyond the three copies from before the mark.
       expect(db.prepare(`SELECT COUNT(*) AS n FROM share_grants`).get()).toEqual({ n: 3 });

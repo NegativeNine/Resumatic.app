@@ -1,19 +1,20 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { App } from "../../src/web/App";
 import { ShareSnapshotContent } from "../../src/web/components/ShareSnapshotContent";
 import { AccountPage } from "../../src/web/pages/AccountPage";
 import { JobsPage } from "../../src/web/pages/JobsPage";
 import { LegalPage } from "../../src/web/pages/LegalPage";
-import { ResumePage } from "../../src/web/pages/ResumePage";
+import { JobPage } from "../../src/web/pages/jobs/JobPage";
+import { RulesPage } from "../../src/web/pages/jobs/RulesPage";
 import { SignedOut } from "../../src/web/pages/SignedOut";
 import { FactsRecord } from "../../src/web/pages/facts/FactsRecord";
 import { FactsReview } from "../../src/web/pages/facts/FactsReview";
 import { FactsSkills } from "../../src/web/pages/facts/FactsSkills";
 import { FactsSources } from "../../src/web/pages/facts/FactsSources";
 import { TodayPage } from "../../src/web/pages/today/TodayPage";
-import { RulesInterim } from "../../src/web/pages/interim/jobs";
 import { AppsInterim, CoachesInterim, RecruitersInterim, SharingInterim } from "../../src/web/pages/interim/sharing";
 import { PlaceholderPage } from "../../src/web/components/Placeholder";
 import { Shell } from "../../src/web/components/Shell";
@@ -21,7 +22,7 @@ import { PLACEHOLDERS, type PlaceholderName } from "../../src/web/placeholders";
 import { parseRoute } from "../../src/web/router";
 import { installFakeApi } from "./api-fake";
 import { emptyVault, fullVault, sharedView } from "./fixtures";
-import { renderWithSession } from "./render";
+import { goTo, renderWithSession } from "./render";
 
 // Structure only: names, roles, labels, headings, ARIA. jsdom has no layout, so contrast is covered by
 // the token tests, and "region" is off because a page is rendered here without the app shell's landmarks.
@@ -86,36 +87,77 @@ describe("accessibility", () => {
     expect(await violations()).toEqual([]);
   });
 
-  it("Jobs, with a workspace and every kind of document open", async () => {
+  it("Your jobs, as a list and as a board", async () => {
     const state = fullVault();
+    state.applications[0]!.url = "https://careers.litware.example/platform-engineer";
     installFakeApi(state);
     renderWithSession(<JobsPage />, state.me);
-    const job = (await screen.findByRole("heading", { name: "Platform Engineer at Litware" })).closest("li")!;
-    await userEvent.click(job.querySelector<HTMLButtonElement>("button[aria-expanded]")!);
-    await screen.findByText("Read cover letter");
-    // The application kit loads by itself, with a question in each state.
-    await screen.findByRole("heading", { name: "Application kit" });
-    await screen.findByRole("button", { name: "Approve kit" });
-    await screen.findByText("Asked every time");
-    for (const details of document.querySelectorAll("details")) details.open = true;
+    await screen.findByRole("link", { name: "Platform Engineer" });
     expect(await violations()).toEqual([]);
-  });
-
-  it("Jobs, as a board", async () => {
-    const state = fullVault();
-    installFakeApi(state);
-    renderWithSession(<JobsPage />, state.me);
-    await userEvent.click(await screen.findByRole("button", { name: "Board" }));
+    await userEvent.click(screen.getByRole("button", { name: "Board" }));
     await screen.findByRole("region", { name: "Jobs by status" });
     expect(await violations()).toEqual([]);
   });
 
-  it("a tailored resume, with its margin notes and documents", async () => {
+  it("a job’s page, on each of its five tabs", async () => {
+    const state = fullVault();
+    state.applications[0]!.url = "https://careers.litware.example/platform-engineer";
+    installFakeApi(state);
+    goTo("#/jobs/app-litware/fit");
+    render(<App />);
+    // Fit, with its fit check, experience questions and the job description.
+    await screen.findByRole("region", { name: "Job description" });
+    await screen.findByLabelText("Have you managed infrastructure with Terraform? Describe what you did.");
+    for (const details of document.querySelectorAll("details")) details.open = true;
+    expect(await violations(true), "fit").toEqual([]);
+    // Resume, with its marks, its gaps and wording checks.
+    act(() => goTo("#/jobs/app-litware/resume"));
+    await screen.findByRole("article", { name: "Resume preview" });
+    await screen.findByRole("heading", { name: "Refine wording" });
+    expect(await violations(true), "resume").toEqual([]);
+    // Cover letter: a failed one, the newest open, and none earlier.
+    act(() => goTo("#/jobs/app-litware/letter"));
+    await screen.findByText("Where these sentences came from");
+    for (const details of document.querySelectorAll("details")) details.open = true;
+    expect(await violations(true), "letter").toEqual([]);
+    // Interview, with one running.
+    act(() => goTo("#/jobs/app-litware/interview"));
+    await screen.findByRole("button", { name: "Cancel this document" });
+    for (const details of document.querySelectorAll("details")) details.open = true;
+    expect(await violations(true), "interview").toEqual([]);
+    // Application: tracking, the kit with a question in each state, and sending.
+    act(() => goTo("#/jobs/app-litware/application"));
+    await screen.findByRole("button", { name: "Approve kit" });
+    await screen.findByText("Asked every time");
+    expect(await violations(true), "application").toEqual([]);
+  });
+
+  it("a resume with a line card open, and as a sheet", async () => {
     const state = fullVault();
     installFakeApi(state);
-    renderWithSession(<ResumePage id="res-ready" />, state.me);
-    await screen.findByRole("heading", { name: "Prepare your application" });
-    expect(await violations()).toEqual([]);
+    const page = renderWithSession(<main><JobPage id="app-litware" tab="resume" /></main>, state.me);
+    await screen.findByRole("article", { name: "Resume preview" });
+    await userEvent.click(document.querySelector<HTMLButtonElement>('[data-note-for="line-latency"] button')!);
+    const card = await screen.findByRole("region", { name: "Where this line came from" });
+    await userEvent.click(within(card).getByRole("button", { name: "Edit line" }));
+    expect(await violations(true)).toEqual([]);
+    page.unmount();
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query === "(max-width: 860px)", media: query, addEventListener() {}, removeEventListener() {} }));
+    renderWithSession(<main><JobPage id="app-litware" tab="resume" /></main>, state.me);
+    await screen.findByRole("article", { name: "Resume preview" });
+    await userEvent.click(document.querySelector<HTMLButtonElement>('[data-note-for="line-mentoring"] button')!);
+    await screen.findByRole("dialog", { name: "Where this line came from" });
+    expect(await violations(true)).toEqual([]);
+  });
+
+  it("Rules and answers", async () => {
+    const state = fullVault();
+    installFakeApi(state);
+    renderWithSession(<main><RulesPage /></main>, state.me);
+    // The saved answers card, with an answer the list now refuses.
+    await screen.findByText("Portfolio link", { selector: "strong" });
+    await screen.findByText(/can’t be offered any more/);
+    expect(await violations(true)).toEqual([]);
   });
 
   it("Account, with plans, share links, connected apps and the card preview", async () => {
@@ -131,9 +173,6 @@ describe("accessibility", () => {
     await screen.findByText("Web platform development software");
     // So does the email notices card.
     await screen.findByRole("checkbox", { name: "A coach comments on a copy you shared" });
-    // So is the saved answers card, with an answer the list now refuses.
-    await screen.findByText("Portfolio link", { selector: "strong" });
-    await screen.findByText(/can’t be offered any more/);
     expect(await violations()).toEqual([]);
     // The form for a new link: what to share, who it’s for and what the copy should say.
     await userEvent.click(screen.getByRole("button", { name: "Choose what to share" }));
@@ -209,7 +248,7 @@ describe("accessibility", () => {
     }
   });
 
-  it("the interim Sharing pages and Rules and answers", async () => {
+  it("the interim Sharing pages", async () => {
     const state = fullVault();
     installFakeApi(state);
     const pages: [string, () => React.ReactNode, () => Promise<unknown>][] = [
@@ -217,7 +256,6 @@ describe("accessibility", () => {
       ["Coaches", () => <CoachesInterim />, () => screen.findByText("Dana Okafor")],
       ["Recruiters", () => <RecruitersInterim />, () => screen.findByText("Web platform development software")],
       ["Connected apps", () => <AppsInterim />, () => screen.findByText("Career Notebook")],
-      ["Rules and answers", () => <RulesInterim />, () => screen.findByText("Portfolio link", { selector: "strong" })],
     ];
     for (const [name, page, loaded] of pages) {
       const shown = renderWithSession(<>{page()}</>, state.me);

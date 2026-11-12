@@ -455,7 +455,7 @@ const NewFactBody = z.object({
 });
 
 const JdText = z.string().trim().min(MIN_JD_CHARS, "paste the whole job description").max(MAX_JD_CHARS);
-const WebUrl = z.string().trim().max(MAX_URL_CHARS).refine(isWebUrl, "enter the posting's web address, starting with https://");
+const WebUrl = z.string().trim().max(MAX_URL_CHARS).refine(isWebUrl, "Enter the job's web address, starting with https://.");
 /** A title or company: one line of the person's own text. An empty line clears it. */
 const JobName = z.string().trim().max(MAX_JOB_NAME_CHARS).refine((value) => !/[\r\n]/.test(value), "use a single line")
   .transform((value) => value || null);

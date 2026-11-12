@@ -160,7 +160,7 @@ export class RunStore {
         if (quota.available < 1)
           throw new AppError(
             "quota",
-            "the output allowance for this period is exhausted",
+            "You've used all your documents for this period. More arrive when your allowance renews.",
           );
         this.sql.exec(
           `UPDATE quota_buckets SET reserved = reserved + 1 WHERE bucket_key = ?`,

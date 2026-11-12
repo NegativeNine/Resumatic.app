@@ -36,7 +36,7 @@ export function legacyReceipt(body: ResumeBody, lineId: string, captured: FactRe
   const item = linesOf(body)?.find(({ line }) => line.id === lineId);
   if (!item || item.line.status !== "kept" || !item.line.factIds.length || item.line.factIds.length > 4 ||
       new Set(item.line.factIds).size !== item.line.factIds.length)
-    throw new AppError("conflict", "the checked line is missing its evidence");
+    throw new AppError("conflict", "A checked line no longer shows where it came from. Check that line again.");
   const byId = new Map(captured.map((fact) => [fact.id, fact]));
   const facts = item.line.factIds.map((id) => byId.get(id));
   if (facts.some((fact) => !fact || (item.roleId !== null && fact.roleId !== item.roleId)))

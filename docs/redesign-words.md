@@ -51,20 +51,10 @@ The interface's own labels that keep an earlier word, each with the stage that r
 
 | Label | Where | Stage |
 | --- | --- | --- |
-| “The posting” | JobPosting's heading | 5, jobs: posting becomes job description |
-| “Read the posting” | JobPosting | 5, jobs |
-| “Hide the posting” | JobPosting | 5, jobs |
-| “Open the original posting” | JobPosting | 5, jobs |
-| “Original posting” | the job row on Jobs | 5, jobs |
-| “Link to the posting” | JobPosting and the add-a-job form | 5, jobs |
-| “Paste the whole posting, including the requirements.” | the add-a-job form's hint | 5, jobs |
-| “Track this application” | ApplicationWorkspace | 5, jobs: application becomes job |
-| “Prepare your application” | Documents | 5, jobs |
-| “Application kit” | ApplicationKit | 5, jobs |
 | “Card preview” | CardPreview on Account | 6, sharing and account: card becomes anonymous profile |
 | “Shared career snapshot” | ShareSnapshotContent | 7, outside: snapshot becomes shared copy |
 
-Sentences that hold one of these words and none of stage 1's five nouns are unchanged as well, such as the sensitive notices on a resume and the posting reader's messages on Jobs. Their room's stage changes them with the labels.
+Sentences that hold one of these words and none of stage 1's five nouns are unchanged as well, such as the sensitive notices on a resume. Their room's stage changes them with the labels. Stage 5 renamed the Jobs room's labels and the posting reader's messages, and took its rows out of this list.
 
 ## 3. Server text a person can reach
 
@@ -82,7 +72,7 @@ HTML pages and emails always reach a person.
 
 **Room** is that of the screen that shows it: facts (files, uploads, paste, roles, facts, review, sensitive); jobs (jobs, postings, tailoring, resumes, documents, kits, answers, fit); sharing/account (shares and the owner's side of comments and suggestions, connected apps and the consent page, card preview, email notices, profile, preferences, billing, export, deletion); outside (`/share`, sign-in, the coach workspace, the invite).
 
-**Proposed sentences** are fixed, in the voice, with the full new words. A proposal that says “private” ships with stage 4 or after it. None changes in stage 1.
+**Proposed sentences** are fixed, in the voice, with the full new words. A proposal that says “private” ships with stage 4 or after it. None changes in stage 1. Stage 5 changed every message assigned to jobs and took those rows out of the tables below; the counts in section 4 are as they were at 78502c9.
 
 No server message is assigned to Today. Its first run shows the facts room’s upload and paste messages, which stage 4 changes.
 
@@ -91,43 +81,12 @@ No server message is assigned to Today. Its first run shows the facts room’s u
 | File:line at 78502c9 | Code | Current text | Proposed sentence | Room |
 | --- | --- | --- | --- | --- |
 | `src/vault/checkout.ts:174` | conflict | finish cancelling the pending checkout first | Cancel the checkout you started first, then try again. | sharing/account |
-| `src/vault/legacy-remediation.ts:39` | conflict | the checked line is missing its evidence | A checked line no longer shows where it came from. Check that line again. | jobs |
-| `src/vault/refinement-evidence.ts:15` | conflict | the resume or its supporting evidence changed; generate a new resume or choose different facts | The resume or the facts behind it changed. Tailor a new resume, or choose different facts. | jobs |
-| `src/vault/runs.ts:161` | quota | the output allowance for this period is exhausted | You’ve used all your documents for this period. More arrive when your allowance renews. | jobs |
 | `src/vault/shares.ts:133` | invalid | A fact marked sensitive can't be shared. Unmark it, or leave it out. | A fact you keep private can’t be shared. Leave it out, or stop keeping it private. | sharing/account |
 | `src/vault/shares.ts:219` | too_large | share snapshot is too large | This shared copy is too large. Choose fewer facts, resumes or documents, then try again. | sharing/account |
 | `src/vault/shares.ts:343` | too_large | share snapshot is too large | This shared copy is too large. Choose fewer facts, resumes or documents, then try again. | sharing/account |
-| `src/vault/snapshots.ts:68` | conflict | fact evidence is incomplete; generate the resume again | Where a fact came from is incomplete. Tailor the resume again. | jobs |
-| `src/vault/snapshots.ts:86` | conflict | role evidence is incomplete; generate the resume again | Where a role came from is incomplete. Tailor the resume again. | jobs |
-| `src/vault/snapshots.ts:186` | conflict | This version uses a fact you marked sensitive. Remove those lines or tailor a new version, then try again. | This version uses a fact you keep private. Remove those lines or tailor a new version, then try again. | jobs |
-| `src/vault/snapshots.ts:206` | conflict | experience requires review; generate the document again | Some of your experience still needs checking. Make the document again. | jobs |
-| `src/vault/snapshots.ts:225` | conflict | experience requires review; generate the document again | Some of your experience still needs checking. Make the document again. | jobs |
-| `src/vault/snapshots.ts:239` | conflict | experience requires review; generate the document again | Some of your experience still needs checking. Make the document again. | jobs |
-| `src/vault/snapshots.ts:345` | conflict | a role changed while this draft was being made; generate it again | A role changed while this draft was being made. Make it again. | jobs |
-| `src/vault/vault.ts:1244` | not_found | no such application | This job can’t be found. It may have been deleted. | jobs |
-| `src/vault/vault.ts:3095` | invalid | enter the posting's web address, starting with https:// | Enter the job’s web address, starting with https://. | jobs |
-| `src/vault/vault.ts:3147` | not_found | no such application | This job can’t be found. It may have been deleted. | jobs |
-| `src/vault/vault.ts:3167` | not_found | no such application | This job can’t be found. It may have been deleted. | jobs |
-| `src/vault/vault.ts:3247` | not_found | no such application | This job can’t be found. It may have been deleted. | jobs |
-| `src/vault/vault.ts:3391` | conflict | this resume is already in review | This resume is already being checked line by line. | jobs |
-| `src/vault/vault.ts:3395` | conflict | this resume does not need grounding review | This resume doesn’t need a line-by-line check. | jobs |
-| `src/vault/vault.ts:3431` | conflict | only a review version can remove a line | Only a version being checked line by line can remove a line. | jobs |
-| `src/vault/vault.ts:3434` | conflict | the review line is missing or ambiguous | That line can’t be found in this version. Refresh the resume, then try again. | jobs |
-| `src/vault/vault.ts:3473` | conflict | only a review version can remove a section | Only a version being checked line by line can remove a section. | jobs |
-| `src/vault/vault.ts:3477` | conflict | the review section is missing or invalid | That section can’t be found in this version. Refresh the resume, then try again. | jobs |
-| `src/vault/vault.ts:3511` | conflict | only a review version can remove a skill | Only a version being checked line by line can remove a skill. | jobs |
-| `src/vault/vault.ts:3514` | conflict | the review skill is missing | That skill can’t be found in this version. Refresh the resume, then try again. | jobs |
 | `src/vault/vault.ts:4172` | invalid | select confirmed facts from your vault | Choose confirmed facts from your record. | sharing/account |
 | `src/vault/vault.ts:4201` | invalid | select finished cover letters or interview preparation from your vault | Choose finished cover letters or interview preparation from your record. | sharing/account |
 | `src/vault/vault.ts:4410` | conflict | A fact this resume cites has changed or is no longer in use, or the version is still being reviewed, so this wording can't be checked. Tailor a new version or finish the review, then accept again. | A fact this resume uses has changed or is no longer in use, or the version is still being checked line by line, so this wording can’t be checked. Tailor a new version or finish checking it, then accept again. | sharing/account |
-| `src/vault/vault.ts:4561` | not_found | no such application | This job can’t be found. It may have been deleted. | jobs |
-| `src/vault/vault.ts:4566` | conflict | the application changed; refresh and try again | This job changed. Refresh the page, then try again. | jobs |
-| `src/vault/vault.ts:4571` | invalid | enter the posting's web address, starting with https:// | Enter the job’s web address, starting with https://. | jobs |
-| `src/vault/vault.ts:4581` | conflict | Work on this job is still in progress. Wait for it to finish, then change the posting. | Work on this job is still in progress. Wait for it to finish, then change the job description. | jobs |
-| `src/vault/vault.ts:4648` | not_found | no such application | This job can’t be found. It may have been deleted. | jobs |
-| `src/vault/vault.ts:4673` | invalid | the resume is not ready for this application | This resume isn’t ready for this job yet. | jobs |
-| `src/vault/vault.ts:4696` | invalid | Choose facts that aren't marked sensitive. | Choose facts you don’t keep private. | jobs |
-| `src/vault/vault.ts:4700` | conflict | This version uses a fact you marked sensitive. Remove those lines or tailor a new version, then try again. | This version uses a fact you keep private. Remove those lines or tailor a new version, then try again. | jobs |
 | `src/vault/vault.ts:5171` | too_large | Your vault has too many files for one archive. Download the JSON and the original files one at a time. | Your record has too many files for one archive. Download the JSON and your files one at a time. | sharing/account |
 | `src/vault/vault.ts:5187` | too_large | Your vault is too large for one archive. Download the JSON and the original files one at a time. | Your record is too large for one archive. Download the JSON and your files one at a time. | sharing/account |
 | `src/worker/routes.ts:1220` | conflict | An original file is missing from your vault. Download the JSON and the available files one at a time. | A file is missing from your record. Download the JSON and the files that are there one at a time. | sharing/account |
@@ -137,11 +96,6 @@ No server message is assigned to Today. Its first run shows the facts room’s u
 
 | Defined and thrown | Code | Current text | Proposed sentence | Room |
 | --- | --- | --- | --- | --- |
-| `src/shared/kit.ts:440, thrown at src/vault/vault.ts:1010, 1122, 1138, 1142, 1197` | conflict | This application kit was changed somewhere else. Load it again, check it, then try again. | This job’s kit was changed somewhere else. Load it again, check it, then try again. | jobs |
-| `src/shared/kit.ts:445, thrown at src/vault/vault.ts:1378, and through KIT_PROBLEMS at 1201 and 1222` | conflict | This resume version can't go in a kit: it uses a fact you've marked sensitive, or a line its facts don't back. Choose another version. | This resume version can’t go in a kit: it uses a fact you keep private, or a line its facts don’t back. Choose another version. | jobs |
-| `src/shared/kit.ts:450, thrown at src/vault/vault.ts:1143, and through KIT_PROBLEMS at 1201 and 1222` | invalid | This question asks about something whose answer is never saved. Type your answer for this application only. | This question asks about something whose answer is never saved. Type your answer for this job only. | jobs |
-| `src/shared/kit.ts:451, thrown at src/vault/vault.ts:1218` | conflict | Approve this application kit before downloading it. | Approve this kit before downloading it. | jobs |
-| `src/shared/kit.ts:452, thrown at src/worker/routes.ts:1512` | conflict | This application kit changed while it was being prepared. Check it, then download it again. | This kit changed while it was being prepared. Check it, then download it again. | jobs |
 
 ### `/share`'s gone sentence
 

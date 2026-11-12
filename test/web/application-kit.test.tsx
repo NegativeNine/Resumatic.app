@@ -11,7 +11,7 @@ import { installFakeApi, type FakeApi } from "./api-fake";
 import { fullVault, type Fixtures } from "./fixtures";
 import { renderWithSession } from "./render";
 
-// The Application kit panel and the Saved answers card, over the fake API. An employer's questions
+// A job's kit and the Saved answers card, over the fake API. An employer's questions
 // are someone else's text and are shown in a quote; every state says what the person can do.
 
 afterEach(() => vi.unstubAllGlobals());
@@ -25,7 +25,7 @@ function openKit(change: (state: Fixtures) => void = () => {}) {
   const session = renderWithSession(<ApplicationKit applicationId={JOB} />, state.me);
   return { state, api, session };
 }
-const panel = () => screen.getByRole("region", { name: "Application kit" });
+const panel = () => screen.getByRole("region", { name: "Your kit" });
 /** The list item holding the question with these words, as its quote shows them. */
 const item = (words: string) => screen.getAllByText(words).find((node) => node.closest("blockquote"))!.closest("li")! as HTMLElement;
 /** Lets every request through to the fake API, after `before` has had its say about it. */
@@ -38,10 +38,15 @@ function intercept(api: FakeApi, before: (method: string, path: string, respond:
   );
 }
 
-describe("the application kit panel", () => {
+describe("a job's kit", () => {
   it("says what the kit is, that nothing is sent, and shows each question's state in its own words", async () => {
     openKit();
+    expect(screen.getByText("Loading your kit…")).toBeInTheDocument();
     await screen.findByRole("button", { name: "Approve kit" });
+    expect(screen.getByRole("heading", { level: 2, name: "Your kit" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 3, name: "The employer’s questions" })).toBeInTheDocument();
+    // Approving is the kit's one brand button; checking an answer and saving questions are plain.
+    expect(screen.getByRole("button", { name: "Approve kit" })).toHaveClass("primary");
     expect(
       within(panel()).getByText(
         "Put together what you’ll send for this job: a resume, a cover letter and interview preparation if you want them, and your answers to the employer’s questions. Nothing is sent from here. Once you approve the kit, download it and send it yourself.",
@@ -68,6 +73,7 @@ describe("the application kit panel", () => {
     expect(within(notice).getByText("Four weeks, from the day I accept an offer.")).toBeInTheDocument();
     expect(within(notice).getByText("Suggested from your answers’ labels. Check that it fits.")).toBeInTheDocument();
     expect(within(notice).getByRole("button", { name: "Use this answer" })).toBeEnabled();
+    expect(within(notice).getByRole("button", { name: "Use this answer" })).not.toHaveClass("primary");
     expect(within(notice).getByRole("button", { name: "Not this one" })).toBeEnabled();
     // Matched by its label, and checked.
     const portfolio = item("Portfolio link");
@@ -82,12 +88,12 @@ describe("the application kit panel", () => {
     // A saved answer the list now refuses is never offered.
     expect(within(within(why).getByRole("combobox", { name: "Use a saved answer" })).getAllByRole("option").map((option) => option.textContent)).toEqual(["None", "Notice period", "Portfolio link"]);
     expect(within(why).getByRole("checkbox", { name: "Also keep this as a saved answer" })).not.toBeChecked();
-    // Sensitive: asked every time, explained, and answered for this application only.
+    // Sensitive: asked every time, explained, and answered for this job only.
     const visa = item("Will you now or in the future require visa sponsorship?");
     expect(within(visa).getByText("Asked every time")).toBeInTheDocument();
     expect(
       within(visa).getByText(
-        "This question asks about work authorisation, visas, sponsorship or citizenship. Answers to questions like this are never saved or matched. Type your answer for this application only.",
+        "This question asks about work authorisation, visas, sponsorship or citizenship. Answers to questions like this are never saved or matched. Type your answer for this job only.",
       ),
     ).toBeInTheDocument();
     expect(within(visa).getByRole("textbox", { name: "Your answer" })).toHaveValue("No.");
@@ -108,7 +114,7 @@ describe("the application kit panel", () => {
     await screen.findByText("Asked every time");
     expect(
       screen.getByText(
-        "This question asks about something answers are never saved for: work authorisation, pay or personal details. Answers to questions like this are never saved or matched. Type your answer for this application only.",
+        "This question asks about something answers are never saved for: work authorisation, pay or personal details. Answers to questions like this are never saved or matched. Type your answer for this job only.",
       ),
     ).toBeInTheDocument();
   });
@@ -138,7 +144,7 @@ describe("the application kit panel", () => {
     });
     await screen.findByText("This kit needs attention before it can be downloaded.");
     expect(
-      screen.getByText(typeset("This resume version can't go in a kit: it uses a fact you've marked sensitive, or a line its facts don't back. Choose another version.")),
+      screen.getByText(typeset("This resume version can't go in a kit: it uses a fact you keep private, or a line its facts don't back. Choose another version.")),
     ).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Download kit (ZIP)" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Approve kit" })).toBeNull();
@@ -148,7 +154,7 @@ describe("the application kit panel", () => {
     openKit((state) => {
       Object.assign(state.kits![JOB]!, { resume: null, choices: { resumes: [], letters: [], preps: [] } });
     });
-    await screen.findByText("Make a resume for this job first. Only a version whose every line is backed by your facts can go in a kit.");
+    await screen.findByText("Tailor a resume for this job first. Only a version whose every line is backed by your record can go in a kit.");
     expect(screen.queryByRole("combobox", { name: "Resume" })).toBeNull();
   });
 
@@ -157,6 +163,7 @@ describe("the application kit panel", () => {
     await screen.findByRole("button", { name: "Approve kit" });
     await userEvent.type(screen.getByRole("textbox", { name: "Paste the employer’s questions, one per line" }), "Are you willing to travel?{enter}{enter}  Salary expectations  ");
     await userEvent.click(screen.getByRole("button", { name: "Add questions" }));
+    expect(screen.getByRole("button", { name: "Save questions" })).not.toHaveClass("primary");
     // Not yet saved, so not yet answered.
     expect(within(item("Are you willing to travel?")).getByText("Save the questions to answer this one.")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Remove question 2" }));
@@ -294,7 +301,7 @@ describe("the application kit panel", () => {
     await screen.findByRole("button", { name: "Approve kit" });
     // Everything but the employer's questions and the person's own answers, which are shown as written.
     const own = new Set(["What is your notice period?", "Portfolio link", "Why do you want to work at Litware?", "Will you now or in the future require visa sponsorship?"]);
-    const said = [...panel().querySelectorAll("p, label, button, option, h3, h4, span, li")].filter((node) => node.children.length === 0 && !own.has(node.textContent ?? ""));
+    const said = [...panel().querySelectorAll("p, label, button, option, h2, h3, span, li")].filter((node) => node.children.length === 0 && !own.has(node.textContent ?? ""));
     for (const node of said) expect(node.textContent, node.outerHTML).not.toContain("'");
   });
 });
@@ -314,7 +321,7 @@ describe("the saved answers card", () => {
     await screen.findByText("Portfolio link", { selector: "strong" });
     expect(
       within(card()).getByText(
-        "Short answers you give on many applications, in your own words. An application kit offers one when an employer’s question fits its label. Your answers stay in your record, and their words are never sent to an AI model.",
+        "Short answers you give on many jobs, in your own words. A job’s kit offers one when an employer’s question fits its label. Your answers stay in your record, and their words are never sent to an AI model.",
       ),
     ).toBeInTheDocument();
     expect(card().querySelector(".rs-msg")!.textContent!.replace(/\s+/g, " ").trim()).toBe(

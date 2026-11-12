@@ -10,8 +10,8 @@ import { useAction, useResource } from "../hooks";
 import { sessionEndNote } from "../session";
 import { ActionError, EmptyState, ErrorNote, Field, Loading, Message } from "./ui";
 
-// The Saved answers card on Account: short answers the person gives on many applications, in their
-// own words. It loads from its own route. An application kit offers one when an employer's
+// The Saved answers card on Jobs › Rules and answers: short answers the person gives on many jobs,
+// in their own words. It loads from its own route. A job's kit offers one when an employer's
 // question fits its label; nothing else reads them, and their words are never sent to a model.
 
 const LABEL_HINT = "A short name, such as “Notice period” or “Portfolio link”.";
@@ -23,8 +23,8 @@ export function SavedAnswers() {
     <section className="card app-saved-answers" aria-labelledby={`${id}-title`}>
       <h2 id={`${id}-title`}>Saved answers</h2>
       <p className="card-text meta">
-        Short answers you give on many applications, in your own words. An application kit offers one when an employer’s
-        question fits its label. Your answers stay in your record, and their words are never sent to an AI model.
+        Short answers you give on many jobs, in your own words. A job’s kit offers one when an employer’s question fits
+        its label. Your answers stay in your record, and their words are never sent to an AI model.
       </p>
       <Message tone="info" live={false}>
         Questions about work authorisation, visas, sponsorship or citizenship, pay, or personal details such as age, health or

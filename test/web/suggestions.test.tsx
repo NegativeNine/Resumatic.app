@@ -228,6 +228,8 @@ describe("an owner answering suggested wording", () => {
     expect(itemOf("Waiting wording").getByRole("deletion")).toHaveTextContent(`Line in the copy: ${LED_LINE}`);
     // Waiting: accept or decline, and Accept is off while another check runs. Out of date: decline only.
     expect(itemOf("Waiting wording").getByRole("button", { name: "Accept and check" })).toBeDisabled();
+    // On Account it is the card's brand button; on a resume's line card it is plain.
+    expect(itemOf("Waiting wording").getByRole("button", { name: "Accept and check" })).toHaveClass("rs-btn--primary");
     expect(itemOf("Waiting wording").getByRole("button", { name: "Decline" })).toBeEnabled();
     expect(itemOf("Stale wording").queryByRole("button", { name: "Accept and check" })).toBeNull();
     expect(itemOf("Stale wording").getByRole("button", { name: "Decline" })).toBeEnabled();

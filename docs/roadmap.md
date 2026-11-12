@@ -32,6 +32,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Redesign stage 2: the shell | `redesign/02-shell`, based on `redesign/01-identity`. No migration | Stages 3–7 build on it, each inside its own marked block, and replace their routes' screens |
 | Redesign stage 3: Today | `redesign/03-today`, based on `redesign/02-shell`. No migration | Merges first of stages 3–7 |
 | Redesign stage 4: Facts | `redesign/04-facts`, based on `redesign/02-shell`. No migration | To check, All facts, Skills and Your files; the Facts room's server sentences; private in place of sensitive |
+| Redesign stage 5: Jobs and a job's page | `redesign/05-jobs`, based on `redesign/02-shell`. No migration | Merges after stage 4; board copy unchecked (question 1) |
 
 The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments, suggested wording (two columns on the comments' table), saved answers and application kits (three tables), email notices (one table). Only that order is deployed.
 

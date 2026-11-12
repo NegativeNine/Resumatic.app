@@ -33,9 +33,9 @@ describe("refinement evidence", () => {
     const body = structuredClone(base.render.body);
     body.sections[0]!.lines[0]!.text = "Built services";
     expect(mergeRefinementEvidence(base, body, [a,b], roles).facts.a.text).toBe(a.text);
-    expect(() => mergeRefinementEvidence(base, body, [{ ...a, level: "led", revision: 2 }, b], roles)).toThrow(/evidence changed/);
+    expect(() => mergeRefinementEvidence(base, body, [{ ...a, level: "led", revision: 2 }, b], roles)).toThrow(/facts behind it changed/);
     delete base.evidence;
-    expect(() => mergeRefinementEvidence(base, body, [a,b], roles)).toThrow(/evidence changed/);
+    expect(() => mergeRefinementEvidence(base, body, [a,b], roles)).toThrow(/facts behind it changed/);
   });
   it("protects printed skills sharing a fact and rejects altered resume structure", () => {
     const base = baseline();
@@ -49,8 +49,8 @@ describe("refinement evidence", () => {
   it("rejects reattribution to a changed role header", () => {
     const base = baseline(), body = structuredClone(base.render.body);
     body.sections[0]!.lines[0]!.text = "Built services";
-    expect(() => mergeRefinementEvidence(base, body, [a,b], [{ ...roles[0]!, org: "Other" }])).toThrow(/evidence changed/);
-    expect(() => mergeRefinementEvidence(base, body, [a,b], [{ ...roles[0]!, unknownEndStartDate: "2021" }])).toThrow(/evidence changed/);
-    expect(() => mergeRefinementEvidence(base, body, [a,b], [])).toThrow(/evidence changed/);
+    expect(() => mergeRefinementEvidence(base, body, [a,b], [{ ...roles[0]!, org: "Other" }])).toThrow(/facts behind it changed/);
+    expect(() => mergeRefinementEvidence(base, body, [a,b], [{ ...roles[0]!, unknownEndStartDate: "2021" }])).toThrow(/facts behind it changed/);
+    expect(() => mergeRefinementEvidence(base, body, [a,b], [])).toThrow(/facts behind it changed/);
   });
 });

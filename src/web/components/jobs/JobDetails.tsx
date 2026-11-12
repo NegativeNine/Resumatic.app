@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import {
   MAX_JD_CHARS,
   MAX_JOB_NAME_CHARS,
@@ -6,114 +6,103 @@ import {
   MIN_JD_CHARS,
   isWebUrl,
   type ApplicationDetail,
-  type ApplicationView,
-} from "../../shared/api";
-import { api } from "../api";
-import { useAction, type Reload } from "../hooks";
-import { ActionError, CharCount, Field, Glyph, Loading } from "./ui";
+} from "../../../shared/api";
+import { api } from "../../api";
+import { useAction } from "../../hooks";
+import { href, navigate } from "../../router";
+import { ActionError, CharCount, Field, Glyph } from "../ui";
 
 /**
- * A saved job's posting: its link, the whole text on request, a form to correct the details, and
- * a way to delete a job that has nothing attached. The posting is the employer's text, so it is
- * plain body type, never a quote.
+ * Correcting a job's details, and deleting a job that has nothing attached. The form starts from
+ * the job as the page read it when the form opened, and its save names that revision, even when the
+ * page reads the job again meanwhile: a change made elsewhere is then refused, and the draft kept.
+ * The job description is sent only when it differs from the one the form opened with, so a name can
+ * be corrected while a resume is being tailored.
+ * `onSaved` reads the job again; `onDescriptionSaved` says the description itself was replaced.
  */
-export function JobPosting({
-  application,
-  revision,
-  onRevision,
+export function JobDetails({
+  job,
   onSaved,
+  onDescriptionSaved,
 }: {
-  application: ApplicationView;
-  /** The revision the workspace last saw. Tracking and details share it, so neither goes stale. */
-  revision: number | undefined;
-  onRevision: (next: number) => void;
-  onSaved: Reload;
+  job: ApplicationDetail;
+  onSaved: () => Promise<unknown>;
+  onDescriptionSaved: () => void;
 }) {
-  const [detail, setDetail] = useState<ApplicationDetail | null>(null);
-  const [mode, setMode] = useState<"closed" | "reading" | "editing" | "deleting">("closed");
+  const [mode, setMode] = useState<"closed" | "editing" | "deleting">("closed");
   const [title, setTitle] = useState("");
   const [company, setCompany] = useState("");
   const [link, setLink] = useState("");
   const [text, setText] = useState("");
+  // The revision and job description the form was filled from.
+  const [base, setBase] = useState<{ revision: number | undefined; jdText: string } | null>(null);
   const [saved, setSaved] = useState(false);
   const action = useAction();
   const id = useId();
+  const edit = useRef<HTMLButtonElement>(null);
   const url = link.trim();
   const badLink = url !== "" && !isWebUrl(url);
   const length = text.trim().length;
-  const hasResumes = application.resumes.length > 0;
 
-  /** The posting is fetched when it's first asked for, not with the list. */
-  async function open(next: "reading" | "editing") {
+  function open() {
     setSaved(false);
-    if (mode === next) return setMode("closed");
-    await action.run(async () => {
-      const current = detail ?? (await api.application(application.id));
-      setDetail(current);
-      if (next === "editing") {
-        setTitle(current.title ?? "");
-        setCompany(current.company ?? "");
-        setLink(current.url ?? "");
-        setText(current.jdText);
-      }
-      setMode(next);
-    });
+    if (mode === "editing") return setMode("closed");
+    setTitle(job.title ?? "");
+    setCompany(job.company ?? "");
+    setLink(job.url ?? "");
+    setText(job.jdText);
+    setBase({ revision: job.revision, jdText: job.jdText });
+    setMode("editing");
+  }
+
+  function close() {
+    setMode("closed");
+    edit.current?.focus();
   }
 
   async function save() {
     setSaved(false);
-    let done = false;
-    await action.run(async () => {
-      const posting = text.trim();
-      await api.updateApplication(application.id, {
+    if (!base) return;
+    const description = text.trim();
+    const replaced = description !== base.jdText;
+    const ok = await action.run(async () => {
+      await api.updateApplication(job.id, {
         title: title.trim(),
         company: company.trim(),
         url,
         // Unchanged text isn't sent, so details can be corrected while a resume is being tailored.
-        ...(detail && posting !== detail.jdText ? { jdText: posting } : {}),
-        expectedRevision: revision,
+        ...(replaced ? { jdText: description } : {}),
+        expectedRevision: base.revision,
       });
-      if (revision !== undefined) onRevision(revision + 1);
-      setDetail(null);
-      done = true;
+      if (replaced) onDescriptionSaved();
       await onSaved();
     });
-    if (done) {
-      setMode("closed");
+    if (ok) {
+      close();
       setSaved(true);
     }
   }
 
   async function remove() {
-    await action.run(async () => {
-      await api.deleteApplication(application.id);
-      await onSaved();
+    const ok = await action.run(async () => {
+      await api.deleteApplication(job.id);
     });
+    if (ok) navigate(href.jobs);
   }
 
   return (
-    <section className="workspace-section app-posting" aria-labelledby={`${id}-heading`}>
-      <h3 id={`${id}-heading`}>The posting</h3>
+    <div className="app-job-details">
       <div className="actions">
-        {application.url && (
-          <a className="rs-btn rs-btn--sm" href={application.url} target="_blank" rel="noreferrer noopener">
-            Open the original posting
-          </a>
-        )}
-        <button type="button" className="small" aria-expanded={mode === "reading"} disabled={action.pending} onClick={() => void open("reading")}>
-          {mode === "reading" ? "Hide the posting" : "Read the posting"}
+        <button type="button" className="small" ref={edit} aria-expanded={mode === "editing"} disabled={action.pending} onClick={open}>
+          Edit details
         </button>
-        <button type="button" className="small" aria-expanded={mode === "editing"} disabled={action.pending} onClick={() => void open("editing")}>
-          {mode === "editing" ? "Close details" : "Edit details"}
-        </button>
-        {!hasResumes && mode !== "deleting" && (
+        {job.canDelete && mode !== "deleting" && (
           <button type="button" className="small" disabled={action.pending} onClick={() => { setSaved(false); setMode("deleting"); }}>
             Delete job
           </button>
         )}
       </div>
-      {hasResumes && <p className="rs-meta app-posting__note">A job with resumes can’t be deleted. Mark it Closed instead.</p>}
-      {action.pending && mode === "closed" && <Loading>Loading the posting…</Loading>}
+      {!job.canDelete && <p className="rs-meta">A job with resumes or documents can’t be deleted. Mark it Closed instead.</p>}
       {saved && (
         <p className="rs-success" role="status">
           <Glyph name="check" />
@@ -121,19 +110,19 @@ export function JobPosting({
         </p>
       )}
 
-      {mode === "reading" && detail && (
-        <div className="app-posting__text" tabIndex={0} role="group" aria-label="The posting’s text">
-          {detail.jdText}
-        </div>
-      )}
-
-      {mode === "editing" && detail && (
+      {mode === "editing" && (
         <form
-          className="app-posting__form"
+          className="app-job-details__form"
           aria-label="Job details"
           onSubmit={(event) => {
             event.preventDefault();
             void save();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && !action.pending) {
+              event.preventDefault();
+              close();
+            }
           }}
         >
           <div className="field-grid">
@@ -144,7 +133,7 @@ export function JobPosting({
               <input id={`${id}-company`} type="text" maxLength={MAX_JOB_NAME_CHARS} value={company} disabled={action.pending} onChange={(event) => setCompany(event.target.value)} />
             </Field>
           </div>
-          <Field id={`${id}-link`} label="Link to the posting" optional error={badLink ? "Enter a web address that starts with https://" : undefined}>
+          <Field id={`${id}-link`} label="Link to the job" optional error={badLink ? "Enter a web address that starts with https://" : undefined}>
             <input
               id={`${id}-link`}
               type="url"
@@ -163,7 +152,7 @@ export function JobPosting({
           <Field
             id={`${id}-text`}
             label="Job description"
-            hint="Resumes already tailored keep the posting they were written for."
+            hint="Resumes, letters and fit checks already made keep the job description they were made from."
           >
             <textarea
               id={`${id}-text`}
@@ -180,7 +169,7 @@ export function JobPosting({
             <button type="submit" className="small primary" disabled={action.pending || badLink || length < MIN_JD_CHARS || length > MAX_JD_CHARS}>
               {action.pending ? "Saving…" : "Save details"}
             </button>
-            <button type="button" className="small" disabled={action.pending} onClick={() => setMode("closed")}>
+            <button type="button" className="small" disabled={action.pending} onClick={close}>
               Cancel
             </button>
           </div>
@@ -188,8 +177,8 @@ export function JobPosting({
       )}
 
       {mode === "deleting" && (
-        <div className="rs-well app-posting__confirm" role="group" aria-label="Delete this job">
-          <p>Delete this job? Its posting, tracking details and notes are removed, and this can’t be undone.</p>
+        <div className="rs-well app-job-details__confirm" role="group" aria-label="Delete this job">
+          <p>Delete this job? Its job description, tracking details and notes are removed, and this can’t be undone.</p>
           <div className="actions">
             <button type="button" className="rs-btn rs-btn--danger rs-btn--sm" disabled={action.pending} onClick={() => void remove()}>
               {action.pending ? "Deleting…" : "Delete job"}
@@ -201,6 +190,6 @@ export function JobPosting({
         </div>
       )}
       <ActionError message={action.error} />
-    </section>
+    </div>
   );
 }

@@ -36,13 +36,14 @@ export const PLACEHOLDERS = {
   jobsFind: {
     title: "Find jobs",
     lede: "Search listings, and see how your record fits each one before you save it.",
-    note: "Finding jobs needs a source of listings first. Until then, add a job by pasting its posting.",
+    note: "Finding jobs needs a licensed listings provider. Until then, add a job by pasting its job description.",
     back: { label: "Go to your jobs", to: href.jobs },
   },
   jobsApplications: {
     title: "Applications",
     lede: "Applications Resumatic prepared under your rules. Nothing is sent until you say so.",
-    note: "Prepared applications wait for rules about what Resumatic may prepare. Each job’s application kit is on that job, under Your jobs.",
+    note: "Prepared applications wait for your rules, and for a way to send each one that you approve first. Until then, each job’s kit is on its page under Your jobs, for you to send yourself.",
+    back: { label: "Rules and answers", to: href.rules },
   },
 
   // stage 6: sharing and account
@@ -108,6 +109,10 @@ export const PLACEHOLDER_SECTIONS = {
   rules: {
     title: "Rules",
     note: "Rules for what Resumatic may prepare for you, such as roles, places, a pay floor and a weekly limit, open next. Your saved answers below work now.",
+  },
+  sending: {
+    title: "Sending for you",
+    note: "Resumatic doesn’t send applications. Sending waits for a way to send each one that you approve first. Until then, download your kit and send it yourself.",
   },
 
   // stage 6: sharing and account

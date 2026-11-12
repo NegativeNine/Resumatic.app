@@ -66,7 +66,7 @@ it("fails closed for pre-migration or incomplete snapshot incarnation records", 
     sql.exec(`INSERT INTO generation_input_items(run_id,kind,item_id,data) VALUES ('legacy','fact',?,?)`, id, JSON.stringify(fact));
     expect(() => snapshots.assertCurrent("legacy", body)).toThrow("Your facts changed while this draft was being made");
     sql.exec(`INSERT INTO entity_incarnation_guard(slot) VALUES(1)`);
-    expect(() => snapshots.assertCurrent("legacy", body)).toThrow("requires review");
+    expect(() => snapshots.assertCurrent("legacy", body)).toThrow("still needs checking");
     sql.exec(`DELETE FROM entity_incarnation_guard WHERE slot=1`);
   });
 });

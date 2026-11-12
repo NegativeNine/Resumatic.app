@@ -255,9 +255,9 @@ describe("what can reach saved answers and application kits", () => {
     expect(naming(/\bapi\.kitArchiveUrl\b/)).toEqual(["src/web/components/ApplicationKit.tsx"]);
     expect(naming("/api/saved-answers")).toEqual(["src/shared/api.ts", "src/web/api.ts"]);
     expect(naming('"/saved-answers')).toEqual([ROUTES]);
-    // On Account and on Rules and answers until stage 5 replaces the interim page.
-    expect(naming(/\bSavedAnswers\b/)).toEqual(["src/web/components/SavedAnswers.tsx", "src/web/pages/AccountPage.tsx", "src/web/pages/interim/jobs.tsx"]);
-    expect(naming(/\bApplicationKit\b/)).toEqual(["src/web/components/ApplicationKit.tsx", "src/web/components/ApplicationWorkspace.tsx"]);
+    // On Jobs › Rules and answers alone, and the kit on a job's Application tab.
+    expect(naming(/\bSavedAnswers\b/)).toEqual(["src/web/components/SavedAnswers.tsx", "src/web/pages/jobs/RulesPage.tsx"]);
+    expect(naming(/\bApplicationKit\b/)).toEqual(["src/web/components/ApplicationKit.tsx", "src/web/pages/jobs/JobApplication.tsx"]);
     expect(naming("kit-save")).toEqual(["src/web/components/ApplicationKit.tsx"]);
     // Nothing under the pipelines, the Workflows, the copies' store or the connected apps' server names any of it.
     const elsewhere = [...sources.keys()].filter((path) => /^src\/(pipeline|workflows)\//.test(path) || path === "src/vault/shares.ts" || path === "src/worker/mcp.ts");

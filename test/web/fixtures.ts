@@ -54,6 +54,8 @@ export interface Fixtures {
   // stage 4: facts
 
   // stage 5: jobs
+  /** How a line check started here ends when its status is first read. Absent: it keeps running. */
+  lineChecks?: "pass" | "fail";
 
   // stage 6: sharing and account
 

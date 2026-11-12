@@ -65,7 +65,7 @@ export function evidenceForFacts(facts: FactRecord[]): Record<string, FactRecord
   const ids = new Set<string>();
   return Object.fromEntries(facts.map((fact) => {
     if (!completeEvidence(fact) || ids.has(fact.id))
-      throw new AppError("conflict", "fact evidence is incomplete; generate the resume again");
+      throw new AppError("conflict", "Where a fact came from is incomplete. Tailor the resume again.");
     ids.add(fact.id);
     return [fact.id, { ...fact }];
   }));
@@ -83,7 +83,7 @@ export function evidenceForRoles(roles: RoleRecord[]): Record<string, RoleRecord
         (role.startDate !== null && typeof role.startDate !== "string") ||
         (role.endDate !== null && typeof role.endDate !== "string") ||
         (role.unknownEndStartDate != null && typeof role.unknownEndStartDate !== "string"))
-      throw new AppError("conflict", "role evidence is incomplete; generate the resume again");
+      throw new AppError("conflict", "Where a role came from is incomplete. Tailor the resume again.");
     ids.add(role.id);
     return [role.id, { ...role }];
   }));
@@ -183,7 +183,7 @@ export function assertGroundedResume(
   if (withheld) {
     const used = sensitiveUse(render.body, facts, evidence, withheld);
     if (used.lineIds.length > 0 || used.skills.length > 0)
-      throw new AppError("conflict", "This version uses a fact you marked sensitive. Remove those lines or tailor a new version, then try again.");
+      throw new AppError("conflict", "This version uses a fact you keep private. Remove those lines or tailor a new version, then try again.");
   }
 }
 
@@ -203,7 +203,7 @@ export class SnapshotStore {
 
   private requireNoIncarnationWrite(): void {
     if (this.sql.exec(`SELECT slot FROM entity_incarnation_guard LIMIT 1`).toArray().length)
-      throw new AppError("conflict", "experience requires review; generate the document again");
+      throw new AppError("conflict", "Some of your experience still needs checking. Make the document again.");
   }
 
   capture(
@@ -222,7 +222,7 @@ export class SnapshotStore {
     );
     for (const fact of facts) {
       const incarnation = this.incarnation("fact", fact.id);
-      if (incarnation === null) throw new AppError("conflict", "experience requires review; generate the document again");
+      if (incarnation === null) throw new AppError("conflict", "Some of your experience still needs checking. Make the document again.");
       this.sql.exec(
         `INSERT INTO generation_input_items (run_id, kind, item_id, data, vector, incarnation) VALUES (?, 'fact', ?, ?, ?, ?)`,
         runId,
@@ -236,7 +236,7 @@ export class SnapshotStore {
     }
     for (const role of roles) {
       const incarnation = this.incarnation("role", role.id);
-      if (incarnation === null) throw new AppError("conflict", "experience requires review; generate the document again");
+      if (incarnation === null) throw new AppError("conflict", "Some of your experience still needs checking. Make the document again.");
       this.sql.exec(
         `INSERT INTO generation_input_items (run_id, kind, item_id, data, incarnation) VALUES (?, 'role', ?, ?, ?)`,
         runId,
@@ -344,7 +344,7 @@ export class SnapshotStore {
     if (this.capturedWithheld(runId, withheld)) throw invalidFact();
     const invalidRole = () => new AppError(
       "conflict",
-      "a role changed while this draft was being made; generate it again",
+      "A role changed while this draft was being made. Make it again.",
     );
     const ids = new Set([
       ...(body.summary ? body.summary.factIds : []),
