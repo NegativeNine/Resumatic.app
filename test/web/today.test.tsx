@@ -671,8 +671,11 @@ describe("when Today can't be read", () => {
 
     api.fail("GET", /\/api\/v2\/today$/, 503, "unavailable", "Upstream exception 7f3a");
     act(() => void window.dispatchEvent(new Event(COUNTS_CHANGED)));
-    const alert = await screen.findByRole("alert");
-    expect(within(alert).getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    // Wait for the retry itself: under load the alert can be found before its button renders.
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    const alert = retry.closest<HTMLElement>('[role="alert"]')!;
+    expect(alert).not.toBeNull();
+    expect(screen.getAllByRole("alert")).toEqual([alert]);
     // Directly under the page's name, above the sentence and the next step.
     expect(document.querySelector(".page-head")!.nextElementSibling).toBe(alert);
     // Every section stays where it was, the sentence keeps focus, and the header keeps the count the
