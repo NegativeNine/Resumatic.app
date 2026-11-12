@@ -102,8 +102,14 @@ describe("the route table", () => {
       "#/sources/extra",
       `#/resumes/${"x".repeat(201)}`,
       "#/coaching/clients/a/b",
+      // Names every object inherits are not old addresses.
+      "#/constructor",
+      "#/__proto__",
+      "#/toString",
+      "#/hasOwnProperty",
     ])
       expect(parseRoute(hash), hash).toEqual({ name: "notFound", room: null, tab: null, workspace: "seeking", params: {} });
+    for (const hash of ["#/constructor", "#/__proto__", "#/toString"]) expect(canonicalHash(hash), hash).toBeNull();
     // Two hundred characters is the most a parameter may be.
     expect(parseRoute(`#/resumes/${"x".repeat(200)}`).name).toBe("resume");
   });

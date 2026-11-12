@@ -6141,7 +6141,9 @@ export class Vault extends DurableObject<Env> {
       facts: {},
       provenance: "legacy",
     };
-    this.snapshots.save(row.id, version, legacy);
+    // Saved the first time it is read, but made when the resume was: dated now, an old resume would
+    // look newly made to the version list, the kit's choices and Today's recent events.
+    this.snapshots.save(row.id, version, legacy, row.created_at);
     return legacy;
   }
 

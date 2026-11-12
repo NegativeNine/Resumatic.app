@@ -174,6 +174,32 @@ describe("what waits for the owner", () => {
     expect(await asking(sam, whoOf(sam))).toBe("given");
   });
 
+  it("is closed while the vault is fenced, and gone once it is deleted", async () => {
+    const sam = await signIn();
+    await unreadable(sam);
+    const fenced = await runInDurableObject(vaultOf(sam), (instance) => {
+      const local = (instance as unknown as { env: Env }).env;
+      const before = local.RESTORE_FENCE_IDS;
+      local.RESTORE_FENCE_IDS = sessionOf(sam).vid;
+      return before;
+    });
+    try {
+      const response = await sam.fetch("/api/v2/today");
+      const text = await response.text();
+      expect(response.status).toBe(503);
+      expect(text).not.toContain("unreadable-cv.docx");
+    } finally {
+      await runInDurableObject(vaultOf(sam), (instance) => {
+        (instance as unknown as { env: Env }).env.RESTORE_FENCE_IDS = fenced;
+      });
+    }
+    expect((await today(sam)).today.counts.facts).toBe(1);
+    expect((await sam.send("DELETE", "/auth/account")).status).toBe(202);
+    const gone = await sam.fetch("/api/v2/today");
+    expect(gone.status).toBe(410);
+    expect(await gone.text()).not.toContain("unreadable-cv.docx");
+  });
+
   it("counts what To check counts, a role and fact found in two files once", async () => {
     const sam = await signIn();
     const first = await upload(sam, "first.pdf", `${RESUME}\nVersion 1`);
@@ -353,6 +379,32 @@ describe("what waits for the owner", () => {
     });
     answer = (await today(sam)).today;
     expect(answer.recent.map((event) => event.kind === "resumeReady" && event.version)).toEqual([12, 11]);
+  });
+
+  it("doesn't call a resume from before saved versions ready just because it was opened", async () => {
+    const sam = await signIn();
+    await upload(sam, "synthetic.pdf", RESUME);
+    const { roles, facts } = await reviewView(sam);
+    expect((await sam.send("POST", "/api/review", { confirm: [...facts, ...roles].map((item) => item.id), reject: [] })).status).toBe(204);
+    const applicationId = await job(sam);
+    const started = await sam.send("POST", `/api/applications/${applicationId}/resumes`);
+    expect(started.status, await started.clone().text()).toBe(202);
+    const { resumeId } = (await started.json()) as { resumeId: string };
+    const resume = (await waitForResume(sam, resumeId)) as ResumeView;
+    expect(resume.state, resume.error ?? "").toBe("ready");
+    // As a resume tailored before versions were saved: its body is on the row and no version is kept.
+    const tailored = Date.now() - 60 * DAY;
+    await sql(sam, (db) => {
+      db.exec(`DELETE FROM resume_versions WHERE resume_id = ?`, resumeId);
+      db.exec(`UPDATE resumes SET created_at = ? WHERE id = ?`, tailored, resumeId);
+    });
+    expect((await today(sam)).today.recent.filter((event) => event.kind === "resumeReady")).toEqual([]);
+
+    // Opening it saves the version it already had, dated when it was made, not when it was read.
+    expect((await sam.fetch(`/api/resumes/${resumeId}`)).status).toBe(200);
+    expect((await today(sam)).today.recent.filter((event) => event.kind === "resumeReady")).toEqual([]);
+    const { versions } = await sam.json<{ versions: { version: number; createdAt: number }[] }>(`/api/resumes/${resumeId}/versions`);
+    expect(versions).toEqual([{ version: resume.version, createdAt: tailored }]);
   });
 
   it("makes each room's count the sum of what waits there, and Today the sum of the rooms", async () => {

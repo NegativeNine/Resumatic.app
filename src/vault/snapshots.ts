@@ -446,7 +446,8 @@ export class SnapshotStore {
     }
   }
 
-  save(resumeId: string, version: number, data: ResumeVersion): void {
+  /** Saves a version once. `createdAt` is when it was made, which is now unless it is older than its saving. */
+  save(resumeId: string, version: number, data: ResumeVersion, createdAt = Date.now()): void {
     const existing = this.read(resumeId, version);
     if (existing) {
       if (JSON.stringify(existing) !== JSON.stringify(data))
@@ -458,7 +459,7 @@ export class SnapshotStore {
       resumeId,
       version,
       JSON.stringify(data),
-      Date.now(),
+      createdAt,
     );
   }
 

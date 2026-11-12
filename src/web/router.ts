@@ -229,7 +229,8 @@ function segments(hash: string): string[] {
 export function canonicalHash(hash: string): string | null {
   const parts = segments(hash);
   if (parts.length === 0) return DEFAULT_HASH;
-  if (parts.length === 1) return ALIASES[parts[0]!] ?? null;
+  // Only the table's own names: "#/constructor" names something every object inherits, not an address.
+  if (parts.length === 1) return Object.hasOwn(ALIASES, parts[0]!) ? ALIASES[parts[0]!]! : null;
   // A job's own address opens its first page.
   if (parts.length === 2 && parts[0] === "jobs" && !RESERVED_JOB_IDS.includes(parts[1]!)) return `#/jobs/${parts[1]}/fit`;
   return null;
