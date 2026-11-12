@@ -1472,7 +1472,7 @@ api.get("/applications/:id/kit/archive", async (c) => {
   if (data.prep)
     entries.push(bytesEntry("interview-preparation.docx", textDocx("Interview preparation", data.prep.questions.flatMap((q) => [q.question, ...q.points]))));
   entries.push(bytesEntry("answers.txt", new TextEncoder().encode(kitAnswersText(data))));
-  const again: KitArchiveData = await myVault(c).kitArchiveData(who, id);
+  const again: KitArchiveData<RenderData> = await myVault(c).kitArchiveData(who, id);
   if ((await contentDigest(again)) !== (await contentDigest(data))) throw new AppError("conflict", KIT_CHANGED_WHILE_PREPARING);
   const name = fileName([data.job.company, data.job.title].filter(Boolean).join(" ") || "job");
   return new Response(createArchive(entries, { signal: c.req.raw.signal, maxEntries: 5 }), {

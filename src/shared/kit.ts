@@ -1,7 +1,6 @@
 import { APOSTROPHES, UNSEEN, withoutHiddenControls } from "./characters";
 import { hasLoneSurrogate } from "./paste";
 import type { SharedDocument } from "./sharing";
-import type { RenderData } from "./types";
 
 // Saved answers and the application kit: the types, caps, sentences and pure rules that the web
 // app, the routes and the Vault share. A saved answer is the owner's own short answer under a label
@@ -356,12 +355,16 @@ export interface KitPartsUpdate {
   expectedRevision: number;
 }
 
-/** Everything an approved kit's ZIP is made from, read in one turn. */
-export interface KitArchiveData {
+/**
+ * Everything an approved kit's ZIP is made from, read in one turn. `Render` is the resume's
+ * RenderData (src/shared/types.ts), named by the Vault and the routes: the web app, which never
+ * reads this, doesn't build the Worker's types.
+ */
+export interface KitArchiveData<Render = unknown> {
   revision: number;
   approvedAt: number;
   job: { title: string | null; company: string | null };
-  resume: { id: string; render: RenderData };
+  resume: { id: string; render: Render };
   letter: SharedDocument | null;
   prep: SharedDocument | null;
   /** In order. A matched question's answer is its saved answer's text as it is now. */

@@ -1045,7 +1045,7 @@ export class Vault extends DurableObject<Env> {
    * prints, the letter and preparation as a copy would show them, and each answer, a matched one
    * in its saved answer's words now.
    */
-  async kitArchiveData(who: Who, applicationId: string): Promise<KitArchiveData> {
+  async kitArchiveData(who: Who, applicationId: string): Promise<KitArchiveData<RenderData>> {
     this.requireOwner(who);
     return this.ctx.storage.transactionSync(() => {
       const job = this.kitJob(applicationId);
