@@ -125,6 +125,8 @@ describe("the privacy notice", () => {
     // Its own paragraph, straight after the one that says comments never reach a model.
     const ai = [...screen.getByRole("heading", { level: 2, name: "How AI is used" }).closest("section")!.querySelectorAll("p")].map((p) => p.textContent!.replace(/\s+/g, " ").trim());
     expect(ai[1]).toBe("Wording a coach suggests is sent to a model only if you accept it, to be checked against your facts like any edit you make.");
+    // Then what an application kit sends, where its matching is on: the question and the labels, never the answers.
+    expect(ai[2]).toBe("Where matching by AI is turned on for application kits, an employer’s question and the short labels you gave your saved answers are sent to a model, to suggest which answer fits. The words of your answers never are.");
     // After the comments item: nothing changes unless the owner accepts, and the coach is told one thing.
     expect(items("Sharing a copy").at(-1)).toBe(
       "A coach you name can suggest new wording for a line. Nothing changes unless you accept it, and then it is checked against your confirmed facts first. Your coach is told whether you used it, and nothing else.",

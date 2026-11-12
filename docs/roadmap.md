@@ -1,6 +1,6 @@
 # Product roadmap
 
-Reconciled on 10 November 2026 from the current PRs and the owner's remaining-work list, and brought up to date on 11 November 2026: the open stack (#25 to #33), the review fixes to it and three of the five Now features landed together in #34, and the last two Now features, the review fixes to those three, tagging in shadow and a batch of hardening fixes landed in #35. This is the repository copy of the roadmap page on claude.ai.
+Reconciled on 10 November 2026 from the current PRs and the owner's remaining-work list, and brought up to date on 11 November 2026: the open stack (#25 to #33), the review fixes to it and three of the five Now features landed together in #34, and the last two Now features, the review fixes to those three, tagging in shadow and a batch of hardening fixes landed in #35. On 12 November the unblocked Next work landed together in #36: paste text as a source, the application kit and saved answers, email notices, the owner's card preview with the re-identification harness, the taxonomy vector index with vector candidates in tagging, and the marketplace spec, pilot plan and decision memos. This is the repository copy of the roadmap page on claude.ai.
 
 ## Open delivery work
 
@@ -23,13 +23,13 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Fit preview through connected apps | Merged in #35. No migration | Deployed before connected apps are switched on anywhere; then MCP in staging and a real client |
 | Hardening fixes | Merged in #35 | Denial and intention checks read any apostrophe; "upto" is a bound; cleaning keeps a star or backtick set off by spaces; an expired connected-app grant is cleared on time; direction overrides are stripped from postings. The shadow stamps these change are raised to /3 |
 | Tagging facts and roles with taxonomy concepts | Merged in #35 | Off by default, refused in production configuration, and inert without a wholly loaded taxonomy. No vault migration. The eval against the real judge has not been run and nothing has been measured; vector candidates, parts, postings, screens and any use of tags are not built |
-| Vector index and vector candidates | `pipeline/06-vector-index`, open | No vault migration; one Directory migration (operator spend), after which production cannot be rolled back past this release. Not built on staging, not run against real models, precision unmeasured. |
-| Private card preview and re-identification test | #NN open, based on main at 3d7c9fe (`market/01-card-preview`) | Off by default, refused in production configuration, needs a wholly loaded taxonomy. No migration. No occupation or skills on real vaults until owner review confirms tags, only a band from job dates. Harness rates are synthetic; Gate 3's real test, counsel and the sharing rules remain |
-| Email notices | #NN open, based on #35 | Vault migration 2 of 2 this round, after saved answers'; at integration it moves after `SAVED_ANSWER_MIGRATIONS` and `removeNotificationMigration` becomes last in the chain. Not deployed to any shared environment until that order is final. Off by default; the DPA and EU-region sending are owed |
-| Paste text as a source | #NN open, based on #35. No migration | The application kit builds on this branch. Text pasted from real word processors, PDF viewers and browsers checked in staging; the extraction eval has no pasted brag documents or reviews yet |
-| Application kit and saved answers | #NN open, based on paste text. Adds the vault's migration 1 of 2 this round, directly after suggested wording; email notices' comes after it | Matching by the judge is off and refused in production; it has not been run against the real judge. Submission and a queue across jobs are not built |
+| Vector index and vector candidates | Merged in #36. No vault migration; one Directory migration (operator spend), after which production cannot be rolled back past this release | The index built on staging and measured; vector precision, its floor and caps measured on lines given with consent; the build runs only where tagging in shadow is switched on |
+| Private card preview and re-identification test | Merged in #36. No migration | Off by default, refused in production configuration, needs a wholly loaded taxonomy. No migration. No occupation or skills on real vaults until owner review confirms tags, only a band from job dates. Harness rates are synthetic; Gate 3's real test, counsel and the sharing rules remain |
+| Email notices | Merged in #36. The vault's last migration, after saved answers' | Off by default and refused in production. A sender domain onboarded to Cloudflare Email Service, then a real inbox in staging; the DPA naming the service and EU-region sending are owed |
+| Paste text as a source | Merged in #36. No migration | Text pasted from real word processors, PDF viewers and browsers checked in staging; the extraction eval has no pasted brag documents or reviews yet |
+| Application kit and saved answers | Merged in #36. Adds a vault migration directly after suggested wording's | Matching by the judge is off and refused in production; it has not been run against the real judge. Submission and a queue across jobs are not built |
 
-The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments, suggested wording (two columns on the comments' table).
+The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments, suggested wording (two columns on the comments' table), saved answers and application kits (three tables), email notices (one table). Only that order is deployed.
 
 A merged PR or a local check is not a claim of production release acceptance. The [release status](seeker-release-status.md) records the broader acceptance work.
 
@@ -37,17 +37,21 @@ A merged PR or a local check is not a claim of production release acceptance. Th
 
 Nothing. All five Now features are merged: preferences, sensitive facts and comments on a shared copy in #34; suggested wording and the fit preview for connected apps in #35, with the review fixes to the first three. What each still owes before release (real sign-ins on both sides, a real MCP client, the real judge) is in the table above and in the [release status](seeker-release-status.md).
 
+## Next: built this round
+
+Everything on the Next list that needed no outside provider and no owner decision is merged in #36. The rest waits on the decisions below or on a provider: job search (a licensed listings provider), sending applications (a way to submit them), live coach access (the threat model), years per skill, owner review of parts, tags and merges (the measurement bars), and who may see the card.
+
 ## Taxonomy pipeline work
 
 The [pipeline design](taxonomy-pipelines-design.md) is agreed. The rebuilt taxonomy ([manifest](taxonomy-build-2026-11-11.json)) is loaded on staging, and the vault can hold parts, tags and links ([record.md](record.md)); nothing uses either except the shadow stages below, switched on nowhere.
 
-1. Load the versioned taxonomy into staging (done on 11 November) and build its vector index (the build and vector candidates are written, in shadow; no index exists on staging).
+1. Load the versioned taxonomy into staging (done on 11 November) and build its vector index (the build and vector candidates are merged in #36, in shadow).
 2. Add evidence, parts, tags and links without changing existing records. Merged in #34.
 3. Evaluate splitting, tagging and duplicate matching in shadow, using consented labelled examples. Splitting ([splitting.md](splitting.md)) and matching ([merging.md](merging.md)) are merged in #34; none has been run against the real models. Tagging of facts and roles is merged in #35 ([tagging.md](tagging.md)); it is switched on nowhere, including staging, where the taxonomy it reads is bound, and has not been run against the real judge.
 4. Add owner review of parts, tags and merge proposals.
 5. Add matching and coverage by concept, retaining evidence checks and similarity fallback.
 6. Add skills with years only where skill-use intervals are evidenced or owner-confirmed; role dates alone are insufficient.
-7. Add the private card preview from confirmed tags. Its sharing rules still need an explicit decision. The owner-only preview is #NN; publishing is not built.
+7. Add the private card preview from confirmed tags. Its sharing rules still need an explicit decision. The owner-only preview is merged in #36; publishing is not built.
 
 Skills with years and the card preview depend on tagging and belong in this pipeline sequence. Missing or uncertain tags remain unknown; they do not establish missing experience.
 

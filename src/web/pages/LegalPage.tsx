@@ -135,6 +135,10 @@ function Privacy() {
           edit you make.
         </p>
         <p>
+          Where matching by AI is turned on for application kits, an employer’s question and the short labels you gave
+          your saved answers are sent to a model, to suggest which answer fits. The words of your answers never are.
+        </p>
+        <p>
           Our own logs record IDs, counts and error codes. They never record your files, facts, job descriptions or
           resume text.
         </p>
