@@ -25,8 +25,8 @@ it("requires a complete captured role before publishing a section or cited fact"
     const sectionBody: ResumeBody = { summary: null, skills: [], sections: [{ ...role, roleId: id, lines: [] }] };
     const summaryBody: ResumeBody = { summary: { id: "line", text: fact.text, factIds: [factId], status: "kept" }, skills: [], sections: [] };
     const expectRejected = () => {
-      expect(() => snapshots.assertCurrent(runId, sectionBody)).toThrow("a role changed");
-      expect(() => snapshots.assertCurrent(runId, summaryBody)).toThrow("a role changed");
+      expect(() => snapshots.assertCurrent(runId, sectionBody)).toThrow("A role changed while this draft was being made");
+      expect(() => snapshots.assertCurrent(runId, summaryBody)).toThrow("A role changed while this draft was being made");
     };
     // The current role happens to have revision 1, but it was not captured.
     expectRejected();
@@ -62,7 +62,7 @@ it("requires a complete captured role before publishing a section or cited fact"
     expect(() => snapshots.assertCurrent(runId, secondBody)).not.toThrow();
     sql.exec(`DELETE FROM roles WHERE id=?`, secondId);
     sql.exec(`INSERT INTO roles(id,kind,org,title,start_date,end_date,state) VALUES (?, 'job', 'Replacement', 'Engineer', '2020', '2021', 'confirmed')`, secondId);
-    expect(() => snapshots.assertCurrent(runId, secondBody)).toThrow("a role changed");
+    expect(() => snapshots.assertCurrent(runId, secondBody)).toThrow("A role changed while this draft was being made");
     sql.exec(`UPDATE roles SET revision=revision+1 WHERE id=?`, id);
     expectRejected();
   });

@@ -160,6 +160,8 @@ import { cosine, packVector, toUnit, topMatches, unpackVector } from "./search";
 
 /** A running Tailor row older than this is checked against the Workflow before it blocks a new run. */
 const STALE_RUN_MS = 30 * 60 * 1000;
+/** What the owner is told when a job they name isn't in their vault. */
+const JOB_NOT_FOUND = "This job can't be found. It may have been deleted.";
 const DEFAULT_TAILOR_LIMIT = 20;
 /** Uploads being read at once, and uploads kept per vault: each upload costs model calls. */
 const MAX_QUEUED_SOURCES = 3;
@@ -1244,7 +1246,7 @@ export class Vault extends DurableObject<Env> {
     const job = this.sql
       .exec<{ title: string | null; company: string | null }>(`SELECT title, company FROM applications WHERE id = ?`, applicationId)
       .toArray()[0];
-    if (!job) throw new AppError("not_found", "no such application");
+    if (!job) throw new AppError("not_found", JOB_NOT_FOUND);
     return { title: job.title, company: job.company };
   }
 
@@ -3150,7 +3152,7 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     if (!/^[a-zA-Z0-9_-]{1,100}$/.test(requestKey))
       throw new AppError("invalid", "invalid request key");
-    if (url !== null && !isWebUrl(url)) throw new AppError("invalid", "enter the posting's web address, starting with https://");
+    if (url !== null && !isWebUrl(url)) throw new AppError("invalid", "Enter the job's web address, starting with https://.");
     const title = name.title?.trim() || null;
     const company = name.company?.trim() || null;
     if ([title, company].some((value) => value !== null && (value.length > MAX_JOB_NAME_CHARS || /[\r\n]/.test(value))))
@@ -3202,7 +3204,7 @@ export class Vault extends DurableObject<Env> {
     const view = (await this.listApplications(who)).find((a) => a.id === id);
     this.requireOwner(who);
     const row = this.sql.exec<ApplicationRow>(`SELECT * FROM applications WHERE id = ?`, id).toArray()[0];
-    if (!view || !row) throw new AppError("not_found", "no such application");
+    if (!view || !row) throw new AppError("not_found", JOB_NOT_FOUND);
     return { ...view, jdText: row.jd_text, canDelete: !this.applicationHasWork(id) };
   }
 
@@ -3222,7 +3224,7 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     this.ctx.storage.transactionSync(() => {
       if (!this.sql.exec(`SELECT 1 FROM applications WHERE id = ?`, id).toArray().length)
-        throw new AppError("not_found", "no such application");
+        throw new AppError("not_found", JOB_NOT_FOUND);
       if (this.applicationHasWork(id))
         throw new AppError("conflict", "This job has resumes or documents, so it can't be deleted. Mark it Closed instead.");
       this.sql.exec(`DELETE FROM application_create_requests WHERE application_id = ?`, id);
@@ -3302,7 +3304,7 @@ export class Vault extends DurableObject<Env> {
         applicationId,
       )
       .toArray()[0];
-    if (!app) throw new AppError("not_found", "no such application");
+    if (!app) throw new AppError("not_found", JOB_NOT_FOUND);
     const key = `tailor:${requestKey}`;
     const replay = () => {
       const previous = this.runs.findRequest(key);
@@ -3446,11 +3448,11 @@ export class Vault extends DurableObject<Env> {
       if (this.runs.listPending().some((run) => GENERATION_RUN_KINDS.includes(run.kind)))
         throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
-      if (base.provenance !== "snapshot") throw new AppError("conflict", "this resume is already in review");
+      if (base.provenance !== "snapshot") throw new AppError("conflict", "This resume is already being checked line by line.");
       let blocked = false;
       try { assertGroundedResume(base.render, base.facts, base.provenance, base.evidence, base.roleEvidence); }
       catch { blocked = true; }
-      if (!blocked) throw new AppError("conflict", "this resume does not need grounding review");
+      if (!blocked) throw new AppError("conflict", "This resume doesn't need a line-by-line check.");
       const version = row.version + 1;
       const saved: ResumeVersion = {
         ...base,
@@ -3486,10 +3488,10 @@ export class Vault extends DurableObject<Env> {
       if (this.runs.listPending().some((run) => GENERATION_RUN_KINDS.includes(run.kind)))
         throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
-      if (base.provenance !== "legacy") throw new AppError("conflict", "only a review version can remove a line");
+      if (base.provenance !== "legacy") throw new AppError("conflict", "Only a version being checked line by line can remove a line.");
       const body = structuredClone(base.render.body);
       const matches = Number(body.summary?.id === lineId) + body.sections.reduce((n, section) => n + section.lines.filter((line) => line.id === lineId).length, 0);
-      if (matches !== 1) throw new AppError("conflict", "the review line is missing or ambiguous");
+      if (matches !== 1) throw new AppError("conflict", "That line can't be found in this version. Refresh the resume, then try again.");
       if (body.summary?.id === lineId) body.summary = null;
       body.sections = body.sections.flatMap((section) => {
         if (!section.lines.some((line) => line.id === lineId)) return [section];
@@ -3528,11 +3530,11 @@ export class Vault extends DurableObject<Env> {
       if (this.runs.listPending().some((run) => GENERATION_RUN_KINDS.includes(run.kind)))
         throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
-      if (base.provenance !== "legacy") throw new AppError("conflict", "only a review version can remove a section");
+      if (base.provenance !== "legacy") throw new AppError("conflict", "Only a version being checked line by line can remove a section.");
       const body = structuredClone(base.render.body);
       const section = body.sections[sectionIndex];
       if (!section || !Array.isArray(section.lines))
-        throw new AppError("conflict", "the review section is missing or invalid");
+        throw new AppError("conflict", "That section can't be found in this version. Refresh the resume, then try again.");
       const receipts = { ...base.legacyReceipts };
       for (const line of section.lines) if (line && typeof line.id === "string") delete receipts[line.id];
       body.sections.splice(sectionIndex, 1);
@@ -3566,10 +3568,10 @@ export class Vault extends DurableObject<Env> {
       if (this.runs.listPending().some((run) => GENERATION_RUN_KINDS.includes(run.kind)))
         throw new AppError("conflict", "Another resume or document is still being made, and Resumatic works on one at a time. Wait for it to finish, then try again.");
       const base = this.resumeVersion(row);
-      if (base.provenance !== "legacy") throw new AppError("conflict", "only a review version can remove a skill");
+      if (base.provenance !== "legacy") throw new AppError("conflict", "Only a version being checked line by line can remove a skill.");
       const body = structuredClone(base.render.body);
       if (!Array.isArray(body.skills) || skillIndex >= body.skills.length)
-        throw new AppError("conflict", "the review skill is missing");
+        throw new AppError("conflict", "That skill can't be found in this version. Refresh the resume, then try again.");
       body.skills.splice(skillIndex, 1);
       const version = row.version + 1;
       this.snapshots.save(resumeId, version, {
@@ -4616,17 +4618,17 @@ export class Vault extends DurableObject<Env> {
     const row = this.sql
       .exec<ApplicationRow>(`SELECT * FROM applications WHERE id = ?`, id)
       .toArray()[0];
-    if (!row) throw new AppError("not_found", "no such application");
+    if (!row) throw new AppError("not_found", JOB_NOT_FOUND);
     if (
       patch.expectedRevision !== undefined &&
       row.revision !== patch.expectedRevision
     )
       throw new AppError(
         "conflict",
-        "the application changed; refresh and try again",
+        "This job changed. Refresh the page, then try again.",
       );
     if (patch.url != null && !isWebUrl(patch.url))
-      throw new AppError("invalid", "enter the posting's web address, starting with https://");
+      throw new AppError("invalid", "Enter the job's web address, starting with https://.");
     const named = patch.title !== undefined || patch.company !== undefined;
     const posting = patch.jdText !== undefined && patch.jdText !== row.jd_text ? patch.jdText : null;
     if (posting !== null) {
@@ -4636,7 +4638,7 @@ export class Vault extends DurableObject<Env> {
         `SELECT 1 FROM resumes WHERE application_id = ? AND state = 'running' UNION ALL
          SELECT 1 FROM documents WHERE application_id = ? AND state = 'running' LIMIT 1`, id, id,
       ).toArray().length > 0;
-      if (running) throw new AppError("conflict", "Work on this job is still in progress. Wait for it to finish, then change the posting.");
+      if (running) throw new AppError("conflict", "Work on this job is still in progress. Wait for it to finish, then change the job description.");
     }
     // What was read from an earlier posting says nothing about a new one.
     const stale = posting !== null && row.details_edited !== 1;
@@ -4703,7 +4705,7 @@ export class Vault extends DurableObject<Env> {
         applicationId,
       )
       .toArray()[0];
-    if (!app) throw new AppError("not_found", "no such application");
+    if (!app) throw new AppError("not_found", JOB_NOT_FOUND);
     const key = `document:${requestKey}`;
     const existing = this.runs.findRequest(key);
     if (existing) {
@@ -4730,7 +4732,7 @@ export class Vault extends DurableObject<Env> {
       if (resume.application_id !== applicationId || resume.state !== "ready")
         throw new AppError(
           "invalid",
-          "the resume is not ready for this application",
+          "This resume isn't ready for this job yet.",
         );
       if (
         options.expectedVersion !== undefined &&
@@ -4751,11 +4753,11 @@ export class Vault extends DurableObject<Env> {
       // edit: the new version would carry those lines on. Its owner removes them first.
       const withheld = withheldFacts(this.sql);
       if (options.manualFactIds?.some((factId) => withheld.ids.has(factId)))
-        throw new AppError("invalid", "Choose facts that aren't marked sensitive.");
+        throw new AppError("invalid", "Choose facts you don't keep private.");
       if (base.provenance === "snapshot") {
         const used = sensitiveUse(base.render.body, base.facts, base.evidence, withheld);
         if (used.lineIds.length > 0 || used.skills.length > 0)
-          throw new AppError("conflict", "This version uses a fact you marked sensitive. Remove those lines or tailor a new version, then try again.");
+          throw new AppError("conflict", "This version uses a fact you keep private. Remove those lines or tailor a new version, then try again.");
       }
     }
     const id = crypto.randomUUID();

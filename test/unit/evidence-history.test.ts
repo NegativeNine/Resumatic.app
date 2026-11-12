@@ -158,17 +158,17 @@ describe("immutable resume evidence", () => {
       // Its owner's own read passes no marks, and neither does removing the line.
       expect(() => assertGroundedResume(render, facts, "snapshot", evidence, roles)).not.toThrow();
       expect(() => assertGroundedResume(render, facts, "snapshot", evidence, roles, nothing)).not.toThrow();
-      expect(() => assertGroundedResume(render, facts, "snapshot", evidence, roles, marked(fact))).toThrow("This version uses a fact you marked sensitive");
+      expect(() => assertGroundedResume(render, facts, "snapshot", evidence, roles, marked(fact))).toThrow("This version uses a fact you keep private");
       expect(() => assertGroundedResume(render, facts, "snapshot", evidence, roles, marked({ ...fact, id: "another", quote: "Another line" }))).not.toThrow();
       // The summary is a line like any other.
       const summarised = version([], [], { id: "summary", text: fact.text, factIds: [fact.id] });
-      expect(() => assertGroundedResume(summarised, facts, "snapshot", evidence, roles, marked(fact))).toThrow("marked sensitive");
+      expect(() => assertGroundedResume(summarised, facts, "snapshot", evidence, roles, marked(fact))).toThrow("you keep private");
     });
 
     it("refuses a version in which a line cites a fact stored with a marked fact's line", () => {
       const render = version([], [], { id: "summary", text: "Go", factIds: [go.id] });
       // Checked while the whole skills list was the quote: the line may rest on the marked word.
-      expect(() => assertGroundedResume(render, stored(go), "snapshot", evidenceForFacts([go]), roles, marked(kubernetes))).toThrow("marked sensitive");
+      expect(() => assertGroundedResume(render, stored(go), "snapshot", evidenceForFacts([go]), roles, marked(kubernetes))).toThrow("you keep private");
       // Captured after the mark, with its own word as its only evidence.
       const own = { ...go, quote: go.text };
       expect(() => assertGroundedResume(render, stored(own), "snapshot", evidenceForFacts([own]), roles, marked(kubernetes))).not.toThrow();
@@ -185,10 +185,10 @@ describe("immutable resume evidence", () => {
     it("refuses a printed skill that only marked facts stand behind", () => {
       const render = version([], ["Go", "Kubernetes"]);
       const facts = stored(go, kubernetes), evidence = evidenceForFacts([go, kubernetes]);
-      expect(() => assertGroundedResume(render, facts, "snapshot", evidence, roles, marked(kubernetes))).toThrow("marked sensitive");
+      expect(() => assertGroundedResume(render, facts, "snapshot", evidence, roles, marked(kubernetes))).toThrow("you keep private");
       const again = skill("kubernetes-2", "Kubernetes", "Kubernetes, Terraform");
       expect(() => assertGroundedResume(render, stored(go, kubernetes, again), "snapshot", evidenceForFacts([go, kubernetes, again]), roles, marked(kubernetes))).not.toThrow();
-      expect(() => assertGroundedResume(render, stored(go, kubernetes, again), "snapshot", evidenceForFacts([go, kubernetes, again]), roles, marked(kubernetes, again))).toThrow("marked sensitive");
+      expect(() => assertGroundedResume(render, stored(go, kubernetes, again), "snapshot", evidenceForFacts([go, kubernetes, again]), roles, marked(kubernetes, again))).toThrow("you keep private");
     });
 
     it("says a version is unverified first when it is that as well", () => {
