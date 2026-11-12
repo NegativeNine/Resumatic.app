@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setModels } from "../../src/ai/models";
 import type { Directory } from "../../src/directory/directory";
 import { DIRECTORY_MIGRATIONS, migrateDirectory } from "../../src/directory/schema";
+import { INVITE_GLOBAL_ORPHAN_MIGRATIONS } from "../../src/directory/invite-revocation";
 import { OPERATOR_SPEND_MIGRATIONS } from "../../src/directory/operator-spend";
 import { TAG_KINDS } from "../../src/pipeline/tag";
 import { directory, directoryByName } from "../../src/shared/stubs";
@@ -172,6 +173,29 @@ describe("the taxonomy vector index routes", () => {
     expect(created).toEqual([]);
   });
 
+  it("refuses a start while a later attempt is live, though an earlier one was deleted", async () => {
+    // The first attempt finished and was deleted, by the operator or the platform's retention,
+    // while the second is still at work: its free ID starts no second build beside it.
+    const hash = TAXONOMY_FIXTURE.info.contentHash.slice(0, 8);
+    for (const status of ["queued", "running", "waiting", "paused", "waitingForPause", "unknown"]) {
+      const { created } = instances({ [SECOND]: status });
+      const response = await build();
+      expect(response.status, status).toBe(409);
+      expect(await response.json(), status).toEqual({ error: "conflict", message: "a build of this index is already running" });
+      expect(created, status).toEqual([]);
+    }
+    // Live at the last attempt, with every earlier ID free or finished.
+    const { created } = instances({ [SECOND]: "errored", [`taxonomy-index-${hash}-20`]: "running" });
+    expect((await build()).status).toBe(409);
+    expect(created).toEqual([]);
+    // With nothing live, the first free ID is taken again.
+    const free = instances({ [SECOND]: "complete" });
+    const response = await build();
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ runId: FIRST });
+    expect(free.created).toEqual([{ id: FIRST, params: { taxonomyVersion: VERSION } }]);
+  });
+
   it("starts the next attempt after a finished one", async () => {
     for (const status of ["complete", "errored", "terminated"]) {
       const { created } = instances({ [FIRST]: status });
@@ -254,7 +278,8 @@ describe("the taxonomy vector index routes", () => {
     const invitee = `ledger-${crypto.randomUUID()}@example.test`;
     await global.addInvite(invitee);
     const at = DIRECTORY_MIGRATIONS.indexOf(OPERATOR_SPEND_MIGRATIONS);
-    expect(at).toBe(DIRECTORY_MIGRATIONS.length - 1);
+    // After the invites' last entry; a later Directory migration comes after it, and the rewind still holds.
+    expect(at).toBeGreaterThan(DIRECTORY_MIGRATIONS.indexOf(INVITE_GLOBAL_ORPHAN_MIGRATIONS));
     await runInDurableObject(global, (_instance, state) => {
       const sql = state.storage.sql;
       const invites = () => sql.exec(`SELECT email, generation FROM invites ORDER BY email`).toArray();

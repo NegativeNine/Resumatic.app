@@ -363,8 +363,9 @@ maintenance.delete("/fleets/reembed/:id", async (c) => {
 });
 
 // The taxonomy's vector index (docs/taxonomy.md, "The vector index"). A build is one Workflow
-// instance at a time for each taxonomy, by its ID: the platform itself refuses a second instance
-// under an ID in use, so two builds can never write one index together.
+// instance at a time for each taxonomy, by its ID. A start is refused while any attempt is live,
+// and takes the first free ID; two starts at once take the same one, and the platform itself
+// refuses a second instance under an ID in use.
 const IndexBuildId = z.string().regex(/^taxonomy-index-[0-9a-f]{8}-\d{1,2}$/);
 const FINISHED = new Set(["complete", "errored", "terminated"]);
 const RUNNING = "a build of this index is already running";
@@ -382,6 +383,10 @@ maintenance.post("/taxonomy/vectors/build", bodyLimit({ maxSize: 2048 }), async 
   if (manifest && manifestMatches(manifest, { taxonomyVersion, kinds: TAG_KINDS })) return c.json({ state: "complete" as const });
   if (manifest && !sameBuild(manifest, taxonomyVersion)) throw new AppError("conflict", "this index holds another build; create a new index for this version");
   const params = { taxonomyVersion };
+  // Every attempt is looked at before one is started. An earlier attempt can be gone, deleted by
+  // the operator or by the platform's retention, while a later one is still at work: its free ID
+  // must not start a second build beside it.
+  let free: string | null = null;
   for (let attempt = 1; attempt <= MAX_BUILD_ATTEMPTS; attempt++) {
     const id = indexBuildId(info.contentHash, attempt);
     let status: string;
@@ -389,19 +394,21 @@ maintenance.post("/taxonomy/vectors/build", bodyLimit({ maxSize: 2048 }), async 
       status = (await (await c.env.TAXONOMY_INDEX.get(id)).status()).status;
     } catch (error) {
       if (!isMissingWorkflowInstance(error, id)) throw error;
-      try {
-        await c.env.TAXONOMY_INDEX.create({ id, params });
-      } catch (refused) {
-        // Another request took this ID first.
-        try { await c.env.TAXONOMY_INDEX.get(id); } catch { throw refused; }
-        throw new AppError("conflict", RUNNING);
-      }
-      return c.json({ runId: id }, 202);
+      free ??= id;
+      continue;
     }
     // Queued, running, paused, waiting or unknown: all are live.
     if (!FINISHED.has(status)) throw new AppError("conflict", RUNNING);
   }
-  throw new AppError("conflict", "delete earlier builds of this index first");
+  if (!free) throw new AppError("conflict", "delete earlier builds of this index first");
+  try {
+    await c.env.TAXONOMY_INDEX.create({ id: free, params });
+  } catch (refused) {
+    // Another request took this ID first.
+    try { await c.env.TAXONOMY_INDEX.get(free); } catch { throw refused; }
+    throw new AppError("conflict", RUNNING);
+  }
+  return c.json({ runId: free }, 202);
 });
 maintenance.get("/taxonomy/vectors", async (c) => {
   let configured: ReturnType<typeof indexConfiguration> | null = null;

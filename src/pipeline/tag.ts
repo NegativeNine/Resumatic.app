@@ -772,8 +772,11 @@ interface VectorRow {
 
 /**
  * Every read the vector part makes, each through `send`. Null when there is no index to read,
- * with the reason in the report. A fact the rule tagged has its tag, and one marked sensitive is
- * never embedded: the vault is asked which are marked immediately before each embedding of facts.
+ * with the reason in the report. A fact the rule tagged has its tag. The vault is asked which facts
+ * are marked immediately before each embedding of facts, and a fact marked by then is not embedded.
+ * That answer is the only guard: the reservation the call makes refuses only a run that captured
+ * a marked fact, and a reading captures none, so a mark that lands while the call is being
+ * reserved or sent does not stop it, as it does not stop a judge call already under way.
  */
 async function vectorReads(
   open: NonNullable<TagOptions["vectors"]>,
