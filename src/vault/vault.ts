@@ -59,6 +59,7 @@ import {
   KIT_QUESTIONS_REFUSED,
   KIT_RESUME_REFUSED,
   KIT_SENSITIVE_NEVER_SAVED,
+  MAX_KIT_RESUME_CHOICES,
   classifyDeterministic,
   cleanKitAnswer,
   cleanKitParts,
@@ -862,7 +863,7 @@ export class Vault extends DurableObject<Env> {
     const labels = before.usable.map((saved) => ({ id: saved.id, label: saved.label }));
     const judged =
       unsettled.length > 0 && this.env.APPLICATION_KIT_ENABLED === "true" && labels.length > 0
-        ? await this.askKitJudge(applicationId, unsettled.map((text) => ({ key: text, text })), labels)
+        ? await this.askKitJudge(applicationId, unsettled.map((text) => ({ key: text, text })), labels, () => this.requireOwner(who))
         : new Map<string, KitMatchAnswer>();
     this.requireOwner(who);
     return this.ctx.storage.transactionSync(() => {
@@ -903,12 +904,14 @@ export class Vault extends DurableObject<Env> {
   /**
    * Asks the judge about each question, four at a time, in a `match` run of its own. Best effort:
    * any failure, building the models included, is no answer, so the question asks. Only codes are
-   * logged: never a question, a label or an answer.
+   * logged: never a question, a label or an answer. `guard` is the caller's owner check, run after
+   * every await: a session that ends between waves fails the run and asks nothing more.
    */
   private async askKitJudge(
     applicationId: string,
     items: { key: string; text: string }[],
     labels: { id: string; label: string }[],
+    guard: () => void,
   ): Promise<Map<string, KitMatchAnswer>> {
     const id = crypto.randomUUID();
     let begun = false;
@@ -923,7 +926,7 @@ export class Vault extends DurableObject<Env> {
       const names = labels.map((label) => label.label);
       const answers = new Map<string, KitMatchAnswer>();
       for (let at = 0; at < items.length; at += 4) {
-        this.requireOpen();
+        guard();
         const wave = items.slice(at, at + 4);
         const results = await Promise.allSettled(wave.map((item) => m.matchQuestion!({ question: item.text, labels: names })));
         results.forEach((result, index) => {
@@ -931,7 +934,7 @@ export class Vault extends DurableObject<Env> {
           else console.error("application kit match failed", { code: "kit_match_failed", cause: logErrorCode(result.reason) });
         });
       }
-      this.requireOpen();
+      guard();
       this.runs.commitStep(id, "match", () => {});
       this.runs.finish(id, () => {});
       finished = true;
@@ -995,6 +998,7 @@ export class Vault extends DurableObject<Env> {
           this.kits.answerQuestion(applicationId, question.id, { state: "asks", matchedBy: null, savedAnswerId: null, confirmedRevision: null, typedAnswer: null });
           break;
         case "use": {
+          if (question.state === "sensitive") throw never();
           if (question.state !== "asks") throw stale();
           if (refusedKind(question.question)) throw never();
           const saved = this.kits.saved(read.savedAnswerId);
@@ -1011,6 +1015,7 @@ export class Vault extends DurableObject<Env> {
           break;
         }
         case "save": {
+          if (question.state === "sensitive") throw never();
           if (question.state !== "asks") throw stale();
           if (refusedKind(question.question)) throw never();
           const saved = this.kits.addSaved({ label: read.label, answer: read.answer }, now);
@@ -1153,19 +1158,25 @@ export class Vault extends DurableObject<Env> {
     return problems;
   }
 
-  /** The resume versions, letters and preparation made for this job that can go in a kit now, newest first. */
+  /**
+   * The resume versions, letters and preparation made for this job that can go in a kit now, newest
+   * first. Each is gated on every kit read and write, so only the newest MAX_KIT_RESUME_CHOICES
+   * resume versions and the newest 200 document versions are looked at.
+   */
   private kitChoices(applicationId: string): KitView["choices"] {
     const resumes: KitChoice[] = [];
-    for (const { id } of this.sql
-      .exec<{ id: string }>(`SELECT id FROM resumes WHERE application_id = ? AND state = 'ready' ORDER BY created_at DESC, id`, applicationId)
+    for (const row of this.sql
+      .exec<{ id: string; version: number; created_at: number }>(
+        `SELECT r.id, v.version, v.created_at FROM resumes r JOIN resume_versions v ON v.resume_id = r.id
+         WHERE r.application_id = ? AND r.state = 'ready' ORDER BY v.created_at DESC, r.id, v.version DESC LIMIT ?`,
+        applicationId, MAX_KIT_RESUME_CHOICES,
+      )
       .toArray()) {
-      for (const { version, createdAt } of this.snapshots.versions(id)) {
-        try {
-          this.gatedRender(id, version);
-          resumes.push({ id, version, createdAt });
-        } catch {
-          // Not offered: the version fails the gate now.
-        }
+      try {
+        this.gatedRender(row.id, row.version);
+        resumes.push({ id: row.id, version: row.version, createdAt: row.created_at });
+      } catch {
+        // Not offered: the version fails the gate now.
       }
     }
     const withheld = withheldFacts(this.sql);
@@ -1185,7 +1196,7 @@ export class Vault extends DurableObject<Env> {
       });
     const choice = (row: { id: string; version: number; created_at: number }): KitChoice => ({ id: row.id, version: row.version, createdAt: row.created_at });
     return {
-      resumes: resumes.sort((a, b) => b.createdAt - a.createdAt),
+      resumes,
       letters: documents.filter((row) => row.kind === "letter").map(choice),
       preps: documents.filter((row) => row.kind === "prep").map(choice),
     };

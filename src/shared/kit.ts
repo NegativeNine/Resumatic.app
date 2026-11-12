@@ -25,6 +25,12 @@ export const MAX_KIT_QUESTION_CHARS = 1_000;
 /** An answer typed for one kit only. */
 export const MAX_KIT_ANSWER_CHARS = 4_000;
 /**
+ * The resume versions a kit offers, newest first, across the job's finished resumes. Each is
+ * checked against the gate on every kit read and write, so the list is bounded. A chosen version
+ * past it is still shown as chosen and still gated.
+ */
+export const MAX_KIT_RESUME_CHOICES = 50;
+/**
  * The body of a save of a kit's questions, the one kit route that needs more than the usual 64 KiB:
  * 30 questions of 1,000 characters can be three bytes each in UTF-8, before JSON's escapes.
  */

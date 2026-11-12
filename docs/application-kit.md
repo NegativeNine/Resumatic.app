@@ -42,6 +42,8 @@ The asking is a `match` run inside the Vault that reserves budget before each ca
 
 A kit can be approved when a resume is chosen and passes the resume gate (a fact marked sensitive since counts against it), each chosen document passes the document gate, and every question is answered: typed, or matched and checked at its saved answer's current revision. Every write to a kit makes it a draft again, even one that changes nothing: questions saved, an answer typed, a match checked or turned down, parts chosen. So does an edit to, or a deletion of, a saved answer it uses.
 
+What can be chosen is worked out the same way, so it is bounded: the kit offers the 50 newest resume versions across the job's finished resumes (`MAX_KIT_RESUME_CHOICES`) and the 200 newest letter and preparation versions, each only if it passes its gate now. A version chosen before it fell out of that list is still shown as chosen and still gated.
+
 The gates are worked out on every read and never written. An approved kit whose resume later uses a fact marked sensitive stays approved, says it needs attention and why, and can't be downloaded until it passes again.
 
 ## The download

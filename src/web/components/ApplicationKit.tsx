@@ -38,9 +38,13 @@ const fromKey = (key: string): KitPart | null => {
 export function ApplicationKit({ applicationId }: { applicationId: string }) {
   const kit = useResource(() => api.kit(applicationId));
   const saved = useResource(() => api.savedAnswers());
-  // The latest kit a write gave back. A read that is newer wins over it.
+  // The latest kit a write gave back. A read at its revision or later wins over it: a read at
+  // revision N comes after write N committed, so it also holds what has changed since without a
+  // write, such as a letter finished for the job.
   const [written, setWritten] = useState<KitView | null>(null);
-  const view = written && (!kit.data || written.revision >= kit.data.revision) ? written : kit.data;
+  const view = written && (!kit.data || written.revision > kit.data.revision) ? written : kit.data;
+  // Bumped when the kit is loaded again, so the forms below start over from what is stored.
+  const [loaded, setLoaded] = useState(0);
   const action = useAction();
   const id = useId();
 
@@ -48,12 +52,15 @@ export function ApplicationKit({ applicationId }: { applicationId: string }) {
   async function write(submitted: KitWrite, send: (revision: number) => Promise<KitView>): Promise<boolean> {
     if (!view) return false;
     const revision = view.revision;
+    // Keeping a typed answer adds a saved answer, which the choices below are made from.
+    const saving = submitted.kind === "answer" && submitted.change.kind === "save";
     return action.run(async () => {
       let next: KitView;
       try {
         next = await send(revision);
       } catch (error) {
         if (ending(error)) throw error;
+        if (saving) await saved.reload();
         let current: KitView;
         try {
           current = await api.kit(applicationId);
@@ -65,7 +72,18 @@ export function ApplicationKit({ applicationId }: { applicationId: string }) {
         next = current;
       }
       setWritten(next);
-      if (submitted.kind === "answer" && submitted.change.kind === "save") await saved.reload();
+      if (saving) await saved.reload();
+    });
+  }
+
+  /** After a refused or unsettled write: reads the kit and the saved answers again, and the forms start over from them. */
+  async function loadAgain() {
+    await action.run(async () => {
+      const [current] = await Promise.all([kit.reload(), saved.reload()]);
+      // A read that failed has said why on its own, or ended the session.
+      if (!current) throw new Error("the kit was not read");
+      setWritten(null);
+      setLoaded((count) => count + 1);
     });
   }
 
@@ -79,10 +97,17 @@ export function ApplicationKit({ applicationId }: { applicationId: string }) {
       </p>
       {view ? (
         <>
-          <KitParts view={view} action={action} write={write} />
-          <KitQuestions view={view} action={action} write={write} saved={saved.data?.savedAnswers ?? []} />
+          <KitParts key={`parts-${loaded}`} view={view} action={action} write={write} />
+          <KitQuestions key={`questions-${loaded}`} view={view} action={action} write={write} saved={saved.data?.savedAnswers ?? []} />
           <KitStatus view={view} action={action} write={write} applicationId={applicationId} />
           <ActionError message={action.error} />
+          {action.error && (
+            <div className="actions">
+              <button type="button" className="small" disabled={action.pending} onClick={() => void loadAgain()}>
+                Load the kit again
+              </button>
+            </div>
+          )}
         </>
       ) : kit.error ? (
         <ErrorNote message={kit.error} onRetry={kit.reload} />
@@ -275,7 +300,7 @@ function KitQuestions({ view, action, write, saved }: PartProps & { saved: Saved
                   </button>
                 </div>
                 {unchanged && !dirty ? (
-                  <QuestionAnswer key={`${unchanged.id}:${unchanged.state}:${view.revision}`} question={unchanged} view={view} action={action} write={write} saved={saved} />
+                  <QuestionAnswer key={`${unchanged.id}:${unchanged.state}`} question={unchanged} view={view} action={action} write={write} saved={saved} />
                 ) : (
                   <p className="rs-hint">Save the questions to answer this one.</p>
                 )}
@@ -301,6 +326,13 @@ function KitQuestions({ view, action, write, saved }: PartProps & { saved: Saved
 
 function QuestionAnswer({ question, view, action, write, saved }: PartProps & { question: KitQuestionView; saved: SavedAnswer[] }) {
   const [answer, setAnswer] = useState(question.typedAnswer ?? "");
+  // What is typed here is kept across other writes to the kit, and replaced only when this
+  // question's stored answer changes.
+  const [stored, setStored] = useState(question.typedAnswer);
+  if (stored !== question.typedAnswer) {
+    setStored(question.typedAnswer);
+    setAnswer(question.typedAnswer ?? "");
+  }
   const [use, setUse] = useState("");
   const [keep, setKeep] = useState(false);
   const [label, setLabel] = useState("");

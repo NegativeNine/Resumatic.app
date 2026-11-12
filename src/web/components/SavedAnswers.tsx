@@ -7,6 +7,7 @@ import {
 } from "../../shared/kit";
 import { api } from "../api";
 import { useAction, useResource } from "../hooks";
+import { sessionEndNote } from "../session";
 import { ActionError, EmptyState, ErrorNote, Field, Loading, Message } from "./ui";
 
 // The Saved answers card on Account: short answers the person gives on many applications, in their
@@ -55,6 +56,7 @@ function SavedAnswerList({ answers, reload }: { answers: SavedAnswer[]; reload: 
               <li key={answer.id}>
                 <SavedAnswerForm
                   initial={answer}
+                  reload={reload}
                   onCancel={() => setEditing(null)}
                   onSaved={async () => {
                     setEditing(null);
@@ -100,6 +102,7 @@ function SavedAnswerList({ answers, reload }: { answers: SavedAnswer[]; reload: 
       <ActionError message={action.error} />
       {editing === null && (
         <SavedAnswerForm
+          reload={reload}
           onSaved={async () => {
             setJustSaved(true);
             await reload();
@@ -115,8 +118,22 @@ function SavedAnswerList({ answers, reload }: { answers: SavedAnswer[]; reload: 
   );
 }
 
-/** A form for a new saved answer, or for changing one at the revision it was read at. */
-function SavedAnswerForm({ initial, onSaved, onCancel }: { initial?: SavedAnswer; onSaved: () => Promise<void>; onCancel?: () => void }) {
+/**
+ * A form for a new saved answer, or for changing one at the revision it was read at. A refused or
+ * lost save reads the list again, keeping what was typed: the next save names the revision held
+ * now, and an answer kept under the same label is shown.
+ */
+function SavedAnswerForm({
+  initial,
+  reload,
+  onSaved,
+  onCancel,
+}: {
+  initial?: SavedAnswer;
+  reload: () => Promise<unknown>;
+  onSaved: () => Promise<void>;
+  onCancel?: () => void;
+}) {
   const [label, setLabel] = useState(initial?.label ?? "");
   const [answer, setAnswer] = useState(initial?.answer ?? "");
   const action = useAction();
@@ -124,8 +141,13 @@ function SavedAnswerForm({ initial, onSaved, onCancel }: { initial?: SavedAnswer
   async function save() {
     const ok = await action.run(async () => {
       const input = { label, answer };
-      if (initial) await api.editSavedAnswer(initial.id, input, initial.revision);
-      else await api.addSavedAnswer(input);
+      try {
+        if (initial) await api.editSavedAnswer(initial.id, input, initial.revision);
+        else await api.addSavedAnswer(input);
+      } catch (error) {
+        if (!sessionEndNote(error)) await reload();
+        throw error;
+      }
     });
     if (ok) {
       if (!initial) {

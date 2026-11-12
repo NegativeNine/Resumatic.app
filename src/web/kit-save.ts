@@ -1,4 +1,4 @@
-import { cleanKitAnswer, cleanKitQuestions, cleanLabel, cleanSavedAnswer, type KitAnswerChange, type KitPart, type KitView } from "../shared/kit";
+import { answerKey, cleanKitAnswer, cleanKitQuestions, cleanSavedAnswer, type KitAnswerChange, type KitPart, type KitView } from "../shared/kit";
 
 // What the application kit panel works out without the page: whether a write landed when its
 // reply was lost. A write can commit and its reply still fail, and the same write sent again is
@@ -44,10 +44,13 @@ export function kitWriteObserved(current: KitView | null | undefined, previousRe
         case "type":
           return question.state !== "matched" && question.typedAnswer !== null && question.typedAnswer === cleanKitAnswer(change.answer);
         case "save":
+          // The vault keeps one saved answer per folded label and returns the one already kept, so
+          // its label may be written differently from the one sent.
           return (
             question.state === "matched" &&
             question.confirmed &&
-            question.savedAnswer?.label === cleanLabel(change.label) &&
+            question.savedAnswer !== null &&
+            answerKey(question.savedAnswer.label) === answerKey(change.label) &&
             question.savedAnswer.answer === cleanSavedAnswer(change.answer)
           );
       }

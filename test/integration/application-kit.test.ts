@@ -18,6 +18,7 @@ import {
   KIT_RESUME_REFUSED,
   KIT_SENSITIVE_NEVER_SAVED,
   KIT_UNANSWERED,
+  MAX_KIT_RESUME_CHOICES,
   MAX_SAVED_ANSWERS,
   REFUSED_KIND_SENTENCE,
   SAVED_ANSWERS_FULL,
@@ -475,8 +476,8 @@ describe("matching an employer's questions", () => {
     let kit = await questions(user, applicationId, ["Do you have any obligations we should know about?"], 0);
     expect(kit.questions[0]).toMatchObject({ state: "sensitive", sensitiveKind: "judge", savedAnswer: null, matchedBy: null });
     const id = kit.questions[0]!.id;
-    expect(await refused(postAnswer(user, applicationId, id, { kind: "use", savedAnswerId: saved.id }, kit.revision))).toEqual([409, KIT_CHANGED]);
-    expect(await refused(postAnswer(user, applicationId, id, { kind: "save", label: "Obligations", answer: "None." }, kit.revision))).toEqual([409, KIT_CHANGED]);
+    expect(await refused(postAnswer(user, applicationId, id, { kind: "use", savedAnswerId: saved.id }, kit.revision))).toEqual([422, KIT_SENSITIVE_NEVER_SAVED]);
+    expect(await refused(postAnswer(user, applicationId, id, { kind: "save", label: "Obligations", answer: "None." }, kit.revision))).toEqual([422, KIT_SENSITIVE_NEVER_SAVED]);
     kit = await answer(user, applicationId, id, { kind: "type", answer: "None that affect this role." }, kit.revision);
     expect(kit.questions[0]).toMatchObject({ state: "sensitive", typedAnswer: "None that affect this role." });
     expect(await savedList(user)).toEqual([saved]);
@@ -663,6 +664,32 @@ describe("approving and downloading a kit", { timeout: 120_000 }, () => {
     expect(kit.choices.preps.map((choice) => choice.id)).toEqual([prep.id]);
     expect((await landed(putParts(user, applicationId, { resume: partOf(resume), prep: partOf(prep) }, 0))).prep).toEqual(partOf(prep));
   });
+
+  it(`offers at most ${MAX_KIT_RESUME_CHOICES} resume versions, newest first, and still keeps an older one chosen`, async () => {
+    const { user, applicationId } = await owner();
+    const resume = await tailor(user, applicationId);
+    // More versions than are offered, each a copy of the first a little later, as a long review would leave them.
+    const extra = MAX_KIT_RESUME_CHOICES + 5;
+    await sql(user, (db) => {
+      const row = db.exec<{ data: string; created_at: number }>(`SELECT data, created_at FROM resume_versions WHERE resume_id = ? AND version = ?`, resume.id, resume.version).one();
+      const data = JSON.parse(row.data) as { render: { version: number } };
+      for (let at = 1; at <= extra; at++) {
+        const version = resume.version + at;
+        db.exec(
+          `INSERT INTO resume_versions (resume_id, version, data, created_at) VALUES (?, ?, ?, ?)`,
+          resume.id, version, JSON.stringify({ ...data, render: { ...data.render, version } }), row.created_at + at,
+        );
+      }
+      db.exec(`UPDATE resumes SET version = ? WHERE id = ?`, resume.version + extra, resume.id);
+    });
+    let kit = await kitOf(user, applicationId);
+    expect(kit.choices.resumes.map((choice) => choice.version)).toEqual(Array.from({ length: MAX_KIT_RESUME_CHOICES }, (_, index) => resume.version + extra - index));
+    // The first version is past the list, and can still be chosen and approved.
+    kit = await readyKit(user, applicationId, resume);
+    expect(kit.resume).toEqual(partOf(resume));
+    expect(kit.choices.resumes).toHaveLength(MAX_KIT_RESUME_CHOICES);
+    expect(kit.problems).toEqual([]);
+  });
 });
 
 // Tailoring and writing run as Workflows, which are slower while other suites share the machine.
@@ -706,8 +733,8 @@ describe("approving and downloading a kit, its gates", { timeout: 120_000 }, () 
     expect(JSON.stringify(await savedList(user))).not.toContain("Tregeseal");
     expect(await count(user, "saved_answers")).toBe(1);
     // Never saved and never matched, even when the owner asks.
-    expect(await refused(postAnswer(user, applicationId, visa!.id, { kind: "use", savedAnswerId: saved.id }, kit.revision))).toEqual([409, KIT_CHANGED]);
-    expect(await refused(postAnswer(user, applicationId, visa!.id, { kind: "save", label: "Visa", answer: ANSWER }, kit.revision))).toEqual([409, KIT_CHANGED]);
+    expect(await refused(postAnswer(user, applicationId, visa!.id, { kind: "use", savedAnswerId: saved.id }, kit.revision))).toEqual([422, KIT_SENSITIVE_NEVER_SAVED]);
+    expect(await refused(postAnswer(user, applicationId, visa!.id, { kind: "save", label: "Visa", answer: ANSWER }, kit.revision))).toEqual([422, KIT_SENSITIVE_NEVER_SAVED]);
     // A question asking about it in words the list caught only later: asks, and use and save are refused for it.
     await sql(user, (db) => db.exec(`UPDATE kit_questions SET question = 'Will you need a work permit?', state = 'asks', sensitive_kind = NULL, typed_answer = NULL WHERE id = ?`, visa!.id));
     kit = await kitOf(user, applicationId);
@@ -1021,6 +1048,34 @@ describe("a kit's life with its vault", { timeout: 120_000 }, () => {
     expect((await saving).status).toBe(410);
     expect(await held()).toEqual(before);
     expect(await refusals(whoOf(again))).toEqual(Array(10).fill("gone: this account is being deleted"));
+  });
+
+  it("asks the judge no further wave once the session is signed out, fails the match run, and writes nothing", async () => {
+    const { user, applicationId } = await owner();
+    await judgeOn(user);
+    await addSaved(user, "Notice period", "Four weeks.");
+    const held = async () => ({
+      kits: await sql(user, (db) => db.exec(`SELECT * FROM application_kits`).toArray()),
+      questions: await sql(user, (db) => db.exec(`SELECT * FROM kit_questions`).toArray()),
+    });
+    const before = await held();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    let released = false;
+    options.match = async () => {
+      await until(() => released);
+      return { kind: "none" };
+    };
+    // Five questions nothing settles: a first wave of four, then one more.
+    const texts = ["When could you start?", "Tell us about a project", "Why this team?", "What do you enjoy building?", "Anything else?"];
+    const saving = putQuestions(user, applicationId, texts.map((text) => ({ text })), 0);
+    await until(() => options.calls.match === 4);
+    expect((await user.send("POST", "/api/account/sign-out-everywhere")).status).toBe(204);
+    released = true;
+    expect((await saving).status).toBe(401);
+    // The second wave was never asked, nothing of the kit was written, and the run failed.
+    expect(options.calls.match).toBe(4);
+    expect(await held()).toEqual(before);
+    expect(await runsOf(user, "match")).toEqual([expect.objectContaining({ state: "failed", error_code: "match_failed" })]);
   });
 
   it("gains saved answers and kits in a vault made before them, with its applications as they were", async () => {

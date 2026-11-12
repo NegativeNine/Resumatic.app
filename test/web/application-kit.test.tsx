@@ -1,11 +1,12 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { KIT_CHANGED, SAVED_ANSWER_LABEL_TAKEN, type KitView } from "../../src/shared/kit";
+import { KIT_CHANGED, SAVED_ANSWER_CHANGED, SAVED_ANSWER_LABEL_TAKEN, type KitView } from "../../src/shared/kit";
 import { ApplicationKit } from "../../src/web/components/ApplicationKit";
 import { SavedAnswers } from "../../src/web/components/SavedAnswers";
 import { formatDate, typeset } from "../../src/web/format";
 import { kitWriteObserved } from "../../src/web/kit-save";
+import { VAULT_CHANGED } from "../../src/web/live";
 import { installFakeApi, type FakeApi } from "./api-fake";
 import { fullVault, type Fixtures } from "./fixtures";
 import { renderWithSession } from "./render";
@@ -222,12 +223,68 @@ describe("the application kit panel", () => {
     expect(kitWriteObserved(null, view.revision, { kind: "approve" })).toBe(false);
   });
 
+  it("settles a lost save by its label as the vault keys it: the saved answer kept under the same label, written differently", () => {
+    const view = fullVault().kits![JOB]!;
+    const notice = view.questions[0]!.savedAnswer!;
+    const why = { ...view.questions[2]!, state: "matched" as const, matchedBy: "owner" as const, savedAnswer: notice, confirmed: true };
+    const next: KitView = { ...view, revision: view.revision + 1, questions: view.questions.map((question) => (question.id === why.id ? why : question)) };
+    const save = (label: string, answer: string) => kitWriteObserved(next, view.revision, { kind: "answer", questionId: why.id, change: { kind: "save", label, answer } });
+    expect(save("NOTICE—period!", ` ${notice.answer} `)).toBe(true);
+    expect(save("Notice period", "Two weeks.")).toBe(false);
+    expect(save("Notice", notice.answer)).toBe(false);
+  });
+
   it("says a stale write's sentence as the server wrote it, curled", async () => {
     const { api } = openKit();
     await screen.findByRole("button", { name: "Approve kit" });
     api.fail("POST", /\/kit\/questions\/kq-notice$/, 409, "conflict", KIT_CHANGED);
     await userEvent.click(within(item("What is your notice period?")).getByRole("button", { name: "Use this answer" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(typeset(KIT_CHANGED));
+  });
+
+  it("shows what a fresh read at the same revision says after a write: a letter written since is offered", async () => {
+    const { state } = openKit();
+    await screen.findByRole("button", { name: "Approve kit" });
+    await userEvent.click(within(item("What is your notice period?")).getByRole("button", { name: "Use this answer" }));
+    await waitFor(() => expect(within(item("What is your notice period?")).getByText("You’ve checked this answer.")).toBeInTheDocument());
+    // A letter finished for the job: what can be chosen changes, the kit's revision doesn't.
+    state.kits![JOB]!.choices.letters.unshift({ id: "doc-letter-2", version: 3, createdAt: 1795000000000 });
+    window.dispatchEvent(new Event(VAULT_CHANGED));
+    const letters = screen.getByRole("combobox", { name: "Cover letter (optional)" });
+    await waitFor(() => expect(within(letters).getByRole("option", { name: `Version 3, made ${formatDate(1795000000000)}` })).toBeInTheDocument());
+  });
+
+  it("loads the kit again after a stale write, and the next write names the revision it now shows", async () => {
+    const { state, api } = openKit();
+    await screen.findByRole("button", { name: "Approve kit" });
+    // Answered somewhere else since this page read it.
+    Object.assign(state.kits![JOB]!, { revision: 7 });
+    state.kits![JOB]!.questions[2]!.typedAnswer = "Answered elsewhere.";
+    await userEvent.click(within(item("What is your notice period?")).getByRole("button", { name: "Use this answer" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(typeset(KIT_CHANGED));
+    await userEvent.click(screen.getByRole("button", { name: "Load the kit again" }));
+    await waitFor(() => expect(within(item("Why do you want to work at Litware?")).getByRole("textbox", { name: "Your answer" })).toHaveValue("Answered elsewhere."));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load the kit again" })).toBeNull();
+    await userEvent.click(within(item("What is your notice period?")).getByRole("button", { name: "Use this answer" }));
+    await waitFor(() => expect(within(item("What is your notice period?")).getByText("You’ve checked this answer.")).toBeInTheDocument());
+    expect(api.callsTo("POST", /\/kit\/questions\/kq-notice$/).map((call) => (call.body as { expectedRevision: number }).expectedRevision)).toEqual([6, 7]);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps an answer typed into one question when another question's answer is saved", async () => {
+    openKit();
+    await screen.findByRole("button", { name: "Approve kit" });
+    await userEvent.click(within(item("What is your notice period?")).getByRole("button", { name: "Use this answer" }));
+    await waitFor(() => expect(within(item("What is your notice period?")).getByText("You’ve checked this answer.")).toBeInTheDocument());
+    const visaAnswer = () => within(item("Will you now or in the future require visa sponsorship?")).getByRole("textbox", { name: "Your answer" });
+    await userEvent.type(visaAnswer(), " Not now.");
+    const why = item("Why do you want to work at Litware?");
+    await userEvent.type(within(why).getByRole("textbox", { name: "Your answer" }), "The team.");
+    await userEvent.click(within(why).getByRole("button", { name: "Save answer" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Approve kit" })).toBeEnabled());
+    expect(visaAnswer()).toHaveValue("No. Not now.");
+    expect(within(item("Why do you want to work at Litware?")).getByRole("textbox", { name: "Your answer" })).toHaveValue("The team.");
   });
 
   it("uses no straight apostrophe in anything it says", async () => {
@@ -295,6 +352,25 @@ describe("the saved answers card", () => {
     expect(api.callsTo("PUT", /\/api\/saved-answers\//)[0]!.body).toEqual({ label: "Notice period", answer: "Two weeks.", expectedRevision: 1 });
     await userEvent.click(screen.getByRole("button", { name: "Delete Notice period" }));
     await screen.findByText("No saved answers yet.");
+  });
+
+  it("loads the saved answers again after a stale edit, so the next save names the revision changed elsewhere", async () => {
+    const { state, api } = openCard();
+    await screen.findByText("Portfolio link", { selector: "strong" });
+    await userEvent.click(screen.getByRole("button", { name: "Edit Notice period" }));
+    // Edited somewhere else since this page read it.
+    Object.assign(state.savedAnswers![0]!, { revision: 3, answer: "Three weeks." });
+    const editing = () => screen.getByRole("form", { name: "Edit Notice period" });
+    await userEvent.clear(within(editing()).getByRole("textbox", { name: "Answer" }));
+    await userEvent.type(within(editing()).getByRole("textbox", { name: "Answer" }), "Two weeks.");
+    await userEvent.click(within(editing()).getByRole("button", { name: "Save answer" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(typeset(SAVED_ANSWER_CHANGED));
+    await waitFor(() => expect(api.callsTo("GET", /\/api\/saved-answers$/)).toHaveLength(2));
+    // What was typed is kept, and saved again at the revision now held.
+    expect(within(editing()).getByRole("textbox", { name: "Answer" })).toHaveValue("Two weeks.");
+    await userEvent.click(within(editing()).getByRole("button", { name: "Save answer" }));
+    await waitFor(() => expect(within(card()).getByText("Two weeks.")).toBeInTheDocument());
+    expect(api.callsTo("PUT", /\/api\/saved-answers\//).map((call) => (call.body as { expectedRevision: number }).expectedRevision)).toEqual([2, 3]);
   });
 
   it("refuses an answer about pay in the server's sentence, and keeps what was typed", async () => {
