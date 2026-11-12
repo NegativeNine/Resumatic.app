@@ -7,7 +7,7 @@ import { TailorProgress } from "../components/TailorProgress";
 import { ActionError, ErrorNote, Loading, PageHeader } from "../components/ui";
 import { formatDateTime } from "../format";
 import { useAction, useResource, type Reload } from "../hooks";
-import { href } from "../router";
+import { href, useCanonicalResumeAddress } from "../router";
 import { resumeErrorMessage } from "../source-error";
 import { useTailor } from "../tailor";
 import { useSession } from "../session";
@@ -18,6 +18,8 @@ export function ResumePage({ id }: { id: string }) {
     (r) => r.state === "running",
   );
   const r = resume.data;
+  // An old link names no job: once the resume says which it is for, the address does too.
+  useCanonicalResumeAddress(r);
   const { refreshMe } = useSession();
   const wasRunning = useRef(false);
   // Set once this page watches the resume finish, so the margin's marks tick in once; never on a later visit.

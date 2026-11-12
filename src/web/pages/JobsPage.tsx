@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import {
   APPLICATION_STATUSES,
@@ -46,7 +46,11 @@ const STATE_GLYPH: Partial<Record<ResumeState, GlyphName>> = {
 const isTailoring = (data: { applications: ApplicationView[] }) =>
   data.applications.some((a) => a.resumes.some((r) => r.state === "running"));
 
-export function JobsPage() {
+/**
+ * Your jobs. `focus` is the job an address names: its workspace opens and its card is scrolled into
+ * view once the list has loaded. A job the list doesn't hold leaves the list as it is.
+ */
+export function JobsPage({ focus }: { focus?: string } = {}) {
   const list = useResource(api.applications, isTailoring);
   const { quota } = useSession().me;
   const applications = [...(list.data?.applications ?? [])].sort(
@@ -68,6 +72,14 @@ export function JobsPage() {
   const columns = APPLICATION_STATUSES.filter(
     (value) => status === "all" || status === value || visible.some((application) => statusOf(application) === value),
   );
+  const cards = useRef(new Map<string, HTMLLIElement>());
+  const loaded = list.data !== undefined;
+  const focusFound = focus !== undefined && applications.some((application) => application.id === focus);
+  useEffect(() => {
+    if (!focus || !focusFound) return;
+    setOpenWorkspaces((previous) => (previous.has(focus) ? previous : new Set([...previous, focus])));
+    cards.current.get(focus)?.scrollIntoView?.({ block: "start" });
+  }, [focus, focusFound, loaded]);
   function toggleWorkspace(id: string) {
     setOpenWorkspaces((previous) => {
       const next = new Set(previous);
@@ -101,6 +113,10 @@ export function JobsPage() {
       hidden={!visibleIds.has(application.id)}
       open={openWorkspaces.has(application.id)}
       onToggleWorkspace={() => toggleWorkspace(application.id)}
+      cardRef={(element) => {
+        if (element) cards.current.set(application.id, element);
+        else cards.current.delete(application.id);
+      }}
       columnLabel={view === "board" && visibleIds.has(application.id) ? `${filterId}-column-${appStatus}` : undefined}
       style={view === "board" && visibleIds.has(application.id) ? { gridColumn: columns.indexOf(appStatus) + 1 } : undefined}
     />);
@@ -405,6 +421,7 @@ function ApplicationCard({
   onToggleWorkspace,
   columnLabel,
   style,
+  cardRef,
 }: {
   application: ApplicationView;
   onSaved: Reload;
@@ -414,6 +431,7 @@ function ApplicationCard({
   onToggleWorkspace: () => void;
   columnLabel?: string;
   style?: CSSProperties;
+  cardRef?: (element: HTMLLIElement | null) => void;
 }) {
   const { tailor, pending, error } = useTailor();
   const headingId = useId();
@@ -424,7 +442,7 @@ function ApplicationCard({
   const Heading = compact ? "h4" : "h3";
 
   return (
-    <li className="card application rs-job" hidden={hidden} style={style}
+    <li className="card application rs-job" hidden={hidden} style={style} ref={cardRef}
       aria-labelledby={columnLabel ? `${columnLabel} ${headingId}` : headingId}>
       <div className="row-between">
         <div className="app-job-head">
@@ -457,7 +475,7 @@ function ApplicationCard({
         <ul className="plain-list resume-list">
           {resumes.map((resume, index) => (
             <li key={resume.id}>
-              <a href={href.resume(resume.id)}>Resume tailored {formatDateTime(resume.createdAt)}</a>
+              <a href={href.jobResume(application.id, resume.id)}>Resume tailored {formatDateTime(resume.createdAt)}</a>
               <span className="app-resume-state">
                 {index === 0 && resumes.length > 1 && <span className="app-latest">Latest</span>}
                 <Badge tone={RUN_MARK[resume.state]}>

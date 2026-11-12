@@ -474,7 +474,7 @@ main:focus {
 
 /* Header (AppHeader) */
 
-.app-nav {
+.app-rooms {
   display: flex;
   align-self: stretch;
 }
@@ -973,8 +973,8 @@ main:focus {
     padding: 0 var(--space-2);
   }
 
-  /* The quota leaves the header for the top of Jobs. */
-  .rs-header__end {
+  /* The quota leaves the header for the top of Jobs. The account menu stays. */
+  .rs-header__end > .rs-quota {
     display: none;
   }
 
@@ -1021,13 +1021,6 @@ main:focus {
 .app-thread .app-comment-form { margin-top: 0; }
 .app-comment-form .actions { margin-top: var(--space-3); }
 .app-comments__none { margin: 0; }
-
-/* New since the person last looked: a coach's comment, and the count of them beside Account in the menu. It waits for the person, so it is a needs-you mark. */
-.app-nav-new { margin-inline-start: 6px; padding: 0 6px; }
-@media (max-width: 600px) {
-  /* The menu is tight here, so the mark is the number alone. The link's name still says what it counts. */
-  .app-nav-new__word { display: none; }
-}
 
 /* Shared layout: the redesign's rd- layout classes, as app- */
 /*
@@ -1094,3 +1087,47 @@ main:focus {
 @media (prefers-reduced-motion: reduce) {
   .rs-tick--working { animation: none; border-right-color: currentColor; opacity: 0.6; }
 }
+
+/*
+ * The redesign's stages add their shared rules below, each inside its own block. A room's own
+ * rules go in styles/rooms/<room>.css.
+ */
+
+/* stage 2: the shell */
+
+/* The name in the header is a button that opens the account menu, below it at its right edge. */
+button.rs-who { background: none; border: 0; cursor: pointer; }
+.app-who { position: relative; }
+.app-who > .app-menu { position: absolute; top: calc(100% + var(--space-1)); right: 0; z-index: 30; }
+.app-menu[hidden] { display: none; }
+.app-menu h2.app-menu__h { font-family: var(--font-sans); letter-spacing: normal; }
+.app-menu a > .rs-meta { margin-left: auto; font-weight: 400; }
+.app-menu__item { display: flex; align-items: center; width: 100%; min-height: 44px; padding: 0 var(--space-3); font: 600 14px/20px var(--font-sans); color: var(--ink); text-align: left; background: none; border: 0; border-radius: var(--radius-md); cursor: pointer; }
+.app-menu__item:hover:not(:disabled) { background: var(--paper-hover); }
+.app-menu .rs-inline-error { margin: var(--space-2) var(--space-3); }
+
+/* A page or section that isn't built yet: its mark, what it waits for, and at most one way back. */
+.app-placeholder { display: grid; justify-items: start; gap: var(--space-3); max-width: 70ch; }
+.page-head + .app-placeholder { margin-top: var(--space-6); }
+.app-placeholder > h2 { margin: 0; }
+.app-placeholder__note, .app-placeholder__back { margin: 0; }
+
+/* On a phone the rooms move to a bar along the bottom of the screen, still in words. */
+@media (max-width: 600px) {
+  .app-rooms { position: fixed; right: 0; bottom: 0; left: 0; z-index: 20; background: var(--paper); border-top: 1px solid var(--rule); }
+  .app-rooms .rs-nav { display: grid; flex: 1 1 auto; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 0; }
+  .app-rooms .rs-nav a { justify-content: center; height: 60px; margin: -1px 0 0; padding: 0 var(--space-1); font-size: 12px; line-height: 16px; border-top: 2px solid transparent; border-bottom: 0; }
+  .app-rooms .rs-nav a[aria-current="page"] { border-top-color: var(--brand); }
+  main.page { padding-bottom: calc(var(--space-12) + 60px); }
+  .rs-footer { padding-bottom: calc(var(--space-8) + 60px); }
+}
+
+/* stage 3: today */
+
+/* stage 4: facts */
+
+/* stage 5: jobs */
+
+/* stage 6: sharing and account */
+
+/* stage 7: outside */

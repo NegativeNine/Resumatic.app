@@ -1,6 +1,8 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
+import { act } from "react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { App } from "../../src/web/App";
 import { AccountPage } from "../../src/web/pages/AccountPage";
 import { JobsPage } from "../../src/web/pages/JobsPage";
 import { SignedOut } from "../../src/web/pages/SignedOut";
@@ -10,7 +12,7 @@ import { permissions } from "../../src/web/components/ConnectedApps";
 import { ShareSnapshotContent } from "../../src/web/components/ShareSnapshotContent";
 import { formatDateTime } from "../../src/web/format";
 import { fixtures, fullVault, sharedView } from "./fixtures";
-import { renderWithSession } from "./render";
+import { goTo, renderWithSession } from "./render";
 
 describe("Jobs", () => {
   it("marks only the newest resume of a job as Latest", async () => {
@@ -53,6 +55,82 @@ describe("Jobs", () => {
     renderWithSession(<JobsPage />, state.me);
     await screen.findByText(/it’s read from the posting when a resume is tailored/);
     for (const meta of document.querySelectorAll(".app-job-meta")) expect(meta.textContent).not.toContain("·");
+  });
+});
+
+describe("a job's address", () => {
+  /** Records which elements are scrolled into view; jsdom has no layout to scroll. */
+  function scrolls(): Element[] {
+    const scrolled: Element[] = [];
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      writable: true,
+      value(this: Element) {
+        scrolled.push(this);
+      },
+    });
+    return scrolled;
+  }
+  afterEach(() => {
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+  const card = (name: string) => screen.getByRole("heading", { name }).closest("li")!;
+
+  it("opens a job's workspace from its address", async () => {
+    const scrolled = scrolls();
+    const state = fixtures();
+    installFakeApi(state);
+    renderWithSession(<JobsPage focus="app-tailspin" />, state.me);
+    const job = (await screen.findByRole("heading", { name: "Senior Data Engineer at Tailspin Toys" })).closest("li")!;
+    await waitFor(() => expect(within(job).getByRole("button", { name: "Close workspace" })).toHaveAttribute("aria-expanded", "true"));
+    expect(scrolled).toEqual([job]);
+    // Only that job's workspace.
+    expect(within(card("Platform Engineer at Litware")).getByRole("button", { name: "Track and prepare" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("moves between a job's tabs without reloading or moving focus", async () => {
+    scrolls();
+    const state = fixtures();
+    const api = installFakeApi(state);
+    goTo("#/jobs/app-litware/fit");
+    render(<App />);
+    const job = (await screen.findByRole("heading", { name: "Platform Engineer at Litware" })).closest("li")!;
+    const close = await within(job).findByRole("button", { name: "Close workspace" });
+    close.focus();
+    const loads = api.callsTo("GET", /^\/api\/applications$/).length;
+    act(() => goTo("#/jobs/app-litware/letter"));
+    act(() => goTo("#/jobs/app-litware/application"));
+    expect(screen.getByRole("button", { name: "Close workspace" })).toBe(close);
+    expect(document.activeElement).toBe(close);
+    expect(api.callsTo("GET", /^\/api\/applications$/)).toHaveLength(loads);
+    // Another job is another page.
+    act(() => goTo("#/jobs/app-tailspin/fit"));
+    expect(document.activeElement).toBe(screen.getByRole("main"));
+  });
+
+  it("leaves the list unchanged for a job that isn't there", async () => {
+    const scrolled = scrolls();
+    const state = fixtures();
+    installFakeApi(state);
+    goTo("#/jobs/no-such-job/fit");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Platform Engineer at Litware" });
+    await screen.findByRole("heading", { name: "Senior Data Engineer at Tailspin Toys" });
+    expect(screen.queryByRole("button", { name: "Close workspace" })).toBeNull();
+    expect(scrolled).toEqual([]);
+    expect(screen.queryByText("Page not found")).toBeNull();
+    expect(window.location.hash).toBe("#/jobs/no-such-job/fit");
+  });
+
+  it("resume links name their job", async () => {
+    const state = fixtures();
+    installFakeApi(state);
+    renderWithSession(<JobsPage />, state.me);
+    const job = card((await screen.findByRole("heading", { name: "Platform Engineer at Litware" })).textContent!);
+    expect(within(job).getAllByRole("link", { name: /^Resume tailored/ }).map((link) => link.getAttribute("href")).sort()).toEqual([
+      "#/jobs/app-litware/resume/res-first",
+      "#/jobs/app-litware/resume/res-ready",
+    ]);
   });
 });
 

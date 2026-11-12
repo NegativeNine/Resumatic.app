@@ -6,6 +6,7 @@ import type { CardPreview } from "../../src/shared/card";
 import type { KitView, SavedAnswer } from "../../src/shared/kit";
 import type { McpGrant } from "../../src/shared/mcp";
 import type { CoachClient, CommentThread, OwnerCommentThread, ShareGrant, SharedView } from "../../src/shared/sharing";
+import type { Today } from "../../src/shared/today";
 import type { BillingView } from "../../src/web/api";
 import data from "./fixtures.json";
 import full from "./fixtures-full.json";
@@ -41,6 +42,22 @@ export interface Fixtures {
   shareComments?: OwnerCommentThread[];
   mcpGrants?: McpGrant[];
   billing?: BillingView;
+
+  // The redesign's stages add their fixtures here, each inside its own block.
+
+  // stage 2: the shell
+  /** What waits for the owner across the rooms. Absent: nothing waits, nothing is in progress. */
+  today?: Today;
+
+  // stage 3: today
+
+  // stage 4: facts
+
+  // stage 5: jobs
+
+  // stage 6: sharing and account
+
+  // stage 7: outside
 }
 
 /** A fresh, deep copy of the fixtures, so a test can change it freely. */

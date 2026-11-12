@@ -595,7 +595,7 @@ describe("an owner reading what their coach wrote", () => {
     expect(unnamed.getByRole("textbox", { name: "Reply to dana@example.test" })).toBeInTheDocument();
     const fact = within(thread(LED));
     expect(fact.getByText("From dana@example.test, on a fact you shared.")).toBeInTheDocument();
-    expect(fact.getByRole("link", { name: "Open Facts" })).toHaveAttribute("href", "#/facts");
+    expect(fact.getByRole("link", { name: "Open Facts" })).toHaveAttribute("href", "#/facts/check");
     expect(await violations()).toEqual([]);
   });
 

@@ -28,6 +28,7 @@ import type { EmailNotices, NoticeKind } from "../shared/email-notices";
 import type { PostingRead } from "../shared/postings";
 import type { CoachClient, ShareableDocument, ShareGrant } from "../shared/sharing";
 import type { CommentThread, NewShareComment, NewSuggestion, OwnerCommentThread, ShareComment } from "../shared/sharing";
+import type { Today } from "../shared/today";
 
 export interface BillingView {
   enabled: boolean;
@@ -60,6 +61,30 @@ function fetchError(error: unknown): unknown {
       (error.name === "AbortError" || error.name === "TimeoutError"))
     ? new ApiNetworkError(error.message)
     : error;
+}
+
+/**
+ * The event sent shortly after this tab changes something, so the header's counts are read again.
+ * Pages listen for it through live.ts, beside VAULT_CHANGED; it is written here because this module
+ * also runs where there is no window.
+ */
+export const COUNTS_CHANGED = "resumatic:counts-change";
+
+/** True while a change this tab made waits to be told: several changes together are told once. */
+let countsPending = false;
+
+/**
+ * Tells the header that something this tab changed may have changed its counts. Only a change to
+ * the API counts: signing out is not one, and its note on the signed-out page stays.
+ */
+function countsChanged(method: string, path: string): void {
+  const target = globalThis as unknown as { dispatchEvent?: (event: Event) => boolean };
+  if (method === "GET" || !path.startsWith("/api/") || countsPending || typeof target.dispatchEvent !== "function") return;
+  countsPending = true;
+  setTimeout(() => {
+    countsPending = false;
+    target.dispatchEvent?.(new Event(COUNTS_CHANGED));
+  }, 150);
 }
 
 async function request<T>(
@@ -102,6 +127,7 @@ async function request<T>(
       payload.message ?? res.statusText,
     );
   }
+  countsChanged(method, path);
   if (res.status === 204) return undefined as T;
   const type = res.headers.get("content-type") ?? "";
   if (!type.includes("application/json")) return undefined as T;
@@ -428,4 +454,20 @@ export const api = {
     request<void>("POST", `/api/shares/suggestions/${encodeURIComponent(id)}/decline`),
   exportUrl: "/api/export",
   exportArchiveUrl: "/api/export/archive",
+
+  // The redesign's stages add their calls here, each inside its own block.
+
+  // stage 2: the shell
+  /** What waits for the owner in each room. Loaded by the shell on a change of room. */
+  today: () => request<Today>("GET", "/api/v2/today"),
+
+  // stage 3: today
+
+  // stage 4: facts
+
+  // stage 5: jobs
+
+  // stage 6: sharing and account
+
+  // stage 7: outside
 };

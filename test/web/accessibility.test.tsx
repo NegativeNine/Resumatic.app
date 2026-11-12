@@ -9,15 +9,21 @@ import { LegalPage } from "../../src/web/pages/LegalPage";
 import { ResumePage } from "../../src/web/pages/ResumePage";
 import { SignedOut } from "../../src/web/pages/SignedOut";
 import { SourcesPage } from "../../src/web/pages/SourcesPage";
+import { RulesInterim } from "../../src/web/pages/interim/jobs";
+import { AppsInterim, CoachesInterim, RecruitersInterim, SharingInterim } from "../../src/web/pages/interim/sharing";
+import { PlaceholderPage } from "../../src/web/components/Placeholder";
+import { Shell } from "../../src/web/components/Shell";
+import { PLACEHOLDERS, type PlaceholderName } from "../../src/web/placeholders";
+import { parseRoute } from "../../src/web/router";
 import { installFakeApi } from "./api-fake";
 import { emptyVault, fullVault, sharedView } from "./fixtures";
 import { renderWithSession } from "./render";
 
 // Structure only: names, roles, labels, headings, ARIA. jsdom has no layout, so contrast is covered by
 // the token tests, and "region" is off because a page is rendered here without the app shell's landmarks.
-async function violations(): Promise<string[]> {
+async function violations(region = false): Promise<string[]> {
   const results = await axe.run(document.body, {
-    rules: { "color-contrast": { enabled: false }, region: { enabled: false } },
+    rules: { "color-contrast": { enabled: false }, region: { enabled: region } },
   });
   return results.violations.map((v) => `${v.id}: ${v.help} (${v.nodes.map((n) => n.target.join(" ")).join("; ")})`);
 }
@@ -93,6 +99,52 @@ describe("accessibility", () => {
     await userEvent.click(screen.getByRole("button", { name: "Choose what to share" }));
     await screen.findByRole("checkbox", { name: "Say which job each resume and document is for" });
     expect(await violations()).toEqual([]);
+  });
+
+  it("the shell, menu open, counts shown", async () => {
+    const state = fullVault();
+    state.me.clients = 2;
+    state.me.signInEmail = "sam.rivera@example.com";
+    installFakeApi(state);
+    renderWithSession(
+      <Shell route={parseRoute("#/sharing/coaches")} title="Coaches">
+        <PlaceholderPage name="today" />
+      </Shell>,
+      state.me,
+    );
+    await screen.findByRole("link", { name: "Facts, 6 waiting for you" });
+    await screen.findByRole("link", { name: "Coaches, 2 waiting for you" });
+    await userEvent.click(screen.getByRole("button", { name: /account and workspaces$/ }));
+    // The whole page is in its landmarks here, so the region rule is on.
+    expect(await violations(true)).toEqual([]);
+  });
+
+  it("every placeholder page", async () => {
+    const state = fullVault();
+    installFakeApi(state);
+    for (const name of Object.keys(PLACEHOLDERS) as PlaceholderName[]) {
+      const page = renderWithSession(<main><PlaceholderPage name={name} /></main>, state.me);
+      expect(await violations(true), name).toEqual([]);
+      page.unmount();
+    }
+  });
+
+  it("the interim Sharing pages and Rules and answers", async () => {
+    const state = fullVault();
+    installFakeApi(state);
+    const pages: [string, () => React.ReactNode, () => Promise<unknown>][] = [
+      ["Sharing", () => <SharingInterim />, () => screen.findByRole("heading", { name: "Sharing", level: 1 })],
+      ["Coaches", () => <CoachesInterim />, () => screen.findByText("Dana Okafor")],
+      ["Recruiters", () => <RecruitersInterim />, () => screen.findByText("Web platform development software")],
+      ["Connected apps", () => <AppsInterim />, () => screen.findByText("Career Notebook")],
+      ["Rules and answers", () => <RulesInterim />, () => screen.findByText("Portfolio link", { selector: "strong" })],
+    ];
+    for (const [name, page, loaded] of pages) {
+      const shown = renderWithSession(<>{page()}</>, state.me);
+      await loaded();
+      expect(await violations(), name).toEqual([]);
+      shown.unmount();
+    }
   });
 
   it("the shared copy a coach reads", async () => {

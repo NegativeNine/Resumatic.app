@@ -1,14 +1,15 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { App } from "../../src/web/App";
 import { placeNotes } from "../../src/web/components/margin-layout";
 import { isWrittenAnswer } from "../../src/web/components/ResumeReport";
 import { ResumeSheet } from "../../src/web/components/ResumeSheet";
 import { ResumePage } from "../../src/web/pages/ResumePage";
 import { installFakeApi, type FakeApi } from "./api-fake";
 import { fixtures, type Fixtures } from "./fixtures";
-import { renderWithSession } from "./render";
+import { goTo, renderWithSession } from "./render";
 
 async function openResume(state: Fixtures = fixtures()): Promise<FakeApi> {
   const api = installFakeApi(state);
@@ -286,5 +287,40 @@ describe("placeNotes", () => {
   it("pushes a note down only as far as it must go to clear the one above", () => {
     expect(placeNotes([0, 20, 200], [40, 40, 40], 8)).toEqual([0, 48, 200]);
     expect(placeNotes([0, 10, 20], [30, 30, 30], 10)).toEqual([0, 40, 80]);
+  });
+});
+
+describe("a resume's address", () => {
+  it("puts the job in an old resume link's address once it loads, focus unmoved", async () => {
+    const state = fixtures();
+    const api = installFakeApi(state);
+    // The resume answers only when the test lets it, so focus can be put somewhere first.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith("/api/resumes/res-ready")) await held;
+      return api.fetch(input, init);
+    }));
+    goTo("#/resumes/res-ready");
+    render(<App />);
+    expect(await screen.findByText("Loading this resume…")).toBeInTheDocument();
+    const back = screen.getByRole("link", { name: "Back to Jobs" });
+    back.focus();
+    expect(window.location.hash).toBe("#/resumes/res-ready");
+    release();
+    await waitFor(() => expect(window.location.hash).toBe("#/jobs/app-litware/resume/res-ready"));
+    await screen.findByRole("article", { name: "Resume preview" });
+    // The same page, not a new one: nothing remounted, and focus is where it was.
+    expect(screen.getByRole("link", { name: "Back to Jobs" })).toBe(back);
+    expect(document.activeElement).toBe(back);
+    expect(api.callsTo("GET", /^\/api\/resumes\/res-ready$/)).toHaveLength(1);
+  });
+
+  it("corrects an address that names the wrong job", async () => {
+    installFakeApi(fixtures());
+    goTo("#/jobs/app-tailspin/resume/res-ready");
+    render(<App />);
+    await screen.findByRole("article", { name: "Resume preview" });
+    await waitFor(() => expect(window.location.hash).toBe("#/jobs/app-litware/resume/res-ready"));
   });
 });

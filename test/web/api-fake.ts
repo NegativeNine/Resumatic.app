@@ -28,6 +28,7 @@ import {
 } from "../../src/shared/kit";
 import { wording } from "../../src/shared/record";
 import { targetText, type NewShareComment, type NewSuggestion, type ShareComment } from "../../src/shared/sharing";
+import { emptyToday } from "../../src/shared/today";
 import { sharedView, type Fixtures } from "./fixtures";
 
 export interface Call {
@@ -759,6 +760,22 @@ export class FakeApi {
         return { status: 204 };
       },
     ],
+
+    // The redesign's stages add their routes here, each inside its own block.
+
+    // stage 2: the shell
+    // What waits for the owner, as the fixtures give it: nothing at all unless a test says.
+    ["GET", /^\/api\/v2\/today$/, () => ok(this.state.today ?? emptyToday(0))],
+
+    // stage 3: today
+
+    // stage 4: facts
+
+    // stage 5: jobs
+
+    // stage 6: sharing and account
+
+    // stage 7: outside
   ];
 
   /** The email notice settings as saved, or every kind off, to the session's address. */

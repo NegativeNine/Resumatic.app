@@ -1,4 +1,4 @@
-import { useId, useState, type ChangeEvent } from "react";
+import { useId, useState, type ChangeEvent, type ReactNode } from "react";
 import type { Profile } from "../../shared/api";
 import { api, ApiError } from "../api";
 import { ActionError, Field, Glyph, PageHeader } from "../components/ui";
@@ -10,7 +10,7 @@ import { CardPreviewSection } from "../components/CardPreview";
 import { SavedAnswers } from "../components/SavedAnswers";
 import { OwnerComments } from "../components/ShareComments";
 import { useAction } from "../hooks";
-import { href } from "../router";
+import { ACCOUNT_ANCHORS, href, type AccountSection } from "../router";
 import { useSession } from "../session";
 import { isProfileSnapshot, profileWriteObserved } from "../profile-save";
 import { getThemeChoice, setThemeChoice, type ThemeChoice } from "../theme";
@@ -25,49 +25,63 @@ export function AccountPage() {
     <>
       <PageHeader title="Account" />
       <div className="stack">
-        <ProfileForm />
+        <Anchor section="profile"><ProfileForm /></Anchor>
         <JobPreferences />
         {me.capabilities?.cardPreview && <CardPreviewSection />}
         <SavedAnswers />
-        <Appearance />
-        <BillingTools />
+        <Anchor section="appearance"><Appearance /></Anchor>
+        <Anchor section="plan"><BillingTools /></Anchor>
         <CoachSharingTools />
         <OwnerComments />
-        {me.capabilities?.emailNotices && <EmailNotices />}
+        {me.capabilities?.emailNotices && <Anchor section="notifications"><EmailNotices /></Anchor>}
         {me.capabilities?.connectedApps && <ConnectedApps />}
-        <SignOutCard />
-        <section className="card" aria-labelledby="data-heading">
-          <h2 id="data-heading">Your data</h2>
-          <div className="rs-setting">
-            <p className="rs-setting__text">
-              <strong>Everything</strong>
-              <span>
-                Your record and your files together, as a ZIP archive. It holds up to 128 files and 100 MiB of
-                data.
-              </span>
-            </p>
-            <a className="rs-btn" href={api.exportArchiveUrl} download>
-              <Glyph name="download" />
-              Download your record and files (ZIP)
-            </a>
-          </div>
-          <div className="rs-setting">
-            <p className="rs-setting__text">
-              <strong>Your record only</strong>
-              <span>
-                One JSON file. For a larger record, download this and the individual files from{" "}
-                <a href={href.facts}>Facts</a> while your account is active.
-              </span>
-            </p>
-            <a className="rs-btn" href={api.exportUrl} download>
-              <Glyph name="download" />
-              Download your record (JSON)
-            </a>
-          </div>
-        </section>
+        <Anchor section="signing-in"><SignOutCard /></Anchor>
+        <Anchor section="data">
+          <section className="card" aria-labelledby="data-heading">
+            <h2 id="data-heading">Your data</h2>
+            <div className="rs-setting">
+              <p className="rs-setting__text">
+                <strong>Everything</strong>
+                <span>
+                  Your record and your files together, as a ZIP archive. It holds up to 128 files and 100 MiB of
+                  data.
+                </span>
+              </p>
+              <a className="rs-btn" href={api.exportArchiveUrl} download>
+                <Glyph name="download" />
+                Download your record and files (ZIP)
+              </a>
+            </div>
+            <div className="rs-setting">
+              <p className="rs-setting__text">
+                <strong>Your record only</strong>
+                <span>
+                  One JSON file. For a larger record, download this and the individual files from{" "}
+                  <a href={href.facts}>Facts</a> while your account is active.
+                </span>
+              </p>
+              <a className="rs-btn" href={api.exportUrl} download>
+                <Glyph name="download" />
+                Download your record (JSON)
+              </a>
+            </div>
+          </section>
+        </Anchor>
         <DeleteAccount />
       </div>
     </>
+  );
+}
+
+/**
+ * Where a section's own address lands: the menu's links open Account at a section, and the shell
+ * scrolls to this and focuses it.
+ */
+function Anchor({ section, children }: { section: AccountSection; children: ReactNode }) {
+  return (
+    <div id={ACCOUNT_ANCHORS[section]} tabIndex={-1}>
+      {children}
+    </div>
   );
 }
 

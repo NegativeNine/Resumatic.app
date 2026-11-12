@@ -49,6 +49,8 @@ if (!browser?.startsWith("/")) {
     if (path === "/api/me") return state.signedIn ? send(res, 200, me) : send(res, 401, { error: "unauthenticated", message: "sign in" });
     if (!state.signedIn) return send(res, 401, { error: "unauthenticated" });
     if (path === "/api/profile" && req.method === "GET") return send(res, 200, me.profile);
+    // The header's counts: nothing waits in this stand-in.
+    if (path === "/api/v2/today" && req.method === "GET") return send(res, 200, { waiting: [], working: [], recent: [], counts: { today: 0, facts: 0, jobs: 0, sharing: 0 }, since: 0 });
     if (path === "/api/v2/profile" && req.method === "PUT") {
       const body = JSON.parse((await read(req)).toString("utf8"));
       state.profileRequests ??= [];
@@ -309,7 +311,7 @@ if (!browser?.startsWith("/")) {
     const sourceRow = `[...document.querySelectorAll('.rs-sources .rs-source')].find(e => e.querySelector('.rs-source__name')?.textContent.trim() === 'synthetic.pdf')`;
     const sourceStatus = `[...(${sourceRow}?.querySelector('.rs-source__meta')?.children ?? [])].map(e => e.textContent.trim()).join(' · ')`;
     await call("Page.enable"); await call("Runtime.enable"); await call("Fetch.enable", { patterns: [{ urlPattern: "*" }] }); await call("Page.navigate", { url: origin });
-    stage = "sign_in"; await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Sign in with Google')`); await clickText("a", "Sign in with Google"); await wait(`document.querySelector('nav a[aria-current="page"]')?.textContent.trim() === 'Facts' && !!document.querySelector('input[type=file]')`);
+    stage = "sign_in"; await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Sign in with Google')`); await clickText("a", "Sign in with Google"); await wait(`document.querySelector('nav a[aria-current="page"]')?.textContent.trim() === 'Facts' && document.querySelector('.app-tabs a[aria-current="page"]')?.textContent.trim() === 'To check' && !!document.querySelector('input[type=file]')`);
     stage = "upload_retry"; const root = await call("DOM.getDocument"); const input = await call("DOM.querySelector", { nodeId: root.root.nodeId, selector: "input[type=file]" }); await call("DOM.setFileInputFiles", { nodeId: input.nodeId, files: [file] }); await wait(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Retry upload')`); await clickText("button", "Retry upload"); await wait(`document.body?.innerText.includes('Built 12 payment services')`); if (state.uploadKeys.length !== 2 || state.uploadKeys[0] !== state.uploadKeys[1]) throw new Error("UPLOAD_RETRY_KEY_MISMATCH");
     stage = "ocr_download_links"; await wait(`!![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download image inputs (JSON)' && x.getAttribute('href') === '/api/sources/source-ocr/file') && !![...document.querySelectorAll('a')].find(x => x.textContent.trim() === 'Download original PDF' && x.getAttribute('href') === '/api/sources/source-1/file')`);
     stage = "source_role_only";
@@ -673,7 +675,10 @@ if (!browser?.startsWith("/")) {
     await wait(`document.body?.innerText.includes("Cancellation is pending")`);
     if (!state.resumeCancel) throw new Error("RESUME_CANCEL_NOT_SENT");
     stage = "export_disclosure";
-    await clickText("nav a", "Account");
+    // Account opens from the menu under the person's name.
+    await evalPage(`document.querySelector('button.rs-who').click()`);
+    await wait(`!!document.querySelector('.app-menu:not([hidden])')`);
+    await clickText(".app-menu a", "Your data");
     await wait(`document.body?.innerText.includes('up to 128 files and 100 MiB')`);
     stage = "profile_submission_lock";
     await evalPage(`(() => { const e = document.querySelector('input[autocomplete="name"]'); e.focus(); e.setSelectionRange(e.value.length, e.value.length); })()`);
@@ -714,7 +719,7 @@ if (!browser?.startsWith("/")) {
     await wait(`document.body?.innerText.includes('This link is currently unavailable.')`);
     if (!await evalPage(`!![...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Revoke link')`)) throw new Error("SHARE_REVOKE_MISSING");
     if (!await evalPage(`!!document.querySelector('a[href="/api/export/archive"]')`)) throw new Error("ARCHIVE_LINK_MISSING");
-    if (!await evalPage(`!!document.querySelector('a[href="/api/export"]') && [...document.querySelectorAll('a[href="#/facts"]')].some(x => x.textContent.includes('Facts'))`)) throw new Error("EXPORT_DOWNLOAD_LINKS_MISSING");
+    if (!await evalPage(`!!document.querySelector('a[href="/api/export"]') && [...document.querySelectorAll('a[href="#/facts/check"]')].some(x => x.textContent.includes('Facts'))`)) throw new Error("EXPORT_DOWNLOAD_LINKS_MISSING");
     stage = "resource_reload";
     if (!await evalPage(`import('/test/support/resource-browser.tsx').then(m => m.checkResourceReload())`)) throw new Error("RESOURCE_RELOAD_DID_NOT_SETTLE");
     stage = "share_retry";
