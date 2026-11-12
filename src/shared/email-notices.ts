@@ -77,7 +77,7 @@ export function noticeMessage(kind: NoticeKind, origin: string): { subject: stri
     case "reminder":
       return {
         subject: "Facts are waiting for your review in Resumatic",
-        text: `Some facts read from your uploads have been waiting for your review for 3 days or more.\n\nSign in to review them: ${origin}/\n\n${FOOTER}`,
+        text: `Some facts Resumatic read for you have been waiting for your review for 3 days or more.\n\nSign in to review them: ${origin}/\n\n${FOOTER}`,
       };
   }
 }

@@ -38,7 +38,7 @@ describe("what an email notice is made of", () => {
     });
     expect(noticeMessage("reminder", ORIGIN)).toEqual({
       subject: "Facts are waiting for your review in Resumatic",
-      text: `Some facts read from your uploads have been waiting for your review for 3 days or more.\n\nSign in to review them: ${ORIGIN}/\n\n${FOOTER}`,
+      text: `Some facts Resumatic read for you have been waiting for your review for 3 days or more.\n\nSign in to review them: ${ORIGIN}/\n\n${FOOTER}`,
     });
     // The origin is the only thing that varies.
     for (const kind of NOTICE_KINDS) {

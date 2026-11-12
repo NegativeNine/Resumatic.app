@@ -67,6 +67,20 @@ describe("the privacy notice", () => {
     expect(section("Your choices")).toContain("cancels a paid plan, ends every shared copy and app connection");
   });
 
+  it("says pasted text is kept, stored, read and exported as an upload is", () => {
+    render(<LegalPage doc="privacy" />);
+    expect(section("What we keep")).toContain(
+      "The files you upload or text you paste, the text read from them, and the roles and facts found in that text, each with the words it came from.",
+    );
+    expect(section("Where it is kept")).toContain("Your uploads, the text you paste and downloaded PDFs are stored with it in Cloudflare R2.");
+    const ai = section("How AI is used");
+    expect(ai).toContain("find facts in your uploads and the text you paste, read job descriptions");
+    expect(ai).toContain("each one receives only the text its step needs: your upload’s text or the text you pasted, a job description, or the facts chosen for one resume or document.");
+    const choices = section("Your choices");
+    expect(choices).toContain("Take it with you: the data export under Account downloads everything in your account, with links to your original uploads and the text you pasted.");
+    expect(choices).toContain("erases your database, uploads, pasted text, PDFs and directory entry.");
+  });
+
   it("says who reads a coach's comments, where they are kept and where they never go", () => {
     render(<LegalPage doc="privacy" />);
     const items = (title: string) => [...screen.getByRole("heading", { level: 2, name: title }).closest("section")!.querySelectorAll("li")].map((item) => item.textContent!.replace(/\s+/g, " ").trim());

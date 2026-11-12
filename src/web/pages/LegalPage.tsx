@@ -64,8 +64,8 @@ function Privacy() {
             connected app or an AI model, and nothing uses them yet.
           </li>
           <li>
-            The files you upload, the text read from them, and the roles and facts found in that text, each with the
-            words it came from.
+            The files you upload or text you paste, the text read from them, and the roles and facts found in that
+            text, each with the words it came from.
           </li>
           <li>
             Facts and roles you add or edit, and your answers to interview questions, which are saved as facts.
@@ -108,8 +108,8 @@ function Privacy() {
       <Section title="Where it is kept">
         <p>
           Your career data lives in a database of its own, separate from every other user’s, on Cloudflare. It is
-          created in a Cloudflare region near where you first sign in. Your uploads and downloaded PDFs are stored
-          with it in Cloudflare R2. A separate directory holds only your email address, your sign-in ID, the ID of
+          created in a Cloudflare region near where you first sign in. Your uploads, the text you paste and
+          downloaded PDFs are stored with it in Cloudflare R2. A separate directory holds only your email address, your sign-in ID, the ID of
           your database and, if you have a paid plan, the Stripe IDs and billing period that tie payments to your
           account. If you connect an app, the credentials it uses are kept in a separate Cloudflare store until they
           expire or you revoke them. The beta does not yet guarantee that data stays in your country.
@@ -118,12 +118,13 @@ function Privacy() {
       <Section title="How AI is used">
         <p>
           Cloudflare Workers AI turns your uploads into text and indexes your facts. Language models from providers
-          such as Anthropic and OpenAI find facts in your uploads, read job descriptions, write resume lines, cover
-          letters and interview preparation, and check each line against your facts. They are reached through
-          Cloudflare AI Gateway with request logging turned off, and each one receives only the text its step needs:
-          your upload’s text, a job description, or the facts chosen for one resume or document. Lines are checked
-          against your confirmed facts, and a line those facts do not support is never shown to you. Comments on a
-          shared copy are never sent to a language model or used to write or check a resume.
+          such as Anthropic and OpenAI find facts in your uploads and the text you paste, read job descriptions, write
+          resume lines, cover letters and interview preparation, and check each line against your facts. They are
+          reached through Cloudflare AI Gateway with request logging turned off, and each one receives only the text
+          its step needs: your upload’s text or the text you pasted, a job description, or the facts chosen for one
+          resume or document. Lines are checked against your confirmed facts, and a line those facts do not support is
+          never shown to you. Comments on a shared copy are never sent to a language model or used to write or check a
+          resume.
         </p>
         <p>
           Wording a coach suggests is sent to a model only if you accept it, to be checked against your facts like any
@@ -229,11 +230,11 @@ function Privacy() {
           </li>
           <li>
             <strong>Take it with you:</strong> the data export under Account downloads everything in your account, with
-            links to your original uploads.
+            links to your original uploads and the text you pasted.
           </li>
           <li>
             <strong>Delete it:</strong> deleting your account under Account stops any work in progress, cancels a paid
-            plan, ends every shared copy and app connection, and erases your database, uploads, PDFs and directory
+            plan, ends every shared copy and app connection, and erases your database, uploads, pasted text, PDFs and directory
             entry. A final sweep of stored files runs within an hour.
           </li>
         </ul>

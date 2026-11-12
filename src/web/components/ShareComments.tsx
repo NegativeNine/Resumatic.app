@@ -198,12 +198,16 @@ export function CoachComments({
     setSuggesting(false);
   }, [chosen]);
 
+  // Whether this deployment sends email notices, so the form says what the owner may be told.
+  // The owner's own choice can't be known here. Not knowing reads as no email.
+  const [emailing, setEmailing] = useState(false);
   const load = useCallback(async () => {
     try {
-      const found = await api.coachComments(grantId);
+      const [found, me] = await Promise.all([api.coachComments(grantId), api.me().catch(() => null)]);
       if (!mounted.current) return;
       // A reply that isn't a list of threads is a failed load, not an empty one.
       if (!Array.isArray(found?.threads)) throw new ApiError(502, "unavailable", "The response was incomplete.");
+      setEmailing(me?.capabilities?.emailNotices === true);
       setThreads(found.threads);
       setLoadFailed(false);
     } catch (e) {
@@ -324,7 +328,7 @@ export function CoachComments({
           label={kind ? `Comment on the selected ${kind}` : "Comment on a line or a fact"}
           hint={
             kind
-              ? `${reader} will see this the next time they open Resumatic. Resumatic doesn’t send email. They keep your comments, with your name and sign-in address, until they delete them.`
+              ? `${reader} will see this the next time they open Resumatic. ${emailing ? "They may also get an email saying there’s something new. It never holds your words." : "Resumatic doesn’t send email."} They keep your comments, with your name and sign-in address, until they delete them.`
               : "Choose a line or a fact on the copy to comment on it."
           }
         >
@@ -545,7 +549,7 @@ function OwnerThread({
             <Field
               id={`${id}-reply`}
               label={`Reply to ${coach}`}
-              hint={`${coach} sees your reply when they next open this copy. Resumatic doesn’t send email.`}
+              hint={`${coach} sees your reply when they next open this copy. Resumatic doesn’t email coaches.`}
             >
               <textarea
                 id={`${id}-reply`}

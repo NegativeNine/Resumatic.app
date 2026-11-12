@@ -185,6 +185,31 @@ describe("a coach commenting on a client's copy", () => {
     expect(box()).toHaveAccessibleDescription(/^The owner of this copy will see this the next time they open Resumatic\./);
   });
 
+  it("says the owner may get an email only where Resumatic sends them, and that it never holds the coach's words", async () => {
+    const KEEP = "They keep your comments, with your name and sign-in address, until they delete them\\. 0 of 1,000 characters$";
+    const withEmail = fixtures();
+    withEmail.me.capabilities = { ocr: false, connectedApps: false, emailNotices: true };
+    const sending = open(joined(), withEmail);
+    await screen.findByText("No comments yet.");
+    await userEvent.click(screen.getByRole("button", { name: LED_LINE }));
+    expect(box()).toHaveAccessibleDescription(
+      new RegExp(`^Sam Rivera will see this the next time they open Resumatic\\. They may also get an email saying there’s something new\\. It never holds your words\\. ${KEEP}`),
+    );
+    sending.page.unmount();
+
+    // Email off, or no answer on whether it is on: no email is promised.
+    const withoutEmail = fixtures();
+    withoutEmail.me.capabilities = { ocr: false, connectedApps: false, emailNotices: false };
+    for (const [state, broken] of [[withoutEmail, false], [fixtures(), true]] as const) {
+      const quiet = open(joined(), state);
+      if (broken) quiet.api.fail("GET", /^\/api\/me$/, 503, "unavailable", "busy");
+      await screen.findByText("No comments yet.");
+      await userEvent.click(screen.getByRole("button", { name: LED_LINE }));
+      expect(box()).toHaveAccessibleDescription(new RegExp(`^Sam Rivera will see this the next time they open Resumatic\\. Resumatic doesn’t send email\\. ${KEEP}`));
+      quiet.page.unmount();
+    }
+  });
+
   it("never shows the owner's reply under “You”, whatever name the owner chose", async () => {
     const threads: CommentThread[] = [
       { target: onLine, quote: LED_LINE, comments: [comment("c1", "coach", "Lead with what it saved."), comment("c2", "owner", "It saved two days a release.")] },
@@ -697,7 +722,7 @@ describe("an owner reading what their coach wrote", () => {
     const api = installFakeApi(state);
     renderWithSession(<OwnerComments />, state.me);
     const reply = await screen.findByRole("textbox", { name: "Reply to Dana O." });
-    expect(reply).toHaveAccessibleDescription(/^Dana O\. sees your reply when they next open this copy\. Resumatic doesn’t send email\. 0 of 1,000 characters$/);
+    expect(reply).toHaveAccessibleDescription(/^Dana O\. sees your reply when they next open this copy\. Resumatic doesn’t email coaches\. 0 of 1,000 characters$/);
     expect(within(card()).getByRole("button", { name: "Reply" })).toBeDisabled();
     await userEvent.type(reply, "  I will, in the first line.  ");
     await userEvent.click(within(card()).getByRole("button", { name: "Reply" }));
