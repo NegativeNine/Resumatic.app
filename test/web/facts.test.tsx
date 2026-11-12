@@ -114,6 +114,26 @@ describe("the keyboard queue", () => {
     expect(reviewCalls(api)[0]).toMatchObject({ confirm: [], reject: ["role-northwind"] });
   });
 
+  it("leaves the keys to an open question: Y on “Yes, leave out 4” doesn’t say the role is right", async () => {
+    const api = await openFacts();
+    const role = screen.getByRole("heading", { name: "Northwind Logistics" }).closest<HTMLElement>("[data-queue-item]")!;
+    role.focus();
+    await userEvent.keyboard("l");
+    const well = screen.getByRole("group", { name: "Leave out Northwind Logistics" });
+    const yes = within(well).getByRole("button", { name: "Yes, leave out 4" });
+    expect(yes).toHaveFocus();
+    await userEvent.keyboard("yflj");
+    expect(reviewCalls(api)).toHaveLength(0);
+    // F opened no editor, L asked nothing new, and J moved nowhere.
+    expect(role.querySelector("form")).toBeNull();
+    expect(screen.getByRole("group", { name: "Leave out Northwind Logistics" })).toBeInTheDocument();
+    expect(yes).toHaveFocus();
+    // The question's own buttons still answer it.
+    await userEvent.click(yes);
+    await waitFor(() => expect(reviewCalls(api)).toHaveLength(1));
+    expect(reviewCalls(api)[0]).toMatchObject({ confirm: [], reject: ["role-northwind"] });
+  });
+
   it("returns focus to Leave it out when the question is cancelled", async () => {
     await openFacts();
     const head = () => screen.getByRole("heading", { name: "Northwind Logistics" }).closest<HTMLElement>("[data-queue-item]")!.querySelector<HTMLElement>(".rs-role__head")!;
@@ -274,6 +294,19 @@ describe("marking a fact sensitive", () => {
     expect(within(fact()).queryByText("Sensitive", { selector: ".rs-mark" })).toBeNull();
     expect(within(fact()).queryByText(HINT)).toBeNull();
     expect(screen.queryByRole("group", { name: "Unmark this fact" })).toBeNull();
+  });
+
+  it("leaves the keys to the question: Y on “Yes, unmark it” neither unmarks nor confirms the fact", async () => {
+    const api = await openFacts(withMarked());
+    await userEvent.click(within(factItem(MIGRATION)).getByRole("button", { name: "Unmark sensitive" }));
+    const yes = screen.getByRole("button", { name: "Yes, unmark it" });
+    expect(yes).toHaveFocus();
+    await userEvent.keyboard("yflk");
+    expect(reviewCalls(api)).toHaveLength(0);
+    expect(sensitiveCalls(api)).toHaveLength(0);
+    expect(screen.queryByLabelText("Fact", { selector: "textarea" })).toBeNull();
+    expect(screen.getByRole("group", { name: "Unmark this fact" })).toBeInTheDocument();
+    expect(yes).toHaveFocus();
   });
 
   it("sends the copies shown together as one request, each with its revision", async () => {

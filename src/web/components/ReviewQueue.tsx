@@ -36,12 +36,23 @@ function isTyping(target: EventTarget): boolean {
 }
 
 /**
+ * A question an item asks before acting ("Leave out …?", "Unmark this fact") answers only to its own
+ * buttons. Its Yes button takes focus, and a Y pressed there means yes to the question, never
+ * "That's right" to the item.
+ */
+function inQuestion(target: EventTarget, queue: HTMLElement | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const question = target.closest(".rs-well");
+  return question !== null && queue !== null && queue.contains(question);
+}
+
+/**
  * The review queue: roles and facts in page order, one of them active. While focus is inside the
  * queue, Y says that's right (confirms), F fixes (edits) and L leaves out (rejects) the active
  * item, and J and K move to the next and previous item. The keys work only with focus inside,
- * never in a field, with Ctrl, Meta or Alt held, or on key repeat, which keeps them clear of
- * speech input and typing elsewhere on the page (WCAG 2.1.4); the buttons stay the main way to
- * review.
+ * never in a field or an open question, with Ctrl, Meta or Alt held, or on key repeat, which keeps
+ * them clear of speech input and typing elsewhere on the page (WCAG 2.1.4); the buttons stay the
+ * main way to review.
  */
 export function ReviewQueue({ children }: { children: ReactNode }) {
   const container = useRef<HTMLDivElement>(null);
@@ -76,6 +87,7 @@ export function ReviewQueue({ children }: { children: ReactNode }) {
 
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.repeat || isTyping(e.target)) return;
+    if (inQuestion(e.target, container.current)) return;
     const key = e.key.toLowerCase();
     if (!KEYS.has(key)) return;
     // The focused item is the active one, even if its focus hasn't re-rendered the queue yet.

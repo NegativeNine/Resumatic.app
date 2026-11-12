@@ -128,6 +128,7 @@ HTML pages and emails always reach a person.
 | `src/vault/vault.ts:3514` | conflict | the review skill is missing | That skill can’t be found in this version. Refresh the resume, then try again. | jobs |
 | `src/vault/vault.ts:4172` | invalid | select confirmed facts from your vault | Choose confirmed facts from your record. | sharing/account |
 | `src/vault/vault.ts:4201` | invalid | select finished cover letters or interview preparation from your vault | Choose finished cover letters or interview preparation from your record. | sharing/account |
+| `src/vault/vault.ts:4410` | conflict | A fact this resume cites has changed or is no longer in use, or the version is still being reviewed, so this wording can't be checked. Tailor a new version or finish the review, then accept again. | A fact this resume uses has changed or is no longer in use, or the version is still being checked line by line, so this wording can’t be checked. Tailor a new version or finish checking it, then accept again. | sharing/account |
 | `src/vault/vault.ts:4561` | not_found | no such application | This job can’t be found. It may have been deleted. | jobs |
 | `src/vault/vault.ts:4566` | conflict | the application changed; refresh and try again | This job changed. Refresh the page, then try again. | jobs |
 | `src/vault/vault.ts:4571` | invalid | enter the posting's web address, starting with https:// | Enter the job’s web address, starting with https://. | jobs |
@@ -201,21 +202,38 @@ HTML pages and emails always reach a person.
 
 ## 4. Not shown to people, and why
 
-Of the 208 `AppError` messages that use an earlier term, 57 are in the table above. The rest, by why a person never reads them:
+**How this was counted.** Every `new AppError(code, message)` call site at 78502c9 in `src/worker`, `src/vault`, `src/shared`, `src/workflows`, `src/pipeline` and `src/ai`, tests left out: 814 sites. A site's message is read from its literal, or from the constant it names (both branches where it chooses between two); values interpolated into it are not read. A site is a candidate when its message holds one of the terms above as a whole word, taking “document”, “upload” and “review” in any sense: 217 sites. Two more sites, `src/vault/vault.ts:1201` and `1222`, throw a sentence looked up from `KIT_PROBLEMS`; they are listed under messages held in constants and are not in these counts.
 
-| Category | Count | Why |
-| --- | --- | --- |
-| 5xx | 46 | A 503 shows the client's fallback (“Resumatic is busy right now…”), never the server's words. |
-| sign-out codes | 3 | A 410 under `/api` signs the person out with the session note; a 401 does the same. |
-| internal guard | 34 | A check on the server's own state or on a request the web app never sends: an upload's reserved key, digest or path, a store's own limits, a vault that isn't the caller's, a deletion step out of order, an idempotency key reused with other input. |
-| workflow detail | 16 | Thrown inside a Workflow step. `SAFE_DETAILS` doesn't list it, so the run stores `GENERIC_DETAIL` instead. |
-| transfer | 8 | Fenced vault replacement (`VaultOperations`, `finishImport`), run by an operator. |
-| maintenance | 5 | Maintenance routes, fleet re-embedding and the maintenance fence. |
-| admin | 1 | The pilot's identity probe, an operator tool. |
-| MCP run() replacement | 2 | A connected app's tool call: `run` in `src/worker/mcp.ts` turns every failure into one of two fixed sentences. |
-| OAuthError descriptions | 1 | Sent to the connecting app during OAuth, not shown by Resumatic. The four `OAuthError` descriptions in `src/worker/mcp.ts` use no earlier word. |
-| replaced by caller words | 1 | The posting reader's `invalid` is replaced by the words `JobsPage` passes. |
-| (no earlier word in this sense) | 34 | The term appears only in another sense: “upload” or “review” as a verb, or “document” for a letter or interview preparation. |
-| `renderResumeHtml` | 1 | The resume itself (`src/render/template.ts`), printed from the person's own words: not interface words. |
+The 217 candidates, each counted once:
 
-The quota sentence for tailoring (`src/vault/vault.ts:3280`) counts “tailored resumes”, which isn't on the list of terms; the client replaces it with `quotaMessage` (`src/web/tailor.ts`), which stage 1 changed to documents.
+| Where | Sites |
+| --- | --- |
+| The `AppError` table above | 58 |
+| The throw sites of the constants table (`src/vault/vault.ts:1010, 1122, 1138, 1142, 1143, 1197, 1218, 1378`, `src/worker/routes.ts:1512`) | 9 |
+| The term in another sense only (below) | 29 |
+| Never shown to a person (below) | 121 |
+| **Total** | **217** |
+
+**The term in another sense only (29).** “Upload” as a verb or an adjective, “review” as a verb or as an operator's review, and “document” for a cover letter or interview preparation, which is the new word's own sense: `src/worker/routes.ts:668, 672, 1316`; `src/vault/checkout.ts:157`; `src/vault/document-shares.ts:34`; `src/vault/legacy-remediation.ts:103`; `src/vault/shares.ts:116`; `src/vault/snapshots.ts:113`; `src/vault/vault.ts:1396, 2718, 2900, 3169, 3273, 3389, 3429, 3471, 3509, 3544, 3595, 3633, 3671, 4666, 4777, 5107, 6067`; `src/workflows/distill.ts:69, 137`; `src/pipeline/distill.ts:30`; `src/pipeline/extract/verify.ts:242`.
+
+**Never shown to a person (121),** by why:
+
+| Category | Count | Why | Sites |
+| --- | --- | --- | --- |
+| 5xx | 48 | A 503 shows the client's fallback (“Resumatic is busy right now…”), never the server's words. | `src/worker/billing.ts:343, 408, 575, 582, 599, 606, 619, 622, 631, 668`; `src/worker/deletion-fences.ts:55`; `src/worker/routes.ts:357, 836, 1030, 1214`; `src/vault/checkout.ts:48, 89, 94, 145, 221`; `src/vault/vault.ts:447, 475, 646, 821, 1587, 1593, 5161, 5174, 5178, 5578, 5593, 5622, 5637, 5646, 5920, 5926, 5928, 5932, 5962, 5971, 5974, 5986, 6219, 6607, 6609, 6614, 6617`; `src/pipeline/card.ts:43` |
+| internal guard | 37 | A check on the server's own state or on a request the web app never sends: an upload's reserved key, digest or path, a store's own limits, a vault that isn't the caller's, a deletion step out of order, an idempotency key reused with other input, image reading for a file that isn't a PDF (`SourceList` offers it only for one). | `src/worker/routes.ts:662, 783, 1314, 2065`; `src/worker/shares.ts:40`; `src/vault/snapshots.ts:453`; `src/vault/uploads.ts:85, 115, 180, 193, 208, 246, 285, 322, 334, 366`; `src/vault/vault.ts:343, 419, 468, 496, 543, 598, 604, 637, 1516, 1522, 1524, 1535, 1565, 1663, 1667, 3253, 5727, 6242, 6243, 6310`; `src/shared/billing.ts:91` |
+| workflow detail | 15 | Thrown inside a Workflow step. `SAFE_DETAILS` doesn't list it, so the run stores `GENERIC_DETAIL` instead. | `src/vault/tailor-publication.ts:21, 38`; `src/vault/vault.ts:2020, 2128, 2192, 2320, 2436, 2452, 2453, 2457, 2476, 2481, 3736`; `src/pipeline/documents.ts:168, 326` |
+| transfer | 8 | Fenced vault replacement (`VaultOperations`, `finishImport`), run by an operator. | `src/vault/operations.ts:163, 168, 190, 341, 436, 714`; `src/vault/vault.ts:5554, 5588` |
+| maintenance | 5 | Maintenance routes, fleet re-embedding and the maintenance fence. | `src/worker/maintenance.ts:32`; `src/vault/operations.ts:539, 721`; `src/shared/operations.ts:114`; `src/workflows/fleet.ts:70` |
+| sign-out codes | 3 | A 410 under `/api` signs the person out with the session note; a 401 does the same. | `src/vault/vault.ts:412, 5424, 5706` |
+| connected apps | 3 | A connected app's call: `run` in `src/worker/mcp.ts` turns every tool failure into one of two fixed sentences, and the token exchange answers with its own `OAuthError`. The grant the consent page builds is checked again in the vault. | `src/vault/mcp-grants.ts:76, 113`; `src/vault/vault.ts:4037` |
+| admin | 1 | The pilot's identity probe, an operator tool. | `src/worker/pilot/ledger.ts:83` |
+| replaced by caller words | 1 | The posting reader's `invalid` is replaced by the words `JobsPage` passes. | `src/worker/postings.ts:34` |
+
+48 + 37 + 15 + 8 + 5 + 3 + 3 + 1 + 1 = 121.
+
+**Outside these counts.** They are not `AppError` messages:
+
+- The four `OAuthError` descriptions in `src/worker/mcp.ts` (:192, :205, :208, :215) go to the connecting app during OAuth and are not shown by Resumatic. None uses an earlier word.
+- `renderResumeHtml` (`src/render/template.ts`) prints the resume itself from the person's own words. Its earlier words (“vault”, and “gap” as a CSS property) are in a code comment and its styles, never in its text.
+- The quota sentence for tailoring (`src/vault/vault.ts:3280`) counts “tailored resumes”, which isn't on the list of terms (its only “quota” is the interpolated `quota.limit`); the client replaces it with `quotaMessage` (`src/web/tailor.ts`), which stage 1 changed to documents.
