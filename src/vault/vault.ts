@@ -1687,12 +1687,12 @@ export class Vault extends DurableObject<Env> {
     if (counts.queued >= MAX_QUEUED_SOURCES)
       throw new AppError(
         "conflict",
-        "Resumatic is still reading your other sources. Wait for one to finish, then upload this file.",
+        "Resumatic is still reading your other files. Wait for one to finish, then upload this file.",
       );
     if (counts.total >= MAX_SOURCES)
       throw new AppError(
         "quota",
-        `You can keep up to ${MAX_SOURCES} sources during the beta. Email support@resumatic.app if you need more.`,
+        `You can keep up to ${MAX_SOURCES} files during the beta. Email support@resumatic.app if you need more.`,
       );
     const id = crypto.randomUUID();
     const extractor = this.extractionStrategy(s.origin, s.filename);
@@ -1911,7 +1911,7 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     const source = this.sourceRow(sourceId);
     if (source.markdown === null)
-      throw new AppError("conflict", "this source has not been read yet");
+      throw new AppError("conflict", "This file hasn't been read yet. Wait for it to finish, then try again.");
     return {
       markdown: source.markdown,
       revisionId: `${sourceId}:1`,
@@ -1923,7 +1923,7 @@ export class Vault extends DurableObject<Env> {
     this.requireOpen();
     const row = this.sourceRow(sourceId);
     if (row.markdown === null)
-      throw new AppError("invalid", "source has not been converted yet");
+      throw new AppError("invalid", "This file hasn't been read yet. Wait for it to finish, then try again.");
     return row.markdown;
   }
 
@@ -6415,7 +6415,7 @@ export class Vault extends DurableObject<Env> {
     }
     const source = this.sourceRow(run.targetId);
     if (source.run_id !== id)
-      throw new AppError("conflict", "this source already has a newer run");
+      throw new AppError("conflict", "This file is already being read again.");
     if (reselect && this.sql.exec(
       `SELECT 1 FROM extraction_commits WHERE source_id=?
        UNION ALL SELECT 1 FROM roles WHERE source_id=?
@@ -6425,7 +6425,7 @@ export class Vault extends DurableObject<Env> {
     ).toArray().length)
       // Legacy extractions may predate extraction_commits; their rows still
       // bind the source to the old extractor and must not be replaced.
-      throw new AppError("conflict", "extraction is already committed for this source");
+      throw new AppError("conflict", "This file has already been read.");
     const extractor = reselect ? this.extractionStrategy(source.origin, source.filename) : source.extractor;
     if (reselect && extractor !== expectedExtractor)
       throw new AppError("unavailable", "extraction configuration is not consistent");
@@ -6436,7 +6436,7 @@ export class Vault extends DurableObject<Env> {
         )
         .one().n >= MAX_QUEUED_SOURCES
     )
-      throw new AppError("conflict", "wait for other uploads to finish");
+      throw new AppError("conflict", "Wait for your other files to finish reading, then try again.");
     const next = crypto.randomUUID();
     this.runs.begin(
       {
@@ -6971,7 +6971,7 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     const source = this.sourceRow(sourceId);
     if (source.state !== "queued" || !source.run_id)
-      throw new AppError("conflict", "this source is no longer being read");
+      throw new AppError("conflict", "This file is no longer being read.");
     // A retry can use a different run ID; only cancel the current reading run.
     this.workflowRun(source.run_id, "distill", sourceId);
     await this.cancelRun(who, source.run_id);
@@ -7006,7 +7006,7 @@ export class Vault extends DurableObject<Env> {
     const row = this.sql
       .exec<SourceRow>(`SELECT * FROM sources WHERE id = ?`, id)
       .toArray()[0];
-    if (!row) throw new AppError("not_found", "no such source");
+    if (!row) throw new AppError("not_found", "This file can't be found. It may have been deleted.");
     return row;
   }
 
@@ -7067,7 +7067,7 @@ export class Vault extends DurableObject<Env> {
       .toArray()[0];
     if (!role) throw new AppError("not_found", "no such role");
     if (role.state === "rejected")
-      throw new AppError("invalid", "That role was rejected. Choose another role for this fact.");
+      throw new AppError("invalid", "That role was left out. Choose another role for this fact.");
   }
 
   /**

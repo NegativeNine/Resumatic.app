@@ -515,7 +515,7 @@ export class FakeApi {
       /^\/api\/sources\/([^/]+)\/text$/,
       (_call, [sourceId]) => {
         const markdown = this.state.sourceTexts?.[sourceId];
-        if (markdown === undefined) return conflict("this source has not been read yet");
+        if (markdown === undefined) return conflict("This file hasn't been read yet. Wait for it to finish, then try again.");
         const origin = this.state.sources.find((s) => s.id === sourceId)?.origin ?? "upload";
         return ok({ markdown, revisionId: `${sourceId}:1`, origin });
       },

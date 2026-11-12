@@ -11,6 +11,8 @@ const EARLIER: Readonly<Record<string, string>> = {
   "We couldn't finish reading this file. Please try again later.": NOT_FINISHED,
   "Reading is temporarily unavailable. Please try again later.": "Reading isn’t available right now. Try again in a few minutes.",
   "Could not start this request. Please try again.": "Reading couldn’t be started. Try again.",
+  // Stored by runs before stage 4 of the redesign, which named the person's file a source.
+  "The import source changed. Upload it again.": "The file changed while it was being read. Upload it again.",
 };
 
 /** Why a source failed, as sentences in the interface's voice. */

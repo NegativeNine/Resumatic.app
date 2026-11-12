@@ -96,7 +96,7 @@ export class UploadStore {
         if (previous.state === "expired")
           throw new AppError(
             "conflict",
-            input.origin === "paste" ? PASTE_EXPIRED : "this upload expired; start a new upload",
+            input.origin === "paste" ? PASTE_EXPIRED : "This file wasn't added. Upload it again.",
           );
         return { intent: previous, replay: true };
       }
@@ -123,7 +123,7 @@ export class UploadStore {
           .exec(`SELECT id FROM sources WHERE id = ?`, input.parentSourceId)
           .toArray().length
       ) {
-        throw new AppError("not_found", "no such original source");
+        throw new AppError("not_found", "The original file can't be found. It may have been deleted.");
       }
       const { total, queued } = this.sql
         .exec<{ total: number; queued: number }>(
@@ -139,13 +139,13 @@ export class UploadStore {
         throw new AppError(
           "conflict",
           input.origin === "paste"
-            ? "Resumatic is still reading your other sources. Wait for one to finish, then add this text."
-            : "Resumatic is still reading your other sources. Wait for one to finish, then upload this file.",
+            ? "Resumatic is still reading your other files. Wait for one to finish, then add this text."
+            : "Resumatic is still reading your other files. Wait for one to finish, then upload this file.",
         );
       if (total + pending >= this.options.maxSources)
         throw new AppError(
           "quota",
-          `You can keep up to ${this.options.maxSources} sources during the beta. Email support@resumatic.app if you need more.`,
+          `You can keep up to ${this.options.maxSources} files during the beta. Email support@resumatic.app if you need more.`,
         );
       const createdAt = this.now();
       this.sql.exec(
@@ -186,7 +186,7 @@ export class UploadStore {
       if (intent.state === "expired")
         throw new AppError(
           "conflict",
-          input.origin === "paste" ? PASTE_EXPIRED : "this upload expired; start a new upload",
+          input.origin === "paste" ? PASTE_EXPIRED : "This file wasn't added. Upload it again.",
         );
       const result: unknown = persist(intent);
       if (result && typeof (result as { then?: unknown }).then === "function")

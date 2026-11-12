@@ -19,6 +19,12 @@ describe("source error guidance", () => {
     expect(sourceErrorMessage("Could not start this request. Please try again.")).toBe("Reading couldn’t be started. Try again.");
   });
 
+  it("rewords the old import sentence", () => {
+    expect(sourceErrorMessage("The import source changed. Upload it again.")).toBe("The file changed while it was being read. Upload it again.");
+    // The new sentence, stored by runs from stage 4 on, is shown as it is.
+    expect(sourceErrorMessage("The file changed while it was being read. Upload it again.")).toBe("The file changed while it was being read. Upload it again.");
+  });
+
   it("keeps specific file errors, as sentences", () => {
     expect(sourceErrorMessage("No text could be read from this file.")).toBe("No text could be read from this file.");
     // Stored before messages were written as sentences.

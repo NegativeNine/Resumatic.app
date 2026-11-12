@@ -61,14 +61,14 @@ describe("reselecting a failed upload's extractor", () => {
         state.storage.sql.exec(`INSERT INTO extraction_commits(source_id,roles,facts,dropped) VALUES (?,0,0,0)`, sourceId);
         const expected = `llm:${local.MODEL_EXTRACT}`;
         await expect(instance.retryRunCurrentExtractorV1({ userId: "other", gen: 1 }, sourceId, "switch", expected)).rejects.toThrow();
-        await expect(instance.retryRunCurrentExtractorV1(who, sourceId, "switch", expected)).rejects.toThrow(/already committed/);
+        await expect(instance.retryRunCurrentExtractorV1(who, sourceId, "switch", expected)).rejects.toThrow("This file has already been read.");
         expect((await instance.retryRun(who, sourceId, "ordinary")).targetId).toBe(sourceId);
 
         // Evidence from older schemas may exist even without a commit marker.
         const legacy = await instance.addSource(who, { filename: "legacy.pdf", r2Key: `vaults/${vid}/sources/legacy` });
         await instance.saveSource(legacy.sourceId, { state: "failed" }, legacy.sourceId);
         state.storage.sql.exec(`INSERT INTO evidence(id,source_id,quote) VALUES (?,?,?)`, crypto.randomUUID(), legacy.sourceId, "synthetic legacy evidence");
-        await expect(instance.retryRunCurrentExtractorV1(who, legacy.sourceId, "switch", expected)).rejects.toThrow(/already committed/);
+        await expect(instance.retryRunCurrentExtractorV1(who, legacy.sourceId, "switch", expected)).rejects.toThrow("This file has already been read.");
       } finally { local.DISTILL = previous; }
     });
   });

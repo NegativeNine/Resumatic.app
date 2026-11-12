@@ -40,6 +40,8 @@ const SAFE_DETAILS = new Set([
   "No text could be read from this file.",
   "This file couldn't be read. Try a Word file (.docx) or a PDF with selectable text.",
   "This file is too long to read. Upload a resume of a few pages.",
+  "The file changed while it was being read. Upload it again.",
+  // Stored by runs before stage 4; EARLIER rewords it. Remove after the next release.
   "The import source changed. Upload it again.",
   "This edit couldn't be checked against the facts it cites. Change the wording or the facts, then try again.",
   "Your facts changed while this draft was being made. Create it again.",
