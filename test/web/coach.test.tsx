@@ -7,6 +7,7 @@ import { copyHeading, ShareSnapshotContent } from "../../src/web/components/Shar
 import { AccountPage } from "../../src/web/pages/AccountPage";
 import { CoachClients } from "../../src/web/pages/outside/CoachClients";
 import { CoachCopy } from "../../src/web/pages/outside/CoachCopy";
+import { VAULT_CHANGED } from "../../src/web/live";
 import { ACCOUNT_DELETED_NOTE } from "../../src/web/session";
 import { FakeApi, installFakeApi } from "./api-fake";
 import { fixtures, fullVault, sharedView } from "./fixtures";
@@ -324,6 +325,29 @@ describe("a client's copy in the app", () => {
     expect(screen.getByRole("heading", { level: 1, name: "A shared copy" })).toBeInTheDocument();
     expect(within(aside).queryByRole("textbox")).toBeNull();
     expect(ended).toEqual([]);
+  });
+
+  it("keeps the chosen line and the wording being written when the coach's own vault changes, and reads the copy only when asked", async () => {
+    const LINE = "Led the migration of 40 services from Heroku to Kubernetes";
+    const { api } = openCopy();
+    await screen.findByRole("heading", { level: 1, name: "A shared copy" });
+    const aside = within(screen.getByRole("complementary", { name: "Comments" }));
+    await aside.findByText("No comments yet.");
+    await userEvent.click(screen.getByRole("button", { name: LINE }));
+    await userEvent.click(aside.getByRole("button", { name: "Suggest wording" }));
+    const box = aside.getByRole("textbox", { name: "Suggested wording for this line" });
+    await userEvent.clear(box);
+    await userEvent.type(box, "Moved 40 services to Kubernetes");
+    // The coach's own upload or run reports a change. It says nothing about a client's copy, which
+    // is kept in the client's vault: the copy isn't read again, and its owner isn't told of another read.
+    api.fail("GET", COPY, 503, "unavailable", "the service is busy");
+    window.dispatchEvent(new Event(VAULT_CHANGED));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(api.callsTo("GET", COPY)).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 1, name: "A shared copy" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: LINE })).toHaveAttribute("aria-pressed", "true");
+    expect(aside.getByRole("textbox", { name: "Suggested wording for this line" })).toHaveValue("Moved 40 services to Kubernetes");
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   });
 
   it("shows the unlisted card when a comment finds the copy taken off the list", async () => {

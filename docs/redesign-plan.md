@@ -168,6 +168,9 @@ Where the build departs from the stage's design:
 - **In the app, a copy that is not in the list or has ended is the page itself,** so its `StateCard` is `level={1}`, as on `/share`.
 - **After a refused comment, a copy that still opens keeps the refusal in place of the threads.** `useCoachCommenting` starts over when the copy is read again, so `CoachCopy` keeps the sentence itself.
 - **The connect sign-in page's lockup is a constant in `mcp.ts`.** The Worker can't import `Lockup.tsx`, so `scripts/email-lockup.test.mjs` holds the two drawings together.
+- **A live copy whose owner gave no name is opened with "Open their copy",** described by the row's heading ("A client who didn’t give their name"), because "Open {name}’s copy" can't be made from that heading.
+- **`CoachCopy` reads the copy only when asked:** when the page opens, on Try again and after a refused comment. `useResource` also reloads when the coach's own vault reports a change, but those changes say nothing about a copy kept in the client's vault, and reading it then would tell the owner of a read nobody made and start the comments over. Every other reload answers with the last read asked for.
+- **The old `.app-clients` rules stay in `app.css`, unused,** so this stage changes that file only in its block. They can go after the merge.
 - **The empty client list closes its address with a comma** ("names your sign-in address, dana@example.test, on a copy"), so the sentence reads as English.
 
 Open questions for the owner, each built as stated:

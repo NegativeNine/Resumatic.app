@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { SharedView } from "../../../shared/sharing";
 import { api, ApiError } from "../../api";
 import { useCoachCommenting } from "../../components/outside/coach-commenting";
@@ -28,7 +28,7 @@ export function CoachCopy({ grantId }: { grantId: string }) {
    * A copy that has ended is a 409, said in the server's sentence. A 401 or a 410 is this account's
    * own session or vault, and `useResource` ends the session on it; the rest is retried.
    */
-  async function load(): Promise<CopyState> {
+  async function readCopy(): Promise<CopyState> {
     try {
       return { kind: "copy", view: await api.coachCopy(grantId) };
     } catch (e) {
@@ -37,7 +37,20 @@ export function CoachCopy({ grantId }: { grantId: string }) {
       throw e;
     }
   }
-  const copy = useResource(load);
+  /**
+   * The last read that was asked for, which every other reload answers with. `useResource` also
+   * reloads when the coach's own vault reports a change, but the copy is kept in the client's vault
+   * and is fixed, so those changes say nothing about it. Reading it then would tell its owner of a
+   * read the coach never made, could put a passing failure in place of the copy, and, as a new view,
+   * would start the comments over, losing a line chosen or wording being written. So the copy is
+   * read when the page opens, on Try again and after a refused comment, as at /share.
+   */
+  const asked = useRef<Promise<CopyState> | null>(null);
+  const copy = useResource(() => (asked.current ??= readCopy()));
+  const readAgain = () => {
+    asked.current = null;
+    return copy.reload();
+  };
   /** The comments found the copy taken off this list, as when another tab removed it. */
   const [unlisted, setUnlisted] = useState(false);
   /**
@@ -50,7 +63,7 @@ export function CoachCopy({ grantId }: { grantId: string }) {
     onUnlisted: () => setUnlisted(true),
     onEnded: (sentence) => {
       setRefused(sentence);
-      void copy.reload();
+      void readAgain();
     },
   });
 
@@ -60,7 +73,7 @@ export function CoachCopy({ grantId }: { grantId: string }) {
         Open the link from your client’s message, then choose Add to my clients.
       </StateCard>
     );
-  if (copy.error) return <ErrorNote message={copy.error} onRetry={copy.reload} />;
+  if (copy.error) return <ErrorNote message={copy.error} onRetry={readAgain} />;
   if (!copy.data) return <Loading>Opening your client’s copy…</Loading>;
   if (copy.data.kind === "ended")
     return (
