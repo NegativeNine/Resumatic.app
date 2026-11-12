@@ -1,7 +1,7 @@
 .source-evidence { margin-block: .5rem 1rem; }
 .source-context { margin-top: .5rem; }
 .source-context pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: .9rem; line-height: 1.6; max-height: 22rem; overflow: auto; padding: 1rem; background: var(--paper-sunken); border: 1px solid var(--rule); border-radius: .5rem; }
-/* Yellow means the person said it: the words a fact came from. */
-.source-context mark { color: var(--on-highlight); background: var(--highlight); padding-block: .1rem; }
+/* Green means backed: the words a fact came from. */
+.source-context mark { color: inherit; background: var(--backed-soft); padding-block: .1rem; }
 .scan-recovery { margin-top: .75rem; }
 .scan-recovery .hint { max-width: 64ch; }

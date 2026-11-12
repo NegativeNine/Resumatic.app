@@ -3,7 +3,7 @@ import { useLiveProgress } from "../live";
 import { feedbackHref } from "../config";
 import { href, type Route } from "../router";
 import { useSession } from "../session";
-import { BrandMark, Lockup } from "./Lockup";
+import { Lockup } from "./Lockup";
 import { QuotaMeter } from "./QuotaMeter";
 
 type NavItem = { to: string; label: string; pages: readonly Route["page"][] };
@@ -60,8 +60,7 @@ export function Shell({
       <header className="rs-header">
         <div className="rs-header__inner">
           <a className="rs-brand" href={href.facts} aria-label="Resumatic, go to Facts">
-            <Lockup className="app-brand-lockup" />
-            <BrandMark className="app-brand-mark" />
+            <Lockup className="app-brand-wordmark" />
           </a>
           <span className="rs-mark rs-mark--beta">Private beta</span>
           <nav className="app-nav" aria-label="Main">
@@ -76,7 +75,7 @@ export function Shell({
                   >
                     {item.label}
                     {item.to === href.account && fromCoach > 0 && (
-                      <span className="rs-mark rs-mark--new app-nav-new">
+                      <span className="rs-mark rs-mark--needs-you app-nav-new">
                         {fromCoach.toLocaleString()}
                         <span className="app-nav-new__word"> new</span>
                       </span>

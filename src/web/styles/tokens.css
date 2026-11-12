@@ -1,65 +1,66 @@
 /*
- * Resumatic design tokens: the custom properties from the design system's tokens.css.
- * The type classes live in type.css, and the @font-face rules in fonts.css.
- * Copied from the design system. Change a value there first, then here (see README.md).
+ * Resumatic design tokens: the custom properties from the design system's tokens.css
+ * (Resumatic, version 1794444170-a305). The type classes live in type.css, and the @font-face
+ * rule in fonts.css. Copied from the design system. Change a value there first, then here
+ * (see README.md).
  */
 :root, [data-theme="light"] {
   color-scheme: light;
-  --desk: #eceef1;
+  --desk: #f3f4ef;
   --paper: #ffffff;
-  --paper-sunken: #f5f6f8;
-  --paper-hover: #eef0f4;
-  --rule: #d9dce3;
-  --rule-strong: #7d8494;
-  --ink: #1b2238;
-  --ink-hover: #2b3554;
-  --ink-muted: #575e70;
+  --paper-sunken: #f5f6f2;
+  --paper-hover: #ebeee7;
+  --rule: #d9ddd4;
+  --rule-strong: #78827a;
+  --ink: #17201b;
+  --ink-muted: #56615a;
   --on-ink: #ffffff;
-  --pencil: #6b7183;
-  --ballpoint: #2c4bd6;
-  --ballpoint-soft: #e7ebff;
-  --highlight: #ffe45c;
-  --on-highlight: #1b2238;
-  --ledger: #1e6a49;
-  --ledger-soft: #e2f1e9;
-  --violet: #5f3fb3;
-  --violet-soft: #eeeafa;
+  --brand: #0c7a49;
+  --brand-hover: #09623a;
+  --on-brand: #ffffff;
+  --link: #0a6b40;
+  --backed: var(--link);
+  --backed-soft: #dff3e7;
+  --needs-you: #7a4b00;
+  --needs-you-soft: #fff0c4;
+  --needs-you-strong: #f2b01e;
+  --on-needs-you: #2a1c00;
   --danger: #b42318;
   --danger-soft: #fcebea;
   --on-danger: #ffffff;
-  --focus: var(--ballpoint);
+  --focus: var(--ink);
   --sheet: #ffffff;
   --sheet-ink: #111111;
   --sheet-ink-muted: #333333;
   --sheet-rule: #999999;
-  --shadow-paper: 0 1px 2px rgba(27, 34, 56, 0.08), 0 12px 32px rgba(27, 34, 56, 0.08);
-  --shadow-pop: 0 2px 6px rgba(27, 34, 56, 0.10), 0 20px 48px rgba(27, 34, 56, 0.16);
+  --shadow-paper: 0 1px 2px rgba(23, 32, 27, 0.08), 0 12px 32px rgba(23, 32, 27, 0.08);
+  --shadow-pop: 0 2px 6px rgba(23, 32, 27, 0.10), 0 20px 48px rgba(23, 32, 27, 0.16);
 }
 [data-theme="dark"] {
   color-scheme: dark;
-  --desk: #0f131d;
-  --paper: #171c29;
-  --paper-sunken: #131826;
-  --paper-hover: #1f2536;
-  --rule: #2a3142;
-  --rule-strong: #6b7389;
-  --ink: #e9ebf2;
-  --ink-hover: #ffffff;
-  --ink-muted: #a6acbb;
-  --on-ink: #0f131d;
-  --pencil: #8f96a8;
-  --ballpoint: #93a5ff;
-  --ballpoint-soft: #1f2753;
-  --highlight: #f4d94e;
-  --on-highlight: #1b2238;
-  --ledger: #72d1a3;
-  --ledger-soft: #15332a;
-  --violet: #bca6f6;
-  --violet-soft: #2a2344;
+  --desk: #0f1512;
+  --paper: #18201b;
+  --paper-sunken: #131a16;
+  --paper-hover: #222c26;
+  --rule: #2c3731;
+  --rule-strong: #6f7c74;
+  --ink: #e8ede9;
+  --ink-muted: #a6b1aa;
+  --on-ink: #0f1512;
+  --brand: #5fd79b;
+  --brand-hover: #82e3b2;
+  --on-brand: #0b1f15;
+  --link: #7fe0ae;
+  --backed: var(--link);
+  --backed-soft: #143024;
+  --needs-you: #f6c453;
+  --needs-you-soft: #3a2c0a;
+  --needs-you-strong: #f2b01e;
+  --on-needs-you: #2a1c00;
   --danger: #ff8b7c;
   --danger-soft: #3b1e1d;
   --on-danger: #1a0c0b;
-  --focus: var(--ballpoint);
+  --focus: var(--ink);
   --sheet: #ffffff;
   --sheet-ink: #111111;
   --sheet-ink-muted: #333333;
@@ -78,17 +79,16 @@
   --space-10: 40px;
   --space-12: 48px;
   --space-16: 64px;
-  --radius-paper: 2px;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
+  --radius-paper: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
   --radius-full: 999px;
   --layout-app: 1120px;
   --layout-reading: 44rem;
   --layout-paper: 720px;
   --layout-margin: 320px;
   --layout-rail: 300px;
-  --font-sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-quote: Newsreader, Georgia, "Times New Roman", serif;
+  --font-sans: "Atkinson Hyperlegible Next", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-paper: "Helvetica Neue", Helvetica, Arial, sans-serif;
 }

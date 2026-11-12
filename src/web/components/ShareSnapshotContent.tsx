@@ -14,7 +14,9 @@ export function ShareFrame({ children, wide }: { children: ReactNode; wide?: boo
   return (
     <div className="app-share">
       <header className="app-share__bar">
-        <Lockup className="app-share__lockup" />
+        <span className="rs-brand app-share__brand">
+          <Lockup />
+        </span>
         <span className="rs-meta">Shared copy, read only</span>
       </header>
       <main className={wide ? "app-share__main app-share__main--comments" : "app-share__main"} id="main">

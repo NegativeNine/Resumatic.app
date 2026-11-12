@@ -35,7 +35,7 @@ dd {
 h1,
 h2,
 h3 {
-  font-weight: 650;
+  font-weight: 700;
   line-height: 1.25;
 }
 
@@ -53,12 +53,8 @@ h3 {
 }
 
 a {
-  color: var(--ballpoint);
+  color: var(--link);
   text-underline-offset: 0.18em;
-}
-
-a:hover {
-  color: var(--ballpoint);
 }
 
 :focus-visible {
@@ -483,15 +479,9 @@ main:focus {
   align-self: stretch;
 }
 
-/* .rs-brand svg sets display: block, so these need the extra class to win. */
-.rs-brand svg.app-brand-mark {
-  display: none;
-  height: 18px;
-}
-
-/* An output that is in progress counts toward the allowance but isn't spent yet. */
+/* A document that is in progress counts toward the allowance but isn't spent yet. */
 .rs-quota__ticks i.is-reserved {
-  background: var(--pencil);
+  background: var(--ink-muted);
   opacity: 1;
 }
 
@@ -722,7 +712,7 @@ main:focus {
 .app-legend summary {
   font-size: 14px;
   font-weight: 600;
-  color: var(--ballpoint);
+  color: var(--link);
   cursor: pointer;
 }
 
@@ -974,12 +964,9 @@ main:focus {
     padding: 0 var(--space-4);
   }
 
-  .rs-brand svg.app-brand-lockup {
+  /* The tile alone, where space is tight. .rs-brand svg sets display: block, so this needs the extra class to win. */
+  .rs-brand svg.app-brand-wordmark {
     display: none;
-  }
-
-  .rs-brand svg.app-brand-mark {
-    display: block;
   }
 
   .rs-nav a {
@@ -1035,10 +1022,75 @@ main:focus {
 .app-comment-form .actions { margin-top: var(--space-3); }
 .app-comments__none { margin: 0; }
 
-/* New since the person last looked: a coach's comment, and the count of them beside Account in the menu. */
-.rs-mark--new { color: var(--ballpoint); background: var(--ballpoint-soft); }
+/* New since the person last looked: a coach's comment, and the count of them beside Account in the menu. It waits for the person, so it is a needs-you mark. */
 .app-nav-new { margin-inline-start: 6px; padding: 0 6px; }
 @media (max-width: 600px) {
   /* The menu is tight here, so the mark is the number alone. The link's name still says what it counts. */
   .app-nav-new__word { display: none; }
+}
+
+/* Shared layout: the redesign's rd- layout classes, as app- */
+/*
+ * The page frame and the layout pieces every room shares. No page uses them yet: the redesign's
+ * later stages do. Colours, spacing, radii and widths come from the tokens; the flex and grid
+ * minimums are the redesign's own, so columns wrap where its boards wrap.
+ */
+
+.app-page { max-width: var(--layout-app); margin: 0 auto; padding: var(--space-8) var(--space-6) var(--space-16); }
+.app-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-3) var(--space-6); }
+.app-cols { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-6); margin-top: var(--space-6); }
+.app-cols--wide { gap: var(--space-10); }
+.app-main { flex: 999 1 560px; min-width: 0; }
+.app-side { flex: 1 1 var(--layout-rail); min-width: 0; }
+.app-half { flex: 1 1 420px; min-width: 0; }
+.app-stack { display: flex; flex-direction: column; gap: var(--space-6); }
+.app-stack--sm { gap: var(--space-3); }
+.app-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
+.app-row--top { align-items: flex-start; }
+.app-inline { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.app-inline--wide { gap: 6px 14px; }
+.app-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(330px, 100%), 1fr)); gap: var(--space-6); align-items: start; }
+.app-grid--sm { grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: var(--space-4); }
+
+/* A list of rows separated by rules, not cards. */
+.app-list { margin: 0; padding: 0; list-style: none; }
+.app-list > li { padding: var(--space-3) 0; border-top: 1px solid var(--rule); }
+.app-list > li:first-child { padding-top: 0; border-top: 0; }
+.app-list > li:last-child { padding-bottom: 0; }
+.app-list--ruled > li:first-child { padding-top: var(--space-3); border-top: 1px solid var(--rule); }
+
+/* The second row under the header: a room's tabs. The current tab is underlined in brand, as the main nav is. */
+.app-sub { background: var(--paper); border-bottom: 1px solid var(--rule); }
+.app-sub__inner { max-width: var(--layout-app); margin: 0 auto; padding: 0 var(--space-6); }
+.app-tabs { display: flex; flex-wrap: wrap; gap: 0 var(--space-6); margin: 0; padding: 0; list-style: none; }
+.app-tabs a { display: inline-flex; align-items: center; height: 44px; font: 600 14px/20px var(--font-sans); color: var(--ink-muted); text-decoration: none; border-bottom: 2px solid transparent; }
+.app-tabs a:hover { color: var(--ink); }
+.app-tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--brand); }
+.app-tabs--page { border-bottom: 1px solid var(--rule); }
+.app-tabs--page a { margin-bottom: -1px; }
+
+/* A menu that opens from the header, such as the account menu. */
+.app-menu { width: var(--layout-rail); padding: var(--space-2); background: var(--paper); border: 1px solid var(--rule); border-radius: var(--radius-lg); box-shadow: var(--shadow-pop); }
+.app-menu a { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-height: 44px; padding: 0 var(--space-3); font: 600 14px/20px var(--font-sans); color: var(--ink); text-decoration: none; border-radius: var(--radius-md); }
+.app-menu a:hover, .app-menu a[aria-current="true"] { color: var(--ink); background: var(--paper-hover); }
+.app-menu__h { margin: var(--space-2) var(--space-3) 2px; font-size: 12px; line-height: 16px; font-weight: 600; color: var(--ink-muted); }
+.app-menu hr { margin: var(--space-2) 0; border: 0; border-top: 1px solid var(--rule); }
+
+/* A count is amber: it says how many things here are waiting for the person. Nothing else is counted. */
+.app-n { display: inline-grid; place-items: center; min-width: 20px; height: 20px; margin-left: 6px; padding: 0 6px; font: 600 12px/1 var(--font-sans); font-variant-numeric: tabular-nums; color: var(--on-needs-you); background: var(--needs-you-strong); border-radius: var(--radius-full); }
+
+/* A row of the status column: the tick, then what it is about, then its action. */
+.app-q { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: var(--space-1) var(--space-4); align-items: start; padding: var(--space-4) 0; border-top: 1px solid var(--rule); }
+.app-q:first-child { border-top: 0; }
+.app-q > .rs-tick { margin-top: 1px; }
+.app-q__t { margin: 0; font-weight: 600; }
+.app-q__more { grid-column: 2 / -1; }
+
+@media (max-width: 760px) {
+  .app-page { padding: var(--space-6) var(--space-4) var(--space-12); }
+}
+
+/* The design system's reduced-motion rule stills the earlier .rs-tick--running. The plain .rs-tick--working spins the same way, so it is stilled here too. */
+@media (prefers-reduced-motion: reduce) {
+  .rs-tick--working { animation: none; border-right-color: currentColor; opacity: 0.6; }
 }

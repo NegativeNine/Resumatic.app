@@ -48,6 +48,8 @@ describe("the header", () => {
     const account = screen.getByRole("link", { name: "Account, 2 new from your coach" });
     expect(account).toHaveAttribute("href", "#/account");
     expect(account.querySelector(".rs-mark")).toHaveTextContent(/^2 new$/);
+    // It waits for the person, so it is amber: a needs-you mark.
+    expect(account.querySelector(".rs-mark")).toHaveClass("rs-mark--needs-you");
     expect(names()).toEqual(["Facts", "Jobs", "Account2 new"]);
     first.unmount();
     // It stays on the Account page itself, until the comments there have been shown.
@@ -74,8 +76,14 @@ describe("the header", () => {
   it("links the lockup to Facts and marks the private beta", () => {
     installFakeApi(fixtures());
     renderWithSession(<Shell route={parseRoute("#/jobs")} title="Jobs">content</Shell>, fixtures().me);
-    expect(screen.getByRole("link", { name: "Resumatic, go to Facts" })).toHaveAttribute("href", "#/facts");
-    expect(screen.getByText("Private beta")).toBeInTheDocument();
+    const brand = screen.getByRole("link", { name: "Resumatic, go to Facts" });
+    expect(brand).toHaveAttribute("href", "#/facts");
+    expect(brand).toHaveClass("rs-brand");
+    // The lockup: the tile, then the wordmark, which hides on a narrow screen and leaves the tile.
+    expect(brand.querySelector(".rs-brand__tile")).toHaveAttribute("aria-hidden", "true");
+    expect(brand.querySelector("svg")).toHaveClass("app-brand-wordmark");
+    expect(brand.querySelectorAll("svg")).toHaveLength(1);
+    expect(screen.getByText("Private beta")).toHaveClass("rs-mark--beta");
   });
 
   it("puts the skip link first and moves focus to main when the route changes", () => {
