@@ -29,7 +29,6 @@ import type { PostingRead } from "../shared/postings";
 import type { CoachClient, ShareableDocument, ShareGrant } from "../shared/sharing";
 import type { CommentThread, NewShareComment, NewSuggestion, OwnerCommentThread, ShareComment } from "../shared/sharing";
 import type { Today } from "../shared/today";
-import type { SharedView } from "../shared/sharing";
 
 export interface BillingView {
   enabled: boolean;
@@ -474,6 +473,7 @@ export const api = {
   /**
    * A client's copy, read in the app from this account's client list. A copy that has ended is a
    * 409 and one not in the list a 404 ("no such client"); only this account being gone is a 410.
+   * The type is imported in place so that this stage changes nothing outside its block.
    */
-  coachCopy: (grantId: string) => request<SharedView>("GET", `/api/coach/clients/${encodeURIComponent(grantId)}/copy`),
+  coachCopy: (grantId: string) => request<import("../shared/sharing").SharedView>("GET", `/api/coach/clients/${encodeURIComponent(grantId)}/copy`),
 };
