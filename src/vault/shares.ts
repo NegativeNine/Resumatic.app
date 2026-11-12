@@ -657,6 +657,21 @@ export class ShareStore {
       .map((row) => ({ grantId: row.id, label: row.label ?? null, coachName: row.coach_name ?? null, coachEmail: row.coach_email ?? null, at: row.last_read_at }));
   }
 
+  /**
+   * How many copies are shared now, neither revoked nor expired, and how many of them name a coach.
+   * It counts rows and runs no delivery check: Today says only that a copy is shared, never that it
+   * can be read. It checks nobody, so the Vault calls it for the owner only.
+   */
+  openCounts(now: number): { copies: number; coachCopies: number } {
+    const row = this.sql
+      .exec<{ copies: number; coach_copies: number }>(
+        `SELECT COUNT(*) AS copies, COUNT(coach_email) AS coach_copies FROM share_grants WHERE revoked_at IS NULL AND expires_at > ?`,
+        now,
+      )
+      .toArray()[0];
+    return { copies: row?.copies ?? 0, coachCopies: row?.coach_copies ?? 0 };
+  }
+
   /** Call from the Vault alarm; access expiry is enforced even if alarm cleanup is delayed. */
   purgeExpired(now = Date.now()): void {
     this.sql.exec(`DELETE FROM share_grants WHERE expires_at <= ?`, now);

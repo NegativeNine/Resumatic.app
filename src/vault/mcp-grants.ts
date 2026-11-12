@@ -193,6 +193,18 @@ export class McpGrantStore {
     return { oauthGrantId: row?.oauth_grant_id ?? null };
   }
 
+  /** How many connected apps have access now: active, not revoked and not expired. It checks nobody, so the Vault calls it for the owner only. */
+  activeCount(now: number): number {
+    return (
+      this.sql
+        .exec<{ n: number }>(
+          `SELECT COUNT(*) AS n FROM mcp_grants WHERE state = 'active' AND revoked_at IS NULL AND expires_at > ?`,
+          now,
+        )
+        .toArray()[0]?.n ?? 0
+    );
+  }
+
   purgeExpired(now = Date.now()): void {
     this.sql.exec(
       `DELETE FROM mcp_grants WHERE expires_at <= ? OR (state = 'pending' AND created_at <= ?)`,

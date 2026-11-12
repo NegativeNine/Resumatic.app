@@ -299,6 +299,30 @@ describe("coach share snapshots", () => {
   });
 });
 
+describe("how many copies are shared", () => {
+  it("counts copies neither revoked nor expired, and those naming a coach", () => {
+    const { shares, db } = store();
+    try {
+      expect(shares.openCounts(now)).toEqual({ copies: 0, coachCopies: 0 });
+      shares.create(who, selection(), now + 10_000, now);
+      const named = shares.create(who, selection(), now + 10_000, now, { coachEmail: "dana@example.test" });
+      shares.create(who, selection(), now + 20_000, now, { coachEmail: "lee@example.test" });
+      const soon = shares.create(who, selection(), now + 1_000, now, { coachEmail: "kim@example.test" });
+      expect(shares.openCounts(now)).toEqual({ copies: 4, coachCopies: 3 });
+      // Revoked: no longer shared.
+      shares.revoke(who, named.id, now);
+      expect(shares.openCounts(now)).toEqual({ copies: 3, coachCopies: 2 });
+      // Expired at the exact moment, before the alarm erases it.
+      expect(shares.openCounts(now + 999)).toEqual({ copies: 3, coachCopies: 2 });
+      expect(shares.openCounts(now + 1_000)).toEqual({ copies: 2, coachCopies: 1 });
+      expect(soon.coach?.email).toBe("kim@example.test");
+      expect(shares.openCounts(now + 20_000)).toEqual({ copies: 0, coachCopies: 0 });
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe("what a copy says about its owner and its jobs", () => {
   const read = (shares: ShareStore, grant: { id: string; epoch: string }, at = now) =>
     shares.read({ grantId: grant.id, epoch: grant.epoch }, at);

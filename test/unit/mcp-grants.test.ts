@@ -135,6 +135,29 @@ describe("MCP grant gate", () => {
       db.close();
     }
   });
+  it("counts only active grants, not pending, revoked or expired ones", () => {
+    const { db, store, claims } = fixture();
+    try {
+      // The fixture's grant is pending until its token callback binds it.
+      expect(store.activeCount(now)).toBe(0);
+      store.bind(claims, "remote_grant_1", now);
+      expect(store.activeCount(now)).toBe(1);
+      // At the moment it expires it is no longer counted, before any cleanup.
+      expect(store.activeCount(claims.expiresAt - 1)).toBe(1);
+      expect(store.activeCount(claims.expiresAt)).toBe(0);
+      const second = { ...input, id: "1653389a-0d6d-4e90-94eb-23cc98b95c19" };
+      store.create(who, second, now);
+      store.bind({ ...claims, grantId: second.id }, "remote_grant_2", now);
+      expect(store.activeCount(now)).toBe(2);
+      store.revoke(who, id, now);
+      expect(store.activeCount(now)).toBe(1);
+      // A grant marked active but revoked is not counted either.
+      db.prepare(`UPDATE mcp_grants SET state = 'active' WHERE id = ?`).run(id);
+      expect(store.activeCount(now)).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
   it("says when its next grant is due to be erased, which is the moment erasing takes it", () => {
     const { db, store, claims } = fixture();
     try {
