@@ -32,12 +32,6 @@ export const PLACEHOLDERS = {
   },
 
   // stage 4: facts
-  factsSkills: {
-    title: "Skills",
-    lede: "The skills and tools your confirmed facts show, each named from one shared list.",
-    note: "Skills are shown once the tags on your facts have been checked and you’ve confirmed them. Years per skill wait for dates your record shows.",
-    back: { label: "See all your facts", to: href.factsAll },
-  },
   attest: {
     title: "Ask a colleague to confirm a fact",
     lede: "Someone who worked with you can confirm one fact. Their answer comes to you, and you decide who else sees it.",
@@ -103,6 +97,18 @@ export const PLACEHOLDER_SECTIONS = {
   // stage 3: today
 
   // stage 4: facts
+  factsCheckKinds: {
+    title: "More to check",
+    note: "Checking the skills Resumatic reads from your facts, joining the same fact found twice, and splitting a line that says two things open next. So does answering experience questions here. For now they’re asked on a job’s page.",
+  },
+  factsSplit: {
+    title: "Split it in two",
+    note: "Splitting a line into what you did and its result, each a fact in the same words, opens next.",
+  },
+  factsSkillYears: {
+    title: "Years per skill",
+    note: "How long you used each skill opens next. It will count only years you’ve confirmed or a dated line shows, and never guess.",
+  },
 
   // stage 5: jobs
   rules: {

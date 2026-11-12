@@ -157,20 +157,7 @@ export function RoleGroup({
             />
           )}
           {askingReject && !editing && (
-            <div className="rs-well" role="group" aria-label={`Leave out ${role.org}`}>
-              <p className="rs-p app-well-text">
-                Leave out {role.org} and its {count(proposedUnder, "fact")} still to check? They’re kept under Left out
-                and never used.
-              </p>
-              <div className="rs-actions app-well-actions">
-                <button type="button" className="rs-btn rs-btn--primary rs-btn--sm" autoFocus disabled={busy} onClick={reject}>
-                  Yes, leave out {rejecting}
-                </button>
-                <button type="button" className="rs-btn rs-btn--sm" onClick={cancelReject}>
-                  Cancel
-                </button>
-              </div>
-            </div>
+            <RoleRejectWell org={role.org} proposedUnder={proposedUnder} rejecting={rejecting} disabled={busy} onYes={reject} onCancel={cancelReject} />
           )}
           <ActionError message={review.error} />
         </div>
@@ -190,5 +177,44 @@ export function RoleGroup({
         <p className="rs-role__empty">{EMPTY_UNDER_ROLE[filter]}</p>
       )}
     </section>
+  );
+}
+
+/**
+ * The question asked before a role with facts still to check is left out: those facts go with it.
+ * Its Yes button takes focus, and the review keys leave it to its own buttons.
+ */
+export function RoleRejectWell({
+  org,
+  proposedUnder,
+  rejecting,
+  disabled,
+  onYes,
+  onCancel,
+}: {
+  org: string;
+  /** Facts still to check under the role and its copies. */
+  proposedUnder: number;
+  /** Everything the answer leaves out: the role, its copies and those facts. */
+  rejecting: number;
+  disabled: boolean;
+  onYes: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="rs-well" role="group" aria-label={`Leave out ${org}`}>
+      <p className="rs-p app-well-text">
+        Leave out {org} and its {count(proposedUnder, "fact")} still to check? They’re kept under Left out and never
+        used.
+      </p>
+      <div className="rs-actions app-well-actions">
+        <button type="button" className="rs-btn rs-btn--primary rs-btn--sm" autoFocus disabled={disabled} onClick={onYes}>
+          Yes, leave out {rejecting}
+        </button>
+        <button type="button" className="rs-btn rs-btn--sm" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }

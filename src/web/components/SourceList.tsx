@@ -9,6 +9,7 @@ import { rasterizeResume } from "../scan";
 import { ApiError } from "../api";
 import { ActionError, Badge, Glyph, RUN_MARK } from "./ui";
 import { sourceErrorMessage } from "../source-error";
+import { href } from "../router";
 
 export function SourceList({
   vault,
@@ -32,7 +33,7 @@ export function SourceList({
       {sources.length === 0 ? (
         <p className="rs-empty">No files yet. Upload your current resume to get started.</p>
       ) : (
-        <ul className="rs-sources rs-panel app-source-panel">
+        <ul className="rs-sources">
           {sources.map((source) => (
             <SourceRow
               key={source.id}
@@ -117,6 +118,16 @@ function SourceRow({
             {sourceErrorMessage(source.error)}
           </p>
           {source.retryRunId && <RetryReading runId={source.retryRunId} reload={reload} />}
+          <p className="rs-hint facts-what-to-do">
+            {source.retryRunId ? (
+              "Retry reading, or upload it again as a Word file (.docx) or a PDF with selectable text."
+            ) : (
+              <>
+                Upload it again as a Word file (.docx) or a PDF with selectable text, or add what it holds yourself
+                under <a href={href.factsAll}>All facts</a>.
+              </>
+            )}
+          </p>
         </div>
       )}
       {source.state === "ready" &&
@@ -129,7 +140,7 @@ function SourceRow({
       {source.state === "ready" && visibleItems === 0 && (
         <p className="source-error" role="status">
           No roles or facts from this file are shown. Upload the file again,
-          try a different format, or add your experience yourself below.
+          try a different format, or add your experience yourself under <a href={href.factsAll}>All facts</a>.
         </p>
       )}
       {proposedIds.length > 0 && (
@@ -288,16 +299,23 @@ function SourceStatus({ source, proposedRoles, proposedFacts, visibleItems }: {
   }
 }
 
-function ConfirmAll({
+/**
+ * Confirms every role and fact still to check from one file, after asking. `ids` are the records
+ * themselves, so a copy read twice counts twice, as the request sends it. Focus goes afterwards to
+ * `focusAfter`, or to the file's row in the list.
+ */
+export function ConfirmAll({
   filename,
   ids,
   revisions,
   reload,
+  focusAfter,
 }: {
   filename: string;
   ids: string[];
   revisions: Record<string, number>;
   reload: Reload;
+  focusAfter?: () => HTMLElement | null;
 }) {
   const [asking, setAsking] = useState(false);
   const { run, pending, error } = useAction();
@@ -314,7 +332,7 @@ function ConfirmAll({
   }
 
   async function confirmAll() {
-    const row = trigger.current?.closest("li");
+    const row = focusAfter ? null : trigger.current?.closest("li");
     const ok = await run(async () => {
       await api.review({
         confirm: ids,
@@ -325,7 +343,7 @@ function ConfirmAll({
       });
       await reload();
     });
-    if (ok) row?.focus();
+    if (ok) (focusAfter ? focusAfter() : row)?.focus();
   }
 
   return (
@@ -337,7 +355,7 @@ function ConfirmAll({
         aria-expanded={asking}
         onClick={() => setAsking(!asking)}
       >
-        Confirm all from this file
+        Confirm all {ids.length} from this file
       </button>
       {asking && (
         <div className="confirm-panel">

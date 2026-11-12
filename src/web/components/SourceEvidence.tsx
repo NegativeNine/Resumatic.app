@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import { api } from "../api";
 import { useAction } from "../hooks";
+import { validSpan } from "./facts/source-runs";
 import { ActionError } from "./ui";
 import "./source-evidence.css";
 
@@ -32,14 +33,7 @@ export function SourceEvidence({
         setSource(await api.sourceText(sourceId));
       });
   }
-  const valid =
-    source &&
-    Number.isInteger(span[0]) &&
-    Number.isInteger(span[1]) &&
-    span[0] >= 0 &&
-    span[1] > span[0] &&
-    span[1] <= source.markdown.length &&
-    source.markdown.slice(...span) === quote;
+  const valid = source !== null && validSpan(source.markdown, span, quote);
   const before = source?.markdown.slice(Math.max(0, span[0] - 600), span[0]);
   const after = source?.markdown.slice(
     span[1],
@@ -58,8 +52,8 @@ export function SourceEvidence({
         {pending
           ? "Opening file…"
           : open
-            ? "Hide the file’s text"
-            : "See this quote in its file"}
+            ? "Hide where this came from"
+            : "See where this came from"}
       </button>
       {open && (
         <div id={panelId} className="source-context" aria-live="polite">

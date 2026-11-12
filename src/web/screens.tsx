@@ -9,7 +9,10 @@ import { AppsInterim, CoachesInterim, RecruitersInterim, SharingInterim } from "
 import { JobsPage } from "./pages/JobsPage";
 import { LEGAL_TITLES, LegalPage } from "./pages/LegalPage";
 import { ResumePage } from "./pages/ResumePage";
-import { SourcesPage } from "./pages/SourcesPage";
+import { FactsRecord } from "./pages/facts/FactsRecord";
+import { FactsReview } from "./pages/facts/FactsReview";
+import { FactsSkills } from "./pages/facts/FactsSkills";
+import { FactsSources } from "./pages/facts/FactsSources";
 import { PLACEHOLDERS, type PlaceholderName } from "./placeholders";
 import { href, NOT_FOUND_ROUTE, routeNeeds, type Route, type RouteName } from "./router";
 
@@ -35,11 +38,11 @@ export const SCREENS: { [K in RouteName]: Screen } = {
   today: placeholder("today"),
 
   // stage 4: facts
-  factsCheck: { title: "Facts", render: () => <SourcesPage /> },
-  factsAll: { title: "Facts", render: () => <SourcesPage /> },
+  factsCheck: { title: "To check", render: () => <FactsReview /> },
+  factsAll: { title: "All facts", render: () => <FactsRecord /> },
   attest: placeholder("attest"),
-  factsSkills: placeholder("factsSkills"),
-  factsFiles: { title: "Facts", render: () => <SourcesPage /> },
+  factsSkills: { title: "Skills", render: () => <FactsSkills /> },
+  factsFiles: { title: "Your files", render: () => <FactsSources /> },
 
   // stage 5: jobs
   jobs: { title: "Jobs", render: () => <JobsPage /> },

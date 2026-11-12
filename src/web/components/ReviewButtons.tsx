@@ -99,6 +99,8 @@ interface Props {
   disabled?: boolean;
   /** Show the keyboard hints, on the active item of the review queue. */
   showKeys?: boolean;
+  /** Full-size buttons, for the one question To check asks at a time. */
+  large?: boolean;
   /** One more control for this item, after Leave it out. It has no key of its own. */
   extra?: ReactNode;
 }
@@ -113,16 +115,18 @@ export function ReviewButtons({
   confirmDisabled = false,
   disabled = false,
   showKeys = false,
+  large = false,
   extra,
 }: Props) {
   const busy = review.deciding !== null || disabled;
+  const size = large ? "" : " rs-btn--sm";
 
   return (
     <div className="rs-actions">
       {state !== "confirmed" && (
         <button
           type="button"
-          className="rs-btn rs-btn--primary rs-btn--sm"
+          className={`rs-btn rs-btn--primary${size}`}
           aria-describedby={describedBy}
           aria-keyshortcuts="Y"
           data-review-action="confirm"
@@ -135,7 +139,7 @@ export function ReviewButtons({
       {onEdit && (
         <button
           type="button"
-          className="rs-btn rs-btn--sm"
+          className={`rs-btn${size}`}
           aria-describedby={describedBy}
           aria-keyshortcuts="F"
           data-review-action="edit"
@@ -148,7 +152,7 @@ export function ReviewButtons({
       {state !== "rejected" && (
         <button
           type="button"
-          className="rs-btn rs-btn--sm"
+          className={`rs-btn${size}`}
           aria-describedby={describedBy}
           aria-keyshortcuts="L"
           aria-expanded={onReject ? Boolean(rejectExpanded) : undefined}

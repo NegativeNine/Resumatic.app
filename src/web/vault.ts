@@ -4,6 +4,7 @@ import { api } from "./api";
 
 // The grouping lives in the shared module, so the Vault's Today counts what To check shows.
 export { countByState, groupByRole, groupFacts, MAX_DUPLICATES, proposedBySource, roleKey, type Group } from "../shared/review-groups";
+export { reviewQuestions, type ReviewQuestion } from "../shared/review-groups";
 
 export interface Vault extends ReviewEntries {
   sources: SourceView[];

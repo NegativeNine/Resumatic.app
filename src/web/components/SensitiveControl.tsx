@@ -3,13 +3,13 @@ import type { FactView } from "../../shared/api";
 import { api } from "../api";
 import { useAction, type Reload } from "../hooks";
 
-// Marking a fact sensitive, and unmarking it. Marking acts at once, because it only ever takes a
-// fact out of use. Unmarking always asks first, because it can put a fact back into a shared copy
-// that is still out there.
+// Keeping a fact private, and stopping. Keeping it private acts at once, because it only ever
+// takes a fact out of use. Stopping always asks first, because it can put a fact back into a shared
+// copy that is still out there. Stored and API names stay "sensitive"; the interface says private.
 
-/** What a marked fact says under its words. */
-export const SENSITIVE_HINT =
-  "Sensitive. Left out of every new resume, letter, interview preparation and fit preview, never put in a shared copy and never shown to a connected app. Facts with the same words are marked with it.";
+/** What a private fact says under its words. */
+export const PRIVATE_HINT =
+  "Kept private. Never used in a new resume, letter, interview preparation or fit preview, never put in a shared copy and never shown to a connected app. Facts with the same words are kept private with it.";
 
 export interface SensitiveControl {
   /** Marks the fact, and the copies shown with it, at once. */
@@ -87,7 +87,7 @@ export function useSensitive(fact: FactView, duplicates: FactView[], reload: Rel
   };
 }
 
-/** The one button: "Mark sensitive" on an unmarked fact, "Unmark sensitive" on a marked one. */
+/** The one button: "Keep private" on a fact that isn't, "Stop keeping it private" on one that is. */
 export function SensitiveButton({
   control,
   marked,
@@ -101,7 +101,7 @@ export function SensitiveButton({
   disabled?: boolean;
 }) {
   const label =
-    control.pending === "mark" ? "Marking…" : control.pending === "unmark" ? "Unmarking…" : marked ? "Unmark sensitive" : "Mark sensitive";
+    control.pending === "mark" ? "Keeping it private…" : control.pending === "unmark" ? "Saving…" : marked ? "Stop keeping it private" : "Keep private";
   return (
     <button
       ref={control.button}
@@ -118,21 +118,21 @@ export function SensitiveButton({
 }
 
 /**
- * The question asked before a fact is unmarked. It says what unmarking puts back in use. Its answer
+ * The question asked before a fact stops being private. It says what that puts back in use. Its answer
  * waits, as the button does, while the list is held for an open editor or a review is on its way.
  */
 export function SensitiveWell({ control, disabled = false }: { control: SensitiveControl; disabled?: boolean }) {
   if (!control.asking) return null;
   return (
-    <div className="rs-well" role="group" aria-label="Unmark this fact">
+    <div className="rs-well" role="group" aria-label="Stop keeping this fact private">
       <p className="rs-p app-well-text">
         It can be used again in resumes and documents, and connected apps can read it. Resumes that use it can be
         downloaded and shared again, and any shared copy that holds it opens again for anyone with its link. Facts
-        with the same words are unmarked with it.
+        with the same words stop being private with it.
       </p>
       <div className="rs-actions app-well-actions">
         <button type="button" className="rs-btn rs-btn--primary rs-btn--sm" autoFocus disabled={disabled} onClick={control.unmark}>
-          Yes, unmark it
+          Yes, stop keeping it private
         </button>
         <button type="button" className="rs-btn rs-btn--sm" onClick={control.cancel}>
           Cancel

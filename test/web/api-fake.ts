@@ -770,6 +770,28 @@ export class FakeApi {
     // stage 3: today
 
     // stage 4: facts
+    // Your files: stopping a file being read, and reading a stopped one again, as the vault does.
+    [
+      "POST",
+      /^\/api\/sources\/([^/]+)\/cancel$/,
+      (_call, [id]) => {
+        const source = this.state.sources.find((s) => s.id === id);
+        if (!source || source.state !== "queued") return conflict("This file is no longer being read.");
+        source.cancellationPending = true;
+        return { status: 202 };
+      },
+    ],
+    [
+      "POST",
+      /^\/api\/runs\/([^/]+)\/retry$/,
+      (_call, [runId]) => {
+        const source = this.state.sources.find((s) => s.retryRunId === runId);
+        if (!source) return conflict("This file is already being read again.");
+        Object.assign(source, { state: "queued", error: null });
+        delete source.retryRunId;
+        return { status: 202, body: { runId: this.id("run"), targetId: source.id } };
+      },
+    ],
 
     // stage 5: jobs
 

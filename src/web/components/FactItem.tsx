@@ -12,10 +12,11 @@ import { api, ApiError } from "../api";
 import { factWriteObserved } from "../fact-save";
 import { FACT_KIND_LABEL, LEVEL_LABEL } from "../format";
 import { useAction, type Reload } from "../hooks";
+import { href } from "../router";
 import { groupFacts, roleLabel, sourceLabel } from "../vault";
 import { ReviewButtons, useReview } from "./ReviewButtons";
 import { useQueueItem } from "./ReviewQueue";
-import { SENSITIVE_HINT, SensitiveButton, SensitiveWell, useSensitive } from "./SensitiveControl";
+import { PRIVATE_HINT, SensitiveButton, SensitiveWell, useSensitive } from "./SensitiveControl";
 import { SourceEvidence } from "./SourceEvidence";
 import { ActionError, Badge, CharCount, Quote, REVIEW_TICK, Tick, type TickState } from "./ui";
 
@@ -65,7 +66,7 @@ function FactItem({
   const review = useReview(fact.id, reload, ref, fact.revision ?? 1, duplicates);
   const sensitive = useSensitive(fact, duplicates, reload);
   const textId = useId();
-  const role = roles.find((item) => item.id === fact.roleId);
+  const role = roles.find((item) => item.id === fact.roleId) ?? null;
   const roleRejected = role?.state === "rejected";
 
   function closeEditor() {
@@ -110,40 +111,10 @@ function FactItem({
           {fact.origin === "extracted" ? cleanExtractedText(fact.text) : fact.text}
         </p>
       )}
-      <p className="rs-fact__meta">
-        <span>{FACT_KIND_LABEL[fact.kind]}</span>
-        {fact.level && <span>Level: {LEVEL_LABEL[fact.level]}</span>}
-        {fact.origin === "user" && <Badge tone="note">Added by you</Badge>}
-        {fact.sensitive && <Badge tone="note">Sensitive</Badge>}
-        {fact.evidenceOrigin === "ocr" && <Badge tone="note">Read from an image</Badge>}
-        {fact.reviewReasons?.length || (fact.confidence != null && fact.confidence < 0.8) ? (
-          <Badge tone="needs-you">Check closely</Badge>
-        ) : null}
-      </p>
-      {fact.evidenceOrigin === "ocr" && (
-        <p className="hint">
-          Compare this fact with your original PDF. Image reading can misread
-          words and numbers.
-        </p>
-      )}
-      {fact.sensitive && canMark && <p className="hint">{SENSITIVE_HINT}</p>}
-      {fact.levelNeedsReview && (
-        <p className="hint">The earlier ownership level{fact.previousLevel ? ` (${LEVEL_LABEL[fact.previousLevel]})` : ""} needs your confirmation before it is used.</p>
-      )}
-      {roleRejected && (
-        <p className="hint">This fact can’t be used while its role is left out. Say “That’s right” to the role to use it.</p>
-      )}
-      {role?.state === "proposed" && fact.state === "confirmed" && (
-        <p className="hint">This fact can’t be used until its role is confirmed.</p>
-      )}
-      {fact.reviewReasons?.includes("strategy_disagreement") && (
-        <p className="hint">
-          This passage was interpreted differently on a second reading. Check
-          its wording and role before confirming.
-        </p>
-      )}
+      <FactMeta fact={fact} />
+      <FactHints fact={fact} role={role} where="list" />
       <FactEvidence fact={fact} filenames={filenames} />
-      {duplicates.length > 0 && <p className="meta">This fact also appears in {duplicates.length} other {duplicates.length === 1 ? "record" : "records"}. Your answer applies to every copy shown; Fix it changes this copy only.</p>}
+      <DuplicatesNote count={duplicates.length} />
       {duplicates.map((copy) => <FactEvidence key={copy.id} fact={copy} filenames={filenames} />)}
       {!editing && (
         <ReviewButtons
@@ -174,12 +145,87 @@ function FactItem({
   );
 }
 
-function FactEvidence({
+/** What kind of fact it is, and the marks that say how it stands: Added by you, Private, Read from an image, Check closely. */
+export function FactMeta({ fact }: { fact: FactView }) {
+  return (
+    <p className="rs-fact__meta">
+      <span>{FACT_KIND_LABEL[fact.kind]}</span>
+      {fact.level && <span>Level: {LEVEL_LABEL[fact.level]}</span>}
+      {fact.origin === "user" && <Badge tone="note">Added by you</Badge>}
+      {fact.sensitive && <Badge tone="note">Private</Badge>}
+      {fact.evidenceOrigin === "ocr" && <Badge tone="note">Read from an image</Badge>}
+      {fact.reviewReasons?.length || (fact.confidence != null && fact.confidence < 0.8) ? (
+        <Badge tone="needs-you">Check closely</Badge>
+      ) : null}
+    </p>
+  );
+}
+
+/**
+ * What a person should know before answering: an image's misreadings, what keeping it private
+ * does, a level to confirm again, and a role that keeps the fact from use. In the list a left-out
+ * role is put back from its own buttons; the question on To check points to where that is done.
+ */
+export function FactHints({ fact, role, where }: { fact: FactView; role: RoleView | null; where: "list" | "question" }) {
+  const roleRejected = role?.state === "rejected";
+  return (
+    <>
+      {fact.evidenceOrigin === "ocr" && (
+        <p className="hint">
+          Compare this fact with your original PDF. Image reading can misread
+          words and numbers.
+        </p>
+      )}
+      {fact.sensitive && fact.state !== "rejected" && <p className="hint">{PRIVATE_HINT}</p>}
+      {fact.levelNeedsReview && (
+        <p className="hint">The earlier ownership level{fact.previousLevel ? ` (${LEVEL_LABEL[fact.previousLevel]})` : ""} needs your confirmation before it is used.</p>
+      )}
+      {roleRejected &&
+        (where === "question" ? (
+          <p className="hint">
+            This fact can’t be used while its role is left out. To use it, open <a href={href.factsAll}>All facts</a>,
+            choose Left out and say “That’s right” to the role.
+          </p>
+        ) : (
+          <p className="hint">This fact can’t be used while its role is left out. Say “That’s right” to the role to use it.</p>
+        ))}
+      {role?.state === "proposed" && fact.state === "confirmed" && (
+        <p className="hint">This fact can’t be used until its role is confirmed.</p>
+      )}
+      {fact.reviewReasons?.includes("strategy_disagreement") && (
+        <p className="hint">
+          This passage was interpreted differently on a second reading. Check
+          its wording and role before confirming.
+        </p>
+      )}
+    </>
+  );
+}
+
+/** Said under a fact shown with copies read from other files. */
+export function DuplicatesNote({ count }: { count: number }) {
+  if (count === 0) return null;
+  return (
+    <p className="meta">
+      This fact also appears in {count} other {count === 1 ? "record" : "records"}. Your answer applies to every copy
+      shown; Fix it changes this copy only.
+    </p>
+  );
+}
+
+/**
+ * The words a fact came from: its quote and the file it is in, the answer it was written from, or
+ * that the person wrote it. `showSource` offers the file's text around the quote; the question on
+ * To check leaves it out for a copy in the file already open beside it.
+ */
+export function FactEvidence({
   fact,
   filenames,
+  showSource = true,
 }: {
   fact: FactView;
   filenames: ReadonlyMap<string, string>;
+  showSource?: boolean;
 }) {
   if (fact.interview)
     return (
@@ -206,7 +252,7 @@ function FactEvidence({
   return (
     <>
       <Quote text={fact.quote} caption={caption} />
-      {fact.sourceId && fact.span && (
+      {showSource && fact.sourceId && fact.span && (
         <SourceEvidence
           key={`${fact.sourceId}:${fact.span.join(":")}:${fact.quote}`}
           sourceId={fact.sourceId}
@@ -218,7 +264,8 @@ function FactEvidence({
   );
 }
 
-function FactEditor(props: {
+/** A fact's editor: its words, its role and its level, saved against the revision it opened at. */
+export function FactEditor(props: {
   fact: FactView;
   roles: RoleView[];
   reload: Reload;
@@ -274,7 +321,7 @@ function FactEditor(props: {
         void save();
       }}
       onKeyDown={(e) => {
-        // Escape cancels the edit; FactItem returns focus to the fact.
+        // Escape cancels the edit; the caller returns focus to the fact or the question.
         if (e.key === "Escape" && !pending) {
           e.preventDefault();
           e.stopPropagation();
@@ -332,8 +379,8 @@ function FactEditor(props: {
       </p>
       {original.sensitive && (
         <p className="hint" id={`${id}-sensitive`}>
-          This fact stays sensitive after you save. To use a different wording, add it as a new fact and leave this
-          one marked.
+          This fact stays private after you save. To use a different wording, add it as a new fact and keep this
+          one private.
         </p>
       )}
       <div className="actions">

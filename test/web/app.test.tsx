@@ -14,8 +14,8 @@ describe("the app shell", () => {
     const rooms = screen.getByRole("navigation", { name: "Rooms" });
     expect(within(rooms).getByRole("link", { name: "Facts" })).toHaveAttribute("aria-current", "page");
     expect(within(screen.getByRole("navigation", { name: "Facts" })).getByRole("link", { name: "To check" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getAllByText("Northwind Logistics").length).toBeGreaterThan(0);
-    await waitFor(() => expect(document.title).toBe("Facts – Resumatic"));
+    expect(screen.getByText("Senior Backend Engineer at Northwind Logistics")).toBeInTheDocument();
+    await waitFor(() => expect(document.title).toBe("To check – Resumatic"));
   });
 
   it("#/today shows its placeholder", async () => {

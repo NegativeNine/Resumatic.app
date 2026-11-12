@@ -8,7 +8,10 @@ import { JobsPage } from "../../src/web/pages/JobsPage";
 import { LegalPage } from "../../src/web/pages/LegalPage";
 import { ResumePage } from "../../src/web/pages/ResumePage";
 import { SignedOut } from "../../src/web/pages/SignedOut";
-import { SourcesPage } from "../../src/web/pages/SourcesPage";
+import { FactsRecord } from "../../src/web/pages/facts/FactsRecord";
+import { FactsReview } from "../../src/web/pages/facts/FactsReview";
+import { FactsSkills } from "../../src/web/pages/facts/FactsSkills";
+import { FactsSources } from "../../src/web/pages/facts/FactsSources";
 import { RulesInterim } from "../../src/web/pages/interim/jobs";
 import { AppsInterim, CoachesInterim, RecruitersInterim, SharingInterim } from "../../src/web/pages/interim/sharing";
 import { PlaceholderPage } from "../../src/web/components/Placeholder";
@@ -29,20 +32,56 @@ async function violations(region = false): Promise<string[]> {
 }
 
 describe("accessibility", () => {
-  it("Facts, with sources, roles and facts in every state", async () => {
+  it("To check, with the role's question open, then a fact's More choices", async () => {
     const state = fullVault();
     installFakeApi(state);
-    renderWithSession(<SourcesPage />, state.me);
-    await screen.findByRole("heading", { name: "Facts", level: 1 });
-    await screen.findAllByRole("button", { name: /That’s right/ });
+    renderWithSession(<FactsReview />, state.me);
+    await screen.findByRole("heading", { name: "To check", level: 1 });
+    await userEvent.click(await screen.findByRole("button", { name: "Leave it out" }));
+    await screen.findByRole("group", { name: "Leave out Northwind Logistics" });
+    await screen.findByText(/^The text Resumatic read from your file\./);
+    expect(await violations()).toEqual([]);
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await userEvent.click(screen.getByRole("button", { name: "Skip for now" }));
+    await userEvent.click(await screen.findByText("More choices"));
+    await screen.findByRole("button", { name: "Keep private" });
     expect(await violations()).toEqual([]);
   });
 
-  it("Facts, before anything is uploaded", async () => {
+  it("To check, before anything is uploaded", async () => {
     const state = emptyVault();
     installFakeApi(state);
-    renderWithSession(<SourcesPage />, state.me);
-    await screen.findByRole("heading", { name: "Facts", level: 1 });
+    renderWithSession(<FactsReview />, state.me);
+    await screen.findByRole("heading", { name: "What happens next" });
+    expect(await violations()).toEqual([]);
+  });
+
+  it("All facts, under each filter", async () => {
+    const state = fullVault();
+    installFakeApi(state);
+    renderWithSession(<FactsRecord />, state.me);
+    for (const filter of ["Confirmed", "Left out"]) {
+      await userEvent.click(await screen.findByRole("radio", { name: new RegExp(`^${filter}`) }));
+      await screen.findByRole("heading", { name: `${filter}, by role` });
+      expect(await violations(), filter).toEqual([]);
+    }
+  });
+
+  it("Skills", async () => {
+    const state = fullVault();
+    installFakeApi(state);
+    renderWithSession(<FactsSkills />, state.me);
+    await screen.findByRole("heading", { name: /^\d+ skills?$/ });
+    expect(await violations()).toEqual([]);
+  });
+
+  it("Your files, with the paste panel open", async () => {
+    const state = fullVault();
+    installFakeApi(state);
+    renderWithSession(<FactsSources />, state.me);
+    await screen.findByText("sam-rivera-2024.pdf");
+    await userEvent.click(screen.getByRole("button", { name: "Paste text" }));
+    await screen.findByRole("form", { name: "Paste text" });
     expect(await violations()).toEqual([]);
   });
 
