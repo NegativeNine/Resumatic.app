@@ -51,6 +51,80 @@ No headless Chromium was available, so stage 1 has no screenshots. There is no c
 
 Font bytes: 171,880 → 53,088. The four Schibsted Grotesk and Newsreader files go, and the two Atkinson Hyperlegible Next files (33,996 and 19,092 bytes) come in. The latin file is byte-identical to the design system's.
 
+### Stage 2: the shell, the rooms and the Today API
+
+Every address exists now. A room stage replaces one line of `SCREENS` per page and deletes its interim file. Today's pages keep serving their capabilities until then. Old links land: `#/resumes/:id` gains its job once the resume loads.
+
+Until stage 3 sets `TODAY_OPEN`, signing in lands on To check and the rooms carry their own counts. Then Today becomes the default and carries the one count.
+
+Until stage 6, the coach, comment, preference, card-preview and connected-app sections appear on Account and under Sharing. Until stage 5, saved answers appear on Account and on Rules and answers. The reach tests name both pages.
+
+`GET /api/v2/today` is derived and stored nowhere. It carries counts, names and IDs, and never the words of a fact, comment, question, answer or stored error.
+
+The phone bar is CSS only, and no test shows it.
+
+**The route table.** Each row is one entry in `ROUTES` (`src/web/router.ts`) and one line in `SCREENS` (`src/web/screens.tsx`).
+
+| Address | Name | Room › tab | Stage-2 screen | Replaced by |
+| --- | --- | --- | --- | --- |
+| `#/today` | today | Today | `PlaceholderPage name="today"` | 3 |
+| `#/facts/check` | factsCheck | Facts › To check | `SourcesPage` | 4 |
+| `#/facts/all` | factsAll | Facts › All facts | `SourcesPage` | 4 |
+| `#/facts/all/ask` | attest | Facts › All facts | placeholder | 4 |
+| `#/facts/skills` | factsSkills | Facts › Skills | placeholder | 4 |
+| `#/facts/files` | factsFiles | Facts › Your files | `SourcesPage` | 4 |
+| `#/jobs` | jobs | Jobs › Your jobs | `JobsPage` | 5 |
+| `#/jobs/find` | jobsFind | Jobs › Find jobs | placeholder | 5 |
+| `#/jobs/applications` | jobsApplications | Jobs › Applications | placeholder | 5 |
+| `#/jobs/rules` | jobsRules | Jobs › Applications | `RulesInterim` (rules `PlaceholderSection`, then `SavedAnswers`) | 5 |
+| `#/jobs/:id/:jobTab` (fit, resume, letter, interview, application) | job | Jobs › Your jobs | `JobsPage focus={id}` | 5 |
+| `#/jobs/:id/resume/:resumeId` | resume | Jobs › Your jobs | `ResumePage id={resumeId}` | 5 |
+| `#/sharing` | sharing | Sharing › Overview | `SharingInterim`: `OwnerComments` | 6 |
+| `#/sharing/coaches` | sharingCoaches | Sharing › Coaches | `CoachesInterim`: `CoachSharingTools`, `OwnerComments`, "Live access" section | 6 |
+| `#/sharing/recruiters` | sharingRecruiters | Sharing › Recruiters | `RecruitersInterim`: `JobPreferences`, `CardPreviewSection` (with `capabilities.cardPreview`), "Visibility, blocks and requests" section | 6 |
+| `#/sharing/recruiters/request/:id` | introRequest | Sharing › Recruiters | placeholder | 6 |
+| `#/sharing/apps` | sharingApps | Sharing › Connected apps | `AppsInterim`: `ConnectedApps` | 6 |
+| `#/account`, `#/account/:section` (profile, plan, notifications, appearance, data, signing-in) | account | none | `AccountPage`, whole, with the section scrolled into view and focused | 6 |
+| `#/coaching/clients`, `#/coaching/clients/:id` | coachingClients, coachingClient | Coaching › Clients | `ClientsPage` | 7 |
+| `#/coaching/organisation` | coachingOrganisation | Coaching › Organisation | placeholder | 7 |
+| `#/hiring/openings`, `/candidates`, `/introductions`, `/organisation` | hiring* | Hiring › each | placeholder | 7 |
+| `#/privacy`, `#/terms` | privacy, terms | none | `LegalPage` | none |
+
+**Old addresses.** `canonicalHash` rewrites these with `history.replaceState`:
+
+- `""` and `#/` become `DEFAULT_HASH`, which is `TODAY_OPEN ? "#/today" : "#/facts/check"`.
+- `#/sources` and `#/facts` become `#/facts/check`.
+- `#/applications` becomes `#/jobs`.
+- `#/clients` and `#/coaching` become `#/coaching/clients`.
+- `#/hiring` becomes `#/hiring/openings`.
+- `#/jobs/:id` becomes `#/jobs/:id/fit`, except when `:id` is `find`, `applications` or `rules`.
+
+`#/resumes/:id` parses to the resume route with no job, and `useCanonicalResumeAddress` puts the job in the address once the resume has loaded, as it corrects an address that names the wrong job. The resume's route key is `resume/<resumeId>` and a job's is `job/<id>`, so neither the correction nor moving between a job's tabs remounts the page or moves focus.
+
+Decisions, each with the alternative rejected:
+
+1. **Two tables in two files.** `ROUTES` in `router.ts` is pure: pattern, name, room, tab and workspace, with no React component, so `router.test.ts` stays a pure test. `SCREENS` in `screens.tsx` is typed over every route name, so the compiler asks for a screen for each; its rows are grouped by owning stage in marked blocks. Components inside `router.ts` were rejected: pages import `href` from the router, so it would be an import cycle.
+2. **`TODAY_OPEN` gates the default and the first-row count.** Stage 2 merges and deploys alone, and landing on a placeholder would replace today's landing page with an empty one. Coach-comment emails link to `/`, and the header's count leads to where comments are read; with the flag off, each room's count leads to a page that shows what it counts, and Sharing › Overview shows `OwnerComments`. Today as the default now (a dead landing), a Today-only count now (it would lead to a page that can't show it) and two separate edits in stage 3 (one constant keeps it to one line) were rejected.
+3. **After stage 3, only Today carries a first-row count**, as the board says: "Nothing else is counted". Room numbers stay in the second row, on To check and Coaches. Room counts kept permanently were rejected; the owner can still ask for them (question 1 below).
+4. **Old resume links are corrected after the resume loads.** A synchronous job lookup (an extra request on every old link) and a resolver component (the same resume loaded twice) were rejected.
+5. **Account sections are sub-routes.** Anchors in the hash (a hash router can't hold them) and every menu link at `#/account` (the person loses their place) were rejected.
+6. **Interim pages are built from existing components** (`src/web/pages/interim/{jobs,sharing}.tsx`), and the two reach tests are widened by one path each. Pointing Sharing tabs at `AccountPage` (the tab and the page heading would disagree) and placeholders for capabilities that are built (the owner's placeholder rule forbids them) were rejected.
+7. **Counts are attributed to the source each review entry is shown under.** `proposedBySource` sums to `countByState(...).proposed`, and both live in `src/shared/review-groups.ts`, so the Vault and the web app count with one function. Raw per-source counts were rejected: a duplicate would be counted twice.
+8. **Today reads files lightly.** The Vault reads only `id, filename`, state and time from `sources`. `readSources()` was rejected: it works out conversion quality over every PDF's and OCR file's text and looks up runs, on a request made on every room change.
+9. **Comments and suggestions are separate kinds.** A comment is an unseen coach's row with no suggestion state; a suggestion is an open row whose owner standing is waiting, seen or not. `unseen()` was rejected: it counts suggestions as comments and misses a suggestion seen but not answered.
+10. **No words.** The answer carries counts, IDs, file names, job titles and companies, coach names and addresses, and link labels. An unreadable file carries no error: its reason is shown on Your files. An employer's question text and the stored error were rejected.
+11. **Counts refresh after a write.** `request()` in `api.ts` sends `COUNTS_CHANGED` 150 ms after any 2xx change to `/api/`, never after `/auth/*`, so a sign-out note stays. Today also reloads when the room or workspace changes, not the tab. Reloading on every route change was rejected: a vault read per tab click.
+12. **The phone bar is the same `nav`, restyled below 600px.** A second nav was rejected: a duplicate landmark.
+13. **The account menu is a disclosure:** a button with `aria-expanded` and `aria-controls`, and the panel next in DOM order. `role="menu"` was rejected: the panel holds headings.
+14. **Shared files carry one marked, empty block per stage**, `// stage 3: today` to `// stage 7: outside` (`/* … */` in CSS), in `api.ts`, `api-fake.ts`, `test/web/fixtures.ts`, `app.css`, `placeholders.ts` and `screens.tsx`. Stages 3 to 7 are built at the same time and add only inside their own block. Appending at the end was rejected: it conflicts at every merge after the first.
+
+Open questions for the owner, each built as stated; the answer changes only a later stage:
+
+1. Once Today opens, only Today carries a first-row count, as the board shows. If room counts should stay after stage 3, stage 3 leaves them on.
+2. Kits for jobs whose status is Closed still count as waiting, as the kit page reports them. Should they?
+3. Kit question text and stored read errors are left out of Today. If stage 3's board needs either, stage 3 adds it, an error only through `sourceErrorMessage`.
+4. The phone bottom bar holds the four rooms (the shell board), while the phone boards add Account as a fifth. Stage 7 settles it; stage 2 ships four.
+
 ---
 
 Nov 7, 2026. Revised after PR #2 (the job seeker roadmap) merged, which changed 42 of the web app's files. The redesign is rebuilt on that `main` (`215a3e3`).
