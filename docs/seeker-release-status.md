@@ -150,7 +150,7 @@ The source review screen reads source states, roles and facts from one owner-che
 
 Document starts stay disabled while a job's document list is unknown or failed, and until an acknowledged start appears; the guard is kept per user and job in tab-scoped storage, across a job's tabs and reloads. A start disabled by a run on another tab names that run and its tab.
 
-The tracking form lives on a job's Application tab and keeps unsaved input when the job is read again; leaving the page or reloading can still discard it.
+The tracking form lives on a job's Application tab and keeps unsaved input when the job is read again; moving to another of the job's tabs, leaving the page or reloading can still discard it. Edit details saves against the revision it was opened from, so a change made elsewhere meanwhile is refused and the draft kept.
 
 The review list holds its displayed snapshot while a fact or role editor is open, so background review or assignment changes do not unmount the draft. Other review actions and filter changes wait until the editor closes; leaving or reloading the page still loses the draft.
 
