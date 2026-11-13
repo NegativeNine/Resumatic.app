@@ -121,12 +121,6 @@ main:focus {
   margin-bottom: 0.9rem;
 }
 
-.section-intro {
-  max-width: 44rem;
-  margin: -0.4rem 0 1.1rem;
-  color: var(--ink-muted);
-}
-
 .back-link {
   margin-bottom: 1rem;
   font-size: 0.95rem;
@@ -220,45 +214,6 @@ main:focus {
 .resume-list li:last-child {
   padding-bottom: 0;
   border-bottom: 0;
-}
-
-.resume-list-empty {
-  margin-top: 0.9rem;
-}
-
-/* Resume: why tailoring stopped */
-
-.failed-reason {
-  margin: 0.25rem 0 0.5rem;
-}
-
-/* Account */
-
-.option-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.6rem 1.5rem;
-  padding: 0.9rem 0;
-  border-top: 1px solid var(--rule);
-}
-
-.card > h2 + .option-row {
-  padding-top: 0.4rem;
-  border-top: 0;
-}
-
-.danger-card {
-  border-color: color-mix(in srgb, var(--danger) 35%, var(--paper));
-}
-
-.danger-card h2 {
-  color: var(--danger);
-}
-
-.danger-card input {
-  max-width: 22rem;
 }
 
 /* Account: job preferences. Two groups of fields, and a row of checkboxes that wraps. */
@@ -490,29 +445,11 @@ main:focus {
 }
 
 /* A quote sits a little apart from the fact or role it backs. */
-:where(.card, .fact, .group, .evidence, .evidence-item, .document-content, .source-evidence) .rs-quote {
+:where(.card, .evidence, .evidence-item, .document-content, .source-evidence) .rs-quote {
   margin-top: var(--space-3);
 }
 
 /* Facts page: the sources rail beside the review queue */
-
-.facts-layout {
-  display: grid;
-  grid-template-columns: var(--layout-rail) minmax(0, 1fr);
-  gap: var(--space-10);
-  align-items: start;
-  margin-top: var(--space-10);
-}
-
-.facts-rail {
-  display: grid;
-  gap: var(--space-4);
-  min-width: 0;
-}
-
-.facts-main > .section:first-child {
-  margin-top: 0;
-}
 
 .app-drop--rail {
   padding: var(--space-6) var(--space-5);
@@ -554,10 +491,6 @@ main:focus {
 .app-paste textarea {
   width: 100%;
   resize: vertical;
-}
-
-.app-source-panel {
-  padding: var(--space-1) var(--space-5);
 }
 
 .app-meta-row {
@@ -670,13 +603,6 @@ main:focus {
   color: var(--ink-muted);
 }
 
-@media (max-width: 860px) {
-  .facts-layout {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-8);
-  }
-}
-
 @media (max-width: 700px) {
   .facts-next__steps {
     grid-template-columns: minmax(0, 1fr);
@@ -692,63 +618,6 @@ main:focus {
   align-items: center;
   gap: var(--space-2);
   margin-bottom: var(--space-4);
-}
-
-.app-check-strip {
-  display: grid;
-  gap: var(--space-3);
-  margin-bottom: var(--space-6);
-  padding: var(--space-4) var(--space-5);
-}
-
-.app-check-strip__head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-2) var(--space-4);
-}
-
-.app-legend summary {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--link);
-  cursor: pointer;
-}
-
-.resume-page {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--layout-margin);
-  gap: var(--space-8);
-  align-items: start;
-}
-
-/* Notes sit level with their lines; margin-layout.ts sets each one's top. */
-.app-notes {
-  position: relative;
-}
-
-.app-notes > .rs-note {
-  position: absolute;
-  right: 0;
-  left: 0;
-  padding-bottom: 0;
-}
-
-.app-notes > .rs-note.is-open {
-  z-index: 2;
-}
-
-.app-notes > .rs-note.is-open .rs-note__evidence {
-  box-shadow: var(--shadow-pop);
-}
-
-/* A note repeats its line only where the notes follow the sheet as a list. */
-.rs-note__line {
-  display: none;
-  margin: 0;
-  font-size: 14px;
-  line-height: 20px;
 }
 
 .app-margin-end {
@@ -787,51 +656,6 @@ main:focus {
 .app-step-count {
   margin: var(--space-4) 0 var(--space-2);
   font-weight: 600;
-}
-
-/* When the page watched the resume finish, the margin's marks tick in, once. */
-@keyframes app-tick-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-}
-
-.resume-page.is-fresh .rs-note__head .rs-mark {
-  animation: app-tick-in 0.32s ease-out both;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .resume-page.is-fresh .rs-note__head .rs-mark {
-    animation: none;
-  }
-}
-
-/* Narrow screens: the margin goes, and the notes follow the sheet as a list, each with its line. */
-@media (max-width: 1000px) {
-  .resume-page {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .app-notes {
-    position: static;
-    display: grid;
-    gap: var(--space-2);
-  }
-
-  .app-notes > .rs-note {
-    position: static;
-    padding: var(--space-3) 0;
-    border-top: 1px solid var(--rule);
-  }
-
-  .app-notes > .rs-note::before {
-    display: none;
-  }
-
-  .rs-note__line {
-    display: block;
-  }
 }
 
 /* Jobs: in the list view the form sits beside the jobs, as on the artboard. The board needs
@@ -893,13 +717,6 @@ main:focus {
   color: var(--ink-muted);
   background: transparent;
   border: 1px solid var(--rule-strong);
-}
-
-.app-resume-state {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-left: auto;
 }
 
 .app-latest {
@@ -989,18 +806,6 @@ main:focus {
   }
 }
 
-/* Clients: the copies other people have shared with this account as their coach. */
-.app-clients { display: grid; gap: var(--space-4); }
-.app-client { display: grid; gap: var(--space-3); }
-.app-client__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
-.app-client__head h2 { margin: 0; overflow-wrap: anywhere; }
-.app-client__head .rs-meta { margin: 2px 0 0; }
-.app-client__head .rs-mark { flex: none; }
-.app-client__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-/* A quiet button has no edge of its own, so when it comes first its words line up with the name above. */
-.app-client__actions > .rs-btn--quiet:first-child { margin-inline-start: calc(-1 * var(--space-3)); }
-.app-clients__foot { margin: var(--space-6) 0 0; max-width: 70ch; }
-
 /* Comments on a shared copy: a thread is what it is about, then each comment under who wrote it. */
 .app-threads { display: grid; gap: var(--space-4); }
 .app-thread { display: grid; gap: var(--space-3); padding: var(--space-4); background: var(--paper); border: 1px solid var(--rule); border-radius: var(--radius-lg); }
@@ -1015,42 +820,33 @@ main:focus {
 .app-thread__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-1) 0 0; }
 /* A quiet button has no edge of its own, so when it comes first its words line up with the comment above. */
 .app-thread__actions > .rs-btn--quiet:first-child { margin-inline-start: calc(-1 * var(--space-3)); }
-.app-thread__from, .app-thread__closed { margin: 0; overflow-wrap: anywhere; }
+.app-thread__from { margin: 0; overflow-wrap: anywhere; }
 .app-comment-form { margin-top: var(--space-4); }
 /* Inside a thread the card's own spacing already sets the form apart. */
 .app-thread .app-comment-form { margin-top: 0; }
 .app-comment-form .actions { margin-top: var(--space-3); }
-.app-comments__none { margin: 0; }
 
 /* Shared layout: the redesign's rd- layout classes, as app- */
 /*
- * The page frame and the layout pieces every room shares. No page uses them yet: the redesign's
- * later stages do. Colours, spacing, radii and widths come from the tokens; the flex and grid
- * minimums are the redesign's own, so columns wrap where its boards wrap.
+ * The layout pieces every room shares. The rooms use them. Colours, spacing, radii and widths come
+ * from the tokens; the flex and grid minimums are the redesign's own, so columns wrap where its
+ * boards wrap.
  */
 
-.app-page { max-width: var(--layout-app); margin: 0 auto; padding: var(--space-8) var(--space-6) var(--space-16); }
 .app-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-3) var(--space-6); }
 .app-cols { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-6); margin-top: var(--space-6); }
-.app-cols--wide { gap: var(--space-10); }
 .app-main { flex: 999 1 560px; min-width: 0; }
 .app-side { flex: 1 1 var(--layout-rail); min-width: 0; }
-.app-half { flex: 1 1 420px; min-width: 0; }
 .app-stack { display: flex; flex-direction: column; gap: var(--space-6); }
-.app-stack--sm { gap: var(--space-3); }
 .app-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
 .app-row--top { align-items: flex-start; }
 .app-inline { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.app-inline--wide { gap: 6px 14px; }
-.app-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(330px, 100%), 1fr)); gap: var(--space-6); align-items: start; }
-.app-grid--sm { grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: var(--space-4); }
 
 /* A list of rows separated by rules, not cards. */
 .app-list { margin: 0; padding: 0; list-style: none; }
 .app-list > li { padding: var(--space-3) 0; border-top: 1px solid var(--rule); }
 .app-list > li:first-child { padding-top: 0; border-top: 0; }
 .app-list > li:last-child { padding-bottom: 0; }
-.app-list--ruled > li:first-child { padding-top: var(--space-3); border-top: 1px solid var(--rule); }
 
 /* The second row under the header: a room's tabs. The current tab is underlined in brand, as the main nav is. */
 .app-sub { background: var(--paper); border-bottom: 1px solid var(--rule); }
@@ -1077,11 +873,6 @@ main:focus {
 .app-q:first-child { border-top: 0; }
 .app-q > .rs-tick { margin-top: 1px; }
 .app-q__t { margin: 0; font-weight: 600; }
-.app-q__more { grid-column: 2 / -1; }
-
-@media (max-width: 760px) {
-  .app-page { padding: var(--space-6) var(--space-4) var(--space-12); }
-}
 
 /* The design system's reduced-motion rule stills the earlier .rs-tick--running. The plain .rs-tick--working spins the same way, so it is stilled here too. */
 @media (prefers-reduced-motion: reduce) {
@@ -1132,6 +923,6 @@ button.rs-who { background: none; border: 0; cursor: pointer; }
 
 /* stage 7: outside */
 
-/* A state in place of what a page would show (States.tsx): what happened, what to do, at most one way on. */
+/* A state in place of what a page would show (StateCard in ui.tsx): what happened, what to do, at most one way on. */
 .app-state-card { display: grid; justify-items: start; gap: var(--space-3); max-width: 70ch; }
 .app-state-card > h1, .app-state-card > h2, .app-state-card > p, .app-state-card > .rs-loading { margin: 0; }

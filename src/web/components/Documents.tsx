@@ -23,9 +23,9 @@ import {
   Field,
   Glyph,
   Loading,
-  Message,
   Quote,
   RUN_MARK,
+  Stopped,
   Success,
 } from "./ui";
 import "./workspace.css";
@@ -171,10 +171,10 @@ export function StartNotes({ id, jobDocs, kinds, counted }: { id: string; jobDoc
         </p>
       )}
       {counted && available === 0 && (
-        <Message tone="info" live={false}>
+        <Stopped role={null}>
           Your documents for this period are used or held for work in progress. You can still read your documents
           and answer experience questions.
-        </Message>
+        </Stopped>
       )}
       <ActionError message={action.error} />
       {list.error && <ErrorNote message={list.error} onRetry={list.reload} />}
@@ -274,15 +274,16 @@ function DocumentCard({ doc, open, reload, retry, retryDisabled }: {
         </div>
       )}
       {doc.state === "failed" && (
-        <div className="rs-msg rs-msg--error app-doc-failed" role="status">
-          <Glyph name="alert" />
-          <p className="rs-msg__text">{documentError(doc.error)}</p>
+        <>
+          <ActionError role="status" message={documentError(doc.error)} />
           {doc.retryRunId && (
-            <button type="button" className="rs-btn rs-btn--sm" disabled={retryDisabled} onClick={() => void retry(doc.retryRunId!)}>
-              Retry {LABELS[doc.kind].toLowerCase()}
-            </button>
+            <div className="actions">
+              <button type="button" className="rs-btn rs-btn--sm" disabled={retryDisabled} onClick={() => void retry(doc.retryRunId!)}>
+                Retry {LABELS[doc.kind].toLowerCase()}
+              </button>
+            </div>
           )}
-        </div>
+        </>
       )}
       {doc.state === "ready" && doc.result && (open ? (
         <DocumentContent doc={doc} open />

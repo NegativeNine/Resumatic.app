@@ -18,6 +18,7 @@ import {
   ActionError,
   Badge,
   CharCount,
+  EmptyState,
   ErrorNote,
   Field,
   Glyph,
@@ -25,6 +26,7 @@ import {
   Message,
   PageHeader,
   RUN_MARK,
+  Stopped,
   type GlyphName,
 } from "../components/ui";
 import { formatDate, RESUME_STATE_LABEL } from "../format";
@@ -105,7 +107,7 @@ export function JobsPage() {
       {/* On small screens the quota leaves the header for the top of Jobs. */}
       <QuotaMeter className="app-quota-small" />
       {quota.used >= quota.limit && (
-        <p className="notice">{quotaMessage(quota)}</p>
+        <Stopped role={null}>{quotaMessage(quota)}</Stopped>
       )}
 
       <div className="app-jobs" data-view={view}>
@@ -169,13 +171,10 @@ export function JobsPage() {
         )}
         {list.data &&
           (applications.length === 0 ? (
-            <p className="empty">
-              No jobs yet. Paste a job description above to start your first
-              one.
-            </p>
+            <EmptyState title="No jobs yet.">Paste a job description above to start your first one.</EmptyState>
           ) : (
             <>
-              {visible.length === 0 && <p className="empty">No jobs have this status yet.</p>}
+              {visible.length === 0 && <EmptyState>No jobs have this status yet.</EmptyState>}
               <div hidden={visible.length === 0} className={view === "board" ? "application-board-scroller" : undefined} role={view === "board" ? "region" : undefined}
                 aria-label={view === "board" ? "Jobs by status" : undefined} tabIndex={view === "board" ? 0 : undefined}>
                 <ul className={`plain-list${view === "board" ? " application-board" : " app-job-rows"}`}
@@ -348,17 +347,18 @@ function JobForm({ onSaved }: { onSaved: Reload }) {
         </div>
       )}
       {duplicate && (
-        <div className="rs-msg rs-msg--info app-msg-block" role="status">
-          <Glyph name="info" />
-          <p className="rs-msg__text">
-            You’ve already saved this job{duplicate.title || duplicate.company
-              ? ` as ${[duplicate.title, duplicate.company].filter(Boolean).join(" at ")}`
-              : ""}, on {formatDate(duplicate.createdAt)}. <a href={href.job(duplicate.id)}>Open it</a>
-          </p>
-          <button type="button" className="rs-btn rs-btn--sm" disabled={busy} onClick={() => void save(true)}>
-            Save it again
-          </button>
-        </div>
+        <Message
+          tone="info"
+          action={
+            <button type="button" className="rs-btn rs-btn--sm" disabled={busy} onClick={() => void save(true)}>
+              Save it again
+            </button>
+          }
+        >
+          You’ve already saved this job{duplicate.title || duplicate.company
+            ? ` as ${[duplicate.title, duplicate.company].filter(Boolean).join(" at ")}`
+            : ""}, on {formatDate(duplicate.createdAt)}. <a href={href.job(duplicate.id)}>Open it</a>
+        </Message>
       )}
       <div className="form-foot app-job-form__foot">
         <button

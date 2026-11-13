@@ -3,7 +3,7 @@ import { MAX_SHARE_LABEL_CHARS, type ShareCoach, type ShareGrant } from "../../.
 import { api, ApiError } from "../../api";
 import { count, formatDateTime } from "../../format";
 import { useAction, useResource, type Resource } from "../../hooks";
-import { ActionError, Badge, ErrorNote, Field, Glyph, Loading, Message, Success } from "../ui";
+import { ActionError, Badge, EmptyState, ErrorNote, Field, Glyph, Loading, Message, Success } from "../ui";
 import "../workspace.css";
 
 // The copies the owner shares with a coach, on Sharing › Coaches: the list of copies already
@@ -35,7 +35,7 @@ export function CopyList({
       <h2 id={`${id}-title`}>Copies you’ve shared</h2>
       {grants.error && <ErrorNote message={grants.error} onRetry={grants.reload} />}
       {!grants.data && !grants.error && <Loading>Loading share links…</Loading>}
-      {grants.data?.grants.length === 0 && <p className="rs-meta app-share-none">You have no share links.</p>}
+      {grants.data?.grants.length === 0 && <EmptyState>You have no share links.</EmptyState>}
       {grants.data && grants.data.grants.length > 0 && (
         <ul className="plain-list app-share-links">
           {grants.data.grants.map((grant) => {

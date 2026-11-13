@@ -72,7 +72,10 @@ function SavedAnswerList({ answers, reload }: { answers: SavedAnswer[]; reload: 
                 </p>
                 <p className="app-saved-answer__text">{answer.answer}</p>
                 {answer.refusedKind && (
-                  <p className="rs-inline-error">This answer can’t be offered any more: it’s about {SENSITIVE_KIND_WORDS[answer.refusedKind]}.</p>
+                  <ActionError
+                    role={null}
+                    message={`This answer can’t be offered any more: it’s about ${SENSITIVE_KIND_WORDS[answer.refusedKind]}.`}
+                  />
                 )}
                 <div className="actions">
                   <button type="button" className="small" disabled={action.pending} onClick={() => setEditing(answer.id)} aria-label={`Change ${answer.label}`}>

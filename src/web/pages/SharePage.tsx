@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiError } from "../api";
 import { useCoachCommenting } from "../components/outside/coach-commenting";
 import { ShareFrame, ShareSnapshotContent } from "../components/ShareSnapshotContent";
-import { StateCard } from "../components/States";
-import { Badge, Loading, Message } from "../components/ui";
+import { ActionError, Badge, Loading, Message, StateCard } from "../components/ui";
 import { describeError } from "../errors";
 import { formatDate } from "../format";
 import { href } from "../router";
@@ -254,8 +253,8 @@ function CoachNotice({
               {state === "adding" ? "Adding…" : "Add to my clients"}
             </button>
           </p>
-          {state === "failed" && <p role="alert">That didn’t go through. Check your connection, then try again.</p>}
-          {state === "refused" && <p role="alert">{reason ?? "This copy couldn’t be added. Reload the page and try again."}</p>}
+          {state === "failed" && <ActionError message="That didn’t go through. Check your connection, then try again." />}
+          {state === "refused" && <ActionError message={reason ?? "This copy couldn’t be added. Reload the page and try again."} />}
         </Message>
       );
     case "other":

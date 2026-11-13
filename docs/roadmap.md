@@ -35,6 +35,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Redesign stage 5: Jobs and a job's page | `redesign/05-jobs`, based on `redesign/02-shell`. No migration | Merges after stage 4; board copy unchecked (question 1) |
 | Redesign stage 6: Sharing and Account | `redesign/06-sharing`, based on `redesign/02-shell`. No migration | Merges after stages 4 and 5; consent page, export, share and reminder sentences changed with their tests |
 | Redesign stage 7: outside | `redesign/07-outside`, based on `redesign/02-shell`. No migration | Landing copy pending the owner's review |
+| Redesign follow-up: one set of states, no dead CSS | `redesign/08-polish`, based on main at d9d2d82. No migration | Owner's answers on a cancelled file's mark (question 1) and the board's quota sentence (question 2) |
 
 The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments, suggested wording (two columns on the comments' table), saved answers and application kits (three tables), email notices (one table). Only that order is deployed.
 

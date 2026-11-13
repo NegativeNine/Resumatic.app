@@ -412,6 +412,17 @@ describe("Sharing › Coaches", () => {
     expect(revoked.textContent).toContain(`Last opened ${formatDateTime(shares[2]!.lastReadAt!)}.`);
   });
 
+  it("says there are no share links as an empty state", async () => {
+    const state = fullVault();
+    state.shares = [];
+    installFakeApi(state);
+    renderWithSession(<SharingCoaches />, state.me);
+    const list = await screen.findByRole("region", { name: "Copies you’ve shared" });
+    const empty = await within(list).findByText("You have no share links.");
+    expect(empty).toHaveClass("rs-empty");
+    expect(empty).not.toHaveAttribute("role");
+  });
+
   it("says a link hasn’t been opened only when the server keeps that reading", async () => {
     const state = fullVault();
     const [first, second, third] = state.shares!;
@@ -702,6 +713,19 @@ describe("Sharing › Connected apps", () => {
     await userEvent.click(within(claude).getByRole("button", { name: "Revoke access" }));
     await waitFor(() => expect(within(within(list).getByText("Claude").closest("li")!).getByText("Access ended")).toBeInTheDocument());
     expect(api.callsTo("DELETE", /^\/api\/mcp\/grants\//).map((call) => call.path)).toEqual(["/api/mcp/grants/g-1"]);
+  });
+
+  it("says the apps couldn’t be loaded as an alert with a fixed sentence", async () => {
+    const state = fullVault();
+    const api = installFakeApi(state);
+    api.fail("GET", /^\/api\/mcp\/grants$/, 503, "unavailable", "The provider said no.", false);
+    renderWithSession(<SharingApps />, state.me);
+    const list = await screen.findByRole("region", { name: "Your apps" });
+    const alert = await within(list).findByRole("alert");
+    expect(alert).toHaveTextContent("Connected apps couldn’t be loaded. Check your connection, then reload the page.");
+    expect(alert).toHaveClass("rs-msg", "rs-msg--error", "app-msg-block");
+    expect(alert.textContent).not.toContain("provider");
+    expect(within(alert).queryByRole("button")).toBeNull();
   });
 
   it("is not found, and has no tab, where apps are off", async () => {

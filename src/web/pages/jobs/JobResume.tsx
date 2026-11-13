@@ -6,7 +6,7 @@ import { api, ApiError } from "../../api";
 import { DocumentList, runningElsewhere, StartNotes, useJobDocuments } from "../../components/Documents";
 import { lineIdsOf, ResumeSheet, type LineSuggestions } from "../../components/ResumeSheet";
 import { TailorProgress } from "../../components/TailorProgress";
-import { ActionError, ErrorNote, Field, Loading } from "../../components/ui";
+import { ActionError, EmptyState, ErrorNote, Field, Loading } from "../../components/ui";
 import { formatDateTime } from "../../format";
 import { useAction, useResource, type Reload, type Resource } from "../../hooks";
 import { href } from "../../router";
@@ -39,7 +39,7 @@ export function JobResume({ job, reloadJob, resume }: { job: ApplicationDetail; 
         <h2 id={`${id}-list`}>Resumes for this job</h2>
         {resumes.length === 0 ? (
           <>
-            <p>No resume for this job yet. Tailoring writes one from your confirmed facts and checks every line.</p>
+            <EmptyState title="No resume for this job yet.">Tailoring writes one from your confirmed facts and checks every line.</EmptyState>
             <div className="actions">
               <button type="button" className="primary" disabled={tailor.pending} onClick={() => void tailor.tailor(job.id)}>
                 {tailor.pending ? "Starting…" : "Tailor a resume"}
@@ -426,9 +426,7 @@ function TailorFailed({ resume }: { resume: ResumeView }) {
   return (
     <section className="card" aria-labelledby="failed-heading">
       <h3 id="failed-heading">This resume couldn’t be finished</h3>
-      <p className="failed-reason">
-        {resumeErrorMessage(resume.error)}
-      </p>
+      <ActionError role={null} message={resumeErrorMessage(resume.error)} />
       <p className="meta">
         Resumatic never shows lines that haven’t passed its checks, so there’s
         nothing to review from this attempt.

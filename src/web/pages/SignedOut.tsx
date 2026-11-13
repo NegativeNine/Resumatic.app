@@ -2,8 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { api } from "../api";
 import { feedbackHref } from "../config";
 import { Lockup } from "../components/Lockup";
-import { Stopped } from "../components/States";
-import { Message } from "../components/ui";
+import { Message, Stopped } from "../components/ui";
 import { href } from "../router";
 import "../styles/rooms/outside.css";
 

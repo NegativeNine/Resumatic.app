@@ -312,11 +312,11 @@ Decisions, each with the alternative rejected:
 | --- | --- |
 | Working | `Loading` for a read, and a run's `rs-mark--working` with its status line |
 | Failing | `ErrorNote` with "Try again" for a failed load, and `ActionError` under the control |
-| Stopping | `Stopped`, for a limit or a refusal, with at most one action |
-| Ended or unavailable | `StateCard` |
+| Stopping | `Stopped` (in `ui.tsx`), for a limit or a refusal, with at most one action |
+| Ended or unavailable | `StateCard` (in `ui.tsx`) |
 | Empty | `EmptyState` with a title and the next step's link |
 
-Room stages replace their own framed and refused states with these at integration.
+The follow-up after the stages moved every room onto these.
 
 **The landing page's copy needs the owner's review before production.** Every claim on it was checked against the code at this branch; prices, plans, testimonials and an invitation request are left out.
 
@@ -351,6 +351,48 @@ A review of the merged branch found places where one stage's work contradicted a
 - **A kit answer waiting for you is amber.** A matched answer not yet checked reads "Check this answer" (`needs-you`); only a checked one is a green "Saved answer"; a match the list now refuses reads "Asked every time" (`note`).
 - **The shared copy's "Fixed copy" mark is a neutral note**, as the coach copy page marks the same state.
 - **Suggestions can also be answered on a resume's line card** (stage 5), beside Coaches.
+
+### After the stages: one set of states, and no dead CSS
+
+The states are one kit, in `src/web/components/ui.tsx`: `Loading`, `ErrorNote`, `ActionError`, `Message`, `Stopped`, `StateCard` and `EmptyState`. `States.tsx` is gone; it was kept apart only while stages 3 to 6 changed `ui.tsx`. Every room now draws its states with these: a file's, a resume's or a document's failure and a refused saved answer are inline errors, a used-up allowance is a stop, an empty list names the next step under a bold title, and a copy that has ended is a note in its thread. Roles are as they were: `ActionError` and `Stopped` take `role`, and each converted place passes the one it had. No words changed. Your files keeps "Reading stopped", because a failed file may be one the person cancelled.
+
+The dead rules were found by reading every class name in a `className` (and `class`) expression across `src/web` and `src/render`, checking each against `index.html`, the tests and the smoke script, and then against the template-string prefixes (`app-drop--`, `is-`, `facts-u--`, `rs-mark--`, `rs-tick--`).
+
+What was removed:
+
+- **`app.css`:**
+  - `.section-intro`, `.resume-list-empty`.
+  - `.option-row`, with `.card > h2 + .option-row`.
+  - `.danger-card` (three rules).
+  - `.fact` and `.group` from the quote's `:where()` list.
+  - `.facts-layout`, `.facts-rail`, `.facts-main` and their 860px query.
+  - `.app-source-panel`.
+  - `.app-check-strip`, `.app-check-strip__head`, `.app-legend`. Only `resume.test.tsx`'s absence check names these; it stays.
+  - `.resume-page`; `.app-notes` with its `.rs-note` rules; `.rs-note__line`; the `.resume-page.is-fresh` rule with its reduced-motion query and `@keyframes app-tick-in`; the 1000px query. `jobs.css` keeps `.app-resume-page.is-fresh` and `app-jobs-tick-in`.
+  - `.app-resume-state`, `.failed-reason`.
+  - `.app-clients`, `.app-client`, `.app-client__head`, `.app-client__actions`, `.app-clients__foot`.
+  - `.app-thread__closed`, `.app-comments__none`.
+  - `.app-page` with its 760px query, `.app-cols--wide`, `.app-half`, `.app-stack--sm`, `.app-inline--wide`, `.app-grid`, `.app-grid--sm`, `.app-list--ruled`, `.app-q__more`.
+- **`controls.css`:** `.danger` (two rules), `.link-button` (two rules), `.alert`, `.empty`, and `.spinner` with its reduced-motion rule. `.meta`, `.notice` and `.success` stay in use.
+- **`components/workspace.css`:**
+  - `.application-workspace`.
+  - `.app-documents`, `.app-documents__start` (six rules).
+  - The `.gap-answer .char-count + .field` selector. Its sibling `.gap-answer .field + .field` stays.
+  - `.app-doc-failed`, `.app-share-none`.
+  - `.app-posting`, `.app-posting__note`, `.app-posting__text`, `.app-posting__form`, `.app-posting__confirm` (eight rules).
+  - `.app-job-link`.
+- **Kept, though the scan first flagged them:** `application-board` and `app-job-rows` (built in a template in `JobsPage`), `is-reserved` (`QuotaMeter`'s `is-${state}`), `app-drop--rail`, `app-drop--first-run`, `facts-u--waiting`, `facts-u--backed`, `.source-error`.
+
+Client CSS: 86,732 → 80,782 bytes (16.20 kB → 15.22 kB gzipped).
+
+Open questions for the owner, each built as stated:
+
+1. Your files says "Reading stopped" for any failed file, and Today says "{file} couldn’t be read" for any failed file, including one the person cancelled. Should both choose their words from the file's stored reason: the board's "Couldn’t read" for an unreadable file, and a cancel word for a cancelled one?
+2. Should the used-up allowance use the board's sentence ("You’ve used all {limit} documents for this month. More on {date}.") with a "See plans" link? Today it keeps its own words and has no action.
+3. Should an action refused by a limit (429: quota or rate) show as `Stopped` rather than `ActionError`? `useAction` keeps only the sentence, so this would need the error code at each call site.
+4. Should an unknown or deleted job or resume be a `StateCard`, the way `CoachCopy` classifies its errors, rather than `ErrorNote` with Try again?
+5. A line editor's loading and empty lines have no role. May they become `Loading` (which adds `role=status`) and `EmptyState`?
+6. Confirmations have two patterns (`Success` and the v1 `p.success`), and the board doesn't cover them. Should a later change unify them?
 
 ---
 

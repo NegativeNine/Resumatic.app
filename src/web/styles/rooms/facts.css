@@ -1,7 +1,6 @@
 /*
  * The Facts room (redesign stage 4): To check, All facts, Skills and Your files. Tokens only.
- * The first-run dropzone and "What happens next" keep their rules in app.css, as do the earlier
- * rail layout's .facts-layout, .facts-rail and .facts-main, which no page uses now.
+ * The first-run dropzone and "What happens next" keep their rules in app.css.
  */
 
 /* To check: the question, with its file beside it, Up next under it and what isn't built yet. */

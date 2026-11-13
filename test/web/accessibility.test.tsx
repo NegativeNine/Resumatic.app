@@ -29,7 +29,7 @@ import { Shell } from "../../src/web/components/Shell";
 import { PLACEHOLDERS, type PlaceholderName } from "../../src/web/placeholders";
 import { parseRoute } from "../../src/web/router";
 import { installFakeApi } from "./api-fake";
-import { emptyVault, fullVault, sharedView } from "./fixtures";
+import { emptyVault, fixtures, fullVault, sharedView } from "./fixtures";
 import { goTo, renderWithSession } from "./render";
 
 // Structure only: names, roles, labels, headings, ARIA. jsdom has no layout, so contrast is covered by
@@ -166,6 +166,51 @@ describe("accessibility", () => {
     await screen.findByText("Portfolio link", { selector: "strong" });
     await screen.findByText(/can’t be offered any more/);
     expect(await violations(true)).toEqual([]);
+  });
+
+  it("the rooms’ empty, failed, stopped and ended states", async () => {
+    // Jobs with no jobs yet, and the month's documents used up.
+    const empty = emptyVault();
+    empty.me.quota.used = empty.me.quota.limit;
+    installFakeApi(empty);
+    let shown = renderWithSession(<main><JobsPage /></main>, empty.me);
+    await screen.findByText("No jobs yet.");
+    await screen.findByText(/You’ve used all/);
+    expect(await violations(true), "Jobs").toEqual([]);
+    shown.unmount();
+
+    // Your files with nothing in it, then with a file that couldn't be read.
+    installFakeApi(emptyVault());
+    shown = renderWithSession(<main><FactsSources /></main>, emptyVault().me);
+    await screen.findByText("No files yet.");
+    expect(await violations(true), "Your files, empty").toEqual([]);
+    shown.unmount();
+    const files = fixtures();
+    files.sources.find((source) => source.id === "src-cv")!.retryRunId = "run-cv";
+    installFakeApi(files);
+    shown = renderWithSession(<main><FactsSources /></main>, files.me);
+    await screen.findByText("Reading stopped");
+    expect(await violations(true), "Your files, a failed file").toEqual([]);
+    shown.unmount();
+
+    // Coaches with no share links.
+    const unshared = fullVault();
+    unshared.shares = [];
+    installFakeApi(unshared);
+    shown = renderWithSession(<main><SharingCoaches /></main>, unshared.me);
+    await screen.findByText("You have no share links.");
+    expect(await violations(true), "Coaches").toEqual([]);
+    shown.unmount();
+
+    // A job's Interview tab with preparation that failed.
+    const failed = fullVault();
+    failed.documents = [
+      { id: "doc-prep-failed", applicationId: "app-litware", kind: "prep", state: "failed", retryRunId: "run-prep", version: 1, createdAt: 1794000000000, error: "unavailable", result: null, facts: {} },
+    ];
+    installFakeApi(failed);
+    renderWithSession(<main><JobPage id="app-litware" tab="interview" /></main>, failed.me);
+    await screen.findByRole("button", { name: "Retry interview preparation" });
+    expect(await violations(true), "Interview").toEqual([]);
   });
 
   it("Account, with every section and its More choices open", async () => {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import type { McpGrant } from "../../shared/mcp";
 import { formatDate } from "../format";
-import { Badge, EmptyState, Glyph } from "./ui";
+import { Badge, EmptyState, ErrorNote, Glyph } from "./ui";
 import "./workspace.css";
 
 /** What an app was allowed to do, as one sentence. */
@@ -63,12 +63,7 @@ export function ConnectedApps() {
       <p className="app-address">
         <code>{address}</code>
       </p>
-      {error && (
-        <div className="rs-msg rs-msg--error app-msg-block" role="alert">
-          <Glyph name="alert" />
-          <p className="rs-msg__text">{error}</p>
-        </div>
-      )}
+      {error && <ErrorNote message={error} />}
       {grants?.length === 0 && !error && <EmptyState>No connected apps.</EmptyState>}
       {grants && grants.length > 0 && (
         <ul className="plain-list app-share-links">

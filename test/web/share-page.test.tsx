@@ -137,7 +137,10 @@ describe("opening a shared copy", () => {
     const add = await page.screen.findByRole("button", { name: "Add to my clients" });
     expect(page.screen.getByText(/^Sam Rivera named you as their coach\./)).toBeInTheDocument();
     page.fireEvent.click(add);
-    expect(await page.screen.findByRole("alert")).toHaveTextContent("Your client list is full. Remove a copy that has ended, then add this one.");
+    const refused = await page.screen.findByRole("alert");
+    expect(refused).toHaveTextContent("Your client list is full. Remove a copy that has ended, then add this one.");
+    // Under the button it answers, as an inline error.
+    expect(refused).toHaveClass("rs-inline-error");
     // Still offered, because making room is something the reader can do.
     expect(add).toBeEnabled();
     page.fireEvent.click(add);
