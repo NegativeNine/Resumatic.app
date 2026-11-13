@@ -766,7 +766,10 @@ describe("an owner reading what their coach wrote", () => {
     const api = installFakeApi(state);
     renderWithSession(<OwnerComments />, state.me);
     await screen.findByRole("region", { name: "Comments from your coach" });
-    expect(within(thread(LED_LINE)).getByText("This copy isn’t open to Dana Okafor any more, so they can’t read a reply. Share a new copy to carry on.")).toBeInTheDocument();
+    // A note in the thread it ends, as the States board draws an ended copy, and silent.
+    const ended = within(thread(LED_LINE)).getByText("This copy isn’t open to Dana Okafor any more, so they can’t read a reply. Share a new copy to carry on.").closest(".rs-msg")!;
+    expect(ended).toHaveClass("rs-msg--info");
+    expect(ended).not.toHaveAttribute("role");
     expect(within(thread(LED)).getByText("This copy isn’t open to dana@example.test any more, so they can’t read a reply. Share a new copy to carry on.")).toBeInTheDocument();
     expect(within(card()).queryByRole("textbox")).toBeNull();
     expect(within(card()).queryByRole("button", { name: "Reply" })).toBeNull();

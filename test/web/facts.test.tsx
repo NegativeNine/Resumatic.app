@@ -1257,18 +1257,67 @@ describe("Your files", () => {
     const api = await openFiles(state);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your files");
     expect(screen.getByRole("heading", { level: 2, name: "What you’ve added" })).toBeInTheDocument();
-    expect(within(row("new.pdf")).getByText("Reading…")).toBeInTheDocument();
+    // A file being read is drawn with the design system's spinner.
+    expect(within(row("new.pdf")).getByText("Reading…").querySelector(".rs-spinner")).toHaveAttribute("aria-hidden", "true");
     expect(within(row("sam-rivera-cv.docx")).getByText("Reading stopped")).toBeInTheDocument();
+    // Its reason is an inline error, as the States board draws one, and is silent: it was there when the page opened.
+    const reason = within(row("sam-rivera-cv.docx")).getByText("No text could be read from this file.").closest("p")!;
+    expect(reason).toHaveClass("rs-inline-error");
+    expect(reason).not.toHaveAttribute("role");
+    expect(within(row("sam-rivera-cv.docx")).queryByRole("alert")).toBeNull();
     expect(within(row("sam-rivera-2024.pdf")).getByText("1 role and 4 facts to check")).toBeInTheDocument();
     // Confirm all counts the records it sends.
     expect(within(row("sam-rivera-2024.pdf")).getByRole("button", { name: "Confirm all 5 from this file" })).toBeInTheDocument();
     await userEvent.click(within(row("new.pdf")).getByRole("button", { name: "Cancel reading" }));
     await waitFor(() => expect(api.callsTo("POST", /^\/api\/sources\/src-new\/cancel$/)).toHaveLength(1));
+    // A Retry reading that fails is the row's one alert, under the button. The browser smoke waits for it.
+    api.fail("POST", /^\/api\/runs\/run-cv\/retry$/, 503, "unavailable", "");
     await userEvent.click(within(row("sam-rivera-cv.docx")).getByRole("button", { name: "Retry reading" }));
     await waitFor(() => expect(api.callsTo("POST", /^\/api\/runs\/run-cv\/retry$/)).toHaveLength(1));
+    const alerts = await within(row("sam-rivera-cv.docx")).findAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]!.previousElementSibling).toBe(within(row("sam-rivera-cv.docx")).getByRole("button", { name: "Retry reading" }));
     // Adding a file is beside the list.
     const add = screen.getByRole("complementary", { name: "Add a file" });
     expect(within(add).getByRole("button", { name: "Choose a file" })).toBeInTheDocument();
+  });
+
+  it("a cancelled file says Reading stopped, and why", async () => {
+    const state = withText();
+    // A read the person cancelled is stored as a failed file whose reason is "Cancelled.".
+    state.sources.unshift({ id: "src-cancelled", filename: "cancelled.pdf", state: "failed", error: "Cancelled.", createdAt: 1793990000000, proposed: 0 });
+    await openFiles(state);
+    const cancelled = row("cancelled.pdf");
+    expect(within(cancelled).getByText("Reading stopped")).toHaveClass("rs-mark", "rs-mark--problem");
+    expect(within(cancelled).getByText("Cancelled.").closest("p")).toHaveClass("rs-inline-error");
+    // "Couldn’t read" would be untrue of a file nobody tried to finish reading.
+    expect(within(cancelled).queryByText("Couldn’t read")).toBeNull();
+    expect(screen.queryByText("Couldn’t read")).toBeNull();
+  });
+
+  it("an empty Your files names the next step", async () => {
+    const state = emptyVault();
+    installFakeApi(state);
+    renderWithSession(<FactsSources />, state.me);
+    const title = await screen.findByText("No files yet.");
+    expect(title.tagName).toBe("STRONG");
+    const empty = title.closest(".rs-empty")!;
+    expect(empty).toHaveTextContent("No files yet.Upload your current resume to get started.");
+    expect(empty).not.toHaveAttribute("role");
+  });
+
+  it("says a cancellation is pending as a plain status line, not an error", async () => {
+    const state = withText();
+    state.sources.unshift({ id: "src-stopping", filename: "stopping.pdf", state: "queued", cancellationPending: true, error: null, createdAt: 1793990000000, proposed: 0 });
+    state.sources.unshift({ id: "src-unsure", filename: "unsure.pdf", state: "queued", dispatchUncertain: true, error: null, createdAt: 1793990000001, proposed: 0 });
+    await openFiles(state);
+    const pending = within(row("stopping.pdf")).getByText(/^Cancellation is pending\./);
+    expect(pending).toHaveClass("rs-meta");
+    expect(pending).toHaveAttribute("role", "status");
+    expect(pending).not.toHaveClass("source-error");
+    const unsure = within(row("unsure.pdf")).getByText(/^Your upload was saved, but Resumatic can’t confirm that reading started\./);
+    expect(unsure).toHaveClass("rs-meta");
+    expect(unsure).toHaveAttribute("role", "status");
   });
 
   it("downloads the original and the original PDF of a scan", async () => {

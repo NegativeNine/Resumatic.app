@@ -350,7 +350,11 @@ describe("the saved answers card", () => {
     expect(card().querySelector(".rs-msg")!.textContent!.replace(/\s+/g, " ").trim()).toBe(
       "Questions about work authorisation, visas, sponsorship or citizenship, pay, or personal details such as age, health or family are never saved. They’re asked every time you apply.",
     );
-    expect(within(card()).getByText("This answer can’t be offered any more: it’s about salary, pay or compensation.")).toBeInTheDocument();
+    // An inline error about that one answer, with the alert glyph, and silent: it was there when the card opened.
+    const refused = within(card()).getByText("This answer can’t be offered any more: it’s about salary, pay or compensation.").closest("p")!;
+    expect(refused).toHaveClass("rs-inline-error");
+    expect(refused).not.toHaveAttribute("role");
+    expect(refused.querySelector(".rs-g--alert")).toHaveAttribute("aria-hidden", "true");
     expect(within(card()).getByText("A short name, such as “Notice period” or “Portfolio link”.")).toBeInTheDocument();
     for (const node of card().querySelectorAll("p, label, button, h2"))
       if (!/Four weeks|https:|salary in line/.test(node.textContent ?? "")) expect(node.textContent).not.toContain("'");

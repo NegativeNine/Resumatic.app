@@ -16,7 +16,7 @@ import { href } from "../router";
 import { ACCOUNT_DELETED_NOTE, useSession } from "../session";
 import { sameTarget } from "./ShareSnapshotContent";
 import { CoachSuggestion, OwnerSuggestion, SuggestWording } from "./SuggestedWording";
-import { ActionError, Badge, CharCount, ErrorNote, Field, Loading, Success } from "./ui";
+import { ActionError, Badge, CharCount, EmptyState, ErrorNote, Field, Loading, Message, Success } from "./ui";
 
 // Comments on a shared copy: the coach's side, beside the copy they are reading, and the owner's
 // side, on Sharing › Coaches. A comment is another person's words. It is shown as text and nothing else:
@@ -273,7 +273,7 @@ export function CoachComments({
   return (
     <>
       {threads.length === 0 ? (
-        <p className="rs-meta app-comments__none">No comments yet.</p>
+        <EmptyState>No comments yet.</EmptyState>
       ) : (
         <ul className="plain-list app-threads">
           {threads.map((thread) => (
@@ -528,7 +528,9 @@ function OwnerThread({
         )}
       </p>
       {!thread.open ? (
-        <p className="rs-meta app-thread__closed">{closed}</p>
+        <Message tone="info" live={false}>
+          {closed}
+        </Message>
       ) : (
         latest && (
           <form

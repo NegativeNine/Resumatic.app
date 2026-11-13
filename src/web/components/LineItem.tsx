@@ -10,7 +10,7 @@ import { api } from "../api";
 import { findingSentence, LINE_STATUS_HINT, LINE_STATUS_LABEL } from "../format";
 import { useAction, type Reload } from "../hooks";
 import { sessionEndNote, useSession } from "../session";
-import { ActionError, Badge, CharCount, LINE_MARK, Quote } from "./ui";
+import { ActionError, Badge, CharCount, ErrorNote, LINE_MARK, Quote } from "./ui";
 
 type CitedFact = { id: string; text: string; quote: string | null };
 
@@ -281,7 +281,7 @@ function LineEditor({
       {!hasEvidence && (
         <fieldset disabled={pending || !!documentId}>
           <legend>Supporting facts{roleId ? " for this role" : ""}</legend>
-          {factsError && <p className="alert" role="alert">Your confirmed facts couldn’t be loaded. Close this editor, then try again.</p>}
+          {factsError && <ErrorNote message="Your confirmed facts couldn’t be loaded. Close this editor, then try again." />}
           {!factsError && availableFacts === null && <p className="meta">Loading confirmed facts…</p>}
           {availableFacts?.length === 0 && <p className="meta">No confirmed facts are available for this line. Add or confirm a relevant fact under Facts first.</p>}
           {availableFacts?.map((fact) => (

@@ -286,6 +286,25 @@ describe("Fit", () => {
     expect(await within(fit).findByRole("button", { name: "Cancel this document" })).toBeInTheDocument();
     expect(within(fit).queryByRole("alert")).toBeNull();
   });
+
+  it("a failed document says why as a status, with Retry under it", async () => {
+    const state = fixtures();
+    state.documents = [doc("doc-f", "fit", "failed", { retryRunId: "run-fit" })];
+    open("fit", state);
+    const fit = await screen.findByRole("region", { name: "How your record covers this job" });
+    const card = (await within(fit).findByRole("heading", { level: 3, name: "Fit preview" })).closest("li")!;
+    // The reason is an inline error, as the States board draws a failed run, and keeps its status role.
+    const reason = within(card).getByRole("status");
+    expect(reason).toHaveClass("rs-inline-error");
+    expect(reason).toHaveTextContent("This document couldn’t be finished, so it isn’t counted toward your documents.");
+    expect(reason.querySelector(".rs-g--alert")).toHaveAttribute("aria-hidden", "true");
+    expect(within(card).queryByRole("alert")).toBeNull();
+    // Retry sits in a row of its own under the reason, not inside it.
+    const retry = within(card).getByRole("button", { name: "Retry fit preview" });
+    expect(reason).not.toContainElement(retry);
+    expect(retry.parentElement).toHaveClass("actions");
+    expect(reason.nextElementSibling).toBe(retry.parentElement);
+  });
 });
 
 describe("Cover letter and Interview", () => {
@@ -359,7 +378,10 @@ describe("Cover letter and Interview", () => {
     const api = open("interview", state);
     const prepare = await screen.findByRole("button", { name: "Prepare for an interview" });
     expect(prepare).toBeDisabled();
-    expect(screen.getByText(/^Your documents for this period are used or held for work in progress\./)).toBeInTheDocument();
+    // A stop, drawn red, but silent: it is there when the tab opens.
+    const stop = screen.getByText(/^Your documents for this period are used or held for work in progress\./).closest(".rs-msg")!;
+    expect(stop).toHaveClass("rs-msg--error");
+    expect(stop).not.toHaveAttribute("role");
     await userEvent.click(prepare);
     expect(api.callsTo("POST", /\/documents$/)).toHaveLength(0);
   });

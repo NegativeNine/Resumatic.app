@@ -16,33 +16,15 @@ import {
   REVIEW_MARK,
   REVIEW_TICK,
   RUN_MARK,
+  StateCard,
+  Stopped,
   Success,
   Tick,
   type MarkTone,
   type TickState,
 } from "../../src/web/components/ui";
-import { StateCard, Stopped } from "../../src/web/components/States";
 
 describe("messages", () => {
-  it("announces a failed load as an alert, with a way to try again", async () => {
-    let resolve!: () => void;
-    const onRetry = vi.fn(() => new Promise<void>((r) => (resolve = r)));
-    render(<ErrorNote message="Your jobs couldn’t load." onRetry={onRetry} />);
-    expect(screen.getByRole("alert")).toHaveTextContent("Your jobs couldn’t load.");
-    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(screen.getByRole("button", { name: "Trying again…" })).toBeDisabled();
-    resolve();
-    expect(await screen.findByRole("button", { name: "Try again" })).toBeEnabled();
-    expect(onRetry).toHaveBeenCalledOnce();
-  });
-
-  it("shows an action’s error only when there is one", () => {
-    const { rerender, container } = render(<ActionError message={null} />);
-    expect(container).toBeEmptyDOMElement();
-    rerender(<ActionError message="This file is empty." />);
-    expect(screen.getByRole("alert")).toHaveTextContent("This file is empty.");
-  });
-
   it("announces information and success as status", () => {
     render(
       <>
@@ -52,16 +34,6 @@ describe("messages", () => {
     );
     const statuses = screen.getAllByRole("status");
     expect(statuses.map((s) => s.textContent)).toEqual(["You’ve used all 20 outputs for Nov 2026.", "Profile saved."]);
-  });
-
-  it("names the next step in an empty state", () => {
-    render(
-      <EmptyState title="You’re all caught up">
-        Nothing is waiting for review. Next, <a href="#/jobs">add a job</a>.
-      </EmptyState>,
-    );
-    expect(screen.getByText("You’re all caught up").tagName).toBe("STRONG");
-    expect(screen.getByRole("link", { name: "add a job" })).toHaveAttribute("href", "#/jobs");
   });
 });
 
@@ -161,15 +133,86 @@ describe("page parts", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Facts" })).toHaveClass("rs-h1");
     expect(screen.getByText("Check each fact against the words it came from.")).toHaveClass("rs-lede");
   });
-
-  it("announces loading", () => {
-    render(<Loading>Loading your jobs…</Loading>);
-    expect(screen.getByRole("status")).toHaveTextContent("Loading your jobs…");
-  });
 });
 
+// One component for each state a room can be in, each with the role its places announce it by.
 describe("states", () => {
-  it("StateCard names what happened under its heading; Stopped is an alert with at most one action", () => {
+  it("Loading says what is being read, as a status", () => {
+    render(<Loading>Loading your jobs…</Loading>);
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Loading your jobs…");
+    expect(status).toHaveClass("rs-loading");
+    expect(status.querySelector(".rs-spinner")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("ErrorNote is an alert, and Try again waits for the retry", async () => {
+    let resolve!: () => void;
+    const onRetry = vi.fn(() => new Promise<void>((r) => (resolve = r)));
+    const { unmount } = render(<ErrorNote message="Your jobs couldn’t load." onRetry={onRetry} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Your jobs couldn’t load.");
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(screen.getByRole("button", { name: "Trying again…" })).toBeDisabled();
+    resolve();
+    expect(await screen.findByRole("button", { name: "Try again" })).toBeEnabled();
+    expect(onRetry).toHaveBeenCalledOnce();
+    unmount();
+    // With nothing to retry, it only says what failed.
+    render(<ErrorNote message="Your confirmed facts couldn’t be loaded. Close this editor, then try again." />);
+    expect(screen.getByRole("alert")).toHaveClass("rs-msg", "rs-msg--error", "app-msg-block");
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("ActionError is an alert by default, a status or silent where its place says so, and nothing without a message", () => {
+    const { rerender, container } = render(<ActionError message="This file is empty." />);
+    expect(screen.getByRole("alert")).toHaveTextContent("This file is empty.");
+    rerender(<ActionError role="status" message="This document couldn’t be finished." />);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("This document couldn’t be finished.");
+    rerender(<ActionError role={null} message="No text could be read from this file." />);
+    const line = screen.getByText("No text could be read from this file.").closest("p")!;
+    expect(line).toHaveClass("rs-inline-error");
+    expect(line).not.toHaveAttribute("role");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(line.querySelector(".rs-g--alert")).toHaveAttribute("aria-hidden", "true");
+    rerender(<ActionError message={null} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("Message is a status unless it is not live, with its one action inside", () => {
+    const { rerender } = render(
+      <Message tone="info" action={<button type="button">Save it again</button>}>
+        You’ve already saved this job.
+      </Message>,
+    );
+    const status = screen.getByRole("status");
+    expect(status).toHaveClass("rs-msg", "rs-msg--info", "app-msg-block");
+    expect(status).toHaveTextContent("You’ve already saved this job.");
+    expect(status).toContainElement(screen.getByRole("button", { name: "Save it again" }));
+    rerender(
+      <Message tone="info" live={false}>
+        This copy isn’t open to Dana any more.
+      </Message>,
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByText("This copy isn’t open to Dana any more.").closest(".rs-msg")).not.toHaveAttribute("role");
+  });
+
+  it("Stopped is an alert with at most one action, or silent where it is shown on arrival", () => {
+    const { rerender } = render(<Stopped action={<a href="#/account/plan">See plans</a>}>You’ve used all 20 documents for this month.</Stopped>);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveClass("rs-msg", "rs-msg--error", "app-msg-block");
+    expect(alert).toHaveTextContent("You’ve used all 20 documents for this month.See plans");
+    expect(alert.querySelector(".rs-g--alert")).toHaveAttribute("aria-hidden", "true");
+    expect(alert.querySelectorAll("a, button")).toHaveLength(1);
+    rerender(<Stopped role={null}>Your documents for this period are used or held for work in progress.</Stopped>);
+    expect(screen.queryByRole("alert")).toBeNull();
+    const stop = screen.getByText("Your documents for this period are used or held for work in progress.").closest(".rs-msg")!;
+    expect(stop).toHaveClass("rs-msg--error", "app-msg-block");
+    expect(stop).not.toHaveAttribute("role");
+  });
+
+  it("StateCard names what happened under its heading", () => {
     const card = render(
       <StateCard title="This copy can’t be opened" action={<a href="#/coaching/clients">Back to your clients</a>}>
         This copy has ended.
@@ -182,16 +225,24 @@ describe("states", () => {
     expect(screen.getByRole("link", { name: "Back to your clients" })).toBeInTheDocument();
     card.unmount();
     // Where the card is the whole page, its heading is the page's.
-    const page = render(<StateCard level={1} title="This link isn’t available">Ask them for a new one.</StateCard>);
+    render(<StateCard level={1} title="This link isn’t available">Ask them for a new one.</StateCard>);
     expect(screen.getByRole("heading", { level: 1, name: "This link isn’t available" })).toBeInTheDocument();
     expect(screen.queryByRole("button")).toBeNull();
-    page.unmount();
-    render(<Stopped action={<a href="#/account/plan">See plans</a>}>You’ve used all 20 documents for this month.</Stopped>);
-    const alert = screen.getByRole("alert");
-    expect(alert).toHaveClass("rs-msg", "rs-msg--error");
-    expect(alert).toHaveTextContent("You’ve used all 20 documents for this month.See plans");
-    expect(alert.querySelector(".rs-g--alert")).toHaveAttribute("aria-hidden", "true");
-    expect(alert.querySelectorAll("a, button")).toHaveLength(1);
+  });
+
+  it("EmptyState names the empty list in bold, then the next step, and announces nothing", () => {
+    render(
+      <EmptyState title="No jobs yet.">
+        Paste a job description above to start your first one. Or <a href="#/jobs">add a job</a>.
+      </EmptyState>,
+    );
+    const title = screen.getByText("No jobs yet.");
+    expect(title.tagName).toBe("STRONG");
+    const empty = title.closest("p")!;
+    expect(empty).toHaveClass("rs-empty");
+    expect(empty).toHaveTextContent("No jobs yet.Paste a job description above to start your first one.");
+    expect(screen.getByRole("link", { name: "add a job" })).toHaveAttribute("href", "#/jobs");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
-

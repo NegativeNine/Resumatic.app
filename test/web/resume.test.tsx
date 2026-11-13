@@ -604,6 +604,24 @@ describe("a version that uses a fact kept private", () => {
     expect(within(choices).queryByText(/audit logging/)).toBeNull();
   });
 
+  it("a line editor whose facts can’t load says so as an alert, with no Try again", async () => {
+    const state = fixtures();
+    const resume = state.resumes["res-ready"]!;
+    resume.provenance = "legacy";
+    resume.legacyReview = { verifiedLineIds: [], totalLines: 7, headersReady: true, skillsReady: true };
+    const api = await openResume(state);
+    api.fail("GET", /^\/api\/facts$/, 503, "unavailable", "", false);
+    await userEvent.click(mark("line-pipeline"));
+    await userEvent.click(within(card()!).getByRole("button", { name: "Review line" }));
+    const choices = await within(card()!).findByRole("group", { name: "Supporting facts for this role" });
+    const alert = await within(choices).findByRole("alert");
+    expect(alert).toHaveTextContent("Your confirmed facts couldn’t be loaded. Close this editor, then try again.");
+    expect(alert).toHaveClass("rs-msg", "rs-msg--error");
+    // Closing the editor is the way to try again, so the note offers no button of its own.
+    expect(within(alert).queryByRole("button")).toBeNull();
+    expect(within(choices).queryByText("Loading confirmed facts…")).toBeNull();
+  });
+
   it("says what to do for a line with nothing linked", async () => {
     const state = fixtures();
     const resume = state.resumes["res-ready"]!;
@@ -672,7 +690,12 @@ describe("the resumes for a job", () => {
     const state = fixtures();
     installFakeApi(state);
     renderWithSession(<JobPage id="app-unnamed" tab="resume" />, state.me);
-    expect(await screen.findByText("No resume for this job yet. Tailoring writes one from your confirmed facts and checks every line.")).toBeInTheDocument();
+    // An empty state: what is missing in bold, then the next step, whose words are unchanged.
+    const title = await screen.findByText("No resume for this job yet.");
+    expect(title.tagName).toBe("STRONG");
+    const empty = title.closest(".rs-empty")!;
+    expect(empty).toHaveTextContent("No resume for this job yet.Tailoring writes one from your confirmed facts and checks every line.");
+    expect(empty).not.toHaveAttribute("role");
     expect(screen.getByRole("button", { name: "Tailor a resume" })).toHaveClass("primary");
   });
 
@@ -723,6 +746,14 @@ describe("the resumes for a job", () => {
     const api = installFakeApi(state);
     let shown = renderWithSession(<JobPage id="app-litware" tab="resume" />, state.me);
     await screen.findByText("This resume couldn’t be finished");
+    // Why it failed is an inline error beside the heading, as it was before: present on arrival, so
+    // nothing announces it.
+    const failed = screen.getByRole("region", { name: "This resume couldn’t be finished" });
+    const reason = failed.querySelector(".rs-inline-error")!;
+    expect(reason).not.toBeNull();
+    expect(reason).not.toHaveAttribute("role");
+    expect(reason.querySelector(".rs-g--alert")).toHaveAttribute("aria-hidden", "true");
+    expect(within(failed).queryByRole("alert")).toBeNull();
     let refine = await screen.findByRole("region", { name: "Refine wording" });
     // Nothing to refine here, but the runs can still be stopped and tried again.
     expect(within(refine).queryByRole("textbox")).toBeNull();

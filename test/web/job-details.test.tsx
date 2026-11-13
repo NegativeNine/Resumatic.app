@@ -56,7 +56,10 @@ describe("adding a job", () => {
     const api = start();
     await userEvent.type(await screen.findByLabelText("Job description"), "Platform Engineer, Litware. We're hiring a platform engineer to run our Kubernetes fleet and build the…");
     await userEvent.click(screen.getByRole("button", { name: "Save job" }));
-    const warning = (await screen.findByText(/^You’ve already saved this job as Platform Engineer at Litware, on 6 Nov 2026\./)).closest("div")!;
+    // The note is a status, with Save it again inside it, as the States board draws it.
+    const warning = (await screen.findByText(/^You’ve already saved this job as Platform Engineer at Litware, on 6 Nov 2026\./)).closest<HTMLElement>(".rs-msg")!;
+    expect(warning).toHaveAttribute("role", "status");
+    expect(warning).toHaveClass("rs-msg--info");
     expect(within(warning).getByRole("link", { name: "Open it" })).toHaveAttribute("href", "#/jobs/app-litware/fit");
     expect(within(warning).getByRole("button", { name: "Save it again" })).toBeEnabled();
     expect(added(api)).toEqual([]);
@@ -80,7 +83,9 @@ describe("adding a job", () => {
     const existing = "We are looking for a Staff Engineer to lead our payments platform. You will own the ledger and…";
     await userEvent.type(await screen.findByLabelText("Job description"), `  ${existing}  `);
     await userEvent.click(screen.getByRole("button", { name: "Save job" }));
-    const warning = (await screen.findByText(/You’ve already saved this job, on 3 Nov 2026\./)).closest("div")!;
+    const warning = (await screen.findByText(/You’ve already saved this job, on 3 Nov 2026\./)).closest<HTMLElement>(".rs-msg")!;
+    expect(warning).toHaveAttribute("role", "status");
+    expect(within(warning).getByRole("button", { name: "Save it again" })).toBeInTheDocument();
     expect(added(api)).toEqual([]);
     await userEvent.click(within(warning).getByRole("button", { name: "Save it again" }));
     await screen.findByText(/^Saved\./);

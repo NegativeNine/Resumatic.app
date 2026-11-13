@@ -7,7 +7,7 @@ import { sourceReviewSummaries, type Vault } from "../vault";
 import { useSession } from "../session";
 import { rasterizeResume } from "../scan";
 import { ApiError } from "../api";
-import { ActionError, Badge, Glyph, RUN_MARK } from "./ui";
+import { ActionError, Badge, EmptyState, Glyph, RUN_MARK } from "./ui";
 import { sourceErrorMessage } from "../source-error";
 import { href } from "../router";
 
@@ -31,7 +31,7 @@ export function SourceList({
   return (
     <>
       {sources.length === 0 ? (
-        <p className="rs-empty">No files yet. Upload your current resume to get started.</p>
+        <EmptyState title="No files yet.">Upload your current resume to get started.</EmptyState>
       ) : (
         <ul className="rs-sources">
           {sources.map((source) => (
@@ -99,12 +99,12 @@ function SourceRow({
       )}
       <div className="rs-source__extra app-source-extra">
       {source.state === "queued" && source.cancellationPending && (
-        <p className="source-error" role="status">
+        <p className="rs-meta" role="status">
           Cancellation is pending. Reading may still start or carry on for a moment, so check back soon.
         </p>
       )}
       {source.state === "queued" && source.dispatchUncertain && !source.cancellationPending && (
-        <p className="source-error" role="status">
+        <p className="rs-meta" role="status">
           Your upload was saved, but Resumatic can’t confirm that reading started. It
           may still begin, so check back soon.
         </p>
@@ -114,9 +114,7 @@ function SourceRow({
       )}
       {source.state === "failed" && (
         <div>
-          <p className="source-error">
-            {sourceErrorMessage(source.error)}
-          </p>
+          <ActionError role={null} message={sourceErrorMessage(source.error)} />
           {source.retryRunId && <RetryReading runId={source.retryRunId} reload={reload} />}
           <p className="rs-hint facts-what-to-do">
             {source.retryRunId ? (
@@ -245,7 +243,7 @@ function ScanRecovery({
             : "Read this PDF as images"}
       </button>
       {progress && (
-        <p className="meta" role="status">
+        <p className="rs-meta" role="status">
           {progress}
         </p>
       )}
@@ -270,7 +268,7 @@ function SourceStatus({ source, proposedRoles, proposedFacts, visibleItems }: {
         return <Badge tone="working">Start unconfirmed</Badge>;
       return (
         <Badge tone={RUN_MARK.queued}>
-          <span className="spinner" aria-hidden="true" />
+          <span className="rs-spinner" aria-hidden="true" />
           Reading…
         </Badge>
       );

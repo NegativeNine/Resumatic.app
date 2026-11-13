@@ -6,7 +6,7 @@ import { emptyToday, type Today, type TodayWaiting } from "../../src/shared/toda
 import { JobsPage } from "../../src/web/pages/JobsPage";
 import { TodayContext } from "../../src/web/today";
 import { installFakeApi } from "./api-fake";
-import { fixtures, type Fixtures } from "./fixtures";
+import { emptyVault, fixtures, type Fixtures } from "./fixtures";
 import { renderWithSession } from "./render";
 
 // Your jobs: every job as a row that opens its own page. Fit is never shown here, and no job is
@@ -81,8 +81,21 @@ describe("Your jobs", () => {
     state.me.quota.used = state.me.quota.limit;
     open(state);
     await row("Platform Engineer");
-    expect(screen.getByText(/You’ve used all 20/)).toBeInTheDocument();
+    // A stop, drawn red, but silent: it is there when the page opens, not the answer to an action.
+    const stop = screen.getByText(/You’ve used all 20/).closest(".rs-msg")!;
+    expect(stop).toHaveClass("rs-msg--error");
+    expect(stop).not.toHaveAttribute("role");
+    expect(screen.queryByRole("alert")).toBeNull();
     for (const button of screen.getAllByRole("button", { name: "Tailor a resume" })) expect(button).toBeEnabled();
+  });
+
+  it("says there are no jobs yet as an empty state with its next step", async () => {
+    open(emptyVault());
+    const title = await screen.findByText("No jobs yet.");
+    expect(title.tagName).toBe("STRONG");
+    const empty = title.closest(".rs-empty")!;
+    expect(empty).toHaveTextContent("No jobs yet.Paste a job description above to start your first one.");
+    expect(empty).not.toHaveAttribute("role");
   });
 
   it("shows which view is on, and switches between List and Board", async () => {

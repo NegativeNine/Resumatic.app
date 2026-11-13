@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import type { LineStatus, ResumeState, ReviewState, SourceState } from "../../shared/api";
 
 // The design system's primitives, drawn with its rs- classes (styles/components.css).
@@ -68,10 +68,13 @@ export function ErrorNote({ message, onRetry }: { message: string; onRetry?: () 
   );
 }
 
-/** A failed action, shown under the control that started it. */
-export function ActionError({ message }: { message: string | null }) {
+/**
+ * A failed action under its control, or the reason a run failed beside it. `role` keeps how its
+ * place announced it.
+ */
+export function ActionError({ message, role = "alert" }: { message: string | null; role?: "alert" | "status" | null }) {
   return message ? (
-    <p className="rs-inline-error" role="alert">
+    <p className="rs-inline-error" role={role ?? undefined}>
       <Glyph name="alert" />
       <span>{message}</span>
     </p>
@@ -83,16 +86,20 @@ export function Message({
   tone,
   children,
   live = true,
+  action,
 }: {
   tone: "info" | "success";
   children: ReactNode;
   /** Announce it to screen readers when it appears. */
   live?: boolean;
+  /** The one thing to do about it, drawn at the note's end. */
+  action?: ReactNode;
 }) {
   return (
     <div className={`rs-msg rs-msg--${tone} app-msg-block`} role={live ? "status" : undefined}>
       <Glyph name={tone === "success" ? "check" : "info"} />
       <div className="rs-msg__text">{children}</div>
+      {action}
     </div>
   );
 }
@@ -113,6 +120,48 @@ export function EmptyState({ title, children }: { title?: string; children: Reac
     <p className="rs-empty">
       {title && <strong>{title}</strong>}
       {children}
+    </p>
+  );
+}
+
+// The states a page is in when it can't show what it is for, one component each. Working is
+// `Loading` for a read, and for a run its working mark with a `p.rs-meta` status line beside it.
+// Failing is `ErrorNote` with Try again for a failed load, and `ActionError` under the control that
+// failed or beside the run that did. Stopping is `Stopped`: a limit or a refusal, with at most one
+// thing to do about it. Ended or unavailable is `StateCard`, named under a heading of its own, or a
+// `Message` in the thread it ends. Empty is `EmptyState`: the empty list's name in bold, then the
+// next step. Each says what happened, then what to do.
+
+/**
+ * Something that has ended or isn't available, in place of what the page would show: a heading
+ * that names what happened, the sentence that says what to do, and at most one way on. `level` is 1
+ * where the card is the whole page, as on a shared copy that can't be opened.
+ */
+export function StateCard({ title, level = 2, children, action }: { title: string; level?: 1 | 2; children: ReactNode; action?: ReactNode }) {
+  const id = useId();
+  const Heading = level === 1 ? "h1" : "h2";
+  return (
+    <section className="rs-panel app-state-card" aria-labelledby={id}>
+      <Heading id={id} className="rs-h3">
+        {title}
+      </Heading>
+      <p className="rs-meta">{children}</p>
+      {action}
+    </section>
+  );
+}
+
+/**
+ * A stop: a limit reached or a refusal, with at most one action beside it, such as a refused
+ * sign-in or a plan with no documents left. It is an alert where it follows something the person
+ * did; `role={null}` keeps it silent where it is already there when the page opens.
+ */
+export function Stopped({ children, action, role = "alert" }: { children: ReactNode; action?: ReactNode; role?: "alert" | null }) {
+  return (
+    <p className="rs-msg rs-msg--error app-msg-block" role={role ?? undefined}>
+      <Glyph name="alert" />
+      <span className="rs-msg__text">{children}</span>
+      {action}
     </p>
   );
 }

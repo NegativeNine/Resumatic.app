@@ -16,7 +16,7 @@ import { useMarginLayout } from "./margin-layout";
 import { GapsCard } from "./ResumeReport";
 import { ResumePaper } from "./ResumePaper";
 import { OwnerSuggestion } from "./SuggestedWording";
-import { ActionError, Badge, ErrorNote } from "./ui";
+import { ActionError, Badge, EmptyState, ErrorNote } from "./ui";
 
 /** A coach's suggested wordings on the owner's copies, as a resume's page reads them, and starts their checks. */
 export interface LineSuggestions {
@@ -231,7 +231,7 @@ export function ResumeSheet({
         <div className={fresh ? "app-resume-page is-fresh" : "app-resume-page"} ref={page}>
           <div className="rs-sheet-frame">
             {isEmpty ? (
-              <p className="rs-empty">This resume has no lines. Confirm more facts, then tailor a new version.</p>
+              <EmptyState title="This resume has no lines.">Confirm more facts, then tailor a new version.</EmptyState>
             ) : (
               <ResumePaper model={model} open={tinted} onToggleLine={open} />
             )}
