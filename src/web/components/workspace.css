@@ -2,11 +2,6 @@
 .workspace-section > h3 { margin-bottom: .7rem; }
 .workspace-section .field-grid { margin-bottom: .8rem; }
 .workspace-section input[type="date"] { display: block; width: 100%; margin-top: .35rem; padding: .55rem .7rem; font: inherit; color: inherit; background: var(--paper); border: 1px solid var(--rule-strong); border-radius: var(--radius-md); }
-.application-workspace { margin-top: .7rem; }
-.app-documents > h3 { margin-bottom: var(--space-2); }
-.app-documents > .rs-meta { max-width: 62ch; margin: 0 0 var(--space-4); }
-.app-documents__start { margin-bottom: var(--space-3); }
-.app-documents .app-msg-block { margin-bottom: var(--space-3); }
 .document-list { margin-top: var(--space-5); }
 .document-card { padding: var(--space-4) 0; border-top: 1px solid var(--rule); }
 .document-card:last-child { padding-bottom: 0; }
@@ -15,7 +10,6 @@
 .app-doc-head .rs-meta { margin: 2px 0 0; }
 .document-card > .rs-meta { margin: var(--space-2) 0 0; max-width: 62ch; }
 .app-doc-running { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin-top: var(--space-3); }
-.app-doc-failed { align-items: center; margin-top: var(--space-3); }
 .document-detail { margin-top: var(--space-2); }
 .document-card summary, .evidence > summary { display: inline-flex; align-items: center; gap: 6px; padding: 6px 0; font: 600 14px/20px var(--font-sans); color: var(--link); cursor: pointer; list-style: none; }
 .document-card summary::-webkit-details-marker { display: none; }
@@ -40,7 +34,7 @@
 .app-doc-evidence .rs-note__fact + .rs-note__fact { padding-top: 0; border-top: 0; }
 .app-doc-evidence .rs-note__fact p { margin: 0; font-size: 14px; line-height: 20px; }
 .gap-answer { padding: var(--space-4); background: var(--paper-sunken); border: 1px solid var(--rule); border-radius: var(--radius-md); }
-.gap-answer .field + .field, .gap-answer .char-count + .field { margin-top: .7rem; }
+.gap-answer .field + .field { margin-top: .7rem; }
 @media (max-width: 560px) {
   .app-letter { padding: var(--space-4); }
 }
@@ -72,8 +66,6 @@
 .share-selection > .field + .field { margin-top: var(--space-4); }
 .share-version label { font-weight: 600; }
 .application-board > * { min-width: 0; }
-.rs-panel.app-documents { margin-top: var(--space-6); }
-.app-documents .inline-form { margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--rule); }
 .app-cancel-run { margin-top: var(--space-3); }
 .app-plan-quota { margin: 0; }
 .app-plan-note { margin: var(--space-2) 0 var(--space-3); max-width: 62ch; }
@@ -83,21 +75,11 @@
 .app-share-links { margin-top: var(--space-4); border-top: 1px solid var(--rule); }
 .app-share-links > .rs-setting:first-of-type { border-top: 0; }
 .app-share-links > .rs-setting:last-child { padding-bottom: 0; }
-.app-share-none { margin: var(--space-4) 0 0; }
 .app-address { margin: 0 0 var(--space-3); }
 .app-address code { display: inline-block; max-width: 100%; padding: 6px 10px; font: 500 13px/20px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; background: var(--paper-sunken); border: 1px solid var(--rule); border-radius: var(--radius-sm); user-select: all; }
-.app-posting__note { margin: var(--space-2) 0 0; }
-.app-posting .rs-success { margin-top: var(--space-2); }
-.app-posting__text { max-height: 22rem; margin-top: var(--space-3); padding: var(--space-4); overflow: auto; font-size: 15px; line-height: 23px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--paper-sunken); border: 1px solid var(--rule); border-radius: var(--radius-md); }
-.app-posting__text:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.app-posting__form { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
-.app-posting__form .field-grid { margin-bottom: 0; }
-.app-posting__confirm { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
-.app-posting__confirm p { margin: 0; }
 .app-job-form__foot { display: flex; justify-content: flex-end; }
 .app-read-link { margin-top: var(--space-3); }
 .app-read-link .rs-hint { margin: var(--space-2) 0 0; }
-.app-job-link { display: inline-flex; }
 .card > .rs-count + .field { margin-top: var(--space-4); }
 .app-fit__summary { margin: 0; font-weight: 600; }
 .app-fit > li { display: grid; grid-template-columns: 22px minmax(0, 1fr); column-gap: var(--space-4); padding: var(--space-3) 0; border-top: 1px solid var(--rule); }
