@@ -68,3 +68,32 @@ it.each(["pdf", "docx"])("refuses cached %s bytes when the supporting fact becom
   expect(response.status).toBe(409);
   expect(await response.text()).toContain("private");
 });
+
+it("refuses cached bytes when a same-version snapshot changes while remaining otherwise printable", async () => {
+  const { user, stub } = await fixture();
+  expect((await user.fetch("/api/resumes/resume/docx")).status).toBe(200);
+  const namespace = {
+    idFromString: (id: string) => env.VAULT.idFromString(id),
+    get: (id: DurableObjectId) => {
+      const target = env.VAULT.get(id);
+      return {
+        renderData: (...args: Parameters<typeof stub.renderData>) => target.renderData(...args),
+        checkSession: (...args: Parameters<typeof stub.checkSession>) => target.checkSession(...args),
+        putExportCache: (...args: Parameters<typeof stub.putExportCache>) => target.putExportCache(...args),
+        readExportCache: async (...args: Parameters<typeof stub.readExportCache>) => {
+          const bytes = await target.readExportCache(...args);
+          expect(bytes).not.toBeNull();
+          await runInDurableObject(stub, (_instance, state) => {
+            const saved = JSON.parse(state.storage.sql.exec<{ data: string }>(`SELECT data FROM resume_versions WHERE resume_id='resume' AND version=1`).one().data);
+            saved.render.profile.name = "Blair Example";
+            state.storage.sql.exec(`UPDATE resume_versions SET data=? WHERE resume_id='resume' AND version=1`, JSON.stringify(saved));
+          });
+          return bytes;
+        },
+      };
+    },
+  };
+  const response = await app.fetch(new Request("https://resumatic.test/api/resumes/resume/docx", { headers: { cookie: user.cookie } }), { ...env, VAULT: namespace } as unknown as Env);
+  expect(response.status).toBe(409);
+  expect(await response.text()).toContain("changed while its file was being prepared");
+});
