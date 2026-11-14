@@ -9,11 +9,13 @@ import type { DocumentView } from "../../src/shared/documents";
 import { MCP_FIT_SCOPES, type McpClaims } from "../../src/shared/mcp";
 import { RecordStore } from "../../src/vault/record";
 import type { Stamp } from "../../src/shared/record";
+import type { SkillDurationClaim, SkillDurationPreview } from "../../src/shared/skill-years";
 import { TAXONOMY_FIXTURE, TAXONOMY_FIXTURE_SQL } from "../support/taxonomy-fixture";
 import { call, cookieFrom, eventually, fakeModels, signIn, waitForResume, type User } from "./support";
 
-const settings = env as unknown as { TAILOR_CONCEPTS_ENABLED?: string };
+const settings = env as unknown as { TAILOR_CONCEPTS_ENABLED?: string; SKILL_YEARS_ENABLED?: string };
 const original = settings.TAILOR_CONCEPTS_ENABLED;
+const originalYears = settings.SKILL_YEARS_ENABLED;
 const VERSION = TAXONOMY_FIXTURE.info.version;
 const PYTHON = "onet:tool:python";
 const TEXT = "Built Python services and trained the team";
@@ -27,7 +29,7 @@ beforeEach(async () => {
     judge: async (items) => ({ verdicts: items.map((item) => ({ id: item.alias, verdict: "supported" as const, reason: "" })) }) };
   setModels(() => active);
 });
-afterEach(() => { settings.TAILOR_CONCEPTS_ENABLED = original; setModels(null); });
+afterEach(() => { settings.TAILOR_CONCEPTS_ENABLED = original; settings.SKILL_YEARS_ENABLED = originalYears; setModels(null); });
 function identity(user: User) {
   const token = user.cookie.slice("__Host-session=".length).split(".")[0]!;
   return JSON.parse(new TextDecoder().decode(fromBase64url(token))) as { vid: string; uid: string; gen: number; epoch?: string };
@@ -57,6 +59,20 @@ async function person(part = false, shadow = false) {
   expect(job.status, await job.clone().text()).toBe(201);
   const { applicationId } = await job.json() as { applicationId: string };
   return { user, factId, applicationId, ...tag };
+}
+async function duration(p: Awaited<ReturnType<typeof person>>) {
+  settings.SKILL_YEARS_ENABLED = "true";
+  const subject = { kind: "tag", id: p.tagId };
+  async function mutate(path: string, body: unknown) {
+    return p.user.fetch(path, { method: "POST", headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() }, body: JSON.stringify(body) });
+  }
+  const interval = await mutate("/api/v2/skill-years/intervals", { subject, start: "2020", end: "2024", ongoing: false, private: false });
+  expect(interval.status, await interval.clone().text()).toBe(201);
+  const { id } = await interval.json() as { id: string };
+  const preview = await (await p.user.send("POST", "/api/v2/skill-years/preview", subject)).json() as SkillDurationPreview;
+  const confirmed = await mutate("/api/v2/skill-years/claims", { subject, asOf: preview.asOf, inputHash: preview.inputHash });
+  expect(confirmed.status, await confirmed.clone().text()).toBe(201);
+  return { claim: await confirmed.json() as SkillDurationClaim, intervalId: id, mutate };
 }
 async function tailor(user: User, applicationId: string) {
   const response = await user.send("POST", `/api/applications/${applicationId}/resumes`);
@@ -136,6 +152,58 @@ describe("concept tailoring in the actual Vault and generation Workflows", () =>
     expect(answer.state).toBe("ready");
     expect(JSON.stringify(answer)).not.toContain("conceptCoverage");
     expect(JSON.stringify(answer)).not.toContain(PYTHON);
+  });
+
+  it("retains only explicitly selected duration text alongside private concept coverage without sending its receipt to models", async () => {
+    const p = await person(), d = await duration(p), base = active, inputs: string[] = [];
+    active = { ...base,
+      async complete(route, messages, schema, options) { inputs.push(JSON.stringify(messages)); return base.complete(route, messages, schema, options); },
+      async embed(texts, options) { inputs.push(JSON.stringify(texts)); return base.embed(texts, options); },
+      async rerank(query, texts) { inputs.push(JSON.stringify([query, texts])); return base.rerank(query, texts); },
+      async judge(items) { inputs.push(JSON.stringify(items)); return base.judge!(items); },
+    };
+    const started = await d.mutate(`/api/v2/applications/${p.applicationId}/resumes`, { skillDurationClaimIds: [d.claim.id] });
+    expect(started.status, await started.clone().text()).toBe(202);
+    const { resumeId } = await started.json() as { resumeId: string };
+    const resume = await waitForResume(p.user, resumeId);
+    expect(resume.state, resume.error ?? "").toBe("ready");
+    expect(resume.body.skills).toContain(d.claim.text);
+    expect(resume.conceptCoverage?.coverage[0]?.factIds).toEqual([p.factId]);
+    const capture = await runInDurableObject(stub(p.user), (_instance, state) => ({
+      metadata: JSON.parse(state.storage.sql.exec<{ metadata: string }>(`SELECT metadata FROM generation_inputs WHERE run_id=?`, resumeId).one().metadata),
+      selection: JSON.parse(state.storage.sql.exec<{ selection: string }>(`SELECT selection FROM resumes WHERE id=?`, resumeId).one().selection),
+    }));
+    expect(capture.metadata.skillDurationClaimIds).toEqual([d.claim.id]);
+    expect(capture.metadata.conceptEvidence).toHaveLength(1);
+    expect(capture.selection.skillIds).toContain(d.claim.factId);
+    expect(capture.selection.factIds).not.toContain(d.claim.factId);
+    for (const value of [d.claim.text, d.claim.id, d.claim.inputHash, "skillDuration"]) expect(inputs.join("\n")).not.toContain(value);
+    const plain = await tailor(p.user, p.applicationId);
+    expect(plain.body?.skills).not.toContain(d.claim.text);
+  });
+
+  it("rejects a selected duration withdrawn during concept selection before another attempt or publication", async () => {
+    const p = await person(), d = await duration(p), base = active;
+    let changed = false, refusal: string | null = null;
+    active = { ...base, async embed(texts, options) {
+      if (options?.purpose === "query" && !changed) {
+        changed = true;
+        expect((await d.mutate(`/api/v2/skill-years/intervals/${d.intervalId}/withdraw`, { expectedRevision: 1 })).status).toBe(204);
+        refusal = await runInDurableObject(stub(p.user), async (instance) => {
+          try { await instance.reserveModelAttempt(resumeId, "select", { attemptId: crypto.randomUUID(), route: "judge", model: "@cf/cloudflare/clef", inputChars: 100, maxOutputTokens: 0 }, 1000, 1_000_000); return null; }
+          catch (error) { return (error as Error).message; }
+        });
+      }
+      return base.embed(texts, options);
+    } };
+    const started = await d.mutate(`/api/v2/applications/${p.applicationId}/resumes`, { skillDurationClaimIds: [d.claim.id] });
+    const { resumeId } = await started.json() as { resumeId: string };
+    expect((await waitForResume(p.user, resumeId)).state).toBe("failed");
+    expect(changed).toBe(true);
+    expect(refusal).toMatch(/facts changed/);
+    const status = await p.user.json("/api/me");
+    expect(status.quota.reserved ?? 0).toBe(0);
+    expect(status.quota.used).toBe(0);
   });
 
   it("keeps requirements unknown in an owner fit preview when there is no confirmed evidence", async () => {

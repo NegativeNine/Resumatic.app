@@ -95,7 +95,10 @@ describe("concept selection through the application selector", () => {
 
   it("retains selected skill-duration receipts verbatim without making them retrieval or coverage evidence", async () => {
     const f = fact("python", "Built Python services");
-    const duration = Object.assign(fact("duration", "Python — 5 years (owner-confirmed intervals)"), { kind: "skill" as const, skillDuration: { claimId: "selected-owner-claim" } });
+    const text = "Python — at least 5 years of use, confirmed as of 2026-11";
+    const duration = Object.assign(fact("duration", text), { kind: "skill" as const, skillDuration: {
+      claimId: "selected-owner-claim", inputHash: "a".repeat(64), method: "owner-periods/1" as const, text, asOf: "2026-11",
+    } });
     const m = models(() => true);
     const selected = await selectFacts(m, async () => [{ factId: duration.id, query: 0, score: 1 }, { factId: f.id, query: 0, score: 0.8 }], analysis(), [f, duration], [], undefined, context("Python services", [hint(f)]));
     expect(selected.skillIds).toContain(duration.id);

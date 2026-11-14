@@ -33,8 +33,8 @@ export async function selectConceptFacts(
 ): Promise<Selection> {
   // Explicitly selected owner duration receipts print exactly as selected, but are not general
   // retrieval/coverage evidence or writer inputs. Their own snapshot proof is checked by Vault.
-  const durations = facts.filter((fact) => !!(fact as FactRecord & { skillDuration?: unknown }).skillDuration);
-  const ordinary = facts.filter((fact) => !(fact as FactRecord & { skillDuration?: unknown }).skillDuration);
+  const durations = facts.filter((fact) => !!fact.skillDuration);
+  const ordinary = facts.filter((fact) => !fact.skillDuration);
   const byId = new Map(ordinary.map((fact) => [fact.id, fact]));
   const roleKeys = new Map(roles.map((role) => [role.id, role.org && role.title && role.startDate
     ? JSON.stringify([role.kind, role.org.trim(), role.title.trim(), role.startDate, role.endDate, role.unknownEndStartDate ?? null]) : role.id]));
