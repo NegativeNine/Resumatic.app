@@ -31,7 +31,11 @@ export async function selectConceptFacts(
   context: ConceptSelectionContext,
   limits: { perRequirement: number; maxFacts: number; maxPerRole: number; maxSkills: number; gapCosine: number },
 ): Promise<Selection> {
-  const byId = new Map(facts.map((fact) => [fact.id, fact]));
+  // Explicitly selected owner duration receipts print exactly as selected, but are not general
+  // retrieval/coverage evidence or writer inputs. Their own snapshot proof is checked by Vault.
+  const durations = facts.filter((fact) => !!(fact as FactRecord & { skillDuration?: unknown }).skillDuration);
+  const ordinary = facts.filter((fact) => !(fact as FactRecord & { skillDuration?: unknown }).skillDuration);
+  const byId = new Map(ordinary.map((fact) => [fact.id, fact]));
   const roleKeys = new Map(roles.map((role) => [role.id, role.org && role.title && role.startDate
     ? JSON.stringify([role.kind, role.org.trim(), role.title.trim(), role.startDate, role.endDate, role.unknownEndStartDate ?? null]) : role.id]));
   const duplicate = (fact: FactRecord) => fact.origin !== "extracted" ? `id:${fact.id}` : JSON.stringify([
@@ -96,14 +100,17 @@ export async function selectConceptFacts(
     if (items.length) {
       asked += items.length;
       const response = models.judge ? await models.judge(items) : await models.complete("judge", judgePrompt(items), JudgeOut);
-      const verdicts = new Map<string, boolean>();
+      const verdicts = new Map<string, boolean | null>();
       const expected = new Set(items.map((item) => item.alias));
       for (const verdict of response.verdicts) {
-        if (!expected.has(verdict.id)) continue;
-        verdicts.set(verdict.id, !verdicts.has(verdict.id) && verdict.verdict === "supported");
+        const id = typeof verdict.id === "string" ? verdict.id.trim() : "";
+        if (!expected.has(id)) continue;
+        // Duplicate or malformed answers establish neither support nor absence.
+        verdicts.set(id, verdicts.has(id) || id !== verdict.id || !["supported", "unsupported", "overstated"].includes(verdict.verdict)
+          ? null : verdict.verdict === "supported");
       }
       for (const item of items) {
-        if (!verdicts.has(item.alias)) unfinished = true;
+        if (typeof verdicts.get(item.alias) !== "boolean") unfinished = true;
         else checked.push(item.alias);
         if (verdicts.get(item.alias) === true) supported.push(item.alias);
       }
@@ -118,7 +125,7 @@ export async function selectConceptFacts(
       conceptStatus: concepts.length ? "tagged" : "unknown", concepts: concepts.map((concept) => ({ id: concept.conceptId, label: concept.label,
         factIds: supported.filter((id) => hints.has(`${id}:${concept.conceptId}`)) })) });
   }
-  const factIds: string[] = [], skillIds: string[] = [], selected = new Set<string>(), counts = new Map<string, number>();
+  const factIds: string[] = [], skillIds: string[] = durations.slice(0, Math.min(12, limits.maxSkills)).map((fact) => fact.id), selected = new Set(durations.map(duplicate)), counts = new Map<string, number>();
   for (const [id] of [...best].sort((a, b) => b[1].tier - a[1].tier || b[1].score - a[1].score)) {
     const fact = byId.get(id)!;
     const key = duplicate(fact);

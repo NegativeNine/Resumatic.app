@@ -3989,8 +3989,9 @@ export class Vault extends DurableObject<Env> {
       throw new AppError("conflict", "this attempt was superseded");
     const id = row.run_id ?? resumeId;
     if (runId) this.workflowRun(runId, "tailor", resumeId);
+    // No await separates this check from the synchronous commit below.
+    if (this.snapshots.metadata(id)?.conceptEvidence !== undefined) this.requireNothingWithheld(id);
     const write = () => {
-      if (this.snapshots.metadata(id)?.conceptEvidence !== undefined) this.requireNothingWithheld(id);
       if (row.state !== "running")
         throw new AppError(
           "conflict",
@@ -5087,6 +5088,7 @@ export class Vault extends DurableObject<Env> {
     const completed = this.runs.finish(
       runId,
       () => {
+        if (this.snapshots.metadata(runId)?.conceptEvidence !== undefined) this.requireNothingWithheld(runId);
         const input = this.snapshots.metadata(runId)!;
         const roles = this.snapshots.items<RoleRecord>(runId, "role");
         let checkBody: ResumeBody = result.body ?? {
@@ -5224,12 +5226,15 @@ export class Vault extends DurableObject<Env> {
             evidence = undefined;
           }
         }
+        const plan = this.sql.exec<{ plan: string | null }>(
+          `SELECT plan FROM document_requests WHERE run_id=?`, runId,
+        ).one().plan;
+        const conceptCoverage = plan ? parseOrNull<DocumentPlan>(plan)?.selection.concepts : undefined;
         this.sql.exec(
           `INSERT INTO document_versions (document_id, version, data, created_at) VALUES (?, 1, ?, ?)`,
           runId,
           JSON.stringify({ result, facts, profile: input.profile, ...(evidence ? { evidence } : {}),
-            ...(this.sql.exec<{ plan: string | null }>(`SELECT plan FROM document_requests WHERE run_id=?`, runId).toArray()[0]?.plan
-              ? { conceptCoverage: parseOrNull<DocumentPlan>(this.sql.exec<{ plan: string }>(`SELECT plan FROM document_requests WHERE run_id=?`, runId).one().plan)?.selection.concepts } : {}) }),
+            ...(conceptCoverage ? { conceptCoverage } : {}) }),
           Date.now(),
         );
         this.sql.exec(

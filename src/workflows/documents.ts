@@ -132,7 +132,7 @@ export class DocumentWorkflow extends WorkflowEntrypoint<Env, DocumentParams> {
       const code = errorCode(error) ?? "generation_failed";
       await step.do("fail", STEP, retrySafely(async () => {
         try {
-          await v.failDocument(runId, code);
+          await (vault(this.env, vaultId) as unknown as DocumentVault).failDocument(runId, code);
         } catch (failure) {
           if (
             errorCode(failure) !== "gone" &&

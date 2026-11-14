@@ -1,5 +1,4 @@
 import type { ConceptKind } from "../taxonomy/types";
-import type { Range } from "./record";
 
 /** Private, immutable retrieval hints captured beside a generation's existing whole-line facts. */
 export interface FactConceptEvidence {
@@ -12,7 +11,7 @@ export interface FactConceptEvidence {
   label: string;
   taxonomyVersion: string;
   decidedAt: number;
-  part?: { id: string; splitId: string; splitDecidedAt: number; ranges: Range[]; text: string };
+  part?: { id: string; splitId: string; splitDecidedAt: number; ranges: { start: number; end: number }[]; text: string };
 }
 
 /** Owner-only coverage metadata. Never placed in printable reports, coach copies or MCP results. */

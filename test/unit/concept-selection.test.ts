@@ -82,4 +82,26 @@ describe("concept selection through the application selector", () => {
     expect(m.judge.mock.calls.flatMap(([items]) => items)).toHaveLength(240);
     expect(selected.concepts!.coverage.slice(20).every((item) => item.status === "unknown")).toBe(true);
   });
+
+  it("keeps duplicate and malformed aliases unknown rather than counting them as absent evidence", async () => {
+    for (const aliases of [["python", "python"], [" python "]]) {
+      const f = fact("python", "Built Python services"), m = models(() => true);
+      m.judge.mockResolvedValue({ verdicts: aliases.map((id) => ({ id, verdict: "supported" as const, reason: "" })) });
+      const selected = await selectFacts(m, async () => [], analysis(), [f], [], undefined, context("Python services", [hint(f)]));
+      expect(selected.concepts!.coverage[0]!.status).toBe("unknown");
+      expect(selected.gaps).toEqual([]);
+    }
+  });
+
+  it("retains selected skill-duration receipts verbatim without making them retrieval or coverage evidence", async () => {
+    const f = fact("python", "Built Python services");
+    const duration = Object.assign(fact("duration", "Python — 5 years (owner-confirmed intervals)"), { kind: "skill" as const, skillDuration: { claimId: "selected-owner-claim" } });
+    const m = models(() => true);
+    const selected = await selectFacts(m, async () => [{ factId: duration.id, query: 0, score: 1 }, { factId: f.id, query: 0, score: 0.8 }], analysis(), [f, duration], [], undefined, context("Python services", [hint(f)]));
+    expect(selected.skillIds).toContain(duration.id);
+    expect(selected.factIds).not.toContain(duration.id);
+    expect(selected.concepts!.coverage[0]!.factIds).not.toContain(duration.id);
+    expect(JSON.stringify(m.judge.mock.calls)).not.toContain(duration.text);
+    expect(JSON.stringify(m.rerank.mock.calls)).not.toContain(duration.text);
+  });
 });

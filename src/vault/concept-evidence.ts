@@ -5,7 +5,7 @@ import { validConceptId } from "../taxonomy/ids.mjs";
 import type { ConceptKind } from "../taxonomy/types";
 
 export const MAX_CAPTURED_CONCEPT_TAGS = 2048;
-interface TagRow {
+type TagRow = {
   id: string; subject_kind: string; subject_id: string; concept_id: string; concept_kind: string;
   label: string; taxonomy_version: string | null; state: string; shadow: number; decided_at: number | null;
 }
@@ -14,17 +14,17 @@ function captured(sql: SqlStorage, row: TagRow, facts: ReadonlyMap<string, FactR
   let fact: FactRecord | undefined, part: FactConceptEvidence["part"];
   if (row.subject_kind === "fact") fact = facts.get(row.subject_id);
   else if (row.subject_kind === "part") {
-    const p = sql.exec<{ id: string; split_id: string; fact_id: string; ranges: string; decided_at: number | null }>(
-      `SELECT p.id,p.split_id,s.fact_id,p.ranges,s.decided_at FROM fact_parts p JOIN fact_splits s ON s.id=p.split_id
+    const p = sql.exec<{ id: string; split_id: string; fact_id: string; ranges: string; kind: string; decided_at: number | null }>(
+      `SELECT p.id,p.split_id,s.fact_id,p.ranges,p.kind,s.decided_at FROM fact_parts p JOIN fact_splits s ON s.id=p.split_id
        WHERE p.id=? AND s.state='confirmed' AND s.shadow=0`, row.subject_id,
     ).toArray()[0];
-    if (!p || !p.decided_at) return null;
+    if (!p || !p.decided_at || !["clause", "result"].includes(p.kind)) return null;
     fact = facts.get(p.fact_id);
     if (!fact) return null;
     let ranges: Range[];
     try { ranges = JSON.parse(p.ranges); } catch { return null; }
     if (rangesProblem(fact.text, ranges)) return null;
-    part = { id: p.id, splitId: p.split_id, splitDecidedAt: p.decided_at, ranges, text: partText(fact.text, ranges) };
+    part = { id: p.id, splitId: p.split_id, splitDecidedAt: p.decided_at, ranges: ranges.map(([start, end]) => ({ start, end })), text: partText(fact.text, ranges) };
   }
   if (!fact || !Number.isSafeInteger(fact.revision)) return null;
   return { tagId: row.id, factId: fact.id, factRevision: fact.revision!, factText: fact.text, conceptId: row.concept_id,

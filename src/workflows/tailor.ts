@@ -150,7 +150,8 @@ export class TailorWorkflow extends WorkflowEntrypoint<Env, TailorParams> {
       );
       await step.do("fail", STEP, retrySafely(async () => {
         try {
-          await v.failResume(resumeId, message, event.instanceId);
+          // A rejected RPC can break its stub. Failure handling must use a fresh one.
+          await vault(this.env, vaultId).failResume(resumeId, message, event.instanceId);
         } catch (error) {
           if (errorCode(error) !== "gone") throw error;
         }
