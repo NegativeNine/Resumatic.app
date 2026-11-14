@@ -296,12 +296,13 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillParams> {
           // The step ran out of time. The upload goes on without it.
         }
       // Which taxonomy concepts a line shows is measured before anyone is shown a tag. Where this
-      // is switched on and a taxonomy is bound, every label found word for word in a fact or a job
-      // title is decided, by a rule or by the judge, and each tag is kept in shadow as it is
+      // is switched on and a taxonomy is bound, labels in a fact, eligible standalone shadow part
+      // or job title are decided, by a rule or by the judge, and kept in shadow as they are
       // decided. Without both there is no step: nothing is looked up and no model is asked. A
       // failure here leaves the upload as it is read today, with whatever tags were kept before it.
       // Where the taxonomy's vector index is bound too and holds a complete build of this version,
-      // each title and fact is then also looked up in it, after every word-for-word tag is kept.
+      // each title, fact and eligible part is then also looked up in it. All subjects share one
+      // question/word budget and deadline; a part's judge evidence contains only that part.
       const taxonomy = this.env.TAG_SHADOW_ENABLED === "true" ? taxonomyFor(this.env) : null;
       if (taxonomy)
         try {
