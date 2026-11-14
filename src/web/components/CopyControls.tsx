@@ -15,8 +15,10 @@ export function CopyControls({ items, filenames, reload, disabled = false }: {
   const links = new Map<string, CopyLinkView>();
   const separated = new Map<string, CopyLinkView>();
   for (const item of items) {
-    for (const link of item.copyReview?.links ?? []) if (ids.has(link.from) && ids.has(link.to)) links.set(link.id, link);
-    for (const link of item.copyReview?.separations ?? []) separated.set(link.id, link);
+    // The root can be shown elsewhere because its state or current identity differs. Every
+    // displayed copy keeps its outgoing choice; an incoming edge is the other copy's choice.
+    for (const link of item.copyReview?.links ?? []) if (ids.has(link.from)) links.set(link.id, link);
+    for (const link of item.copyReview?.separations ?? []) if (ids.has(link.from)) separated.set(link.id, link);
   }
   if (!links.size && !separated.size) return null;
   async function decide(link: CopyLinkView, decision: "confirmed" | "rejected") {
