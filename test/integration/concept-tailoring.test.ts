@@ -1,3 +1,4 @@
+import { strFromU8, unzipSync } from "fflate";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -80,8 +81,8 @@ async function tailor(user: User, applicationId: string) {
   const { resumeId } = await response.json() as { resumeId: string };
   return await waitForResume(user, resumeId) as ResumeView;
 }
-async function fit(user: User, applicationId: string) {
-  const response = await user.fetch(`/api/applications/${applicationId}/documents`, { method: "POST", headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() }, body: JSON.stringify({ kind: "fit" }) });
+async function fit(user: User, applicationId: string, kind: "fit" | "letter" = "fit") {
+  const response = await user.fetch(`/api/applications/${applicationId}/documents`, { method: "POST", headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() }, body: JSON.stringify({ kind }) });
   expect(response.status, await response.clone().text()).toBe(202);
   const { documentId } = await response.json() as { documentId: string };
   return eventually(async () => {
@@ -152,6 +153,29 @@ describe("concept tailoring in the actual Vault and generation Workflows", () =>
     expect(answer.state).toBe("ready");
     expect(JSON.stringify(answer)).not.toContain("conceptCoverage");
     expect(JSON.stringify(answer)).not.toContain(PYTHON);
+  });
+
+  it("keeps private concept explanations out of checked document downloads and coach copies", async () => {
+    const p = await person(), base = active;
+    active = { ...base, async complete(route, messages, schema, options) {
+      if (route === "write") return schema.parse({ units: [{ roleId: null, text: TEXT, factIds: [p.factId], group: 0 }] });
+      return base.complete(route, messages, schema, options);
+    } };
+    const doc = await fit(p.user, p.applicationId, "letter");
+    expect(doc.state, doc.error ?? "").toBe("ready");
+    expect(doc.conceptCoverage?.coverage[0]).toMatchObject({ status: "supported", factIds: [p.factId] });
+    const downloaded = await p.user.fetch(`/api/documents/${doc.id}/docx`);
+    expect(downloaded.status).toBe(200);
+    const xml = Object.values(unzipSync(new Uint8Array(await downloaded.arrayBuffer()))).map((entry) => strFromU8(entry)).join("\n");
+    for (const value of ["conceptCoverage", PYTHON, VERSION, "concept-evidence/1"]) expect(xml).not.toContain(value);
+    const made = await p.user.send("POST", "/api/shares", { factIds: [], resumes: [], documents: [{ id: doc.id, version: doc.version }] });
+    expect(made.status, await made.clone().text()).toBe(201);
+    const { grant, url } = await made.json() as { grant: { id: string }; url: string };
+    const exchanged = await call("/share/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: new URL(url).hash.slice(1) }) });
+    const copy = await call(`/share/snapshot?g=${grant.id}`, { cookie: cookieFrom(exchanged, `__Host-share-${grant.id}`)! });
+    expect(copy.status).toBe(200);
+    const copied = await copy.text();
+    for (const value of ["conceptCoverage", PYTHON, VERSION, "concept-evidence/1"]) expect(copied).not.toContain(value);
   });
 
   it("retains only explicitly selected duration text alongside private concept coverage without sending its receipt to models", async () => {
