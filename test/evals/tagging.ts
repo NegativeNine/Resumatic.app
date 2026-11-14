@@ -159,8 +159,8 @@ export async function runTagging(
   return { report: run.report, left: candidates.report.left, outcomes };
 }
 
-/** For each method: how many tags it proposed, how many of them a careful reader expects, and the share. */
-export function precision(outcomes: readonly TagOutcome[]): Record<TagMethod, { tagged: number; right: number; precision: number | null }> {
+/** For the three fact/role methods this fixture exercises; parts and requirements need their own labelled evaluation. */
+export function precision(outcomes: readonly TagOutcome[]): Record<typeof TAG_RULE_METHOD | typeof TAG_JUDGE_METHOD | typeof TAG_VECTOR_METHOD, { tagged: number; right: number; precision: number | null }> {
   const of = (method: TagMethod) => {
     const tagged = outcomes.filter((outcome) => outcome.tagged === method);
     const right = tagged.filter((outcome) => outcome.listed?.expect === "tag").length;
