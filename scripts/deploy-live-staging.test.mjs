@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { deployLiveStaging, stagingOverlay, stagingCredentials } from "./deploy-live-staging.mjs";
 
 const accountId = "a".repeat(32);
@@ -37,6 +38,12 @@ function harness(snapshots = [live(), live()], options = {}) {
   } };
 }
 const options = { accountId, token: "private-token", project: "/synthetic/project" };
+
+test("the normal staging deployment command also uses the guarded live path", async () => {
+  const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(pkg.scripts["deploy:staging"], "node scripts/deploy-live-staging.mjs");
+  assert.equal(pkg.scripts["deploy:live-staging"], pkg.scripts["deploy:staging"]);
+});
 
 test("preserves real staging settings and resources instead of deploying template defaults", async () => {
   const h = harness(); const result = await deployLiveStaging(options, h.deps);
