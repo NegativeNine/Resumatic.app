@@ -4,6 +4,7 @@ import {
   type WorkflowStep,
 } from "cloudflare:workers";
 import { runModels } from "./models";
+import { conceptContext } from "../pipeline/concept-context";
 import {
   planDocument,
   verifyDocument,
@@ -67,6 +68,7 @@ export class DocumentWorkflow extends WorkflowEntrypoint<Env, DocumentParams> {
               runModels(this.env, vaultId, runId, "plan", "document"),
               input,
               (queries, k) => v.searchFacts(queries, k, runId),
+              (analysis) => conceptContext(this.env, runModels(this.env, vaultId, runId, "plan", "document"), analysis, input.conceptEvidence),
             ));
           await v.saveDocumentStep(runId, "plan", { plan });
           return {

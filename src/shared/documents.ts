@@ -12,6 +12,7 @@ export interface NewDocument {
   manualFactIds?: string[];
 }
 export interface DocumentView {
+  conceptCoverage?: import("./concept-tailoring").ConceptSelection;
   /** The stopped generation run can be retried with its original options. */
   retryRunId?: string;
   /** The request was saved, but starting its workflow is unconfirmed. */

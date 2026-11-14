@@ -14,6 +14,7 @@ import type {
 } from "../shared/types";
 import { isInstruction } from "./extract/verify";
 import { analyzeJob, selectFacts, verifyDraft, verifyExactLine } from "./tailor";
+import type { ConceptSelectionContext } from "./concept-selection";
 
 /** A changed line drops its finding, which was about the earlier wording. Accepting a coach's suggested wording builds its line the same way. */
 export function rewritten(line: ResumeLine, change: Pick<ResumeLine, "text" | "factIds" | "status">): ResumeLine {
@@ -36,6 +37,7 @@ export interface CitedUnit extends DraftLine {
   group: number;
 }
 export interface DocumentInput {
+  conceptEvidence?: import("../shared/concept-tailoring").FactConceptEvidence[];
   kind: DocumentKind;
   jdText: string;
   analysis: Analysis | null;
@@ -105,6 +107,7 @@ export async function planDocument(
   models: Models,
   input: DocumentInput,
   search?: DocumentSearch,
+  concepts?: (analysis: Analysis) => Promise<ConceptSelectionContext | undefined>,
 ): Promise<DocumentPlan> {
   validateInput(input);
   const analysis = input.analysis ?? (await analyzeJob(models, input.jdText));
@@ -137,7 +140,7 @@ export async function planDocument(
     // Always measured afresh against the captured facts: a fit preview is about now.
     selection = input.facts.length === 0
       ? { factIds: [], skillIds: [], gaps: cleanAnalysis.requirements }
-      : await selectFacts(models, search ?? (await localSearch(models, input.facts)), cleanAnalysis, input.facts, input.roles, covered);
+      : await selectFacts(models, search ?? (await localSearch(models, input.facts)), cleanAnalysis, input.facts, input.roles, covered, await concepts?.(cleanAnalysis));
   } else if (input.selection) {
     const available = new Set(input.facts.map((f) => f.id));
     selection = {
@@ -159,6 +162,8 @@ export async function planDocument(
       cleanAnalysis,
       input.facts,
       input.roles,
+      undefined,
+      await concepts?.(cleanAnalysis),
     );
   }
   if (

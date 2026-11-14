@@ -53,6 +53,8 @@ interface ResumaticSecrets {
    * up. It adds judge calls to an upload, and a failure in it leaves the upload as it is read today.
    */
   TAG_SHADOW_ENABLED?: string;
+  /** Off by default: private concept candidates and evidence-checked requirement coverage. */
+  TAILOR_CONCEPTS_ENABLED?: string;
   /** Operator-only reference-index build; does not enable tagging of uploads. */
   TAXONOMY_INDEX_BUILD_ENABLED?: string;
   /**

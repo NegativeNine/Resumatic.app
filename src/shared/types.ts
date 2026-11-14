@@ -122,6 +122,8 @@ export interface Candidate {
 }
 
 export interface Selection {
+  /** Owner-only requirement/concept evidence; never a printable or shared claim. */
+  concepts?: import("./concept-tailoring").ConceptSelection;
   /** Accomplishment and credential facts the writer may use, best first. */
   factIds: string[];
   /** Confirmed skill facts that match the job, printed verbatim. */
@@ -151,6 +153,7 @@ export interface VerifiedDraft {
 }
 
 export interface TailorInput {
+  conceptEvidence?: import("./concept-tailoring").FactConceptEvidence[];
   applicationId: string;
   jdText: string;
   analysis: Analysis | null;

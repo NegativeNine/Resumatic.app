@@ -389,6 +389,7 @@ export interface ResumeReport {
 }
 
 export interface ResumeView {
+  conceptCoverage?: import("./concept-tailoring").ConceptSelection;
   /** The stored version is retained for the owner but cannot currently be exported or shared. */
   needsGroundingReview?: boolean;
   /**

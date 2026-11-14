@@ -4,6 +4,7 @@ import {
   type WorkflowStep,
 } from "cloudflare:workers";
 import { runModels } from "./models";
+import { conceptContext } from "../pipeline/concept-context";
 import {
   analyzeJob,
   composeBody,
@@ -70,6 +71,8 @@ export class TailorWorkflow extends WorkflowEntrypoint<Env, TailorParams> {
               input.analysis!,
               input.facts,
               input.roles,
+              undefined,
+              await conceptContext(this.env, m("select"), input.analysis!, input.conceptEvidence),
             ));
           await v.saveStep(resumeId, "select", { selection }, event.instanceId);
           return {
