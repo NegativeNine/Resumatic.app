@@ -85,7 +85,7 @@ describe("reading with shadow offers switched on", () => {
       holds: false,
       proposedBy: "model",
       model: env.MODEL_JUDGE,
-      method: "entailment/3",
+      method: "entailment/4",
       decidedBy: null,
     });
     expect(links.shown).toEqual([]);
@@ -105,6 +105,30 @@ describe("reading with shadow offers switched on", () => {
     const { links, calls } = await twice({ judgeRejects: ["Mentored"] });
     expect(calls.judge).toBe(1);
     expect(links.all).toEqual([]);
+  });
+
+  it.each(["missing", "repeated"] as const)("keeps no fuller offer when one direction's answer is %s", async (answer) => {
+    settings.OFFER_SHADOW_ENABLED = "true";
+    let questions = 0;
+    const { facts, links } = await twice({}, (models) => ({
+      ...models,
+      async complete(route, messages, schema, options) {
+        if (route !== "judge") return models.complete(route, messages, schema, options);
+        const { lines } = JSON.parse(messages.at(-1)!.content) as { lines: { id: string; text: string }[] };
+        questions += lines.length;
+        return schema.parse({
+          verdicts: lines.flatMap((line) => {
+            const yes = { id: line.id, verdict: "supported", reason: "" };
+            if (line.text !== LONG) return [yes];
+            return answer === "missing" ? [] : [yes, { ...yes, verdict: "unsupported" }];
+          }),
+        });
+      },
+    }));
+    expect(questions).toBe(2);
+    expect(facts).toHaveLength(16);
+    expect(links.all).toEqual([]);
+    expect(links.shown).toEqual([]);
   });
 
   it("puts no pair to the judge when the earlier line is marked sensitive", async () => {
@@ -149,7 +173,7 @@ describe("reading with shadow offers switched on", () => {
     const { links, long, short } = await twice({ judgeRejects: ["every quarter"] });
     // Three roles and seven lines are word for word the same. The eighth line is the offer.
     expect(links.all.filter((link) => link.proposedBy === "rule").map((link) => link.method).sort()).toEqual([...Array(3).fill("identical-role/3"), ...Array(7).fill("identical-wording/3")].sort());
-    expect(links.all.filter((link) => link.proposedBy === "model")).toMatchObject([{ relation: "fuller", from: long.id, to: short.id, method: "entailment/3" }]);
+    expect(links.all.filter((link) => link.proposedBy === "model")).toMatchObject([{ relation: "fuller", from: long.id, to: short.id, method: "entailment/4" }]);
     expect(links.all.every((link) => link.shadow && !link.holds)).toBe(true);
   });
 

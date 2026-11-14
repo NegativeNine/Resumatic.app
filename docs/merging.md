@@ -46,7 +46,7 @@ A line marked sensitive is on neither side of a pair, so it is never put to the 
 Then each direction separately: does this line say everything that one says?
 
 1. The checks a resume line passes against its facts, which need no model. A different figure, a different name, a denial or a plan of an action those checks know, or an outcome going the other way settles that direction as no, whatever a judge would say.
-2. The judge, in the form it already answers. Anything but one plain "supported" is a no, and an answer counts only in the call that asked its question.
+2. The judge, in the form it already answers. Exactly one "supported" settles a direction as yes; exactly one "unsupported" or "overstated" settles it as no. An answer counts only in the call that asked its question. A missing, repeated or invalid answer leaves that direction unknown, so the pair produces no offer even if the other direction is supported. A direction refused by a deterministic check is already settled as no and needs no judge answer.
 
 | Each says everything the other says | Only one does | Neither does |
 | --- | --- | --- |

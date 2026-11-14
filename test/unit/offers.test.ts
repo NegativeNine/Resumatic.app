@@ -63,11 +63,41 @@ describe("what to offer about two lines", () => {
     expect(await offers(models({ "Wrote the runbooks": "unsupported", "Reviewed the runbooks": "unsupported" }).models, [pair("Wrote the runbooks", "Reviewed the runbooks")])).toEqual([]);
   });
 
-  it("takes anything but one plain yes as a no", async () => {
-    for (const verdict of ["overstated", "missing", "twice"] as const) {
-      expect(await offers(models({ [LONG]: verdict }).models, [pair(LONG, SHORT)]), verdict).toEqual([{ relation: "fuller", from: "later-1", to: "earlier-1" }]);
-      expect(await offers(models({ [LONG]: verdict, [SHORT]: verdict }).models, [pair(LONG, SHORT)]), verdict).toEqual([]);
-    }
+  it("requires an explicit negative answer for the reverse direction before offering a fuller version", async () => {
+    for (const typed of [false, true])
+      for (const verdict of ["unsupported", "overstated"] as const) {
+        expect(await offers(models({ [LONG]: verdict }, typed).models, [pair(LONG, SHORT)]), `${typed}: ${verdict}`).toEqual([{ relation: "fuller", from: "later-1", to: "earlier-1" }]);
+        expect(await offers(models({ [LONG]: verdict, [SHORT]: verdict }, typed).models, [pair(LONG, SHORT)]), `${typed}: ${verdict}`).toEqual([]);
+      }
+  });
+
+  it("offers nothing when either direction has no single answer, even if the other is supported", async () => {
+    for (const typed of [false, true])
+      for (const verdict of ["missing", "twice"] as const)
+        for (const text of [LONG, SHORT]) {
+          const fake = models({ [text]: verdict }, typed);
+          expect(await offers(fake.models, [pair(LONG, SHORT)]), `${typed}: ${verdict}: ${text}`).toEqual([]);
+          expect(fake.asked.flat()).toHaveLength(2);
+        }
+  });
+
+  it("never infers a fuller version from conflicting or repeated answers, in any order", async () => {
+    for (const typed of [false, true])
+      for (const repeated of [["supported", "unsupported"], ["unsupported", "supported"], ["supported", "unsupported", "supported"], ["supported", "supported", "supported"]] as const) {
+        const { models: fake } = models({}, typed, (answers) => answers.flatMap((answer) =>
+          answer.id === "1.l" ? repeated.map((verdict, index) => ({ ...answer, id: index ? " 1.l " : answer.id, verdict })) : [answer],
+        ));
+        expect(await offers(fake, [pair(LONG, SHORT)]), `${typed}: ${repeated.join(", ")}`).toEqual([]);
+      }
+  });
+
+  it("leaves an invalid typed decision unknown", async () => {
+    // Schema-based replies reject invalid choices before they reach offers. A malformed typed
+    // adapter must not turn its unknown choice into evidence that the reverse direction is false.
+    const { models: fake } = models({}, true, (answers) => answers.map((answer) =>
+      answer.id === "1.l" ? { ...answer, verdict: "uncertain" as Answer["verdict"] } : answer,
+    ));
+    expect(await offers(fake, [pair(LONG, SHORT)])).toEqual([]);
   });
 
   it("settles a difference in figures, names or denial without asking, whatever a judge would say", async () => {
@@ -178,9 +208,9 @@ describe("what to offer about two lines", () => {
     };
     for (const typed of [false, true]) {
       // The first reply volunteers that the earlier line says everything, and the call that asked gets no answer.
-      expect(await relations((answers, call) => (call === 0 ? [...answers, yes("11.l")] : answers.filter((answer) => answer.id !== "11.l")), typed), String(typed)).toEqual([...Array(10).fill("same"), "fuller"]);
+      expect(await relations((answers, call) => (call === 0 ? [...answers, yes("11.l")] : answers.filter((answer) => answer.id !== "11.l")), typed), String(typed)).toEqual([...Array(10).fill("same"), "nothing"]);
       // The other way round: no answer from the call that asked, and one volunteered by the next.
-      expect(await relations((answers, call) => (call === 0 ? answers.filter((answer) => answer.id !== "3.e") : [...answers, yes("3.e")]), typed), String(typed)).toEqual(["same", "same", "fuller", ...Array(8).fill("same")]);
+      expect(await relations((answers, call) => (call === 0 ? answers.filter((answer) => answer.id !== "3.e") : [...answers, yes("3.e")]), typed), String(typed)).toEqual(["same", "same", "nothing", ...Array(8).fill("same")]);
       // An answer nobody asked for decides nothing by itself, and takes nothing from the answer that was asked for.
       expect(await relations((answers, call) => (call === 0 ? [...answers, { ...yes("11.e"), verdict: "unsupported" }, yes("12.e")] : answers), typed), String(typed)).toEqual(Array(11).fill("same"));
       // Nor does a volunteered answer stand in for a direction a check settled without asking.
