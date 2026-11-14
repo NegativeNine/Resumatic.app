@@ -1,0 +1,199 @@
+{
+  "format": 1,
+  "promotionEligible": false,
+  "checkedAt": "2026-11-14T06:08:45.490426+00:00",
+  "staging": {
+    "checkedAt": "2026-11-14T06:08:45.490426+00:00",
+    "url": "https://resumatic-staging.floral-resonance-bb84.workers.dev",
+    "version": "897a6f75-b160-4300-bde2-5912431ae132",
+    "sourceCommit": "66cd14ca9f4288607ccee8ca3589a6f1d0c4a6a6",
+    "bindingsPreserved": 53,
+    "durableObjectNamespacesUnchanged": true,
+    "workflowBindings": 6,
+    "health": 200,
+    "home": 200,
+    "googleRedirect": 302,
+    "realGoogleSignInVerified": false,
+    "featureFlags": {
+      "IDENTICAL_REVIEW_ENABLED": true,
+      "RECORD_PROPOSAL_REVIEW_ENABLED": false,
+      "TAG_SHADOW_ENABLED": false,
+      "SPLIT_SHADOW_ENABLED": false,
+      "MATCH_SHADOW_ENABLED": false,
+      "OFFER_SHADOW_ENABLED": false,
+      "SKILL_YEARS_ENABLED": false,
+      "TAILOR_CONCEPTS_ENABLED": false
+    },
+    "modelIdentifiers": {
+      "MODEL_EXTRACT": "meta/muse-ember-1.0",
+      "MODEL_WRITE": "meta/muse-ember-1.0",
+      "MODEL_JUDGE": "@cf/cloudflare/clef",
+      "EMBEDDING_MODEL": "@cf/qwen/qwen3-embedding-0.6b",
+      "RERANK_MODEL": "@cf/cloudflare/clef"
+    },
+    "taxonomyIndex": {
+      "checkedAt": "2026-11-14T06:08:44.822398+00:00",
+      "environment": "staging",
+      "taxonomyVersion": "esco-1.2.1+onet-31.0+3f810824",
+      "index": "resumatic-taxonomy-3f810824",
+      "manifest": {
+        "after": "onet:toolcat:2.E.9.o",
+        "completedAt": 1794629307724,
+        "count": 29981,
+        "dimensions": 1024,
+        "document": "label-kind-description/1",
+        "format": 1,
+        "kind": "manifest",
+        "kinds": "activity,knowledge,occupation,skill,skill-group,tool,tool-category",
+        "model": "@cf/qwen/qwen3-embedding-0.6b",
+        "runId": "taxonomy-index-3f810824-3",
+        "startedAt": 1794626426278,
+        "state": "complete",
+        "taxonomyVersion": "esco-1.2.1+onet-31.0+3f810824"
+      },
+      "vectorCount": 29982,
+      "metric": "cosine",
+      "bindingsMatch": true,
+      "selfChecks": [
+        {
+          "id": "esco:isced-f:00",
+          "kind": "skill-group",
+          "returnedId": "esco:isced-f:00",
+          "score": 1.0,
+          "exactScoring": true
+        },
+        {
+          "id": "onet:toolcat:2.E.9.o",
+          "kind": "tool-category",
+          "returnedId": "onet:toolcat:2.E.9.o",
+          "score": 1.0,
+          "exactScoring": true
+        }
+      ],
+      "verificationSourceCommit": "9c2367151a24a5c38e72e638b9085699ba8ad652",
+      "limitations": [
+        "Structural index readiness only; semantic tag precision, similarity floor and caps remain unmeasured.",
+        "Upload shadow stages and model-proposal review remain disabled.",
+        "The first two embedding attempts stopped and resumed from their saved checkpoints; exact-score verification completed without re-embedding."
+      ]
+    },
+    "sourceProofProtocolActivated": false,
+    "productionDeployment": false
+  },
+  "localBrowser": {
+    "sourceCommit": "c587ded85766dd5d80946419088824d0343ce99f",
+    "browser": "Chrome for Testing 157.0.8103.78",
+    "report": {
+      "status": "passed",
+      "promotionEligible": false,
+      "mode": "synthetic-api-standin",
+      "checks": {
+        "signInNavigation": true,
+        "uploadRetryKey": true,
+        "ocrDownloadLinks": true,
+        "sourceRoleOnly": true,
+        "sourceEmpty": true,
+        "pollRecovery": true,
+        "pollNonTransient": true,
+        "uncertainSourceCancellation": true,
+        "sourceReadingRetry": true,
+        "roleAndFactReview": true,
+        "roleDraftDuringRefresh": true,
+        "factDraftDuringRefresh": true,
+        "sourceConfirmationDuringDraft": true,
+        "secondReviewEditorBlocked": true,
+        "reviewLockReleasedOnNavigation": true,
+        "roleEditLostResponse": true,
+        "factLevelReview": true,
+        "factEditLostResponse": true,
+        "manualFactRetryKey": true,
+        "manualFactSubmissionLock": true,
+        "manualRoleSubmissionLock": true,
+        "manualRoleRetryKey": true,
+        "editorFocusReturn": true,
+        "applicationCreation": true,
+        "jobSubmissionLock": true,
+        "jobRetryKey": true,
+        "profileSubmissionLock": true,
+        "profileConcurrentEdit": true,
+        "profileLostResponse": true,
+        "jobOpenedFromRow": true,
+        "applicationTracking": true,
+        "trackingDraftOnRefresh": true,
+        "boardKeyboardScroll": true,
+        "documentRefreshAfterStart": true,
+        "documentTabReturnGuard": true,
+        "coverLetterDisplay": true,
+        "documentWordDownloadLink": true,
+        "savedInterviewAnswer": true,
+        "interviewSubmissionLock": true,
+        "tailoredResumeDisplay": true,
+        "historicLevelGuard": true,
+        "resumeDraftDuringRefresh": true,
+        "verifiedManualEdit": true,
+        "uncitedRemediation": true,
+        "lineCardFocusAfterCheck": true,
+        "lineCardNoOverlap": true,
+        "lineCardSheet": true,
+        "legacyResumeReview": true,
+        "legacySkillRemoval": true,
+        "checkedSkillRemoval": true,
+        "checkedLineRemoval": true,
+        "uncertainDocumentCancellation": true,
+        "documentRetry": true,
+        "uncertainResumeCancellation": true,
+        "exportDisclosure": true,
+        "unavailableShareNotice": true,
+        "stableResourceReload": true,
+        "shareRetry": true,
+        "expiredShare": true
+      }
+    }
+  },
+  "localRendering": {
+    "sourceCommit": "c587ded85766dd5d80946419088824d0343ce99f",
+    "report": {
+      "status": "passed",
+      "promotionEligible": false,
+      "checks": {
+        "pdf": {
+          "name": true,
+          "email": true,
+          "employer": true,
+          "title": true,
+          "accomplishment": true,
+          "skill": true
+        },
+        "docx": {
+          "name": true,
+          "email": true,
+          "employer": true,
+          "title": true,
+          "accomplishment": true,
+          "skill": true
+        }
+      },
+      "renderer": "local-chromium",
+      "browserRunVerified": false
+    }
+  },
+  "mergedPullRequests": [
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47
+  ],
+  "limitations": [
+    "Health and Google redirect checks do not establish real-account Google sign-in or coach/client acceptance.",
+    "Local browser uses synthetic API stand-ins; local PDF and Word text checks do not establish Browser Run or independent ATS acceptance.",
+    "No model quality approval: the prior focused real-judge smoke failed the positive C++ tagging control.",
+    "Model proposal review, upload shadow stages, skill years and concept tailoring remain disabled on staging.",
+    "The complete source-proof protocol, deletion inventory, provider/billing/security checks and beta observation remain unfinished.",
+    "Source-proof component prototypes are isolated and not registered or activated on main."
+  ]
+}
