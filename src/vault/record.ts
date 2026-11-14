@@ -327,6 +327,14 @@ export class RecordStore {
     return row ? this.splitView(row) : null;
   }
 
+  /** Owner review history only: rejected visible splits, never shadow judgements. */
+  rejectedSplits(factId: string): FactSplit[] {
+    return this.sql.exec<SplitRow>(
+      `SELECT * FROM fact_splits WHERE fact_id = ? AND shadow = 0 AND state = 'rejected' ORDER BY decided_at DESC, created_at DESC, id`,
+      factId,
+    ).toArray().map((row) => this.splitView(row));
+  }
+
   /** The owner accepts a division or turns it down. Turning down one they accepted undoes it. */
   decideSplit(splitId: string, decision: "confirmed" | "rejected"): void {
     this.transaction(() => {
@@ -660,10 +668,9 @@ export class RecordStore {
   }
 
   private decide(table: Table, id: string, state: "confirmed" | "rejected", by: "rule" | "owner"): void {
-    // Link decisions also serve as the owner's optimistic-concurrency generation. Two choices
-    // made in the same millisecond (or after the clock moves backwards) must remain distinct.
-    const clock = table === "record_links" ? "MAX(?, COALESCE(decided_at, 0) + 1)" : "?";
-    this.sql.exec(`UPDATE ${table} SET state = ?, decided_by = ?, decided_at = ${clock} WHERE id = ?`, state, by, this.now(), id);
+    // Decisions are owner compare-and-set generations for links, splits and tags. A frozen
+    // or backwards clock must not make confirm/reject/confirm look unchanged to an old screen.
+    this.sql.exec(`UPDATE ${table} SET state = ?, decided_by = ?, decided_at = MAX(?, COALESCE(decided_at, 0) + 1) WHERE id = ?`, state, by, this.now(), id);
   }
 
   /** A proposal made again takes the stamp of what made it last. */

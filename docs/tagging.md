@@ -4,7 +4,7 @@ A line of experience shows things the [taxonomy](taxonomy.md) has names for: sof
 
 It is step 5 of the [pipeline design](taxonomy-pipelines-design.md), for facts, verified parts and job roles, from labels found word for word and from concepts near the words in the taxonomy's vector index. The shared engine is `src/pipeline/tag.ts`; `src/pipeline/requirement-tags.ts` applies its closed candidates and bounds to job requirements without making claims about the person. What a person tag is stored as is in [record.md](record.md).
 
-**Status: the tagger exists and is tested with stand-in models and a made-up taxonomy. Upload tagging runs only where `TAG_SHADOW_ENABLED` is `"true"` and a taxonomy is bound and wholly loaded. That upload switch remains off in every checked-in environment. Part tagging additionally needs verified shadow splits from `SPLIT_SHADOW_ENABLED`, also off. The reference taxonomy and vector index have been loaded in staging independently of these upload stages. Building the part and requirement paths does not enable them or establish their accuracy; their new judge methods still need measurement before release.**
+**Status: the tagger exists and is tested with stand-in models and a made-up taxonomy. Upload tagging runs only where `TAG_SHADOW_ENABLED` is `"true"` and a taxonomy is bound and wholly loaded. That upload switch remains off in every checked-in environment. Part tagging additionally needs verified shadow splits from `SPLIT_SHADOW_ENABLED`, also off. The reference taxonomy and [vector index are built and structurally verified in staging](taxonomy-index-2026-11-14.json), independently of these upload stages. The focused real-judge smoke failed its positive tagging control (see below); full real-model and vector-candidate quality remain unmeasured. Building the part and requirement paths does not enable them or establish their accuracy; their new judge methods still need measurement before release.**
 
 ## Candidates
 
@@ -172,7 +172,7 @@ These numbers come from arithmetic, not from measurement. Vector questions take 
 
 ## What is not built
 
-- **Automatic promotion of shadow tags.** The owner review panel is separately gated and reads only non-shadow proposals. No upload stage creates those proposals or promotes measured shadow judgements into them.
+- **Automatic promotion of shadow tags.** The owner review panel in #40 is behind `RECORD_PROPOSAL_REVIEW_ENABLED`, off everywhere, and reads only non-shadow proposals. Measurement is required before enabling it. No upload stage creates those proposals or promotes measured shadow judgements into them.
 - **Release of concept-based matching, coverage or years per skill.** Those consumers have separate gates and validation. Any consumer has to leave out tags of every fact `usableFacts()` leaves out, including a part's parent. The owner's card preview, where switched on, reads only confirmed tags, which no stage writes; and it bars every concept that any tag on a fact marked sensitive names, in any state, even where an unmarked fact shows it too ([visibility-design.md](visibility-design.md)).
 
 ## What has and has not been measured
@@ -185,3 +185,5 @@ These numbers come from arithmetic, not from measurement. Vector questions take 
 - **Not measured:** the precision of each method's tags. That needs lines given with consent and the real taxonomy: the labelled examples and the taxonomy they are read against are made up, and cannot set a threshold. Nor has the stage's cost in D1 statements been run against a deployed Worker.
 
 Nothing is shown to anyone until that is measured.
+
+The [14 November focused real-Clef smoke](evals/pipeline-smoke-2026-11-14.json) asked three tagging questions. It declined both denial/intention cases and the positive C++ use case, so the run failed. The full tag eval, vector precision and consented quality measurements remain outstanding. No production prompt or confidence threshold was changed to hide the failure.

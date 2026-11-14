@@ -110,7 +110,48 @@ const tag = (subject: NewTag["subject"], conceptId: string, conceptKind: NewTag[
   stamp,
 });
 
+describe("decision generations", () => {
+  it("changes monotonically for splits and tags even when the clock is frozen", () => {
+    const { record } = vault(() => 1234);
+    const split = record.proposeSplit({ factId: "f1", line: LINE, parts: DIVISION, stamp: model });
+    const concept = record.proposeTag(tag({ kind: "fact", id: "f1" }, "onet:tool:python", "tool", "Python"));
+    for (const state of ["confirmed", "rejected", "confirmed"] as const) {
+      record.decideSplit(split.splitId, state); record.decideTag(concept.tagId, state);
+    }
+    expect(record.split("f1")!.decidedAt).toBe(1236);
+    expect(record.tags({ kind: "fact", id: "f1" })[0]!.decidedAt).toBe(1236);
+  });
+});
+
 describe("how a line divides", () => {
+  it("reads rejected non-shadow history, restores a split explicitly and never restores its removed tags", () => {
+    const { record, db } = vault();
+    const first = record.proposeSplit({ factId: "f1", line: LINE, parts: DIVISION, stamp: model });
+    const shadowed = record.proposeSplit({ factId: "f1", line: LINE, parts: DIVISION, stamp: shadow(model) });
+    record.proposeTag(tag({ kind: "part", id: first.partIds[0]! }, "onet:tool:api", "tool", "API"));
+    record.decideSplit(first.splitId, "rejected");
+    db.prepare(`UPDATE fact_splits SET state = 'rejected' WHERE id = ?`).run(shadowed.splitId);
+    expect(record.split("f1")).toBeNull();
+    const history = record.rejectedSplits("f1");
+    expect(history.map((split) => split.id)).toEqual([first.splitId]);
+    expect(history[0]!.parts.map((part) => part.text)).toContain("Designed the API");
+    expect(record.tags({ kind: "part", id: first.partIds[0]! })).toEqual([]);
+    record.decideSplit(first.splitId, "confirmed");
+    expect(record.split("f1")!.id).toBe(first.splitId);
+    expect(record.rejectedSplits("f1")).toEqual([]);
+    expect(record.tags({ kind: "part", id: first.partIds[0]! })).toEqual([]);
+  });
+
+  it("refuses to reactivate history while another non-shadow split is active", () => {
+    const { record } = vault();
+    const first = record.proposeSplit({ factId: "f1", line: LINE, parts: DIVISION, stamp: model });
+    record.decideSplit(first.splitId, "rejected");
+    const active = record.proposeSplit({ factId: "f1", line: LINE, parts: [{ kind: "clause", ranges: [[0, LINE.length]] }], stamp: model });
+    expect(refusal(() => record.decideSplit(first.splitId, "confirmed"))).toBe("conflict");
+    expect(record.split("f1")!.id).toBe(active.splitId);
+    expect(record.rejectedSplits("f1").map((split) => split.id)).toEqual([first.splitId]);
+  });
+
   it("stores parts as positions and reads them back in the line's own words", () => {
     const { record, db } = vault();
     const saved = record.proposeSplit({ factId: "f1", line: LINE, parts: DIVISION, stamp: model });

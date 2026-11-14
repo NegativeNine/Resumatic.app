@@ -222,7 +222,9 @@ export async function runIndexBuild(
         if (!first || !last) return { code: "unfiltered" as const };
         for (const concept of [first, last]) {
           const id = await vectorIdFor(concept.id);
-          const found = await index.queryById(id, { topK: 1, filter: { kind: { $eq: concept.kind } } });
+          // Default Vectorize scores are approximate, including a vector's self-score. Exact
+          // scoring is required here to verify the metric against the unchanged near-one bound.
+          const found = await index.queryById(id, { topK: 1, filter: { kind: { $eq: concept.kind } }, returnValues: true });
           const top = found?.matches?.[0];
           if (!top || top.id !== id) return { code: "unfiltered" as const };
           if (!(top.score >= SELF_MATCH_MIN && top.score <= SELF_MATCH_MAX)) return { code: "metric" as const };

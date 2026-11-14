@@ -222,6 +222,18 @@ describe("building the taxonomy's vector index", () => {
     expect((await readManifest(unfiltered.index))?.state).toBe("building");
   });
 
+  it("verifies self-matches with exact scoring when default scores are approximate", async () => {
+    class ApproximateIndex extends MemoryVectorIndex {
+      override async queryById(id: string, options: VectorizeQueryOptions = {}) {
+        const result = await super.queryById(id, options);
+        // The live cosine index scored its own boundary vectors about 0.94 by default.
+        if (!options.returnValues) for (const match of result.matches) match.score *= 0.94;
+        return result;
+      }
+    }
+    expect((await setup({ index: new ApproximateIndex() }).build()).result.state).toBe("complete");
+  });
+
   it("stops with metric when a concept does not match itself at about 1", async () => {
     // Euclidean scores a vector against itself 0.
     const { index, build } = setup({ index: new MemoryVectorIndex({ metric: "euclidean" }) });
