@@ -111,17 +111,40 @@ describe("checked document DOCX publication", () => {
     const inspection = await user.json<DocumentView>(`/api/documents/${ids.letter}`);
     expect(inspection.result?.units).toHaveLength(3);
   });
-  it.each(["private fact", "private source line", "withdrawn fact", "withdrawn role"])("refuses %s after saving", async (reason) => {
+  it.each(["private fact", "private source line"])("preserves owner bytes for a %s while coach sharing stays blocked", async (reason) => {
     const { user, ids, inside } = await seed();
+    const before = new Uint8Array(await (await user.fetch(`/api/documents/${ids.letter}/docx`)).arrayBuffer());
     await inside((sql) => {
       if (reason === "private fact") sql.exec(`UPDATE facts SET sensitive = 1 WHERE id = 'f1'`);
-      else if (reason === "private source line") {
-        sql.exec(`INSERT INTO facts (id, kind, text, evidence_id, origin, state, sensitive, updated_at) VALUES ('private-sibling', 'skill', 'Go', 'e-f1', 'extracted', 'confirmed', 1, 1)`);
-      } else if (reason === "withdrawn fact") sql.exec(`UPDATE facts SET state = 'rejected' WHERE id = 'f1'`);
+      else sql.exec(`INSERT INTO facts (id, kind, text, evidence_id, origin, state, sensitive, updated_at) VALUES ('private-sibling', 'skill', 'Go', 'e-f1', 'extracted', 'confirmed', 1, 1)`);
+      // Private current wording does not replace what the saved letter was checked against.
+      sql.exec(`UPDATE facts SET text='Rebuilt internal tools', origin='user', revision=revision+1 WHERE id='f1'`);
+    });
+    const response=await user.fetch(`/api/documents/${ids.letter}/docx`);
+    expect(response.status,await response.clone().text()).toBe(200);
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(before);
+    expect((await user.json<DocumentView>(`/api/documents/${ids.letter}`)).result?.units[0]?.text).toBe("Built one service.");
+    expect((await user.send("POST","/api/shares",{factIds:[],resumes:[],documents:[{id:ids.letter,version:1}]})).status).toBe(409);
+  });
+  it.each(["withdrawn fact", "withdrawn role"])("refuses %s after saving", async (reason) => {
+    const { user, ids, inside } = await seed();
+    await inside((sql) => {
+      if (reason === "withdrawn fact") sql.exec(`UPDATE facts SET state = 'rejected' WHERE id = 'f1'`);
       else sql.exec(`UPDATE roles SET state = 'rejected' WHERE id = 'role-a'`);
     });
     await refused(await user.fetch(`/api/documents/${ids.letter}/docx`));
     expect((await user.json<DocumentView>(`/api/documents/${ids.letter}`)).result?.units[0]?.text).toBe("Built one service.");
+  });
+  it("preserves the owner projection when a privacy mark lands during its hash",async()=>{
+    const {stub,who,ids,user}=await seed();
+    const before=await stub.documentExportData(who,ids.letter!);
+    await runInDurableObject(stub,async(instance,state)=>{
+      const pending=instance.documentExportData(who,ids.letter!);
+      state.storage.sql.exec(`UPDATE facts SET sensitive=1 WHERE id='f1'`);
+      expect(await pending).toEqual(before);
+    });
+    expect(await wordXml(await user.fetch(`/api/documents/${ids.letter}/docx`))).toContain("Built one service.");
+    expect((await user.send("POST","/api/shares",{factIds:[],resumes:[],documents:[{id:ids.letter,version:1}]})).status).toBe(409);
   });
   it("retains the exact saved evidence across ordinary edits", async () => {
     const { user, ids, inside } = await seed();
@@ -131,6 +154,7 @@ describe("checked document DOCX publication", () => {
   });
   it.each(["version", "evidence", "privacy", "withdrawal", "session"])("rechecks a %s change between projection and returning bytes", async (reason) => {
     const { user, ids, stub, who, inside, change } = await seed(); let first = true; let checked = false;
+    const before = reason === "privacy" ? new Uint8Array(await (await user.fetch(`/api/documents/${ids.letter}/docx`)).arrayBuffer()) : null;
     const namespace = {
       idFromString: (id: string) => env.VAULT.idFromString(id),
       get: (id: DurableObjectId) => {
@@ -155,6 +179,11 @@ describe("checked document DOCX publication", () => {
     };
     const bindings = { ...env, VAULT: namespace } as unknown as Env;
     const response = await app.fetch(new Request(`https://resumatic.test/api/documents/${ids.letter}/docx`, { headers: { cookie: user.cookie } }), bindings);
-    await refused(response, reason === "session" ? 401 : 409); expect(checked).toBe(true);
+    if (reason === "privacy") {
+      expect(response.status,await response.clone().text()).toBe(200);
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(before);
+      expect((await user.send("POST","/api/shares",{factIds:[],resumes:[],documents:[{id:ids.letter,version:1}]})).status).toBe(409);
+    } else await refused(response, reason === "session" ? 401 : 409);
+    expect(checked).toBe(true);
   });
 });
