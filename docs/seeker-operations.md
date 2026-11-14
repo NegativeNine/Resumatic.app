@@ -54,6 +54,12 @@ On that deployment, reading an upload, tailoring and an uncached PDF fail closed
 
 Normal deployment and staging lifecycle preflight require a finite positive `DAILY_SPEND_CAP_USD` in the selected Worker configuration. The committed value is zero, so paid work remains disabled until the operator sets a cap. Bind all four per-Vault Workflows (`DISTILL`, `TAILOR`, `DOCUMENTS`, `REEMBED`). The public production workflow also refuses configured restore fences; maintenance deploys follow the fenced replacement procedure below.
 
+### Updating an already configured live staging service
+
+For a code update to an existing `resumatic-staging` whose live settings differ from the committed smoke template, use `CLOUDFLARE_ACCOUNT_ID=<account-id> npm run deploy:staging` (`deploy:live-staging` is an alias). Both commands preserve the live service. They use `CLOUDFLARE_API_TOKEN` if supplied, otherwise refresh the current Wrangler login and capture its token privately. The helper reads the live settings before building, builds staging, and overlays the live variables and resource bindings onto the compiled configuration. Worker secrets stay with Cloudflare and are never copied into the artifact. Durable Object and Workflow identities must already match the source configuration. Unknown binding types, secrets that shadow reviewed settings, incomplete Google/account/gateway settings, or a failed settings read stop deployment.
+
+The helper reads the live settings again before writing the artifact and refuses a change during the build. A build or artifact failure also stops before deploy. It never falls back to a saved settings file. After it succeeds, verify the live bindings, health, Google redirect, and enabled feature flags. This is a code update path; deliberate runtime configuration changes and first-time provisioning still require the configuration preflight and runbook above. The helper does not prove release readiness or run paid checks.
+
 ### Reading a posting from a link
 
 `POSTING_READER_ENABLED=true` lets a signed-in person have the Worker fetch a job posting's page and read the schema.org JobPosting on it. It is absent from every environment, so the feature is off and the app doesn't offer it. `scripts/validate-config.mjs` refuses it in production configuration (`POSTING_READER_ROLLOUT_UNVERIFIED`).
