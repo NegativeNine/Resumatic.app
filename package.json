@@ -9,6 +9,7 @@
     "build": "vite build",
     "build:staging": "CLOUDFLARE_ENV=staging vite build",
     "deploy:staging": "npm run build:staging && wrangler deploy",
+    "deploy:live-staging": "node scripts/deploy-live-staging.mjs",
     "cf-typegen": "wrangler types --strict-vars=false",
     "typecheck": "wrangler types --strict-vars=false && tsc -b",
     "test": "vitest run --project unit --project integration --project web",
