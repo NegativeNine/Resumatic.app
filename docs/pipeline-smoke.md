@@ -10,6 +10,8 @@ It permits at most **$1 in conservative reservations and 50 weighted upstream at
 
 The private, durable SQLite ledger is created exclusively and cannot be reset by rerunning the command. Reservations commit before dispatch; unknown usage or a failed request freezes the campaign. Questions run sequentially. A fresh adapter cannot reset the allowance. The report must contain eight settled attempts and positive results, so a judge declining everything cannot pass.
 
+The report is checkpointed after each completed check and question. A later provider failure preserves earlier results. Each synthetic question records the judge's claim and cited words, its choice and three probabilities, and the final thresholded verdict separately; a `supported` choice below 0.8 therefore remains distinguishable from an explicit rejection. Only these reviewed decision fields are copied: provider extras, full responses, request headers and credentials are never stored. The original eight-request smoke did not collect these diagnostics, so its positive-tag failure cannot retrospectively be attributed to a low probability or a particular choice.
+
 With a current Cloudflare token set as `CF_AI_TOKEN`, the account ID in `CF_ACCOUNT_ID` and `AI_GATEWAY_ID=resumatic-staging`, create an empty owner-only directory outside the checkout, then run:
 
 ```sh
