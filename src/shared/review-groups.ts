@@ -1,4 +1,5 @@
 import type { FactView, ReviewState, RoleView } from "./api";
+import { wording } from "./record";
 import { cleanExtractedText } from "./clean";
 
 // How the review queue groups what it shows: the same role or fact read from two files is one
@@ -24,6 +25,7 @@ export interface Group {
 export const MAX_DUPLICATES = 200;
 
 export function roleKey(role: RoleView): string | null {
+  if (role.copyReview) return JSON.stringify([role.copyReview.rootId, role.state]);
   // A missing title or start date cannot safely distinguish two tenures.
   if (!role.sourceId || !role.title || !role.startDate) return null;
   return JSON.stringify([role.kind, role.org.trim(), role.title.trim(), role.startDate,
@@ -105,7 +107,10 @@ export function groupByRole(entries: ReviewEntries, state: ReviewState): Group[]
     const choices = key ? matching.get(key) : undefined;
     let group = choices?.find((item) => (item.duplicates?.length ?? 0) < MAX_DUPLICATES - 1);
     if (group) {
-      (group.duplicates ??= []).push(role);
+      if (role.copyReview?.rootId === role.id) {
+        (group.duplicates ??= []).push(group.role!);
+        group.role = role;
+      } else (group.duplicates ??= []).push(role);
     } else {
       group = { role, facts: [] };
       groups.push(group);
@@ -131,15 +136,18 @@ export function groupFacts(facts: FactView[], equivalentRoles: ReadonlySet<strin
   const matching = new Map<string, FactView[][]>();
   for (const fact of facts) {
     const role = fact.roleId && equivalentRoles.has(fact.roleId) ? "equivalent-role" : fact.roleId;
-    const text = cleanExtractedText(fact.text);
+    const text = fact.copyReview ? wording(fact.text) : cleanExtractedText(fact.text);
     // A marked copy and an unmarked one are shown apart: one control would say both things at once.
     const key = fact.origin === "extracted" && fact.sourceId && fact.quote && text && !fact.levelNeedsReview
-      ? JSON.stringify([role, fact.kind, text, fact.level, fact.state,
+      ? JSON.stringify([fact.copyReview?.rootId ?? role, fact.kind, text, fact.level, fact.state,
           fact.evidenceOrigin ?? "upload", fact.reviewReasons ?? [], (fact.confidence ?? 1) < 0.8, fact.sensitive === true])
       : null;
     const choices = key ? matching.get(key) : undefined;
     const group = choices?.find((items) => items.length < MAX_DUPLICATES);
-    if (group) group.push(fact);
+    if (group) {
+      if (fact.copyReview?.rootId === fact.id) group.unshift(fact);
+      else group.push(fact);
+    }
     else {
       const next = [fact];
       groups.push(next);

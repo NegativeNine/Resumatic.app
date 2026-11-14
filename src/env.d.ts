@@ -36,6 +36,8 @@ interface ResumaticSecrets {
    * Off everywhere by default, and a failure in it leaves the upload as it is read today.
    */
   MATCH_SHADOW_ENABLED?: string;
+  /** Owner review of deterministic copies only. No model judgements are exposed. */
+  IDENTICAL_REVIEW_ENABLED?: string;
   /**
    * "true" has the reading of an upload also ask the judge whether lines that differ in wording
    * say the same thing as lines already in the record, and keep each answer as an offer in

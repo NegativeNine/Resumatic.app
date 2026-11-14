@@ -3,6 +3,7 @@ import type { FactView, ReviewState, RoleView } from "../../shared/api";
 import { count, formatDateRange, ROLE_KIND_LABEL, STATE_LABEL } from "../format";
 import type { Reload } from "../hooks";
 import { sourceLabel } from "../vault";
+import { CopyControls } from "./CopyControls";
 import { FactList } from "./FactItem";
 import { ReviewButtons, useReview } from "./ReviewButtons";
 import { useQueueItem } from "./ReviewQueue";
@@ -142,6 +143,7 @@ export function RoleGroup({
                 </div>
               ),
           )}
+          {!editing && <CopyControls items={[role, ...duplicates]} filenames={filenames} reload={reload} disabled={busy} />}
           {editing ? (
             <RoleForm role={role} reload={reload} onClose={closeEditor} />
           ) : (

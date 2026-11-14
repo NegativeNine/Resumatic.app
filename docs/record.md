@@ -4,7 +4,7 @@ A vault holds a person's facts and roles, each with the quote it was read from. 
 
 It is step 3 of the [pipeline design](taxonomy-pipelines-design.md). The vocabulary and the rules that need no storage are in `src/shared/record.ts`; the tables and the store are in `src/vault/record.ts`.
 
-**Status: the tables, the store and its rules exist and are tested. Three things write to them, all in shadow and only where switched on, which is nowhere by default: divisions of lines ([splitting.md](splitting.md)); notes of roles and facts that repeat an earlier one word for word, and offers of two wordings as the same fact ([merging.md](merging.md)); and tags on facts and job roles ([tagging.md](tagging.md)). Nothing is merged, no screen shows any of it, and tailoring does not use it. What a vault shows and does is exactly as it was.**
+**Status: the tables, the store and its rules exist and are tested. Three things write to them, all in shadow and only where switched on, which is nowhere by default: divisions of lines ([splitting.md](splitting.md)); notes of roles and facts that repeat an earlier one word for word, and offers of two wordings as the same fact ([merging.md](merging.md)); and tags on facts and job roles ([tagging.md](tagging.md)). By default nothing is merged, no screen shows any of it, and tailoring does not use it. The owner-only deterministic copy review below is an optional first review increment; model judgements remain in shadow.**
 
 ## What is kept
 
@@ -113,6 +113,18 @@ Dropping a confirmed tag when its fact is reworded is deliberate: the tag was co
 ## What is not built
 
 - Divisions are proposed only in shadow and only where switched on (step 4, [splitting.md](splitting.md)). Identical copies are noted the same way, and so are offers of two wordings as the same fact (step 6, [merging.md](merging.md)). Tags are proposed the same way, on facts and job roles only; a part gets none yet (step 5, [tagging.md](tagging.md)).
-- No screen shows or decides one (step 7), and the vault has no routes for them.
+- Model divisions, tags and semantic offers have no review screen or decision route (step 7). Deterministic identical copies have the gated owner review below.
 - Tailoring does not read tags, parts or merges (step 8). The list of facts still shows every fact, including one merged into another.
 - A fact's record does not yet hold when a skill was used, which years per skill needs.
+
+## Owner review of identical copies
+
+`IDENTICAL_REVIEW_ENABLED=true` enables the first review increment in staging. It is absent by default, and production configuration refuses it until rollout acceptance is recorded. It exposes no model split, tag or semantic offer.
+
+- In To check and All facts the owner can choose **Group identical copies**. This calls `POST /api/v2/record/identical`; merely opening Facts, reading the vault or counting Today writes no links. Grouping uses the existing deterministic identity rules, roles first, and never rewrites or deletes a source row. New uploads are grouped only when the owner asks again.
+- A grouped item shows each source quote and source-context control. Copies with different review states, privacy marks, levels or review warnings remain separate questions. The earliest identical row supplies the group identity; its state or privacy never replaces another copy's.
+- **Keep the copy … separate** rejects its deterministic link. Repeating grouping or adding another upload respects that choice. **Show these identical copies together again** is an explicit owner action, not an automatic reopen.
+- The decision route `POST /api/v2/record/links/:id` accepts only non-shadow deterministic links, checks both current row revisions, and rechecks identical identity before rejoining. Another owner's ID is not found. Shadow and model links cannot be decided through it.
+- Every row, its words and its evidence remain intact. Export contains the decisions in the existing record-link tables; no migration, coach-copy change or tailoring-by-merge behavior is added.
+
+Real staging acceptance, including two owner sessions and large vault performance, remains required before production enablement. The separate measurement bars for model proposals are unchanged.

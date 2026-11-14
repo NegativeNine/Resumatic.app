@@ -17,6 +17,7 @@ import { groupFacts, roleLabel, sourceLabel } from "../vault";
 import { ReviewButtons, useReview } from "./ReviewButtons";
 import { useQueueItem } from "./ReviewQueue";
 import { PRIVATE_HINT, SensitiveButton, SensitiveWell, useSensitive } from "./SensitiveControl";
+import { CopyControls } from "./CopyControls";
 import { SourceEvidence } from "./SourceEvidence";
 import { ActionError, Badge, CharCount, Quote, REVIEW_TICK, Tick, type TickState } from "./ui";
 
@@ -115,6 +116,7 @@ function FactItem({
       <FactHints fact={fact} role={role} where="list" />
       <FactEvidence fact={fact} filenames={filenames} />
       <DuplicatesNote count={duplicates.length} />
+      {!editing && <CopyControls items={[fact, ...duplicates]} filenames={filenames} reload={reload} disabled={busy} />}
       {duplicates.map((copy) => <FactEvidence key={copy.id} fact={copy} filenames={filenames} />)}
       {!editing && (
         <ReviewButtons

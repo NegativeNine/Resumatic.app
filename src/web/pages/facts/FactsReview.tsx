@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { GroupIdenticalCopies } from "../../components/CopyControls";
 import { ADD_SOURCE_START, AddSource, type AddSourceState } from "../../components/AddSource";
 import { isFirstRun, WhatHappensNext } from "../../components/facts/FirstRun";
 import { FactQuestion, RoleQuestion } from "../../components/facts/Question";
@@ -75,6 +76,7 @@ export function FactsReview() {
           <AddSource onAdded={vault.reload} size="first-run" state={adding} onState={setAdding} />
         </section>
       )}
+      {vault.data && <GroupIdenticalCopies enabled={[...vault.data.roles, ...vault.data.facts].some((item) => !!item.copyReview)} reload={vault.reload} />}
       {vault.data && <Check live={vault.data} reload={vault.reload} />}
       {vault.data && firstRun && <WhatHappensNext />}
     </>

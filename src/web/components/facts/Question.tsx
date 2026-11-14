@@ -11,6 +11,7 @@ import { RoleRejectWell } from "../RoleGroup";
 import { useSensitive } from "../SensitiveControl";
 import { SourceEvidence } from "../SourceEvidence";
 import { ActionError, Quote } from "../ui";
+import { CopyControls } from "../CopyControls";
 import { MoreChoices } from "./MoreChoices";
 
 // The one item To check asks about: a fact or a role, its words large, every quote it rests on, and
@@ -96,6 +97,7 @@ export function FactQuestion({ question, filenames, roles, reload, section, text
       <FactHints fact={fact} role={role} where="question" />
       <FactEvidence fact={fact} filenames={filenames} showSource={false} />
       <DuplicatesNote count={duplicates.length} />
+      {!editing && <CopyControls items={[fact, ...duplicates]} filenames={filenames} reload={reload} disabled={review.deciding !== null || sensitive.pending !== null} />}
       {duplicates.map((copy) => (
         <FactEvidence key={copy.id} fact={copy} filenames={filenames} showSource={copy.sourceId !== fact.sourceId} />
       ))}
@@ -184,6 +186,7 @@ export function RoleQuestion({ question, filenames, reload, section, textId, onE
             </div>
           ),
       )}
+      {!editing && <CopyControls items={[role, ...duplicates]} filenames={filenames} reload={reload} disabled={review.deciding !== null} />}
       {!editing && (
         <ReviewButtons
           state={role.state}
