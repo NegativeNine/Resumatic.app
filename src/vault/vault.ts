@@ -5365,6 +5365,60 @@ export class Vault extends DurableObject<Env> {
     return this.documentView(id);
   }
 
+  /**
+   * Printable words only, checked independently of the owner's inspection view. The snapshot
+   * fingerprint binds a later export check to the exact saved version, including its evidence.
+   * It is a freshness guard, not a claim of original-source provenance.
+   */
+  async documentExportData(who: Who, id: string, expected?: { version: number; snapshot: string }): Promise<{ document: SharedDocument; snapshot: string }> {
+    this.requireOwner(who);
+    const before = this.checkedDocumentExport(id);
+    const snapshot = base64url(await sha256(JSON.stringify([before.document.kind, before.document.version, before.saved])));
+    // Hashing yields: availability, the saved version and the session may all have changed.
+    this.requireOwner(who);
+    const current = this.checkedDocumentExport(id);
+    if (current.document.version !== before.document.version || current.document.kind !== before.document.kind || current.saved !== before.saved ||
+        (expected !== undefined && (expected.version !== current.document.version || expected.snapshot !== snapshot)))
+      throw new AppError("conflict", "This document changed while preparing the download. Try downloading it again.");
+    return { document: current.document, snapshot };
+  }
+
+  private checkedDocumentExport(id: string): { document: SharedDocument; saved: string } {
+    const row = this.sql.exec<{ kind: string; state: string; version: number; data: string | null }>(
+      `SELECT d.kind, d.state, d.version, v.data FROM documents d
+       LEFT JOIN document_versions v ON v.document_id = d.id AND v.version = d.version WHERE d.id = ?`, id,
+    ).toArray()[0];
+    if (!row) throw new AppError("not_found", "no such document");
+    if (row.kind !== "letter" && row.kind !== "prep")
+      throw new AppError("invalid", "only cover letters and interview preparation can be exported as documents");
+    if (row.state !== "ready")
+      throw new AppError("conflict", "This document isn't ready yet. Wait for it to finish, then try again.");
+    const data = parseOrNull<DocumentVersion>(row.data);
+    let document: SharedDocument;
+    // Privacy limits sharing and new generation; an owner can still download their saved words.
+    // Retain nonprivacy availability restrictions (including invalidDerived when calculated
+    // claims are present), while the checked projection still validates every saved sentence.
+    const ownerRestrictions = { ...withheldFacts(this.sql), ids: new Set<string>(), quotes: new Set<string>() };
+    try { document = sharedDocument(id, row.version, row.kind, data, ownerRestrictions); }
+    catch (error) {
+      if (errorCode(error) !== "conflict") throw error;
+      throw new AppError("conflict", "This document's saved evidence can't be checked. Write it again before downloading.");
+    }
+    // Withdrawing an experience item or its role also withdraws it from new downloads. Ordinary
+    // edits do not rewrite the immutable evidence saved with this document.
+    const roles = new Set(this.confirmedRoles().map((role) => role.id));
+    // readFacts keeps private owner history. It also excludes internal calculated backing facts
+    // when that feature is installed, so a generic letter gains no derived-claim authority.
+    const included = new Set(this.readFacts("confirmed").filter((fact) => fact.roleId === null || roles.has(fact.roleId)).map((fact) => fact.id));
+    const units = data!.result!.units as { factIds: string[] }[]; // sharedDocument checked every unit.
+    for (const id of new Set(units.flatMap((unit) => unit.factIds))) {
+      const fact = data!.evidence![id]!;
+      if (!included.has(id) || (fact.roleId !== null && !roles.has(fact.roleId)))
+        throw new AppError("conflict", "This document uses experience you no longer include. Write it again before downloading.");
+    }
+    return { document, saved: row.data! };
+  }
+
   /** Build a view only after its caller has checked ownership. */
   private documentView(id: string): DocumentView {
     const row = this.sql

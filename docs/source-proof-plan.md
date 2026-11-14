@@ -5,6 +5,16 @@ prerequisite. It does not establish source provenance or close the output
 paths listed below. Do not claim that the product verifies historical source
 provenance until the full protocol and rollout have passed these checks.
 
+The document DOCX route has a narrower saved-evidence guard: it checks the same
+captured fact records and deterministic claims used by coach document sharing,
+current confirmed fact/role inclusion and withdrawal, and an exact saved-version
+fingerprint again before returning bytes. Privacy does not remove the owner’s
+right to download their saved letter or preparation; coach delivery still
+applies privacy withholding, and unavailable derived claims remain refused.
+This closes that route's inspection-to-export bypass;
+it does not supply protected source revisions, extraction receipts or an
+activation floor, and does not change the status of this plan.
+
 ## The gap
 
 Extraction checks a quote against the current converted Markdown when saving
