@@ -1,3 +1,4 @@
+import { validSkillDurationProof } from "../shared/skill-years";
 import type { FactRecord } from "../shared/types";
 import {
   checkClaim,
@@ -56,6 +57,9 @@ export function checkLine(
     }
     cited.push(authoritativeFact(fact));
   }
+  if (cited.some((fact) => fact.skillDuration &&
+      (!validSkillDurationProof(fact.skillDuration, fact.text) || cited.length !== 1 || line.text !== fact.text)))
+    problems.push("a confirmed skill total must keep its exact skill, duration and as-of wording together");
   if (problems.length) return { ok: false, problems, findings: [{ kind: "citation" }] };
   return checkClaim(
     line.text,

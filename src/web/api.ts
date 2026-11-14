@@ -1,3 +1,4 @@
+import type { SkillDurationClaim, SkillDurationPreview, SkillIntervalInput, SkillSubjectRef, SkillYearsView } from "../shared/skill-years";
 import { GenerationKeys } from "./generation-keys";
 import type {
   ApiErrorBody,
@@ -332,10 +333,18 @@ export const api = {
       `/api/applications/${encodeURIComponent(id)}`,
       patch,
     ),
-  tailor: (applicationId: string) =>
+  skillYears: () => request<SkillYearsView>("GET", "/api/v2/skill-years"),
+  saveSkillInterval: (input: SkillIntervalInput, requestKey: string, edit?: { id: string; expectedRevision: number }) =>
+    request<{ id: string }>(edit ? "PATCH" : "POST", `/api/v2/skill-years/intervals${edit ? `/${encodeURIComponent(edit.id)}` : ""}`, edit ? { ...input, expectedRevision: edit.expectedRevision } : input, requestKey),
+  withdrawSkillInterval: (id: string, expectedRevision: number, requestKey: string) =>
+    request<void>("POST", `/api/v2/skill-years/intervals/${encodeURIComponent(id)}/withdraw`, { expectedRevision }, requestKey),
+  previewSkillDuration: (subject: SkillSubjectRef) => request<SkillDurationPreview>("POST", "/api/v2/skill-years/preview", subject),
+  confirmSkillDuration: (subject: SkillSubjectRef, preview: SkillDurationPreview, requestKey: string) =>
+    request<SkillDurationClaim>("POST", "/api/v2/skill-years/claims", { subject, asOf: preview.asOf, inputHash: preview.inputHash }, requestKey),
+  tailor: (applicationId: string, skillDurationClaimIds: string[] = []) =>
     generate<{ resumeId: string }>(
-      `/api/applications/${encodeURIComponent(applicationId)}/resumes`,
-      undefined,
+      skillDurationClaimIds.length ? `/api/v2/applications/${encodeURIComponent(applicationId)}/resumes` : `/api/applications/${encodeURIComponent(applicationId)}/resumes`,
+      skillDurationClaimIds.length ? { skillDurationClaimIds: [...skillDurationClaimIds].sort() } : undefined,
       ["resumeId"],
     ),
   /** A job's application kit, with every check worked out now. */

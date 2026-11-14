@@ -85,6 +85,8 @@ export interface Extraction {
 // ---- Tailor ----
 
 export interface FactRecord {
+  /** Internal snapshot proof for an explicitly selected owner claim. Never spread into model, share, MCP or printable serializers. */
+  skillDuration?: import("./skill-years").SkillDurationProof;
   revision?: number;
   origin?: "extracted" | "user";
   /** True only when the owner explicitly selected the level for this revision. */

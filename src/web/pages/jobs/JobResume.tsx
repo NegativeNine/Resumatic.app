@@ -12,6 +12,7 @@ import { useAction, useResource, type Reload, type Resource } from "../../hooks"
 import { href } from "../../router";
 import { useSession } from "../../session";
 import { resumeErrorMessage } from "../../source-error";
+import { SkillDurationChoices } from "../../components/SkillYears";
 import { useTailor } from "../../tailor";
 
 // A job's Resume tab: the resumes tailored to it, then the chosen one, which is the address's or
@@ -32,6 +33,7 @@ export function JobResume({ job, reloadJob, resume }: { job: ApplicationDetail; 
   const listed = resumes.find((item) => item.id === chosenId);
   const id = useId();
   const tailor = useTailor();
+  const [skillClaimIds, setSkillClaimIds] = useState<string[]>([]);
 
   return (
     <>
@@ -40,8 +42,9 @@ export function JobResume({ job, reloadJob, resume }: { job: ApplicationDetail; 
         {resumes.length === 0 ? (
           <>
             <EmptyState title="No resume for this job yet.">Tailoring writes one from your confirmed facts and checks every line.</EmptyState>
+            <SkillDurationChoices selected={skillClaimIds} onChange={setSkillClaimIds} disabled={tailor.pending} />
             <div className="actions">
-              <button type="button" className="primary" disabled={tailor.pending} onClick={() => void tailor.tailor(job.id)}>
+              <button type="button" className="primary" disabled={tailor.pending} onClick={() => void tailor.tailor(job.id, skillClaimIds)}>
                 {tailor.pending ? "Starting…" : "Tailor a resume"}
               </button>
             </div>
@@ -422,6 +425,7 @@ function RefineWording({ applicationId, resume, onUpdated }: { applicationId: st
 
 function TailorFailed({ resume }: { resume: ResumeView }) {
   const { tailor, pending, error } = useTailor();
+  const [skillClaimIds, setSkillClaimIds] = useState<string[]>([]);
 
   return (
     <section className="card" aria-labelledby="failed-heading">
@@ -431,11 +435,12 @@ function TailorFailed({ resume }: { resume: ResumeView }) {
         Resumatic never shows lines that haven’t passed its checks, so there’s
         nothing to review from this attempt.
       </p>
+      <SkillDurationChoices selected={skillClaimIds} onChange={setSkillClaimIds} disabled={pending} />
       <div className="actions">
         <button
           type="button"
           className="primary"
-          onClick={() => void tailor(resume.applicationId)}
+          onClick={() => void tailor(resume.applicationId, skillClaimIds)}
           disabled={pending}
         >
           {pending ? "Starting…" : "Tailor again"}

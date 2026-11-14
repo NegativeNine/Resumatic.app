@@ -1,6 +1,7 @@
 import type { ResumeBody } from "../shared/api";
 import { wording } from "../shared/record";
 import { completeEvidence, type ResumeVersion } from "./snapshots";
+import { durationRestrictions } from "./skill-years";
 
 // A fact its owner has marked sensitive stays theirs to read, edit and export, and goes nowhere
 // else: it is chosen for nothing generated, copied into no share and returned to no connected app.
@@ -24,6 +25,8 @@ export interface Withheld {
   readonly ids: ReadonlySet<string>;
   /** The exact `evidence.quote` of each marked fact. While a fact is marked, the line it was read from is evidence for nothing. */
   readonly quotes: ReadonlySet<string>;
+  /** Withdrawn or changed calculated claims are unavailable, distinct from a privacy mark. */
+  readonly invalidDerived?: ReadonlySet<string>;
 }
 
 /** The facts marked now, and the lines they were read from. Quotes match by text, so the same line in another upload is covered. */
@@ -39,7 +42,9 @@ export function withheldFacts(sql: SqlStorage): Withheld {
     ids.add(row.id);
     if (typeof row.quote === "string") quotes.add(row.quote);
   }
-  return { ids, quotes };
+  const durations = durationRestrictions(sql,ids);
+  for (const id of durations.privateIds) ids.add(id);
+  return { ids, quotes, ...(durations.invalid.size ? { invalidDerived: durations.invalid } : {}) };
 }
 
 /**

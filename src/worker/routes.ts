@@ -61,6 +61,7 @@ import {
   type RoleKind,
 } from "../shared/api";
 import { AppError, errorCode, errorDetail, httpStatus } from "../shared/errors";
+import { MAX_SELECTED_SKILL_CLAIMS, SKILL_YEARS_OFF } from "../shared/skill-years";
 import { MAX_SHARE_LABEL_CHARS, type CoachClient, type SharedView } from "../shared/sharing";
 import type { CommentThread, NewSuggestion, OwnerCommentThread } from "../shared/sharing";
 import { SHARE_LINK_GONE } from "../shared/sharing";
@@ -521,6 +522,7 @@ api.get("/me", async (c) => {
     postingReader: c.env.POSTING_READER_ENABLED === "true",
     // Both this Worker and the Vault must understand the card preview.
     cardPreview: c.env.CARD_PREVIEW_ENABLED === "true" && me.capabilities?.cardPreview === true,
+    skillYears: c.env.SKILL_YEARS_ENABLED === "true" && me.capabilities?.skillYears === true,
     // Both this Worker and the Vault must send them.
     emailNotices: emailConfigured(c.env) && me.capabilities?.emailNotices === true,
   } });
@@ -1096,6 +1098,33 @@ api.get("/applications/:id", async (c) =>
 api.delete("/applications/:id", async (c) => {
   await myVault(c).deleteApplication(c.get("who"), c.req.param("id"));
   return c.body(null, 204);
+});
+
+const skillSubjectSchema = z.object({ kind: z.enum(["fact", "tag"]), id: z.string().min(1).max(100) }).strict();
+const skillIntervalSchema = z.object({ subject: skillSubjectSchema, start: z.string().min(4).max(7), end: z.string().min(4).max(7).nullable(), ongoing: z.boolean(), private: z.boolean() }).strict();
+const skillPeriodGate: MiddlewareHandler<AppEnv> = async (c, next) => {
+  if (c.env.SKILL_YEARS_ENABLED !== "true") throw new AppError("not_found", SKILL_YEARS_OFF);
+  await next();
+};
+api.get("/v2/skill-years", skillPeriodGate, async (c) => c.json(await myVault(c).skillYearsView(c.get("who"))));
+api.post("/v2/skill-years/intervals", skillPeriodGate, JSON_LIMIT, async (c) => c.json(await myVault(c).saveSkillInterval(c.get("who"), await jsonBody(c, skillIntervalSchema), requestKey(c)), 201));
+api.patch("/v2/skill-years/intervals/:id", skillPeriodGate, JSON_LIMIT, async (c) => {
+  const { expectedRevision, ...input } = await jsonBody(c, skillIntervalSchema.extend({ expectedRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER - 1) }).strict());
+  return c.json(await myVault(c).saveSkillInterval(c.get("who"), input, requestKey(c), { id: c.req.param("id"), expectedRevision }));
+});
+api.post("/v2/skill-years/intervals/:id/withdraw", skillPeriodGate, JSON_LIMIT, async (c) => {
+  const { expectedRevision } = await jsonBody(c, z.object({ expectedRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER - 1) }).strict());
+  await myVault(c).withdrawSkillInterval(c.get("who"), c.req.param("id"), expectedRevision, requestKey(c));
+  return c.body(null, 204);
+});
+api.post("/v2/skill-years/preview", skillPeriodGate, JSON_LIMIT, async (c) => c.json(await myVault(c).previewSkillDuration(c.get("who"), await jsonBody(c, skillSubjectSchema))));
+api.post("/v2/skill-years/claims", skillPeriodGate, JSON_LIMIT, async (c) => {
+  const { subject, asOf, inputHash } = await jsonBody(c, z.object({ subject: skillSubjectSchema, asOf: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/), inputHash: z.string().regex(/^[a-f0-9]{64}$/) }).strict());
+  return c.json(await myVault(c).confirmSkillDuration(c.get("who"), subject, asOf, inputHash, requestKey(c)), 201);
+});
+api.post("/v2/applications/:id/resumes", skillPeriodGate, JSON_LIMIT, async (c) => {
+  const { skillDurationClaimIds } = await jsonBody(c, z.object({ skillDurationClaimIds: z.array(z.string().min(1).max(100)).max(MAX_SELECTED_SKILL_CLAIMS).refine((ids) => new Set(ids).size === ids.length) }).strict());
+  return c.json(await myVault(c).tailorWithSkillClaims(c.get("who"), c.req.param("id"), skillDurationClaimIds, requestKey(c)), 202);
 });
 
 api.post("/applications/:id/resumes", async (c) =>

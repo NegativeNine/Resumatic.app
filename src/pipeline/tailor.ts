@@ -136,7 +136,7 @@ export async function selectFacts(
     .map(([id]) => byId.get(id)!);
   const perRole = new Map<string, number>();
   const factIds: string[] = [];
-  const skillIds: string[] = [];
+  const skillIds: string[] = facts.filter((fact) => fact.skillDuration).map((fact) => fact.id);
   const selectedKeys = new Set<string>();
   for (const fact of ranked) {
     const duplicate = duplicateKey(fact);

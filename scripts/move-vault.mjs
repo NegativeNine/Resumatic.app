@@ -30,6 +30,10 @@ export const TABLES = new Set([
   "fact_parts",
   "record_tags",
   "record_links",
+  "skill_record_identities",
+  "skill_use_intervals",
+  "skill_duration_claims",
+  "skill_year_requests",
   "coach_clients",
   "share_comments",
   // Saved answers and application kits: the owner's own words and choices. Resume and document IDs

@@ -11,6 +11,8 @@ it.each(["fact", "role"] as const)("propagates a database error while checking a
   const role = { id: "role", revision: 1, kind: "job", org: "Example", title: null, startDate: null, endDate: null };
   const sql = {
     exec(query: string) {
+      // This ordinary-fact fixture has no derived-duration tables.
+      if (query.includes("sqlite_master")) return cursor([]);
       if (query.includes("entity_incarnation_guard")) return cursor([]);
       if (query.includes("FROM entity_incarnations")) return cursor([{ value: 1 }]);
       if (query.includes("generation_input_items") && query.includes("kind = 'fact'")) return cursor([{ item_id: fact.id, data: JSON.stringify(fact), incarnation: 1 }]);
