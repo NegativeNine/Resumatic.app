@@ -115,7 +115,7 @@ Dropping a confirmed tag when its fact is reworded is deliberate: the tag was co
 - Divisions are proposed only in shadow and only where switched on (step 4, [splitting.md](splitting.md)). Identical copies are noted the same way, and so are offers of two wordings as the same fact (step 6, [merging.md](merging.md)). Tags are proposed the same way, on facts and job roles only; a part gets none yet (step 5, [tagging.md](tagging.md)).
 - Existing non-shadow divisions, tags and model-origin semantic fact offers have the separately gated owner review below. Pipeline judgements still run only in shadow and cannot be promoted through it. Deterministic identical copies have their own gated review.
 - Tailoring does not read tags, parts or merges (step 8). The list of facts still shows every fact, including one merged into another.
-- A fact's record does not yet hold when a skill was used, which years per skill needs.
+- The optional [owner-confirmed skill-period path](skill-years.md) holds explicit use intervals separately. Fact and role dates never imply skill duration; only an owner-selected immutable confirmed total can enter a new resume.
 
 ## Owner review of identical copies
 

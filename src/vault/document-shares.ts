@@ -64,6 +64,9 @@ export function sharedDocument(id: string, version: number, kind: string, data: 
       if (!stored || !completeEvidence(full) || full.id !== factId || full.text !== stored.text || full.quote !== stored.quote ||
           (unit.roleId !== null && full.roleId !== unit.roleId))
         throw refuse();
+      // Calculated skill totals have an explicit resume-only owner selection path. No generic
+      // letter/preparation projection may acquire that authority from a stored backing row.
+      if (full.skillDuration || withheld?.invalidDerived?.has(factId)) throw refuse();
       // A fact its owner has marked since supports nothing that is sent to someone else.
       if (withheld && isWithheld(factId, stored, withheld)) throw refuse();
       const safe = authoritativeFact(full);

@@ -1,3 +1,5 @@
+import { SkillYearsPanel } from "../../components/SkillYears";
+import { useSession } from "../../session";
 import type { FactView, RoleView } from "../../../shared/api";
 import { cleanExtractedText } from "../../../shared/clean";
 import { PlaceholderSection } from "../../components/Placeholder";
@@ -38,6 +40,7 @@ export function confirmedSkills(vault: Vault): Skill[] {
 }
 
 export function FactsSkills() {
+  const { me } = useSession();
   const vault = useResource(loadVault, isReading);
   return (
     <>
@@ -47,7 +50,7 @@ export function FactsSkills() {
       {vault.data && (
         <div className="app-stack facts-skills">
           <SkillList vault={vault.data} />
-          <PlaceholderSection name="factsSkillYears" />
+          {me.capabilities?.skillYears ? <SkillYearsPanel /> : <PlaceholderSection name="factsSkillYears" />}
         </div>
       )}
     </>

@@ -23,10 +23,10 @@ export function useTailor() {
   const { me, refreshMe } = useSession();
   const { run, pending, error } = useAction();
 
-  const tailor = (applicationId: string) =>
+  const tailor = (applicationId: string, skillDurationClaimIds: string[] = []) =>
     run(
       async () => {
-        const { resumeId } = await api.tailor(applicationId);
+        const { resumeId } = await api.tailor(applicationId, skillDurationClaimIds);
         void refreshMe();
         navigate(href.jobResume(applicationId, resumeId));
       },

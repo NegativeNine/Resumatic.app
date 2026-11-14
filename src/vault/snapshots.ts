@@ -10,8 +10,11 @@ import type {
 } from "../shared/types";
 import { packVector, topMatches, unpackVector } from "./search";
 import { isWithheld, sensitiveUse, usableQuote, withheldFacts, type Withheld } from "./sensitive";
+import { validSkillDurationProof } from "../shared/skill-years";
+import { SkillYearsStore } from "./skill-years";
 
 export interface InputMetadata {
+  skillDurationClaimIds?: string[];
   embeddingModel?: string;
   applicationId: string;
   jdText: string;
@@ -56,6 +59,7 @@ export function completeEvidence(value: FactRecord | undefined): value is FactRe
     typeof value.text === "string" && value.text.trim().length > 0 &&
     (value.level === null || ["contributed", "implemented", "led", "owned", "founded"].includes(value.level)) &&
     (value.levelExplicit === undefined || typeof value.levelExplicit === "boolean") &&
+    (value.skillDuration === undefined || (value.kind === "skill" && value.origin === "user" && value.roleId === null && value.quote === null && validSkillDurationProof(value.skillDuration,value.text))) &&
     (value.quote === null || typeof value.quote === "string") &&
     (value.origin !== "extracted" || (typeof value.quote === "string" && !!value.quote.trim()));
 }
@@ -94,7 +98,7 @@ export function sameEvidence(a: FactRecord | undefined, b: FactRecord | undefine
   return completeEvidence(a) && completeEvidence(b) &&
     a.id === b.id && a.revision === b.revision && a.origin === b.origin &&
     a.roleId === b.roleId && a.kind === b.kind && a.text === b.text &&
-    a.level === b.level && a.levelExplicit === b.levelExplicit && a.quote === b.quote;
+    a.level === b.level && a.levelExplicit === b.levelExplicit && a.quote === b.quote && JSON.stringify(a.skillDuration) === JSON.stringify(b.skillDuration);
 }
 
 /**
@@ -156,6 +160,7 @@ export function assertGroundedResume(
         if (!completeEvidence(full) || full.id !== id || full.text !== stored.text || full.quote !== stored.quote ||
             (roleId !== null && full.roleId !== roleId)) throw unavailable();
         const safe = authoritativeFact(full);
+        if (full.skillDuration && (line.factIds.length !== 1 || line.text !== full.text)) throw unavailable();
         cited.push({ text: safe.text, quote: safe.quote, level: safe.level });
       } else {
         // Earlier snapshots did not record origin. A retained quote may have
@@ -177,6 +182,14 @@ export function assertGroundedResume(
           return completeEvidence(full) && full.id === id && full.kind === "skill" &&
             full.text === stored.text && full.quote === stored.quote;
         })) throw unavailable();
+  }
+  if (withheld?.invalidDerived?.size) {
+    const used = new Set([
+      ...(render.body.summary?.factIds ?? []),
+      ...render.body.sections.flatMap((section) => section.lines.flatMap((line) => line.factIds)),
+      ...Object.entries(evidence ?? {}).filter(([,fact]) => fact.kind === "skill" && render.body.skills.includes(fact.text)).map(([id]) => id),
+    ]);
+    if ([...used].some((id) => withheld.invalidDerived!.has(id))) throw unavailable();
   }
   // The version is sound, and still its owner's to read. What it took from a fact marked since
   // goes no further until those lines, those skills or the mark are removed.
@@ -291,11 +304,11 @@ export class SnapshotStore {
   }
 
   private capturedWithheld(runId: string, withheld: Withheld): boolean {
-    if (withheld.ids.size === 0) return false;
+    if (withheld.ids.size === 0 && !withheld.invalidDerived?.size) return false;
     for (const row of this.sql
       .exec<{ item_id: string; data: string }>(`SELECT item_id, data FROM generation_input_items WHERE run_id = ? AND kind = 'fact'`, runId)
       .toArray()) {
-      if (withheld.ids.has(row.item_id)) return true;
+      if (withheld.ids.has(row.item_id) || withheld.invalidDerived?.has(row.item_id)) return true;
       let captured: { text?: unknown; quote?: unknown } | null;
       try {
         captured = JSON.parse(row.data) as { text?: unknown; quote?: unknown } | null;
@@ -367,6 +380,8 @@ export class SnapshotStore {
       facts.set(row.item_id, fact);
       factIncarnations.set(row.item_id, row.incarnation);
     }
+    const durations = new SkillYearsStore(this.sql,(fn) => fn());
+    const durationFactIds = durations.backingIds();
     const factMatches = (id: string): boolean => {
       const old = facts.get(id);
       if (!old) return false;
@@ -391,6 +406,10 @@ export class SnapshotStore {
         // for a quote, so a run that captured it that way still matches.
         quote: usableQuote(current, withheld),
       };
+      if (durationFactIds.has(id)) {
+        if (!old.skillDuration || !this.metadata(runId)?.skillDurationClaimIds?.includes(old.skillDuration.claimId)) return false;
+        try { now.skillDuration = durations.proofForFact(id,withheld.ids) ?? undefined; } catch { return false; }
+      } else if (old.skillDuration) return false;
       // Older user snapshots without a level flag did not claim an explicit
       // level when their captured effective level was null.
       const captured = old.origin === "user" && old.level === null && old.levelExplicit === undefined

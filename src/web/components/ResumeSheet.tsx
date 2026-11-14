@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useId, useMemo, useRef, type RefObject } from "react";
+import { SkillDurationChoices } from "./SkillYears";
+import { useState, useCallback, useEffect, useId, useMemo, useRef, type RefObject } from "react";
 import type { ResumeBody, ResumeLine, ResumeView } from "../../shared/api";
 import type { OwnerCommentThread, ShareComment } from "../../shared/sharing";
 import { sheetModel } from "../../shared/sheet";
@@ -375,11 +376,13 @@ export const lineIdsOf = (body: ResumeBody) => new Set(bodyLines(body).map((line
 
 function TailorAgain({ applicationId }: { applicationId: string }) {
   const { tailor, pending, error } = useTailor();
+  const [claimIds, setClaimIds] = useState<string[]>([]);
   return (
     <>
+      <SkillDurationChoices selected={claimIds} onChange={setClaimIds} disabled={pending} />
       <button
         type="button"
-        onClick={() => void tailor(applicationId)}
+        onClick={() => void tailor(applicationId, claimIds)}
         disabled={pending}
       >
         {pending ? "Starting…" : "Tailor a new version"}

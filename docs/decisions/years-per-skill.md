@@ -2,6 +2,10 @@
 
 **Waiting for: the owner, with counsel on one point. Written on 11 November 2026 against `main` at `3d7c9fe`.**
 
+## Implemented subset behind an off-by-default gate
+
+The owner-entry path (option 3) is implemented under `SKILL_YEARS_ENABLED`, without role-date inference. [Owner-confirmed skill periods](../skill-years.md) describes its intervals, conservative bounds, immutable confirmed claims, explicit resume selection and privacy/lifecycle guards. This adds one path permitted by the agreed design; it does **not** settle options 1–2, undated-duration aggregation, or recruiter-card policy. The recommendation and owner/counsel decisions below remain open.
+
 ## The question
 
 When may Resumatic say that a person used a skill for a number of years? What counts as an evidenced or owner-confirmed interval of using it?
@@ -12,7 +16,7 @@ When may Resumatic say that a person used a skill for a number of years? What co
 - **The system design disagrees with itself.** Its derived facts say "6 years of Go" is "computed from the dates of roles with evidence of Go, counting overlapping roles once, and the user confirms or corrects it" ([system-design.md](../system-design.md), line 173). Its rules on equivalences say "Skill years count only dated evidence of the skill, not a whole role that mentions it once" (line 269). The pipeline design follows the second.
 - **It blocks** pipeline step 8, "years per skill" ([taxonomy-pipelines-design.md](../taxonomy-pipelines-design.md), "Order of work"), the roadmap's taxonomy step 6 ([roadmap.md](../roadmap.md)), the card's years per skill in bands (system design, line 352), and the "Time" check, under which "durations and 'years of' phrases must equal confirmed derived facts" (system design, line 248).
 
-**What the code holds today.** A role has a start and an end, each a year or a year and month as the source gave it (`src/shared/api.ts`, the comment on role dates; `roles` in `src/vault/schema.ts`). A fact has no dates of its own, and the record says so: "A fact's record does not yet hold when a skill was used" ([record.md](../record.md), line 117). There is no derived-fact table. A resume line that states a number of years passes only if a cited fact states that number, because the claim checks hold every number to the cited facts (`checkClaim` in `src/grounding/claims.ts`).
+**Original audit, before the gated implementation above.** A role has a start and an end, each a year or a year and month as the source gave it (`src/shared/api.ts`, the comment on role dates; `roles` in `src/vault/schema.ts`). A fact has no dates of its own, and the record says so: "A fact's record does not yet hold when a skill was used" ([record.md](../record.md), line 117). There is no derived-fact table. A resume line that states a number of years passes only if a cited fact states that number, because the claim checks hold every number to the cited facts (`checkClaim` in `src/grounding/claims.ts`).
 
 ## Options
 
