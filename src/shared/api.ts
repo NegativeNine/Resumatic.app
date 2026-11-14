@@ -32,6 +32,8 @@
 //   GET    /api/facts?state=           { facts: FactView[] }
 //   POST   /api/facts                  NewFact -> 201 { factId }
 //   PATCH  /api/facts/:id              FactPatch -> 204          (new wording, another role, or both)
+//   GET    /api/v2/record/proposals  RecordProposals; existing non-shadow splits/tags only (gated)
+//   POST   /api/v2/record/proposals/:kind/:id  ProposalDecision -> 204 (gated)
 //   POST   /api/v2/record/identical   {} -> 204; owner asks to group deterministic copies (gated)
 //   POST   /api/v2/record/links/:id  { decision, fromRevision, toRevision } -> 204; separate/rejoin copies (gated)
 //   POST   /api/review                 ReviewRequest -> 204   (role or fact IDs)
@@ -195,6 +197,8 @@ export interface CopyReviewView {
 
 export interface RoleView {
   copyReview?: CopyReviewView;
+  /** Owner-only hint; present only where non-shadow proposal review is enabled. */
+  proposalReviewEnabled?: boolean;
   revision?: number;
   span?: [number, number] | null;
   id: string;
@@ -223,6 +227,8 @@ export interface RolePatch {
 
 export interface FactView {
   copyReview?: CopyReviewView;
+  /** Owner-only hint; present only where non-shadow proposal review is enabled. */
+  proposalReviewEnabled?: boolean;
   /** An older level was retained for history but needs the owner's confirmation. */
   levelNeedsReview?: boolean;
   previousLevel?: Level;

@@ -1777,7 +1777,11 @@ export class Vault extends DurableObject<Env> {
 
   /** Owner-only metadata about deterministic links. No shadow/model judgements are exposed. */
   private copyReviewEntries(): { roles: RoleView[]; facts: FactView[] } {
-    const roles = this.readRoles(); const facts = this.readFacts();
+    let roles = this.readRoles(); let facts = this.readFacts();
+    if (this.env.RECORD_PROPOSAL_REVIEW_ENABLED === "true") {
+      roles = roles.map((role) => ({ ...role, proposalReviewEnabled: true }));
+      facts = facts.map((fact) => ({ ...fact, proposalReviewEnabled: true }));
+    }
     if (this.env.IDENTICAL_REVIEW_ENABLED !== "true") return { roles, facts };
     const decorate = <T extends { id: string; revision?: number }>(rows: T[], kind: "role" | "fact"): (T & { copyReview: import("../shared/api").CopyReviewView })[] => {
       const byId = new Map(rows.map((row) => [row.id, row]));
@@ -1821,6 +1825,48 @@ export class Vault extends DurableObject<Env> {
         }
       }
       this.record.decideLink(id, input.decision);
+    });
+  }
+
+  /** Existing non-shadow proposals only. No read creates or promotes a judgement. */
+  async recordProposals(who: Who): Promise<import("../shared/proposal-review").RecordProposals> {
+    this.requireOwner(who);
+    if (this.env.RECORD_PROPOSAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "proposal review is not enabled");
+    return this.ctx.storage.transactionSync(() => {
+      const facts = this.readFacts().map((fact) => {
+        const split = this.record.split(fact.id);
+        return { fact, split, tags: this.record.tags({ kind: "fact", id: fact.id }),
+          partTags: (split?.parts ?? []).map((part) => ({ part, tags: this.record.tags({ kind: "part", id: part.id }) })).filter((row) => row.tags.length > 0) };
+      }).filter((row) => row.split !== null || row.tags.length > 0 || row.partTags.length > 0);
+      const roles = this.readRoles().map((role) => ({ role, tags: this.record.tags({ kind: "role", id: role.id }) })).filter((row) => row.tags.length > 0);
+      return { facts, roles };
+    });
+  }
+
+  /** Decide only an existing, visible split or tag, against the subject and decision last shown. */
+  async decideRecordProposal(who: Who, kind: "split" | "tag", id: string, input: import("../shared/proposal-review").ProposalDecision): Promise<void> {
+    this.requireOwner(who);
+    if (this.env.RECORD_PROPOSAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "proposal review is not enabled");
+    if (kind !== "split" && kind !== "tag") throw new AppError("invalid", "unknown proposal kind");
+    this.ctx.storage.transactionSync(() => {
+      const row = kind === "split"
+        ? this.sql.exec<{ state: string; decided_at: number | null; revision: number }>(
+          `SELECT s.state, s.decided_at, f.revision FROM fact_splits s JOIN facts f ON f.id = s.fact_id WHERE s.id = ? AND s.shadow = 0`, id,
+        ).toArray()[0]
+        : this.sql.exec<{ state: string; decided_at: number | null; revision: number }>(
+          `SELECT t.state, t.decided_at, CASE WHEN t.subject_kind = 'role' THEN r.revision ELSE f.revision END AS revision
+           FROM record_tags t
+           LEFT JOIN roles r ON t.subject_kind = 'role' AND r.id = t.subject_id
+           LEFT JOIN fact_parts p ON t.subject_kind = 'part' AND p.id = t.subject_id
+           LEFT JOIN fact_splits s ON s.id = p.split_id AND s.shadow = 0 AND s.state <> 'rejected'
+           LEFT JOIN facts f ON f.id = CASE WHEN t.subject_kind = 'fact' THEN t.subject_id ELSE s.fact_id END
+           WHERE t.id = ? AND t.shadow = 0 AND (r.id IS NOT NULL OR f.id IS NOT NULL)`, id,
+        ).toArray()[0];
+      if (!row) throw new AppError("not_found", "no such proposal");
+      if (row.revision !== input.expectedSubjectRevision || row.state !== input.expectedState || row.decided_at !== input.expectedDecidedAt)
+        throw new AppError("conflict", "This proposal changed. Refresh the page, then review it again.");
+      if (kind === "split") this.record.decideSplit(id, input.decision);
+      else this.record.decideTag(id, input.decision);
     });
   }
 

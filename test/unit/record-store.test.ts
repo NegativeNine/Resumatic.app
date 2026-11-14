@@ -110,6 +110,19 @@ const tag = (subject: NewTag["subject"], conceptId: string, conceptKind: NewTag[
   stamp,
 });
 
+describe("decision generations", () => {
+  it("changes monotonically for splits and tags even when the clock is frozen", () => {
+    const { record } = vault(() => 1234);
+    const split = record.proposeSplit({ factId: "f1", line: LINE, parts: DIVISION, stamp: model });
+    const concept = record.proposeTag(tag({ kind: "fact", id: "f1" }, "onet:tool:python", "tool", "Python"));
+    for (const state of ["confirmed", "rejected", "confirmed"] as const) {
+      record.decideSplit(split.splitId, state); record.decideTag(concept.tagId, state);
+    }
+    expect(record.split("f1")!.decidedAt).toBe(1236);
+    expect(record.tags({ kind: "fact", id: "f1" })[0]!.decidedAt).toBe(1236);
+  });
+});
+
 describe("how a line divides", () => {
   it("stores parts as positions and reads them back in the line's own words", () => {
     const { record, db } = vault();
