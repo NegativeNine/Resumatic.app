@@ -278,6 +278,11 @@ export const api = {
     generate<{ factId: string }>("/api/v2/facts", fact, ["factId"]),
   editFact: (id: string, patch: FactPatch) =>
     request<void>("PATCH", `/api/facts/${encodeURIComponent(id)}`, patch),
+  recordProposals: () => request<import("../shared/proposal-review").RecordProposals>("GET", "/api/v2/record/proposals"),
+  decideSemanticOffer: (id: string, input: import("../shared/proposal-review").SemanticOfferDecision) =>
+    request<void>("POST", `/api/v2/record/offers/${encodeURIComponent(id)}`, input),
+  decideRecordProposal: (kind: "split" | "tag", id: string, input: import("../shared/proposal-review").ProposalDecision) =>
+    request<void>("POST", `/api/v2/record/proposals/${kind}/${encodeURIComponent(id)}`, input),
   groupIdenticalCopies: () => request<void>("POST", "/api/v2/record/identical", {}),
   decideIdenticalCopy: (link: import("../shared/api").CopyLinkView, decision: "confirmed" | "rejected") =>
     request<void>("POST", `/api/v2/record/links/${encodeURIComponent(link.id)}`, { decision, fromRevision: link.fromRevision, toRevision: link.toRevision, expectedDecisionVersion: link.decisionVersion }),

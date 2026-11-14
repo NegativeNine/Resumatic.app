@@ -4,7 +4,7 @@ A line of experience shows things the [taxonomy](taxonomy.md) has names for: sof
 
 It is step 5 of the [pipeline design](taxonomy-pipelines-design.md), for facts and job roles, from labels found word for word and from concepts near the words in the taxonomy's vector index. The code is `src/pipeline/tag.ts`. What a tag is stored as is in [record.md](record.md).
 
-**Status: the tagger exists and is tested with stand-in models and a made-up taxonomy. It runs only where `TAG_SHADOW_ENABLED` is `"true"` and a taxonomy is bound and wholly loaded, which is nowhere. Vector candidates are built too, and are tested with a stand-in embedding and an index in memory; they need a vector index of the taxonomy as well, and none has been built on staging. It has not been run against the real judge or the real embedding model, and nothing has been measured.**
+**Status: the tagger exists and is tested with stand-in models and a made-up taxonomy. It runs only where `TAG_SHADOW_ENABLED` is `"true"` and a taxonomy is bound and wholly loaded, which is nowhere. Vector candidates are built too, and are tested with a stand-in embedding and an index in memory; the [real reference index is now built and structurally verified on staging](taxonomy-index-2026-11-14.json), while vector-candidate quality remains unmeasured. The full evaluation and real vector-candidate quality have not been measured. The focused real-judge smoke failed its positive tagging control (see below).**
 
 ## Candidates
 
@@ -147,7 +147,7 @@ These numbers come from arithmetic, not from measurement. Vector questions take 
 
 - **Tags on parts of a line.** A part gets none yet ([splitting.md](splitting.md)).
 - **Tags on postings** and their requirements.
-- **Any screen, and the owner's review.** Nothing shows a tag, and nobody can confirm or reject one.
+- **Live review of model tags.** Owner review of existing non-shadow tags is built in #40 behind `RECORD_PROPOSAL_REVIEW_ENABLED`, off everywhere. Shadow tags remain hidden and the pipeline creates no non-shadow proposals. Measurement is required before this screen is enabled.
 - **Any use of tags:** matching and coverage by concept, years per skill, and anything shown to someone other than its owner. A reading tags every fact it proposed that is not marked sensitive, whatever is decided about the fact later, and a fact marked after it was tagged keeps its tags. The first use of them for anyone but their owner has to leave out the tags of every fact `usableFacts()` leaves out. The owner's card preview, where switched on, reads only confirmed tags, which no stage writes, so it shows nothing yet; and it bars every concept that any tag on a fact marked sensitive names, in any state, even where an unmarked fact shows it too ([visibility-design.md](visibility-design.md)).
 
 ## What has and has not been measured
@@ -159,3 +159,5 @@ These numbers come from arithmetic, not from measurement. Vector questions take 
 - **Not measured:** the precision of each method's tags. That needs lines given with consent and the real taxonomy: the labelled examples and the taxonomy they are read against are made up, and cannot set a threshold. Nor has the stage's cost in D1 statements been run against a deployed Worker.
 
 Nothing is shown to anyone until that is measured.
+
+The [14 November focused real-Clef smoke](evals/pipeline-smoke-2026-11-14.json) asked three tagging questions. It declined both denial/intention cases and the positive C++ use case, so the run failed. The full tag eval, vector precision and consented quality measurements remain outstanding. No production prompt or confidence threshold was changed to hide the failure.

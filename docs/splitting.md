@@ -80,3 +80,9 @@ A person's export includes their shadow divisions, marked as such. No screen sho
 - **Not measured:** how often an accepted division changes a line's meaning. The target is zero on labelled lines, and the labelled lines so far are made up. That needs real resumes given with consent, as the extraction evals do.
 
 Nothing is shown to anyone until that is measured.
+
+## Gated owner review
+
+The owner panel for existing non-shadow splits is built in #40, behind `RECORD_PROPOSAL_REVIEW_ENABLED` and off everywhere. It shows the original line, evidence, exact parts and result relationships. Rejected splits remain in owner-only history and can be restored unless another active split conflicts; removed part tags are not restored. Shadow splits remain hidden, and no read promotes one. Quality measurement remains required before enabling review.
+
+The [14 November focused smoke](evals/pipeline-smoke-2026-11-14.json) put one predetermined bad split to real Clef, which refused it. It did not evaluate Muse proposal generation or the full splitting corpus.

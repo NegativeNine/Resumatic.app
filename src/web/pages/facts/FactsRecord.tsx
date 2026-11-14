@@ -1,3 +1,4 @@
+import { RecordProposalReview } from "../../components/RecordProposalReview";
 import { GroupIdenticalCopies } from "../../components/CopyControls";
 import { Review } from "../../components/Review";
 import { ErrorNote, Loading, PageHeader } from "../../components/ui";
@@ -17,6 +18,7 @@ export function FactsRecord() {
       {!vault.data && !vault.error && <Loading>Loading your facts…</Loading>}
       {vault.data && <GroupIdenticalCopies enabled={[...vault.data.roles, ...vault.data.facts].some((item) => !!item.copyReview)} reload={vault.reload} />}
       {vault.data && <Review vault={vault.data} reload={vault.reload} />}
+      {vault.data && <RecordProposalReview enabled={[...vault.data.roles, ...vault.data.facts].some((item) => item.proposalReviewEnabled === true)} filenames={new Map(vault.data.sources.map((source) => [source.id, source.filename]))} />}
     </>
   );
 }

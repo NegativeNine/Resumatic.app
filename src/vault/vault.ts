@@ -1777,7 +1777,11 @@ export class Vault extends DurableObject<Env> {
 
   /** Owner-only metadata about deterministic links. No shadow/model judgements are exposed. */
   private copyReviewEntries(): { roles: RoleView[]; facts: FactView[] } {
-    const roles = this.readRoles(); const facts = this.readFacts();
+    let roles = this.readRoles(); let facts = this.readFacts();
+    if (this.env.RECORD_PROPOSAL_REVIEW_ENABLED === "true") {
+      roles = roles.map((role) => ({ ...role, proposalReviewEnabled: true }));
+      facts = facts.map((fact) => ({ ...fact, proposalReviewEnabled: true }));
+    }
     if (this.env.IDENTICAL_REVIEW_ENABLED !== "true") return { roles, facts };
     const decorate = <T extends { id: string; revision?: number }>(rows: T[], kind: "role" | "fact"): (T & { copyReview: import("../shared/api").CopyReviewView })[] => {
       const byId = new Map(rows.map((row) => [row.id, row]));
@@ -1820,6 +1824,84 @@ export class Vault extends DurableObject<Env> {
           if (a.kind !== b.kind || !sameWording(a.text, b.text)) throw new AppError("conflict", "These facts are no longer identical.");
         }
       }
+      this.record.decideLink(id, input.decision);
+    });
+  }
+
+  /** Existing non-shadow proposals only. No read creates or promotes a judgement. */
+  async recordProposals(who: Who): Promise<import("../shared/proposal-review").RecordProposals> {
+    this.requireOwner(who);
+    if (this.env.RECORD_PROPOSAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "proposal review is not enabled");
+    return this.ctx.storage.transactionSync(() => {
+      const factRows = this.readFacts(); const roleRows = this.readRoles();
+      const factById = new Map(factRows.map((fact) => [fact.id, fact]));
+      const roleById = new Map(roleRows.map((role) => [role.id, role]));
+      const facts = factRows.map((fact) => {
+        const split = this.record.split(fact.id);
+        return { fact, split, rejectedSplits: this.record.rejectedSplits(fact.id), tags: this.record.tags({ kind: "fact", id: fact.id }),
+          partTags: (split?.parts ?? []).map((part) => ({ part, tags: this.record.tags({ kind: "part", id: part.id }) })).filter((row) => row.tags.length > 0) };
+      }).filter((row) => row.split !== null || row.rejectedSplits.length > 0 || row.tags.length > 0 || row.partTags.length > 0);
+      const roles = roleRows.map((role) => ({ role, tags: this.record.tags({ kind: "role", id: role.id }) })).filter((row) => row.tags.length > 0);
+      const offers = this.sql.exec<{ from_id: string }>(
+        `SELECT DISTINCT from_id FROM record_links WHERE kind = 'fact' AND proposed_by = 'model' AND shadow = 0 AND relation IN ('same', 'fuller') ORDER BY from_id`,
+      ).toArray().flatMap(({ from_id }) => this.record.links("fact", from_id)
+        .filter((link) => link.from === from_id && link.proposedBy === "model" && !link.shadow && (link.relation === "same" || link.relation === "fuller"))
+        .flatMap((link) => {
+          const from = factById.get(link.from); const to = factById.get(link.to);
+          return from && to ? [{ link, from, to, fromRole: from.roleId ? roleById.get(from.roleId) ?? null : null,
+            toRole: to.roleId ? roleById.get(to.roleId) ?? null : null }] : [];
+        }));
+      return { facts, roles, offers };
+    });
+  }
+
+  /** Decide only an existing, visible split or tag, against the subject and decision last shown. */
+  async decideRecordProposal(who: Who, kind: "split" | "tag", id: string, input: import("../shared/proposal-review").ProposalDecision): Promise<void> {
+    this.requireOwner(who);
+    if (this.env.RECORD_PROPOSAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "proposal review is not enabled");
+    if (kind !== "split" && kind !== "tag") throw new AppError("invalid", "unknown proposal kind");
+    this.ctx.storage.transactionSync(() => {
+      const row = kind === "split"
+        ? this.sql.exec<{ state: string; decided_at: number | null; revision: number }>(
+          `SELECT s.state, s.decided_at, f.revision FROM fact_splits s JOIN facts f ON f.id = s.fact_id WHERE s.id = ? AND s.shadow = 0`, id,
+        ).toArray()[0]
+        : this.sql.exec<{ state: string; decided_at: number | null; revision: number }>(
+          `SELECT t.state, t.decided_at, CASE WHEN t.subject_kind = 'role' THEN r.revision ELSE f.revision END AS revision
+           FROM record_tags t
+           LEFT JOIN roles r ON t.subject_kind = 'role' AND r.id = t.subject_id
+           LEFT JOIN fact_parts p ON t.subject_kind = 'part' AND p.id = t.subject_id
+           LEFT JOIN fact_splits s ON s.id = p.split_id AND s.shadow = 0 AND s.state <> 'rejected'
+           LEFT JOIN facts f ON f.id = CASE WHEN t.subject_kind = 'fact' THEN t.subject_id ELSE s.fact_id END
+           WHERE t.id = ? AND t.shadow = 0 AND (r.id IS NOT NULL OR f.id IS NOT NULL)`, id,
+        ).toArray()[0];
+      if (!row) throw new AppError("not_found", "no such proposal");
+      if (row.revision !== input.expectedSubjectRevision || row.state !== input.expectedState || row.decided_at !== input.expectedDecidedAt)
+        throw new AppError("conflict", "This proposal changed. Refresh the page, then review it again.");
+      if (kind === "split") this.record.decideSplit(id, input.decision);
+      else this.record.decideTag(id, input.decision);
+    });
+  }
+
+  /** An explicit owner choice about two existing lines; never a rewrite or a shadow promotion. */
+  async decideSemanticOffer(who: Who, id: string, input: import("../shared/proposal-review").SemanticOfferDecision): Promise<void> {
+    this.requireOwner(who);
+    if (this.env.RECORD_PROPOSAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "proposal review is not enabled");
+    this.ctx.storage.transactionSync(() => {
+      const row = this.sql.exec<{ state: string; decided_at: number | null; from_revision: number; to_revision: number;
+        from_role_revision: number | null; to_role_revision: number | null; from_kind: string; to_kind: string }>(
+        `SELECT l.state, l.decided_at, f.revision AS from_revision, t.revision AS to_revision,
+           r1.revision AS from_role_revision, r2.revision AS to_role_revision, f.kind AS from_kind, t.kind AS to_kind
+         FROM record_links l JOIN facts f ON f.id = l.from_id JOIN facts t ON t.id = l.to_id
+         LEFT JOIN roles r1 ON r1.id = f.role_id LEFT JOIN roles r2 ON r2.id = t.role_id
+         WHERE l.id = ? AND l.kind = 'fact' AND l.proposed_by = 'model' AND l.shadow = 0 AND l.relation IN ('same', 'fuller')`, id,
+      ).toArray()[0];
+      if (!row) throw new AppError("not_found", "no such offer");
+      if (row.from_revision !== input.expectedFromRevision || row.to_revision !== input.expectedToRevision ||
+        row.from_role_revision !== input.expectedFromRoleRevision || row.to_role_revision !== input.expectedToRoleRevision ||
+        row.state !== input.expectedState || row.decided_at !== input.expectedDecidedAt)
+        throw new AppError("conflict", "This offer or its facts changed. Refresh the page, then review it again.");
+      if (input.decision === "confirmed" && row.from_kind !== row.to_kind)
+        throw new AppError("conflict", "These facts have different kinds and cannot be joined.");
       this.record.decideLink(id, input.decision);
     });
   }

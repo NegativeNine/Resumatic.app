@@ -196,6 +196,10 @@ The notices are on the privacy notice and the beta terms, and `test/web/legal.te
 - `scripts/taxonomy-build.test.mjs`: the CSV reader, both source readers, the crosswalk reader, joining, the SQL (loaded into SQLite as written, whole and with each file left out in turn), the build command, and that the same files always give the same bytes.
 - `test/unit/taxonomy.test.ts`: the four reads over records in memory.
 - `test/integration/taxonomy-d1.test.ts`: the same records loaded into D1 answer every read identically, and a database that does not hold all of them is read as not loaded.
-- `test/unit/taxonomy-vectors.test.ts`: lookups in the vector index, what makes an index ready, and what a concept's document is. `test/unit/taxonomy-index.test.ts` and `test/integration/taxonomy-index.test.ts`: the build, its refusals, its routes and their Access check, over an index in memory (`test/support/fake-vectorize.ts`). No real Vectorize index has been built.
+- `test/unit/taxonomy-vectors.test.ts`: lookups in the vector index, what makes an index ready, and what a concept's document is. `test/unit/taxonomy-index.test.ts` and `test/integration/taxonomy-index.test.ts`: the build, its refusals, its routes and their Access check, over an index in memory (`test/support/fake-vectorize.ts`). The real staging index is now complete; see the dated verification below.
 
 The test files under `test/fixtures/taxonomy` are synthetic and say so. `test/support/taxonomy-fixture.ts` is generated from them by `node scripts/taxonomy/fixture.mjs`, and a test fails if it is out of date.
+
+## Staging index verification: 14 November 2026
+
+The [readiness report](taxonomy-index-2026-11-14.json) records all 29,981 eligible concepts plus the manifest (29,982 vectors), the complete matching manifest, cosine metric, correct staging bindings and filtered boundary self-match scores of 1.0. The first two embedding runs resumed from their checkpoints; final verification made no additional embedding calls. Default approximate self-scores were about 0.94; #41 requests exact scoring for the unchanged 0.99–1.01 test. Tagging precision and the lookup floor/caps remain unmeasured, and upload tagging stays off.
