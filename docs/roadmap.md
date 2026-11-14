@@ -10,7 +10,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Muse Ember generation/extraction and Clef decisions | #25 merged in #34; on staging | The live eval: the first pilot cannot start within the 50 weighted attempts authorised against the typed-decision judge (it needs 66). Authorise more, or choose a smaller case |
 | Qwen embeddings and Clef relevance | #27 merged in #34; on staging | Keep the task-aware query/document inputs and per-vault embedding migration |
 | Coach accounts and client list | #26 merged in #34, with six review fixes | The take-up writes to two vaults and is not atomic; the page offers the add again |
-| Taxonomy builder and lookup | #28 merged in #34, with review fixes. Rebuilt from the same downloads on 11 November ([manifest](taxonomy-build-2026-11-11.json), version `esco-1.2.1+onet-31.0+3f810824`) and loaded into a D1 database on the staging account, its counts checked | Build the vector index on staging (`pipeline/06-vector-index`) |
+| Taxonomy builder and lookup | #28 merged in #34, with review fixes. Rebuilt from the same downloads on 11 November ([manifest](taxonomy-build-2026-11-11.json), version `esco-1.2.1+onet-31.0+3f810824`) and loaded into a D1 database on the staging account, its counts checked | The index is structurally ready on staging; semantic precision and rollout measurements remain |
 | Shared-copy title test | #29 merged in #34 | |
 | The record: parts of a line, tags and links | #30 merged in #34 | Its migration comes before coach accounts' |
 | Dividing a line into its claims | #31 merged in #34 | Off by default, and kept in shadow where switched on. The focused real-judge smoke refused the bad split; full model evals and quality measurement remain |
@@ -22,7 +22,7 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Suggested wording on a shared copy | Merged in #35 | Adds the vault's next migration, the fourth of four after coach accounts, directly after comments'; only that order is deployed. Accepting is the owner's own verified line edit, so the manual-edit release blocker holds it. Real sign-ins on both sides and the real judge on suggested wording are owed |
 | Fit preview through connected apps | Merged in #35. No migration | Deployed before connected apps are switched on anywhere; then MCP in staging and a real client |
 | Hardening fixes | Merged in #35 | Denial and intention checks read any apostrophe; "upto" is a bound; cleaning keeps a star or backtick set off by spaces; an expired connected-app grant is cleared on time; direction overrides are stripped from postings. The shadow stamps these change are raised to /3 |
-| Tagging facts and roles with taxonomy concepts | Merged in #35 | Off by default, refused in production configuration, and inert without a wholly loaded taxonomy. No vault migration. The full eval against the real judge has not been run; the focused smoke failed its positive C++ case. No quality measurement or model-tag rollout is approved |
+| Tagging facts, parts and roles with taxonomy concepts | Merged in #35; #43 adds verified standalone parts and an ephemeral exact-input job-requirement helper | Off by default, refused in production configuration, and inert without a wholly loaded taxonomy. No vault migration. The full eval against the real judge has not been run; the focused smoke failed its positive C++ case. No quality measurement or model-tag rollout is approved |
 | Vector index and vector candidates | Merged in #36. No vault migration; one Directory migration (operator spend), after which production cannot be rolled back past this release | The index is built and structurally verified on staging ([report](taxonomy-index-2026-11-14.json)); vector precision, its floor and caps still need measurement on lines given with consent; the operator-only build switch permits reference indexing while upload tagging stays off |
 | Private card preview and re-identification test | Merged in #36. No migration | Off by default, refused in production configuration, needs a wholly loaded taxonomy. No migration. No occupation or skills on real vaults until owner review confirms tags, only a band from job dates. Harness rates are synthetic; Gate 3's real test, counsel and the sharing rules remain |
 | Email notices | Merged in #36. The vault's last migration, after saved answers' | Off by default and refused in production. A sender domain onboarded to Cloudflare Email Service, then a real inbox in staging; the DPA naming the service and EU-region sending are owed |
@@ -37,9 +37,14 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Redesign stage 7: outside | `redesign/07-outside`, based on `redesign/02-shell`. No migration | Landing copy pending the owner's review |
 | Redesign follow-up: one set of states, no dead CSS | `redesign/08-polish`, based on main at d9d2d82. No migration | Owner's answers on a cancelled file's mark (question 1) and the board's quota sentence (question 2) |
 | Owner review of identical copies | Merged in #39: an explicit grouping action, separate/rejoin controls, source quotes retained, stale changes refused. No migration | On in staging, off by default behind `IDENTICAL_REVIEW_ENABLED` and refused in production; real-owner usability remains to check. Model parts, tags and semantic offers remain hidden |
+| Owner review of model proposals | Merged in #40; reviews existing non-shadow parts, tags and semantic fact offers with stale-decision checks | Off behind `RECORD_PROPOSAL_REVIEW_ENABLED`; never promotes shadow results. Real-model quality and review bars remain |
+| Owner-confirmed skill periods | Merged in #46 ([design and limits](skill-years.md)); overlap-aware conservative totals, explicit-only resume selection and full lifecycle support. Vault migration38 follows email notices | Off behind `SKILL_YEARS_ENABLED`, refused in production pending staging verification. Broader policy alternatives remain open; no card years |
+| Concept retrieval and private coverage | Merged in #47 ([design and limits](concept-tailoring.md)); keeps embedding candidates, adds bounded concept hints, judges whole requirements and preserves explicit dated skill selections | Off behind `TAILOR_CONCEPTS_ENABLED`; real-model and consented quality evaluation remain. Coverage is excluded from coach, printable and MCP projections |
+| Live staging deployment guard | Merged in #42; `deploy:staging` reads and preserves live settings, refuses failed reads/builds/artifact writes or changed bindings | Live guarded deployment verified. Deliberate configuration changes and release acceptance retain their own preflight |
+| Download integrity | #44 rechecks resume evidence/privacy after rendering and cache access; #45 checks document evidence/version/session while preserving private owner downloads | Local runtime races and full CI passed. Protected historical source provenance is a separate unfinished protocol |
 | Focused real-judge smoke | [14 November results](evals/pipeline-smoke-2026-11-14.json): eight settled Clef requests / 48 weighted attempts. The bad split, equivalent-wording control and stronger-credit refusal passed | Tagging's positive C++ use case failed alongside correctly declined denial/intention cases. Tagging remains off. This does not complete the full evals, Muse proposal testing or consented quality measurements |
 
-The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments, suggested wording (two columns on the comments' table), saved answers and application kits (three tables), email notices (one table). Only that order is deployed.
+The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments, suggested wording (two columns on the comments' table), saved answers and application kits (three tables), email notices (one table), and owner-confirmed skill periods (#46, migration38). Keep that order for deployment. The source-proof prototypes have no registered migration on main.
 
 A merged PR or a local check is not a claim of production release acceptance. The [release status](seeker-release-status.md) records the broader acceptance work.
 
@@ -49,7 +54,7 @@ Nothing. All five Now features are merged: preferences, sensitive facts and comm
 
 ## Next: built this round
 
-Everything on the Next list that needed no outside provider and no owner decision is merged in #36. The rest waits on the decisions below or on a provider: job search (a licensed listings provider), sending applications (a way to submit them), live coach access (the threat model), years per skill, owner review of parts, tags and merges (the measurement bars), and who may see the card.
+Everything on the Next list that needed no outside provider and no owner decision is merged in #36. The owner-confirmed interval path for skills is now built in #46, and gated proposal review in #40. Their broader policy and measurement decisions remain open. Provider or decision work still includes job search (a licensed listings provider), sending applications (a way to submit them), live coach access (the threat model), review measurement bars, and who may see the card.
 
 ## Taxonomy pipeline work
 
@@ -59,8 +64,8 @@ The [pipeline design](taxonomy-pipelines-design.md) is agreed. The rebuilt taxon
 2. Add evidence, parts, tags and links without changing existing records. Merged in #34.
 3. Evaluate splitting, tagging and duplicate matching in shadow, using consented labelled examples. Splitting ([splitting.md](splitting.md)) and matching ([merging.md](merging.md)) are merged in #34; the focused real-judge smoke has run, but the full suites and consented quality measurements remain outstanding. Tagging of facts and roles is merged in #35 ([tagging.md](tagging.md)); it is switched on nowhere, including staging, where the taxonomy it reads is bound, and failed its positive C++ control in the focused real-judge smoke.
 4. Owner review of parts, tags and semantic fact offers is built in #40 behind `RECORD_PROPOSAL_REVIEW_ENABLED`, which stays off. It accepts existing non-shadow proposals only, retains rejected-part history for undo, and never promotes shadow results. Measurement is still required before enabling it.
-5. Add matching and coverage by concept, retaining evidence checks and similarity fallback.
-6. Add skills with years only where skill-use intervals are evidenced or owner-confirmed; role dates alone are insufficient.
+5. Matching and coverage by concept is merged in #47, retaining evidence checks, the existing embedding candidates and unknown fallback. It remains off pending quality evaluation.
+6. Owner-confirmed skill-use intervals and dated totals are merged in #46 and remain off. Role dates never supply skill experience; broader evidence-policy alternatives remain unresolved.
 7. Add the private card preview from confirmed tags. Its sharing rules still need an explicit decision. The owner-only preview is merged in #36; publishing is not built.
 
 ### 14 November validation
@@ -84,3 +89,9 @@ Each memo states the question, what it blocks, the options, a recommendation, wh
 - [What counts as years of using a skill](decisions/years-per-skill.md)
 - [The bars before parts, tags and offers are shown for review](decisions/review-bars.md)
 - [Who may see the private card](decisions/card-sharing.md)
+
+### Delivery and acceptance on 14 November
+
+The local Chrome interface smoke passed with synthetic API stand-ins, and local PDF/Word text checks passed. These are interface and rendering checks, not real Google sign-in, Browser Run, model-quality, independent ATS or beta acceptance. The actual staging service separately passed health, Google redirect, binding preservation and taxonomy-index checks after guarded deployment.
+
+The [source-proof protocol](source-proof-plan.md) remains unfinished. Protected receipt, authority and manifest components are being tested in isolated branches; they are not activated or deployed, and do not remove the manual-edit or deletion-inventory release blockers. Owner inspection and account data export remain distinct from a claim of publication provenance.
