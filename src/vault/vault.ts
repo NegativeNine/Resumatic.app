@@ -140,7 +140,7 @@ import { countByState, proposedBySource } from "../shared/review-groups";
 import { TodayStore, todayView, type KitCount } from "./today";
 import { IDENTICAL_ROLE_METHOD, IDENTICAL_WORDING_METHOD, MAX_OFFER_PAIRS, OFFERS_PER_FACT, OFFER_MIN_COSINE, identicalMatches, type JudgedOffer, type OfferPair } from "../pipeline/match";
 import { roleKey, sameRole, sameWording, stampProblem } from "../shared/record";
-import { MAX_TAGS_PER_SAVE, MAX_TAG_FACTS, MAX_TAG_ROLES, TAG_JUDGE_METHOD, TAG_RULE_METHOD, TAG_VECTOR_METHOD, skillAsWritten, tagStamp, type HeldTag, type ProposedTag, type TagMade, type TagSubjects } from "../pipeline/tag";
+import { MAX_TAGS_PER_SAVE, MAX_TAG_FACTS, MAX_TAG_ROLES, TAG_JUDGE_METHOD, TAG_RULE_METHOD, TAG_VECTOR_METHOD, TAG_PART_JUDGE_METHOD, TAG_PART_VECTOR_METHOD, skillAsWritten, tagStamp, type HeldTag, type ProposedTag, type TagMade, type TagSubjects } from "../pipeline/tag";
 import type { NewPart, RecordExport } from "../shared/record";
 import { ShareStore } from "./shares";
 import { markedWording, sensitiveUse, setSensitive, usableQuote, withheldFacts } from "./sensitive";
@@ -2503,8 +2503,8 @@ export class Vault extends DurableObject<Env> {
     // put to the judge. It is left out before the cap, so it takes no other line's place.
     const withheld = withheldFacts(this.sql).ids;
     const usable = this.sql
-      .exec<{ id: string; role_id: string | null; kind: string; text: string; quote: string | null }>(
-        `SELECT f.id, f.role_id, f.kind, f.text, e.quote FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id
+      .exec<{ id: string; role_id: string | null; kind: string; text: string; revision: number; quote: string | null }>(
+        `SELECT f.id, f.role_id, f.kind, f.text, f.revision, e.quote FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id
          WHERE f.source_id = ? AND f.origin = 'extracted' ORDER BY f.rowid`,
         sourceId,
       )
@@ -2555,6 +2555,19 @@ export class Vault extends DurableObject<Env> {
         .toArray(),
       facts,
     );
+    const parts: NonNullable<TagSubjects["parts"]> = [];
+    for (const fact of usable) {
+      const split = this.record.split(fact.id, { shadow: true });
+      if (!split) continue;
+      for (const part of split.parts) {
+        // A mention merely names something. Only verified standalone claims/results can show experience.
+        if (part.kind === "mention") continue;
+        parts.push({ id: part.id, roleId: fact.role_id, kind: fact.kind, text: part.text, asWritten: false,
+          held: this.record.tags({ kind: "part", id: part.id }, { shadow: true }).map((tag) => ({
+            conceptId: tag.conceptId, method: tag.method, model: tag.model, taxonomyVersion: tag.taxonomyVersion, own: true,
+          })), part: { factId: fact.id, revision: fact.revision, splitId: split.id, line: fact.text, kind: part.kind } });
+      }
+    }
     return {
       roles: roles.map((role) => ({ id: role.id, title: role.title, held: roleTags.get(role.id) ?? [] })),
       facts: facts.map((fact) => ({
@@ -2565,7 +2578,8 @@ export class Vault extends DurableObject<Env> {
         asWritten: fact.kind === "skill" && skillAsWritten(fact.quote, fact.text),
         held: factTags.get(fact.id) ?? [],
       })),
-      total,
+      ...(parts.length ? { parts: parts.slice(0, Math.max(0, MAX_TAG_FACTS - facts.length)) } : {}),
+      total: parts.length ? { ...total, parts: parts.length } : total,
     };
   }
 
@@ -2596,9 +2610,13 @@ export class Vault extends DurableObject<Env> {
     if (!Array.isArray(tags)) throw new AppError("invalid", "tags are proposed for facts and job roles");
     if (tags.length > MAX_TAGS_PER_SAVE) throw new AppError("invalid", "too many tags for one upload");
     for (const tag of tags) {
-      if (tag?.method !== TAG_JUDGE_METHOD && tag?.method !== TAG_RULE_METHOD && tag?.method !== TAG_VECTOR_METHOD) throw new AppError("invalid", "unknown tagging method");
-      if ((tag.subject?.kind !== "fact" && tag.subject?.kind !== "role") || typeof tag.subject.id !== "string")
+      if (tag?.method !== TAG_JUDGE_METHOD && tag?.method !== TAG_RULE_METHOD && tag?.method !== TAG_VECTOR_METHOD && tag?.method !== TAG_PART_JUDGE_METHOD && tag?.method !== TAG_PART_VECTOR_METHOD) throw new AppError("invalid", "unknown tagging method");
+      if ((tag.subject?.kind !== "fact" && tag.subject?.kind !== "role" && tag.subject?.kind !== "part") || typeof tag.subject.id !== "string")
         throw new AppError("invalid", "tags are proposed for facts and job roles");
+      if (tag.subject.kind === "part" && (!tag.parent || typeof tag.parent.factId !== "string" ||
+        !Number.isSafeInteger(tag.parent.revision) || tag.parent.revision < 1 || typeof tag.parent.splitId !== "string" ||
+        typeof tag.parent.line !== "string" || (tag.method !== TAG_PART_JUDGE_METHOD && tag.method !== TAG_PART_VECTOR_METHOD)))
+        throw new AppError("invalid", "part tags require their current parent and split");
     }
     const unstamped = made && typeof made === "object" ? stampProblem(tagStamp(TAG_JUDGE_METHOD, made)) : "a judgement says what made it";
     if (unstamped) throw new AppError("invalid", unstamped);
@@ -2607,9 +2625,24 @@ export class Vault extends DurableObject<Env> {
     let stored = 0;
     let refused = 0;
     for (const tag of tags) {
+      if (tag.subject.kind === "requirement") throw new AppError("invalid", "requirements are not person tags");
       // The judge was asked, and the taxonomy read, before this was called. Nothing is awaited
       // from here to the tag being stored, so no edit or mark can fall between these checks and the write.
-      if (tag.subject.kind === "fact") {
+      if (tag.subject.kind === "part") {
+        const parent = tag.parent;
+        if (!parent || typeof parent.factId !== "string" || !Number.isSafeInteger(parent.revision) || parent.revision < 1 ||
+          typeof parent.splitId !== "string" || typeof parent.line !== "string" ||
+          (tag.method !== TAG_PART_JUDGE_METHOD && tag.method !== TAG_PART_VECTOR_METHOD)) { refused++; continue; }
+        const fact = this.sql.exec<{ id: string; text: string; revision: number }>(
+          `SELECT f.id, f.text, f.revision FROM fact_parts p JOIN fact_splits s ON s.id = p.split_id JOIN facts f ON f.id = s.fact_id
+           WHERE p.id = ? AND f.source_id = ? AND s.id = ? AND s.shadow = 1 AND s.state <> 'rejected' AND p.kind IN ('clause', 'result')`,
+          tag.subject.id, sourceId, parent.splitId,
+        ).toArray()[0];
+        if (!fact || fact.id !== parent.factId || fact.revision !== parent.revision || fact.text !== parent.line || withheld.has(fact.id)) { refused++; continue; }
+        const part = this.record.split(fact.id, { shadow: true })?.parts.find((part) => part.id === tag.subject.id);
+        if (!part || part.kind === "mention" || part.text !== tag.words || part.kind !== parent.kind) { refused++; continue; }
+      } else if (tag.subject.kind === "fact") {
+        if (tag.method === TAG_PART_JUDGE_METHOD || tag.method === TAG_PART_VECTOR_METHOD) { refused++; continue; }
         const fact = this.sql
           .exec<{ kind: string; text: string; quote: string | null }>(
             `SELECT f.kind, f.text, e.quote FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id WHERE f.id = ? AND f.source_id = ?`,
@@ -2624,21 +2657,22 @@ export class Vault extends DurableObject<Env> {
         const role = this.sql.exec<{ kind: string; title: string | null }>(`SELECT kind, title FROM roles WHERE id = ? AND source_id = ?`, tag.subject.id, sourceId).toArray()[0];
         if (!role) throw new AppError("conflict", "role is not part of this source");
         // Only a job is given an occupation, and the rule is for listed skills: a job's is always asked about.
-        if (role.kind !== "job" || role.title !== tag.words || tag.method === TAG_RULE_METHOD) continue;
+        if (role.kind !== "job" || role.title !== tag.words || tag.method === TAG_RULE_METHOD || tag.method === TAG_PART_JUDGE_METHOD || tag.method === TAG_PART_VECTOR_METHOD) continue;
       }
       const stamp = tagStamp(tag.method, made);
       // A concept found word for word in the row is that row's from its words. A vector tag for it
       // is left, since proposing it again would restamp the word-for-word row as a vector one.
       if (
-        tag.method === TAG_VECTOR_METHOD &&
+        (tag.method === TAG_VECTOR_METHOD || tag.method === TAG_PART_VECTOR_METHOD) &&
         this.sql
           .exec(
-            `SELECT 1 FROM record_tags WHERE subject_kind = ? AND subject_id = ? AND concept_id = ? AND shadow = 1 AND method IN (?, ?)`,
+            `SELECT 1 FROM record_tags WHERE subject_kind = ? AND subject_id = ? AND concept_id = ? AND shadow = 1 AND method IN (?, ?, ?)`,
             tag.subject.kind,
             tag.subject.id,
             tag.conceptId,
             TAG_JUDGE_METHOD,
             TAG_RULE_METHOD,
+            TAG_PART_JUDGE_METHOD,
           )
           .toArray().length > 0
       )
