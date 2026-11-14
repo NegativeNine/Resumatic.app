@@ -982,6 +982,7 @@ api.post("/v2/record/links/:id", JSON_LIMIT, async (c) => {
   if (c.env.IDENTICAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "copy review is not enabled");
   await myVault(c).decideIdenticalCopy(c.get("who"), c.req.param("id"), await jsonBody(c, z.object({
     decision: z.enum(["confirmed", "rejected"]), fromRevision: z.number().int().positive(), toRevision: z.number().int().positive(),
+    expectedDecisionVersion: z.number().int().nonnegative().safe(),
   }).strict()));
   return c.body(null, 204);
 });

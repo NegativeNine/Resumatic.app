@@ -184,6 +184,8 @@ export interface CopyLinkView {
   to: string;
   fromRevision: number;
   toRevision: number;
+  /** Monotonic decision generation; protects newer owner choices even when wording is unchanged. */
+  decisionVersion: number;
 }
 export interface CopyReviewView {
   rootId: string;

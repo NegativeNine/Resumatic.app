@@ -18,7 +18,7 @@ async function upload(user: User, extra = "") {
   await waitForSource(user, (await res.json() as { sourceId: string }).sourceId);
 }
 function decide(user: User, link: CopyLinkView, decision: "confirmed" | "rejected", revisions = {}) {
-  return user.send("POST", `/api/v2/record/links/${link.id}`, { decision, fromRevision: link.fromRevision, toRevision: link.toRevision, ...revisions });
+  return user.send("POST", `/api/v2/record/links/${link.id}`, { decision, fromRevision: link.fromRevision, toRevision: link.toRevision, expectedDecisionVersion: link.decisionVersion, ...revisions });
 }
 
 describe("owner review of deterministic identical copies", () => {
@@ -53,7 +53,8 @@ describe("owner review of deterministic identical copies", () => {
     expect((await view(user)).facts.map((f) => [f.id, f.text, f.quote, f.span, f.state])).toEqual(first.facts.map((f) => [f.id, f.text, f.quote, f.span, f.state]));
     await upload(user, "\nAnother distinct footer"); await group(user);
     expect((await view(user)).facts.find((f) => f.id === link.from)!.copyReview!.rootId).toBe(link.from);
-    expect((await decide(user, link, "confirmed")).status).toBe(204);
+    const current = (await view(user)).facts.find((f) => f.id === link.from)!.copyReview!.separations.find((l) => l.id === link.id)!;
+    expect((await decide(user, current, "confirmed")).status).toBe(204);
     expect((await view(user)).facts.find((f) => f.id === link.from)!.copyReview!.rootId).toBe(link.to);
   });
 
@@ -65,6 +66,19 @@ describe("owner review of deterministic identical copies", () => {
     expect((await decide(await signIn(), link, "rejected")).status).toBe(404);
     expect((await decide(user, link, "rejected", { fromRevision: link.fromRevision + 1 })).status).toBe(409);
     expect((await view(user)).facts.find((f) => f.id === link.from)!.copyReview!.rootId).toBe(link.to);
+  });
+
+  it("refuses delayed decisions even when neither copy's wording changed", async () => {
+    settings.IDENTICAL_REVIEW_ENABLED = "true";
+    const user = await signIn(); await upload(user); await upload(user, "\nSecond upload"); await group(user);
+    const old = (await view(user)).facts.find((f) => f.copyReview?.links.length)!.copyReview!.links[0]!;
+    expect((await decide(user, old, "rejected")).status).toBe(204);
+    expect((await decide(user, old, "confirmed")).status).toBe(409);
+    const separated = (await view(user)).facts.find((f) => f.id === old.from)!.copyReview!.separations[0]!;
+    expect(separated.decisionVersion).toBeGreaterThan(old.decisionVersion);
+    expect((await decide(user, separated, "confirmed")).status).toBe(204);
+    expect((await decide(user, separated, "rejected")).status).toBe(409);
+    expect((await view(user)).facts.find((f) => f.id === old.from)!.copyReview!.rootId).toBe(old.to);
   });
 
   it("does not rejoin an old comparison after its wording is edited", async () => {

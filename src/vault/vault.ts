@@ -1785,7 +1785,7 @@ export class Vault extends DurableObject<Env> {
         const links = this.record.links(kind, row.id).filter((link) => link.relation === "same" &&
           link.proposedBy === "rule" && link.method === (kind === "role" ? IDENTICAL_ROLE_METHOD : IDENTICAL_WORDING_METHOD));
         const view = (link: (typeof links)[number]) => ({ id: link.id, from: link.from, to: link.to,
-          fromRevision: byId.get(link.from)?.revision ?? 1, toRevision: byId.get(link.to)?.revision ?? 1 });
+          fromRevision: byId.get(link.from)?.revision ?? 1, toRevision: byId.get(link.to)?.revision ?? 1, decisionVersion: link.decidedAt ?? 0 });
         return { ...row, copyReview: { rootId: this.record.root(kind, row.id),
           links: links.filter((link) => link.state === "confirmed" && link.holds).map(view),
           separations: links.filter((link) => link.state === "rejected" && link.decidedBy === "owner").map(view) } };
@@ -1795,15 +1795,17 @@ export class Vault extends DurableObject<Env> {
   }
 
   /** Separate or rejoin deterministic copies. An owner can never decide a shadow/model link here. */
-  async decideIdenticalCopy(who: Who, id: string, input: { decision: "confirmed" | "rejected"; fromRevision: number; toRevision: number }): Promise<void> {
+  async decideIdenticalCopy(who: Who, id: string, input: { decision: "confirmed" | "rejected"; fromRevision: number; toRevision: number; expectedDecisionVersion: number }): Promise<void> {
     this.requireOwner(who);
     if (this.env.IDENTICAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "copy review is not enabled");
     this.ctx.storage.transactionSync(() => {
-      const link = this.sql.exec<{ kind: string; from_id: string; to_id: string; method: string; proposed_by: string; shadow: number; relation: string }>(
-        `SELECT kind, from_id, to_id, method, proposed_by, shadow, relation FROM record_links WHERE id = ?`, id,
+      const link = this.sql.exec<{ kind: string; from_id: string; to_id: string; method: string; proposed_by: string; shadow: number; relation: string; decided_at: number | null }>(
+        `SELECT kind, from_id, to_id, method, proposed_by, shadow, relation, decided_at FROM record_links WHERE id = ?`, id,
       ).toArray()[0];
       if (!link || link.shadow || link.relation !== "same" || link.proposed_by !== "rule" ||
         (link.kind !== "role" && link.kind !== "fact") || link.method !== (link.kind === "role" ? IDENTICAL_ROLE_METHOD : IDENTICAL_WORDING_METHOD)) throw new AppError("not_found", "no such copy link");
+      if ((link.decided_at ?? 0) !== input.expectedDecisionVersion)
+        throw new AppError("conflict", "The decision about these copies changed. Refresh the page, then try again.");
       const table = link.kind === "role" ? "roles" : "facts";
       const revisions = this.sql.exec<{ id: string; revision: number }>(`SELECT id, revision FROM ${table} WHERE id IN (?, ?)`, link.from_id, link.to_id).toArray();
       if (revisions.find((r) => r.id === link.from_id)?.revision !== input.fromRevision || revisions.find((r) => r.id === link.to_id)?.revision !== input.toRevision)

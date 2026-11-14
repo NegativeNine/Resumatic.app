@@ -6,7 +6,7 @@ import { api } from "../../src/web/api";
 import { CopyControls, GroupIdenticalCopies } from "../../src/web/components/CopyControls";
 import { renderWithSession } from "./render";
 import { fixtures } from "./fixtures";
-const link: CopyLinkView = { id: "link-1", from: "later", to: "first", fromRevision: 2, toRevision: 3 };
+const link: CopyLinkView = { id: "link-1", from: "later", to: "first", fromRevision: 2, toRevision: 3, decisionVersion: 123 };
 const files = new Map([["source-1", "first.pdf"], ["source-2", "second.pdf"]]);
 const first = { id: "first", sourceId: "source-1", copyReview: { rootId: "first", links: [link], separations: [] } };
 const later = { id: "later", sourceId: "source-2", copyReview: { rootId: "first", links: [link], separations: [] } };

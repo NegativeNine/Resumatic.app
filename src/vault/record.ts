@@ -660,7 +660,10 @@ export class RecordStore {
   }
 
   private decide(table: Table, id: string, state: "confirmed" | "rejected", by: "rule" | "owner"): void {
-    this.sql.exec(`UPDATE ${table} SET state = ?, decided_by = ?, decided_at = ? WHERE id = ?`, state, by, this.now(), id);
+    // Link decisions also serve as the owner's optimistic-concurrency generation. Two choices
+    // made in the same millisecond (or after the clock moves backwards) must remain distinct.
+    const clock = table === "record_links" ? "MAX(?, COALESCE(decided_at, 0) + 1)" : "?";
+    this.sql.exec(`UPDATE ${table} SET state = ?, decided_by = ?, decided_at = ${clock} WHERE id = ?`, state, by, this.now(), id);
   }
 
   /** A proposal made again takes the stamp of what made it last. */

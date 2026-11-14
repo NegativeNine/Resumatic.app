@@ -30,7 +30,7 @@ const api: NewPart = { kind: "mention", ranges: [at(LINE, "API")] };
 /** Two clauses, the outcome of the second, and one mention. */
 const DIVISION: NewPart[] = [designed, built, cutting(1), api];
 
-function vault() {
+function vault(now?: () => number) {
   const db = new DatabaseSync(":memory:");
   const sql = {
     exec(statement: string, ...bindings: (string | number | null)[]) {
@@ -56,7 +56,7 @@ function vault() {
   };
   createSchema(sql, transaction);
   let clock = 1_800_000_000_000;
-  const record = new RecordStore(sql, transaction, () => clock++);
+  const record = new RecordStore(sql, transaction, now ?? (() => clock++));
   const run = (statement: string, ...bindings: (string | number | null)[]) => void db.prepare(statement).run(...bindings);
   const count = (table: string, where = "1 = 1") => (db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${where}`).get() as { n: number }).n;
   const source = (id: string) =>
@@ -477,6 +477,22 @@ describe("merging what says the same thing", () => {
     expect(record.root("role", "other-title")).toBe("other-title");
     expect(refusal(() => record.proposeLink({ kind: "role", from: "missing", to: "r1", relation: "same", stamp: model }))).toBe("not_found");
     expect(refusal(() => record.proposeLink({ kind: "role", from: "same", to: "r1", relation: "fuller", stamp: model }))).toBe("invalid");
+  });
+
+  it("keeps link decision generations distinct within one millisecond and after clock rollback", () => {
+    let clock = 1000;
+    const { record, fact } = vault(() => clock);
+    fact("f2", LINE);
+    const { linkId } = record.proposeLink({ kind: "fact", from: "f2", to: "f1", relation: "same", stamp: rule, confirm: true });
+    const generation = () => record.links("fact", "f2")[0]!.decidedAt!;
+    const first = generation();
+    record.decideLink(linkId, "rejected");
+    expect(generation()).toBe(first + 1);
+    record.decideLink(linkId, "confirmed");
+    expect(generation()).toBe(first + 2);
+    clock = 500;
+    record.decideLink(linkId, "rejected");
+    expect(generation()).toBe(first + 3);
   });
 
   it("is the owner's to accept, turn down and undo", () => {
