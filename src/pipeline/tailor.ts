@@ -17,6 +17,7 @@ import {
 } from "../grounding/verdict";
 import { isInstruction } from "./extract/verify";
 import { cleanExtractedText } from "../shared/clean";
+import { selectConceptFacts, type ConceptSelectionContext } from "./concept-selection";
 import type { LineFinding, ResumeBody, ResumeLine, ResumeSection } from "../shared/api";
 import type {
   Analysis,
@@ -75,7 +76,9 @@ export async function selectFacts(
    * or above the gap threshold, best first, or none for a gap. The selection itself is unchanged.
    */
   coverage?: Map<string, string[]>,
+  concepts?: ConceptSelectionContext,
 ): Promise<Selection> {
+  if (concepts) return selectConceptFacts(models, search, analysis, facts, roles, coverage, concepts, TAILOR);
   const byId = new Map(facts.map((f) => [f.id, f]));
   const roleKeys = new Map(roles.map((role) => [role.id,
     role.org && role.title && role.startDate

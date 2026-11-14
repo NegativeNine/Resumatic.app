@@ -14,6 +14,7 @@ import { validSkillDurationProof } from "../shared/skill-years";
 import { SkillYearsStore } from "./skill-years";
 
 export interface InputMetadata {
+  conceptEvidence?: import("../shared/concept-tailoring").FactConceptEvidence[];
   skillDurationClaimIds?: string[];
   embeddingModel?: string;
   applicationId: string;
@@ -23,6 +24,8 @@ export interface InputMetadata {
 }
 
 export interface ResumeVersion {
+  /** Private owner explanation, excluded from coach/MCP projections. */
+  conceptCoverage?: import("../shared/concept-tailoring").ConceptSelection;
   render: RenderData;
   report: ResumeReport | null;
   facts: Record<string, { text: string; quote: string | null }>;
@@ -346,7 +349,12 @@ export class SnapshotStore {
       row.captured >= 0 && row.captured === row.live);
   }
 
-  assertCurrent(runId: string, body: ResumeBody): void {
+  /** Reuses the publication identity/evidence checks before dispatching any model input. */
+  assertInputsCurrent(runId: string): void {
+    this.assertCurrent(runId, { summary: null, sections: [], skills: [] }, this.items<FactRecord>(runId, "fact").map((fact) => fact.id));
+  }
+
+  assertCurrent(runId: string, body: ResumeBody, extraFactIds: readonly string[] = []): void {
     this.requireNoIncarnationWrite();
     const invalidFact = () => new AppError(
       "conflict",
@@ -360,6 +368,7 @@ export class SnapshotStore {
       "A role changed while this draft was being made. Make it again.",
     );
     const ids = new Set([
+      ...extraFactIds,
       ...(body.summary ? body.summary.factIds : []),
       ...body.sections.flatMap((s) => s.lines.flatMap((l) => l.factIds)),
     ]);

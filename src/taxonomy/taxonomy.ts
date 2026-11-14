@@ -142,6 +142,17 @@ export class Taxonomy {
     return order.map((found) => concepts.get(found)).filter((concept): concept is Concept => concept !== undefined);
   }
 
+  /** Direct parents and children, used only to expand retrieval candidates, never as evidence. */
+  async adjacent(id: string): Promise<Concept[]> {
+    if (!validConceptId(id)) return [];
+    const ids = [...new Set([
+      ...(await this.store.from(id, ["broader"])).map((edge) => edge.dst),
+      ...(await this.store.to(id, ["broader"])).map((edge) => edge.src),
+    ])].filter((other) => other !== id).sort().slice(0, 32);
+    const found = await this.get(ids);
+    return ids.flatMap((other) => found.has(other) ? [found.get(other)!] : []);
+  }
+
   /**
    * One occupation seen through both sources. What ESCO or O*NET says of the occupation itself
    * comes first; what they say of the occupations the official crosswalk relates it to follows,

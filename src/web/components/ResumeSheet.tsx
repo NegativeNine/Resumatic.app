@@ -15,6 +15,7 @@ import { SHEET_QUERY, useMediaQuery } from "./jobs/use-media";
 import { LineDetail } from "./LineItem";
 import { useMarginLayout } from "./margin-layout";
 import { GapsCard } from "./ResumeReport";
+import { ConceptCoveragePanel } from "./ConceptCoverage";
 import { ResumePaper } from "./ResumePaper";
 import { OwnerSuggestion } from "./SuggestedWording";
 import { ActionError, Badge, EmptyState, ErrorNote } from "./ui";
@@ -359,7 +360,7 @@ export function ResumeSheet({
                   {!review && <ActionError message={finalization.error} />}
                 </section>
               )}
-              {resume.report ? (
+              {!readOnly && resume.conceptCoverage ? <ConceptCoveragePanel coverage={resume.conceptCoverage} facts={resume.facts} /> : resume.report ? (
                 <GapsCard gaps={resume.report.gaps} applicationId={resume.applicationId} readOnly={readOnly} />
               ) : (
                 <p className="rs-meta">No report is available for this resume.</p>
