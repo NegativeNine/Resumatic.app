@@ -149,6 +149,8 @@ export async function validate({
     // precision is measured on lines given with consent and the notice and credits are in place.
     if (environment === "production" && config.vars?.TAG_SHADOW_ENABLED === "true")
       missing.push("TAG_SHADOW_ROLLOUT_UNVERIFIED");
+    if (environment === "production" && config.vars?.TAILOR_CONCEPTS_ENABLED === "true")
+      missing.push("TAILOR_CONCEPTS_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.TAXONOMY_INDEX_BUILD_ENABLED === "true")
       missing.push("TAXONOMY_INDEX_BUILD_ROLLOUT_UNVERIFIED");
     // The card preview reads confirmed tags and shows their taxonomy groups. Keep it out of

@@ -120,6 +120,7 @@ import {
 import { vault as vaultStub } from "../shared/stubs";
 import { createSchema, hasSchema, migrate, SCHEMA_VERSION } from "./schema";
 import { assertGroundedResume, evidenceForFacts, evidenceForRoles, SnapshotStore, type ResumeVersion } from "./snapshots";
+import { captureConceptEvidence, conceptEvidenceCurrent } from "./concept-evidence";
 import { canShareDocument, sharedDocument, SHAREABLE_DOCUMENT_KINDS, type DocumentVersion } from "./document-shares";
 import { CoachClientStore, type CoachClientEntry } from "./coach-clients";
 import type { CoachAccount } from "./shares";
@@ -3633,6 +3634,7 @@ export class Vault extends DurableObject<Env> {
               : null,
             profile: this.readProfile(),
             embeddingModel: this.activeEmbeddingModel(),
+            ...(this.env.TAILOR_CONCEPTS_ENABLED === "true" ? { conceptEvidence: captureConceptEvidence(this.sql, this.usableFacts()) } : {}),
             ...(skillDurationClaimIds.length ? { skillDurationClaimIds } : {}),
           },
           [...this.usableFacts(), ...this.skillYears.selectedFacts(skillDurationClaimIds, withheldFacts(this.sql).ids)],
@@ -3673,6 +3675,7 @@ export class Vault extends DurableObject<Env> {
       body: saved?.render.body ?? null,
       report: saved?.report ?? null,
       facts: saved?.facts ?? {},
+      ...(saved?.conceptCoverage ? { conceptCoverage: saved.conceptCoverage } : {}),
       // The sheet in the app prints the same contact details as this version's PDF.
       ...(saved ? { profile: saved.render.profile } : {}),
       provenance: saved?.provenance,
@@ -4058,6 +4061,7 @@ export class Vault extends DurableObject<Env> {
       );
     return {
       applicationId: input.applicationId,
+      ...(input.conceptEvidence !== undefined ? { conceptEvidence: input.conceptEvidence } : {}),
       jdText: input.jdText,
       analysis: parseOrNull<Analysis>(row.run_analysis) ?? input.analysis,
       selection: parseOrNull<Selection>(row.selection),
@@ -4126,6 +4130,8 @@ export class Vault extends DurableObject<Env> {
       throw new AppError("conflict", "this attempt was superseded");
     const id = row.run_id ?? resumeId;
     if (runId) this.workflowRun(runId, "tailor", resumeId);
+    // No await separates this check from the synchronous commit below.
+    if (this.snapshots.metadata(id)?.conceptEvidence !== undefined) this.requireNothingWithheld(id);
     const write = () => {
       if (row.state !== "running")
         throw new AppError(
@@ -4161,6 +4167,7 @@ export class Vault extends DurableObject<Env> {
         const analysis =
           parseOrNull<Analysis>(row.run_analysis) ?? input.analysis;
         const snapshot: ResumeVersion = {
+          ...(parseOrNull<Selection>(row.selection)?.concepts ? { conceptCoverage: parseOrNull<Selection>(row.selection)!.concepts } : {}),
           render: {
             profile: input.profile,
             body: publication.body,
@@ -4505,7 +4512,8 @@ export class Vault extends DurableObject<Env> {
         const row = this.resumeRow(id);
         const job = jobOf(row.application_id);
         if (job) jobs[id] = job;
-        return { id, ...this.resumeVersion(row, version) };
+        const { conceptCoverage: _privateCoverage, ...sharedVersion } = this.resumeVersion(row, version);
+        return { id, ...sharedVersion };
       });
       const documentJobs: Record<string, { title: string | null; company: string | null }> = {};
       const documents = (selection.documents ?? []).map(({ id, version }) => {
@@ -5077,6 +5085,7 @@ export class Vault extends DurableObject<Env> {
               : null,
             profile: base?.render.profile ?? this.readProfile(),
             embeddingModel: this.activeEmbeddingModel(),
+            ...(this.env.TAILOR_CONCEPTS_ENABLED === "true" ? { conceptEvidence: captureConceptEvidence(this.sql, this.usableFacts()) } : {}),
             ...(skillDurationClaimIds.length ? { skillDurationClaimIds } : {}),
           },
           [...this.usableFacts(), ...this.skillYears.selectedFacts(skillDurationClaimIds, withheldFacts(this.sql).ids)],
@@ -5114,6 +5123,7 @@ export class Vault extends DurableObject<Env> {
       throw new AppError("not_found", "no such document request");
     return {
       ...JSON.parse(row.options),
+      ...(input.conceptEvidence !== undefined ? { conceptEvidence: input.conceptEvidence } : {}),
       jdText: input.jdText,
       analysis: input.analysis,
       facts: this.snapshots.items<FactRecord>(runId, "fact"),
@@ -5156,6 +5166,7 @@ export class Vault extends DurableObject<Env> {
     },
   ): Promise<void> {
     this.requireOpen();
+    if (this.snapshots.metadata(runId)?.conceptEvidence !== undefined) this.requireNothingWithheld(runId);
     this.workflowRun(runId, "document", runId);
     this.runs.commitStep(runId, step, () => {
       for (const field of ["plan", "draft", "result"] as const)
@@ -5188,6 +5199,7 @@ export class Vault extends DurableObject<Env> {
 
   async finishDocument(runId: string, result: DocumentResult): Promise<void> {
     this.requireOpen();
+    if (this.snapshots.metadata(runId)?.conceptEvidence !== undefined) this.requireNothingWithheld(runId);
     this.workflowRun(runId, "document", runId);
     const options = JSON.parse(
       this.sql
@@ -5220,6 +5232,7 @@ export class Vault extends DurableObject<Env> {
     const completed = this.runs.finish(
       runId,
       () => {
+        if (this.snapshots.metadata(runId)?.conceptEvidence !== undefined) this.requireNothingWithheld(runId);
         const input = this.snapshots.metadata(runId)!;
         const roles = this.snapshots.items<RoleRecord>(runId, "role");
         let checkBody: ResumeBody = result.body ?? {
@@ -5357,10 +5370,15 @@ export class Vault extends DurableObject<Env> {
             evidence = undefined;
           }
         }
+        const plan = this.sql.exec<{ plan: string | null }>(
+          `SELECT plan FROM document_requests WHERE run_id=?`, runId,
+        ).one().plan;
+        const conceptCoverage = plan ? parseOrNull<DocumentPlan>(plan)?.selection.concepts : undefined;
         this.sql.exec(
           `INSERT INTO document_versions (document_id, version, data, created_at) VALUES (?, 1, ?, ?)`,
           runId,
-          JSON.stringify({ result, facts, profile: input.profile, ...(evidence ? { evidence } : {}) }),
+          JSON.stringify({ result, facts, profile: input.profile, ...(evidence ? { evidence } : {}),
+            ...(conceptCoverage ? { conceptCoverage } : {}) }),
           Date.now(),
         );
         this.sql.exec(
@@ -5518,6 +5536,7 @@ export class Vault extends DurableObject<Env> {
       error: row.error,
       result: data?.result ?? null,
       facts: data?.facts ?? {},
+      ...(data?.conceptCoverage ? { conceptCoverage: data.conceptCoverage } : {}),
       ...(row.kind === "questions" ? {
         answeredQuestionIds: this.sql.exec<{ question_id: string }>(
           `SELECT DISTINCT question_id FROM interview_answers WHERE document_id = ? ORDER BY question_id`,
@@ -7428,6 +7447,12 @@ export class Vault extends DurableObject<Env> {
   private requireNothingWithheld(runId: string): void {
     if (this.snapshots.holdsWithheld(runId))
       throw new AppError("conflict", "Your facts changed while this draft was being made. Create it again.");
+    const entries = this.snapshots.metadata(runId)?.conceptEvidence;
+    if (entries !== undefined) {
+      this.snapshots.assertInputsCurrent(runId);
+      if (!conceptEvidenceCurrent(this.sql, entries, this.usableFacts()))
+        throw new AppError("conflict", "Your facts changed while this draft was being made. Create it again.");
+    }
   }
 
   private confirmedRoles(): RoleRecord[] {

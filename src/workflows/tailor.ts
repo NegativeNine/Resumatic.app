@@ -4,6 +4,7 @@ import {
   type WorkflowStep,
 } from "cloudflare:workers";
 import { runModels } from "./models";
+import { conceptContext } from "../pipeline/concept-context";
 import {
   analyzeJob,
   composeBody,
@@ -70,6 +71,8 @@ export class TailorWorkflow extends WorkflowEntrypoint<Env, TailorParams> {
               input.analysis!,
               input.facts,
               input.roles,
+              undefined,
+              await conceptContext(this.env, m("select"), input.analysis!, input.conceptEvidence),
             ));
           await v.saveStep(resumeId, "select", { selection }, event.instanceId);
           return {
@@ -147,7 +150,8 @@ export class TailorWorkflow extends WorkflowEntrypoint<Env, TailorParams> {
       );
       await step.do("fail", STEP, retrySafely(async () => {
         try {
-          await v.failResume(resumeId, message, event.instanceId);
+          // A rejected RPC can break its stub. Failure handling must use a fresh one.
+          await vault(this.env, vaultId).failResume(resumeId, message, event.instanceId);
         } catch (error) {
           if (errorCode(error) !== "gone") throw error;
         }

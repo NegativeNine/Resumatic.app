@@ -1,6 +1,7 @@
 import type { DocumentView } from "../../../shared/documents";
 import { formatDateTime } from "../../format";
 import { Glyph, Tick } from "../ui";
+import { ConceptCoveragePanel } from "../ConceptCoverage";
 
 // How a job's description stands against the person's confirmed facts, shown only after they, or an
 // app they connected, asked. It is worded as what the record covers, never as a score or a verdict,
@@ -17,6 +18,7 @@ export function FitPreview({ doc }: { doc: DocumentView }) {
   const requirements = doc.result?.fit?.requirements ?? [];
   const covered = requirements.filter((requirement) => requirement.factIds.some((id) => doc.facts[id] !== undefined)).length;
   const when = <p className="rs-meta">Checked {formatDateTime(doc.createdAt)}, against the job description as it was then.</p>;
+  if (doc.conceptCoverage) return <div className="document-content">{when}<ConceptCoveragePanel coverage={doc.conceptCoverage} facts={doc.facts} /></div>;
   if (requirements.length === 0)
     return (
       <div className="document-content">
