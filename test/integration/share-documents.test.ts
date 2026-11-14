@@ -88,6 +88,7 @@ describe("cover letters and interview preparation in a copy", () => {
     const { user, applicationId, factId } = await owner();
     const letter = await write(user, applicationId, "letter");
     const preparation = await write(user, applicationId, "prep");
+    for (const document of [letter, preparation]) expect((await user.fetch(`/api/documents/${document.id}/docx`)).status).toBe(200);
     await write(user, applicationId, "questions");
     expect((await user.send("PATCH", `/api/applications/${applicationId}`, { title: "Staff Engineer", company: "Litware" })).status).toBe(204);
 
@@ -168,9 +169,9 @@ describe("cover letters and interview preparation in a copy", () => {
     // The copy made while it could be checked is closed too, and the owner's list says so.
     expect((await read(copy)).status).toBe(410);
     expect((await grants(user))[0]).toMatchObject({ documentCount: 1, available: false });
-    // The owner can still read and download their own letter.
+    // The owner can still inspect their letter; an unchecked historical version is not exported.
     expect((await user.json<DocumentView>(`/api/documents/${letter.id}`)).result?.units[0]?.text).toBe(FACT);
-    expect((await user.fetch(`/api/documents/${letter.id}/docx`)).status).toBe(200);
+    expect((await user.fetch(`/api/documents/${letter.id}/docx`)).status).toBe(409);
   });
 
   it("shares only finished letters and preparation from the person's own vault", async () => {

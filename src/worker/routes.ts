@@ -1385,28 +1385,17 @@ api.get("/resumes/:id/docx", async (c) => {
   });
 });
 api.get("/documents/:id/docx", async (c) => {
-  const doc = await myVault(c).getDocument(c.get("who"), c.req.param("id"));
-  if (doc.kind !== "letter" && doc.kind !== "prep")
-    throw new AppError("invalid", "only cover letters and interview preparation can be exported as documents");
-  if (doc.state !== "ready" || !doc.result)
-    throw new AppError("conflict", "This document isn't ready yet. Wait for it to finish, then try again.");
-  const paragraphs =
-    doc.kind === "prep"
-      ? doc.result.questions.flatMap((q, i) => [
-          q.question,
-          ...doc.result!.units.filter((u) => u.group === i).map((u) => u.text),
-        ])
-      : [...new Set(doc.result.units.map((unit) => unit.group))]
-          .sort((a, b) => a - b)
-          .map((group) =>
-            doc.result!.units.filter((unit) => unit.group === group)
-              .map((unit) => unit.text).join(" "),
-          );
+  const who = c.get("who");
+  const id = c.req.param("id");
+  const checked = await myVault(c).documentExportData(who, id);
+  const doc = checked.document;
+  const paragraphs = doc.kind === "prep" ? doc.questions.flatMap((question) => [question.question, ...question.points]) : doc.paragraphs;
+  const bytes = textDocx(doc.kind === "prep" ? "Interview preparation" : "Cover letter", paragraphs);
+  // Recheck after preparing the bytes. A future asynchronous renderer or cache must keep this
+  // final check after its work too; inspection data is never an export authorization.
+  await myVault(c).documentExportData(who, id, { version: doc.version, snapshot: checked.snapshot });
   return new Response(
-    textDocx(
-      doc.kind === "prep" ? "Interview preparation" : "Cover letter",
-      paragraphs,
-    ),
+    bytes,
     {
       headers: {
         "content-type":
