@@ -7,6 +7,28 @@ const role = (id: string, state: ReviewState): RoleView => ({
 });
 
 describe("duplicate review grouping", () => {
+  it("requires current role identity as well as a shared copy root", () => {
+    const base: RoleView = { ...role("first", "proposed"), org: "Acme", title: "Engineer", startDate: "2021-01", endDate: "2023-02", sourceId: "s1",
+      copyReview: { rootId: "first", links: [], separations: [] } };
+    const copy = { ...base, id: "copy", sourceId: "s2" };
+    const entries = (changed: RoleView) => ({ sources: [], roles: [changed, copy], facts: [] });
+    expect(groupByRole(entries(base), "proposed")).toHaveLength(1);
+    expect(groupByRole(entries({ ...base, title: " Engineer. " }), "proposed")).toHaveLength(1);
+    // Confirmed incoming links survive an edit of their canonical role. That history must not
+    // combine a different title, organisation, tenure, kind or unknown date into one question.
+    const changes: Partial<RoleView>[] = [
+      { title: "Staff Engineer" }, { org: "Globex" }, { kind: "project" },
+      { startDate: "2022-01" }, { startDate: "2021" }, { endDate: "2024-02" },
+      { endDate: null }, { title: null }, { startDate: null },
+      { startDate: null, endDate: null, unknownEndStartDate: "2021-01" },
+    ];
+    for (const patch of changes) {
+      const next = entries({ ...base, ...patch });
+      expect(groupByRole(next, "proposed"), JSON.stringify(patch)).toHaveLength(2);
+      expect(reviewQuestions(next).filter((question) => question.kind === "role").map((question) => question.duplicates), JSON.stringify(patch)).toEqual([[], []]);
+    }
+  });
+
   it("groups matching extracted roles from different sources while preserving distinct dates and states", () => {
     const base: RoleView = { ...role("first", "proposed"), org: "Acme", title: "Engineer", startDate: "2021-01", sourceId: "s1", quote: "Acme Engineer" };
     const copy = { ...base, id: "copy", sourceId: "s2" };

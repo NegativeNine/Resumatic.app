@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setModels } from "../../src/ai/models";
 import type { CopyLinkView, FactView, RoleView, SourceView } from "../../src/shared/api";
-import { groupByRole, groupFacts } from "../../src/shared/review-groups";
+import { groupByRole, groupFacts, reviewQuestions } from "../../src/shared/review-groups";
 import { RESUME, fakeModels, signIn, waitForSource, type User } from "./support";
 
 const settings = env as unknown as { IDENTICAL_REVIEW_ENABLED?: string };
@@ -91,6 +91,30 @@ describe("owner review of deterministic identical copies", () => {
     expect((await decide(user, link, "confirmed")).status).toBe(404);
     await group(user);
     expect((await view(user)).facts.find((f) => f.id === link.from)!.copyReview!.rootId).toBe(link.from);
+  });
+
+  it("keeps roles as separate review questions when the canonical role is retitled", async () => {
+    settings.IDENTICAL_REVIEW_ENABLED = "true";
+    const user = await signIn(); await upload(user); await upload(user, "\nSecond upload"); await group(user);
+    const first = await view(user);
+    const link = first.roles.find((role) => role.kind === "job" && role.copyReview?.links.length)!.copyReview!.links[0]!;
+    const root = first.roles.find((role) => role.id === link.to)!;
+    const copy = first.roles.find((role) => role.id === link.from)!;
+    const changedTitle = `${root.title} II`;
+    const changed = await user.send("PATCH", `/api/roles/${root.id}`, { title: changedTitle, expectedRevision: root.revision });
+    expect(changed.status, await changed.clone().text()).toBe(204);
+    const next = await view(user);
+    // The source-evidence relationship stays as history; current review questions stay exact.
+    expect(next.roles.find((role) => role.id === copy.id)!.copyReview!.rootId).toBe(root.id);
+    const questions = reviewQuestions(next).filter((question) => question.kind === "role" && [root.id, copy.id].includes(question.role.id));
+    expect(questions).toHaveLength(2);
+    expect(questions.map((question) => question.duplicates)).toEqual([[], []]);
+    const shown = groupByRole(next, "proposed").filter((group) => group.role && [root.id, copy.id].includes(group.role.id));
+    expect(shown.map((group) => group.role!.title).sort()).toEqual([copy.title, changedTitle].sort());
+    for (const entry of shown) expect(entry.facts.every((fact) => fact.roleId === entry.role!.id)).toBe(true);
+    // A decision derived from the edited role's question must not change the old role's copy.
+    expect((await user.send("POST", "/api/review", { reject: [root.id], confirm: [] })).status).toBe(204);
+    expect((await view(user)).roles.find((role) => role.id === copy.id)!.state).toBe("proposed");
   });
 
   it("keeps private and different-state copies as separate questions", async () => {

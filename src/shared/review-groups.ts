@@ -1,5 +1,5 @@
 import type { FactView, ReviewState, RoleView } from "./api";
-import { wording } from "./record";
+import { roleKey as identicalRoleKey, wording } from "./record";
 import { cleanExtractedText } from "./clean";
 
 // How the review queue groups what it shows: the same role or fact read from two files is one
@@ -25,7 +25,12 @@ export interface Group {
 export const MAX_DUPLICATES = 200;
 
 export function roleKey(role: RoleView): string | null {
-  if (role.copyReview) return JSON.stringify([role.copyReview.rootId, role.state]);
+  if (role.copyReview) {
+    // Confirmed incoming links survive an edit to their canonical role as source history.
+    // A shared historical root alone does not make the roles identical as they stand today.
+    const identity = identicalRoleKey(role);
+    return identity === null ? null : JSON.stringify([role.copyReview.rootId, identity, role.state]);
+  }
   // A missing title or start date cannot safely distinguish two tenures.
   if (!role.sourceId || !role.title || !role.startDate) return null;
   return JSON.stringify([role.kind, role.org.trim(), role.title.trim(), role.startDate,
