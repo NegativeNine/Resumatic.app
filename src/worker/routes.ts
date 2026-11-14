@@ -1197,6 +1197,17 @@ api.post("/resumes/:id/grounding-review", JSON_LIMIT, async (c) => {
   return c.json(await myVault(c).beginResumeReview(c.get("who"), c.req.param("id"), expectedVersion));
 });
 
+/** Reauthorize the same immutable version after work outside its Vault. */
+function authorizeResumeExport(c: C, resumeId: string, data: RenderData): () => Promise<void> {
+  const expected = JSON.stringify(data);
+  return async () => {
+    // A fresh stub also works after an optional cache RPC left its earlier stub broken.
+    const current = await myVault(c).renderData(c.get("who"), resumeId, data.version);
+    if (JSON.stringify(current) !== expected)
+      throw new AppError("conflict", "This resume changed while its file was being prepared. Download it again.");
+  };
+}
+
 /** A checked resume version's PDF: rendered once per version, and served from the cache after that. */
 async function resumePdf(c: C, resumeId: string, data: RenderData): Promise<ArrayBuffer | Uint8Array> {
   // Legacy renderers ignore unknown-end starts. Isolate their cached output
@@ -1204,7 +1215,7 @@ async function resumePdf(c: C, resumeId: string, data: RenderData): Promise<Arra
   const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
   const key = await snapshotCacheKey(pdfKey(c.get("session").vid, resumeId, data.version, hasUnknownEndDates), data);
   return cachedExport(() => myVault(c), c.get("who"), key,
-    () => renderPdf(c.env, renderResumeHtml(data)));
+    () => renderPdf(c.env, renderResumeHtml(data)), authorizeResumeExport(c, resumeId, data));
 }
 
 /** A checked resume version's Word file, cached as its PDF is. */
@@ -1212,7 +1223,7 @@ async function resumeDocx(c: C, resumeId: string, data: RenderData): Promise<Arr
   const hasUnknownEndDates = data.body.sections.some((s) => !!s.unknownEndStartDate);
   const key = await snapshotCacheKey(docxKey(c.get("session").vid, resumeId, data.version, hasUnknownEndDates), data);
   return cachedExport(() => myVault(c), c.get("who"), key,
-    async () => renderDocx(data));
+    async () => renderDocx(data), authorizeResumeExport(c, resumeId, data));
 }
 
 /** One archive member from bytes already made. */

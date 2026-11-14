@@ -6,10 +6,34 @@ const who = { userId: "u", gen: 1, epoch: "epoch" };
 const text = (value: ArrayBuffer | Uint8Array) => new TextDecoder().decode(value);
 
 describe("Vault export cache routing", () => {
+  it("refuses changed publication authority before using any cached bytes", async () => {
+    const vault = { readExportCache: vi.fn(async () => new Uint8Array([1])), putExportCache: vi.fn(async () => true), checkSession: vi.fn(async () => {}) };
+    const render = vi.fn(async () => new Uint8Array([2]));
+    await expect(cachedExport(() => vault, who, "key", render, async () => { throw Error("private"); })).rejects.toThrow("private");
+    expect(vault.readExportCache).not.toHaveBeenCalled(); expect(render).not.toHaveBeenCalled();
+  });
+
+  it("refuses privacy changes during rendering before storing or returning bytes", async () => {
+    let privateNow = false;
+    const vault = { readExportCache: vi.fn(async () => null), putExportCache: vi.fn(async () => true), checkSession: vi.fn(async () => {}) };
+    const authorize = async () => { if (privateNow) throw Error("private"); };
+    await expect(cachedExport(() => vault, who, "key", async () => { privateNow = true; return new Uint8Array([1]); }, authorize)).rejects.toThrow("private");
+    expect(vault.putExportCache).not.toHaveBeenCalled();
+  });
+
+  it("rechecks publication authority after successful cache writes and cache hits", async () => {
+    for (const hit of [false, true]) {
+      let privateNow = false;
+      const vault = { readExportCache: async () => { if (hit) privateNow = true; return hit ? new Uint8Array([1]) : null; },
+        putExportCache: async () => { privateNow = true; return true; }, checkSession: async () => {} };
+      await expect(cachedExport(() => vault, who, "key", async () => new Uint8Array([2]), async () => { if (privateNow) throw Error("private"); })).rejects.toThrow("private");
+    }
+  });
+
   it("renders fresh when the snapshot-bound cache is empty", async () => {
     const vault = { readExportCache: vi.fn(async () => null), putExportCache: vi.fn(async () => true), checkSession: vi.fn(async () => {}) };
     const render = vi.fn(async () => new TextEncoder().encode("new"));
-    expect(text(await cachedExport(() => vault, who, "key", render))).toBe("new");
+    expect(text(await cachedExport(() => vault, who, "key", render, async () => {}))).toBe("new");
     expect(render).toHaveBeenCalledOnce();
     expect(vault.putExportCache).toHaveBeenCalledOnce();
     expect(vault.checkSession).toHaveBeenCalledTimes(2);
@@ -19,16 +43,16 @@ describe("Vault export cache routing", () => {
     const checkSession = vi.fn(async () => {});
     const vault = { readExportCache: vi.fn(async () => null), putExportCache: vi.fn(async () => { throw new Error("cache unavailable"); }), checkSession };
     const render = vi.fn(async () => new TextEncoder().encode("new"));
-    expect(text(await cachedExport(() => vault, who, "key", render))).toBe("new");
+    expect(text(await cachedExport(() => vault, who, "key", render, async () => {}))).toBe("new");
     expect(checkSession).toHaveBeenCalledTimes(3);
     checkSession.mockReset().mockResolvedValueOnce().mockRejectedValueOnce(new Error("closed"));
-    await expect(cachedExport(() => vault, who, "key", render)).rejects.toThrow("closed");
+    await expect(cachedExport(() => vault, who, "key", render, async () => {})).rejects.toThrow("closed");
   });
 
   it("rechecks a failed cache read before rendering", async () => {
     const vault = { readExportCache: vi.fn(async () => { throw new Error("cache failure"); }), putExportCache: vi.fn(async () => true), checkSession: vi.fn(async () => { throw new Error("closed"); }) };
     const render = vi.fn(async () => new TextEncoder().encode("new"));
-    await expect(cachedExport(() => vault, who, "key", render)).rejects.toThrow("closed");
+    await expect(cachedExport(() => vault, who, "key", render, async () => {})).rejects.toThrow("closed");
     expect(render).not.toHaveBeenCalled();
   });
 
@@ -45,7 +69,7 @@ describe("Vault export cache routing", () => {
       };
     };
     const render = vi.fn(async () => new TextEncoder().encode("new"));
-    expect(text(await cachedExport(fresh, who, "key", render))).toBe("new");
+    expect(text(await cachedExport(fresh, who, "key", render, async () => {}))).toBe("new");
     expect(stubs).toBeGreaterThanOrEqual(2);
     expect(check).toHaveBeenCalledTimes(3);
     expect(render).toHaveBeenCalledOnce();
@@ -78,7 +102,7 @@ describe("Vault export cache routing", () => {
       };
     };
     const render = vi.fn(async () => new TextEncoder().encode("new"));
-    expect(text(await cachedExport(fresh, who, "key", render))).toBe("new");
+    expect(text(await cachedExport(fresh, who, "key", render, async () => {}))).toBe("new");
     expect(render).toHaveBeenCalledOnce();
     expect(write).toHaveBeenCalledOnce();
     expect(check).toHaveBeenCalledTimes(4);
@@ -93,7 +117,7 @@ describe("Vault export cache routing", () => {
       checkSession: check,
     });
     const render = vi.fn(async () => new TextEncoder().encode("new"));
-    await expect(cachedExport(fresh, who, "key", render)).rejects.toThrow("closed");
+    await expect(cachedExport(fresh, who, "key", render, async () => {})).rejects.toThrow("closed");
     expect(check).toHaveBeenCalledOnce();
     expect(render).not.toHaveBeenCalled();
   });

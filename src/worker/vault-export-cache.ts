@@ -8,7 +8,7 @@ type CacheVault = {
 };
 
 // Bump whenever either renderer's output or its security checks change.
-const RENDER_CACHE_VERSION = "resume-render-v4";
+const RENDER_CACHE_VERSION = "resume-render-v5";
 
 /** Bind regenerable bytes to the entire immutable snapshot and renderer version. */
 export async function snapshotCacheKey(base: string, data: RenderData): Promise<string> {
@@ -26,7 +26,11 @@ export async function cachedExport(
   who: Who,
   key: string,
   render: () => Promise<ArrayBuffer | Uint8Array>,
+  authorize: () => Promise<void>,
 ): Promise<ArrayBuffer | Uint8Array> {
+  // Cache hashing, lookups and rendering all yield. The initial route check is not
+  // authority to release a snapshot after its supporting words become private.
+  await authorize();
   let bytes: ArrayBuffer | Uint8Array | null = null;
   try {
     bytes = await vault().readExportCache(who, key);
@@ -40,7 +44,9 @@ export async function cachedExport(
   if (!bytes) {
     // Rendering can interleave with account closure.
     await vault().checkSession(who);
+    await authorize();
     bytes = await render();
+    await authorize();
     try {
       await vault().putExportCache(who, key, bytes);
     } catch {
@@ -50,5 +56,6 @@ export async function cachedExport(
     }
   }
   await vault().checkSession(who);
+  await authorize();
   return bytes;
 }
