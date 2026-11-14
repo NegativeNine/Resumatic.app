@@ -5454,7 +5454,7 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     const before = this.checkedDocumentExport(id);
     const snapshot = base64url(await sha256(JSON.stringify([before.document.kind, before.document.version, before.saved])));
-    // Hashing yields: privacy, withdrawal, the version and the session may all have changed.
+    // Hashing yields: availability, the saved version and the session may all have changed.
     this.requireOwner(who);
     const current = this.checkedDocumentExport(id);
     if (current.document.version !== before.document.version || current.document.kind !== before.document.kind || current.saved !== before.saved ||
@@ -5475,19 +5475,25 @@ export class Vault extends DurableObject<Env> {
       throw new AppError("conflict", "This document isn't ready yet. Wait for it to finish, then try again.");
     const data = parseOrNull<DocumentVersion>(row.data);
     let document: SharedDocument;
-    try { document = sharedDocument(id, row.version, row.kind, data, withheldFacts(this.sql)); }
+    // Privacy limits sharing and new generation; an owner can still download their saved words.
+    // Retain nonprivacy availability restrictions (including invalidDerived when calculated
+    // claims are present), while the checked projection still validates every saved sentence.
+    const ownerRestrictions = { ...withheldFacts(this.sql), ids: new Set<string>(), quotes: new Set<string>() };
+    try { document = sharedDocument(id, row.version, row.kind, data, ownerRestrictions); }
     catch (error) {
       if (errorCode(error) !== "conflict") throw error;
       throw new AppError("conflict", "This document's saved evidence can't be checked. Write it again before downloading.");
     }
     // Withdrawing an experience item or its role also withdraws it from new downloads. Ordinary
     // edits do not rewrite the immutable evidence saved with this document.
-    const usable = new Set(this.usableFacts().map((fact) => fact.id));
     const roles = new Set(this.confirmedRoles().map((role) => role.id));
+    // readFacts keeps private owner history. It also excludes internal calculated backing facts
+    // when that feature is installed, so a generic letter gains no derived-claim authority.
+    const included = new Set(this.readFacts("confirmed").filter((fact) => fact.roleId === null || roles.has(fact.roleId)).map((fact) => fact.id));
     const units = data!.result!.units as { factIds: string[] }[]; // sharedDocument checked every unit.
     for (const id of new Set(units.flatMap((unit) => unit.factIds))) {
       const fact = data!.evidence![id]!;
-      if (!usable.has(id) || (fact.roleId !== null && !roles.has(fact.roleId)))
+      if (!included.has(id) || (fact.roleId !== null && !roles.has(fact.roleId)))
         throw new AppError("conflict", "This document uses experience you no longer include. Write it again before downloading.");
     }
     return { document, saved: row.data! };
