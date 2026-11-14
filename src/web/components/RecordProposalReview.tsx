@@ -1,9 +1,10 @@
 import { useId } from "react";
+import type { SemanticOfferReview } from "../../shared/proposal-review";
 import type { ConceptTag, FactSplit, Judgement } from "../../shared/record";
 import { api } from "../api";
 import { useAction, useResource } from "../hooks";
 import { SourceEvidence } from "./SourceEvidence";
-import { FactEvidence } from "./FactItem";
+import { FactEvidence, FactMeta } from "./FactItem";
 import { ActionError, Badge, EmptyState, ErrorNote, Loading } from "./ui";
 
 /** Mounted only when the owner's vault advertises the gated review capability. */
@@ -14,12 +15,12 @@ export function RecordProposalReview({ enabled, filenames }: { enabled: boolean;
 function Proposals({ filenames }: { filenames: ReadonlyMap<string, string> }) {
   const proposals = useResource(api.recordProposals);
   return <section className="rs-panel app-stack" aria-labelledby="record-proposals-heading">
-    <h2 id="record-proposals-heading">Parts and tags to review</h2>
+    <h2 id="record-proposals-heading">Parts, tags and links to review</h2>
     <p>Check each suggestion against your original line. Your line and source evidence stay as they are.</p>
     {proposals.error && <ErrorNote message={proposals.error} onRetry={proposals.reload} />}
     {!proposals.data && !proposals.error && <Loading>Loading your suggestions…</Loading>}
-    {proposals.data && !proposals.data.facts.length && !proposals.data.roles.length &&
-      <EmptyState>No parts or tags are available for review.</EmptyState>}
+    {proposals.data && !proposals.data.facts.length && !proposals.data.roles.length && !(proposals.data.offers?.length ?? 0) &&
+      <EmptyState>No parts, tags or links are available for review.</EmptyState>}
     {proposals.data?.facts.map(({ fact, split, tags, partTags }) => <article key={fact.id} className="app-stack" aria-label={`Suggestions for ${fact.text}`}>
       <h3>Your line</h3>
       <p>{fact.text}</p>
@@ -37,7 +38,44 @@ function Proposals({ filenames }: { filenames: ReadonlyMap<string, string> }) {
       {role.quote && role.sourceId && role.span && <SourceEvidence sourceId={role.sourceId} quote={role.quote} span={role.span} />}
       <Tags tags={tags} revision={role.revision ?? 1} reload={proposals.reload} />
     </article>)}
+    {proposals.data?.offers?.map((offer) => <OfferReview key={offer.link.id} offer={offer} filenames={filenames} reload={proposals.reload} />)}
   </section>;
+}
+
+function OfferReview({ offer, filenames, reload }: { offer: SemanticOfferReview; filenames: ReadonlyMap<string, string>; reload: () => Promise<unknown> }) {
+  const headingId = useId();
+  const action = useAction();
+  const { link } = offer;
+  const same = link.relation === "same";
+  async function decide(decision: "confirmed" | "rejected") {
+    await action.run(async () => {
+      await api.decideSemanticOffer(link.id, { decision,
+        expectedFromRevision: offer.from.revision ?? 1, expectedToRevision: offer.to.revision ?? 1,
+        expectedFromRoleRevision: offer.fromRole?.revision ?? null, expectedToRoleRevision: offer.toRole?.revision ?? null,
+        expectedState: link.state, expectedDecidedAt: link.decidedAt });
+      await reload();
+    });
+  }
+  return <article className="app-stack" aria-labelledby={headingId}>
+    <h3 id={headingId}>{same ? "Do these say the same thing?" : "Does the first line include the second?"}</h3>
+    <p>{same ? "Accepting makes the second line stand for both facts. Each original line and source quote stays; no wording is blended."
+      : "Accepting links the first line as a fuller version of the second. Both facts stay separate, and neither is automatically chosen for a resume."}</p>
+    <div className="rs-field-grid">
+      {[{ fact: offer.from, role: offer.fromRole, title: "First line" }, { fact: offer.to, role: offer.toRole, title: "Second line" }].map(({ fact, role, title }) => <section className="app-stack" key={fact.id} aria-label={title}>
+        <h4>{title}</h4>
+        <p>{fact.text}</p>
+        <FactMeta fact={fact} />
+        <p className="rs-meta">{role ? `Role: ${role.title ? `${role.title} at ` : ""}${role.org}` : "Not tied to a role"}</p>
+        <FactEvidence fact={fact} filenames={filenames} />
+      </section>)}
+    </div>
+    <p className="rs-meta">{link.state === "confirmed" ? "Confirmed by you" : link.state === "rejected" ? "Rejected by you" : "Waiting for your review"}</p>
+    <div className="app-inline">
+      <button aria-describedby={headingId} disabled={action.pending || link.state === "confirmed"} onClick={() => void decide("confirmed")}>{same ? "Treat as one fact" : "Link as fuller version"}</button>
+      <button aria-describedby={headingId} disabled={action.pending || link.state === "rejected"} onClick={() => void decide("rejected")}>{link.state === "confirmed" ? same ? "Undo this merge" : "Remove fuller link" : "Reject link"}</button>
+    </div>
+    <ActionError message={action.error} />
+  </article>;
 }
 
 function SplitReview({ split, revision, reload }: { split: FactSplit; revision: number; reload: () => Promise<unknown> }) {

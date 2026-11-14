@@ -13,7 +13,7 @@ const fact = { ...fixtures().facts[0]!, id: "fact-1", text: line, quote: line, r
 const split: FactSplit = { ...stamp, id: "split-1", factId: fact.id, state: "proposed", decidedBy: null, decidedAt: null, createdAt: 1,
   parts: [{ id: "part-1", kind: "clause", ranges: [[0,13]], text: "Built the API", resultOf: null }, { id: "part-2", kind: "clause", ranges: [[18,line.length]], text: "improved reliability", resultOf: null }] };
 const tag: ConceptTag = { ...stamp, id: "tag-1", subject: { kind: "fact", id: fact.id }, taxonomyVersion: "test-taxonomy-1", conceptId: "onet:tool:python", conceptKind: "tool", label: "Python", relation: "uses", state: "proposed", decidedBy: null, decidedAt: null, createdAt: 1 };
-const data = (): RecordProposals => ({ facts: [{ fact, split, tags: [tag], partTags: [] }], roles: [] });
+const data = (): RecordProposals => ({ facts: [{ fact, split, tags: [tag], partTags: [] }], roles: [], offers: [] });
 const files = new Map([[fact.sourceId!, "resume.pdf"]]);
 afterEach(() => vi.restoreAllMocks());
 function open() { return renderWithSession(<RecordProposalReview enabled filenames={files} />, fixtures().me); }

@@ -1833,13 +1833,25 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     if (this.env.RECORD_PROPOSAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "proposal review is not enabled");
     return this.ctx.storage.transactionSync(() => {
-      const facts = this.readFacts().map((fact) => {
+      const factRows = this.readFacts(); const roleRows = this.readRoles();
+      const factById = new Map(factRows.map((fact) => [fact.id, fact]));
+      const roleById = new Map(roleRows.map((role) => [role.id, role]));
+      const facts = factRows.map((fact) => {
         const split = this.record.split(fact.id);
         return { fact, split, tags: this.record.tags({ kind: "fact", id: fact.id }),
           partTags: (split?.parts ?? []).map((part) => ({ part, tags: this.record.tags({ kind: "part", id: part.id }) })).filter((row) => row.tags.length > 0) };
       }).filter((row) => row.split !== null || row.tags.length > 0 || row.partTags.length > 0);
-      const roles = this.readRoles().map((role) => ({ role, tags: this.record.tags({ kind: "role", id: role.id }) })).filter((row) => row.tags.length > 0);
-      return { facts, roles };
+      const roles = roleRows.map((role) => ({ role, tags: this.record.tags({ kind: "role", id: role.id }) })).filter((row) => row.tags.length > 0);
+      const offers = this.sql.exec<{ from_id: string }>(
+        `SELECT DISTINCT from_id FROM record_links WHERE kind = 'fact' AND proposed_by = 'model' AND shadow = 0 AND relation IN ('same', 'fuller') ORDER BY from_id`,
+      ).toArray().flatMap(({ from_id }) => this.record.links("fact", from_id)
+        .filter((link) => link.from === from_id && link.proposedBy === "model" && !link.shadow && (link.relation === "same" || link.relation === "fuller"))
+        .flatMap((link) => {
+          const from = factById.get(link.from); const to = factById.get(link.to);
+          return from && to ? [{ link, from, to, fromRole: from.roleId ? roleById.get(from.roleId) ?? null : null,
+            toRole: to.roleId ? roleById.get(to.roleId) ?? null : null }] : [];
+        }));
+      return { facts, roles, offers };
     });
   }
 
@@ -1867,6 +1879,30 @@ export class Vault extends DurableObject<Env> {
         throw new AppError("conflict", "This proposal changed. Refresh the page, then review it again.");
       if (kind === "split") this.record.decideSplit(id, input.decision);
       else this.record.decideTag(id, input.decision);
+    });
+  }
+
+  /** An explicit owner choice about two existing lines; never a rewrite or a shadow promotion. */
+  async decideSemanticOffer(who: Who, id: string, input: import("../shared/proposal-review").SemanticOfferDecision): Promise<void> {
+    this.requireOwner(who);
+    if (this.env.RECORD_PROPOSAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "proposal review is not enabled");
+    this.ctx.storage.transactionSync(() => {
+      const row = this.sql.exec<{ state: string; decided_at: number | null; from_revision: number; to_revision: number;
+        from_role_revision: number | null; to_role_revision: number | null; from_kind: string; to_kind: string }>(
+        `SELECT l.state, l.decided_at, f.revision AS from_revision, t.revision AS to_revision,
+           r1.revision AS from_role_revision, r2.revision AS to_role_revision, f.kind AS from_kind, t.kind AS to_kind
+         FROM record_links l JOIN facts f ON f.id = l.from_id JOIN facts t ON t.id = l.to_id
+         LEFT JOIN roles r1 ON r1.id = f.role_id LEFT JOIN roles r2 ON r2.id = t.role_id
+         WHERE l.id = ? AND l.kind = 'fact' AND l.proposed_by = 'model' AND l.shadow = 0 AND l.relation IN ('same', 'fuller')`, id,
+      ).toArray()[0];
+      if (!row) throw new AppError("not_found", "no such offer");
+      if (row.from_revision !== input.expectedFromRevision || row.to_revision !== input.expectedToRevision ||
+        row.from_role_revision !== input.expectedFromRoleRevision || row.to_role_revision !== input.expectedToRoleRevision ||
+        row.state !== input.expectedState || row.decided_at !== input.expectedDecidedAt)
+        throw new AppError("conflict", "This offer or its facts changed. Refresh the page, then review it again.");
+      if (input.decision === "confirmed" && row.from_kind !== row.to_kind)
+        throw new AppError("conflict", "These facts have different kinds and cannot be joined.");
+      this.record.decideLink(id, input.decision);
     });
   }
 

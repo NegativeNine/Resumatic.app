@@ -113,7 +113,7 @@ Dropping a confirmed tag when its fact is reworded is deliberate: the tag was co
 ## What is not built
 
 - Divisions are proposed only in shadow and only where switched on (step 4, [splitting.md](splitting.md)). Identical copies are noted the same way, and so are offers of two wordings as the same fact (step 6, [merging.md](merging.md)). Tags are proposed the same way, on facts and job roles only; a part gets none yet (step 5, [tagging.md](tagging.md)).
-- Existing non-shadow divisions and tags have the separately gated owner review below. Pipeline divisions and tags still run only in shadow and cannot be promoted through it. Semantic offers have no review screen or decision route. Deterministic identical copies have their own gated review.
+- Existing non-shadow divisions, tags and model-origin semantic fact offers have the separately gated owner review below. Pipeline judgements still run only in shadow and cannot be promoted through it. Deterministic identical copies have their own gated review.
 - Tailoring does not read tags, parts or merges (step 8). The list of facts still shows every fact, including one merged into another.
 - A fact's record does not yet hold when a skill was used, which years per skill needs.
 
@@ -129,12 +129,16 @@ Dropping a confirmed tag when its fact is reworded is deliberate: the tag was co
 
 Real staging acceptance, including two owner sessions and large vault performance, remains required before production enablement. The separate measurement bars for model proposals are unchanged.
 
-## Owner review of existing parts and tags
+## Owner review of existing parts, tags and semantic offers
 
 `RECORD_PROPOSAL_REVIEW_ENABLED=true` adds a separate owner review panel under All facts. It is off by default and refused in production configuration until the measurement and rollout requirements are met. It neither switches a pipeline on nor turns a shadow judgement into a visible proposal. Since every current pipeline writes only shadow judgements, the panel initially has nothing to review on real vaults.
 
-`GET /api/v2/record/proposals` reads only existing non-shadow splits and tags on facts, roles and parts. It shows the original line, its source quote and context control, the parts as exact slices, their kinds and outcome relationships, and the stored taxonomy labels. Reading writes nothing. A rejected split is no longer shown and its part tags are removed by the existing record rule; rejected fact and role tags stay visible so the owner may explicitly reconsider them.
+`GET /api/v2/record/proposals` reads only existing non-shadow splits and tags on facts, roles and parts, plus model-origin non-shadow fact links offering `same` or `fuller`. It shows the original line, its source quote and context control, the parts as exact slices, their kinds and outcome relationships, and the stored taxonomy labels. Reading writes nothing. A rejected split is no longer shown and its part tags are removed by the existing record rule; rejected fact and role tags stay visible so the owner may explicitly reconsider them.
 
 The owner can confirm a tag, reject it, accept parts or keep a line whole. `POST /api/v2/record/proposals/:kind/:id` accepts only an existing non-shadow split or tag in that owner's vault. It compares the current subject revision, judgement state and decision generation with what the panel showed. Decision generations increase even within one clock tick, so a confirm/reject/confirm sequence cannot let an old screen overwrite a later choice. Editing or deleting the subject invalidates its old proposals through the existing triggers.
+
+Semantic offers show both current lines, their original source quotes and context controls, and both roles side by side. Only the owner can choose to treat them as one fact, link one as a fuller version, reject the offer or undo an accepted link. A same-fact confirmation keeps the offer's existing destination wording as the record that stands for both; every original row and quote stays. A fuller link keeps both facts separate. No wording is blended and no stronger line is automatically selected for tailoring.
+
+`POST /api/v2/record/offers/:id` accepts only an existing model-origin non-shadow fact link. It refuses deterministic rule/copy links, role links and shadow IDs. It checks both fact revisions, both role-context revisions, the link state and its monotonic decision generation. The record still requires the facts to be in one role before confirming a link, and the API refuses different fact kinds. Rejected offers remain visible for explicit owner reconsideration.
 
 No original wording, source evidence, shared copy or tailoring input is changed by these decisions, and no migration or proposal-creation route is added. The existing, separately gated owner-only card preview may use a newly confirmed non-shadow tag of a usable fact or role; a part's tag counts there only after its split is confirmed as well. Showing model proposals still requires the measurement bars and explicit rollout acceptance; this flag remains off everywhere.

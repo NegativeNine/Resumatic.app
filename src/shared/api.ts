@@ -32,6 +32,7 @@
 //   GET    /api/facts?state=           { facts: FactView[] }
 //   POST   /api/facts                  NewFact -> 201 { factId }
 //   PATCH  /api/facts/:id              FactPatch -> 204          (new wording, another role, or both)
+//   POST   /api/v2/record/offers/:id  SemanticOfferDecision -> 204 (gated)
 //   GET    /api/v2/record/proposals  RecordProposals; existing non-shadow splits/tags only (gated)
 //   POST   /api/v2/record/proposals/:kind/:id  ProposalDecision -> 204 (gated)
 //   POST   /api/v2/record/identical   {} -> 204; owner asks to group deterministic copies (gated)

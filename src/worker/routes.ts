@@ -976,6 +976,17 @@ api.get("/v2/record/proposals", async (c) => {
   return c.json(await myVault(c).recordProposals(c.get("who")));
 });
 
+api.post("/v2/record/offers/:id", JSON_LIMIT, async (c) => {
+  if (c.env.RECORD_PROPOSAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "proposal review is not enabled");
+  await myVault(c).decideSemanticOffer(c.get("who"), c.req.param("id"), await jsonBody(c, z.object({
+    decision: z.enum(["confirmed", "rejected"]), expectedFromRevision: z.number().int().positive().safe(),
+    expectedToRevision: z.number().int().positive().safe(), expectedFromRoleRevision: z.number().int().positive().safe().nullable(),
+    expectedToRoleRevision: z.number().int().positive().safe().nullable(), expectedState: z.enum(["proposed", "confirmed", "rejected"]),
+    expectedDecidedAt: z.number().int().nonnegative().safe().nullable(),
+  }).strict()));
+  return c.body(null, 204);
+});
+
 api.post("/v2/record/proposals/:kind/:id", JSON_LIMIT, async (c) => {
   if (c.env.RECORD_PROPOSAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "proposal review is not enabled");
   const kind = c.req.param("kind");
