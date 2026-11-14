@@ -152,3 +152,19 @@ describe("a document's words for a copy", () => {
     for (const [id, v] of [["", 1], ["doc1", 0], ["doc1", 1.5], ["doc1", Number.NaN]] as const) refused(version("letter"), "letter", id, v);
   });
 });
+
+
+it("never gives a generic document authority to use a duration backing claim, and fences stale derived IDs separately from privacy",()=>{
+  for(const kind of ["letter","prep"] as const) {
+    const plain=version(kind),withheld={ids:new Set<string>(),quotes:new Set<string>(),invalidDerived:new Set(["f1"])};
+    expect(()=>sharedDocument("doc",1,kind,plain,withheld)).toThrow("can't be shared as it is");
+    expect(canShareDocument("doc",1,kind,plain,{...withheld,invalidDerived:new Set(["unused"])})).toBe(true);
+    const derived=version(kind,(data)=>{
+      const text="Go — at least 3 years of use, confirmed as of 2026-11";
+      data.result.units[2]!.text=text;
+      data.facts.f3={text,quote:null};
+      data.evidence.f3={...data.evidence.f3!,kind:"skill",roleId:null,text,quote:null,level:null,skillDuration:{claimId:"claim",inputHash:"a".repeat(64),method:"owner-periods/1",text,asOf:"2026-11"}};
+    });
+    expect(()=>sharedDocument("doc",1,kind,derived)).toThrow("can't be shared as it is");
+  }
+});

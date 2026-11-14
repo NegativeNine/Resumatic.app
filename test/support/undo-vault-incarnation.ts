@@ -7,8 +7,19 @@ export function removeSavedAnswerMigration(sql: SqlStorage): void {
   sql.exec(`DROP TABLE IF EXISTS saved_answers`);
 }
 
-/** Test-only helper to reconstruct a Vault schema before email notices could be turned on, the latest migration. */
+/** Test-only helper to reconstruct a Vault schema before owner skill intervals were kept. */
+export function removeSkillYearsMigration(sql: SqlStorage): void {
+  for (const kind of ["fact", "role", "split", "part", "tag"])
+    for (const action of ["insert", "update", "delete"]) sql.exec(`DROP TRIGGER IF EXISTS skill_identity_${kind}_${action}`);
+  for (const action of ["insert", "update", "delete"]) sql.exec(`DROP TRIGGER IF EXISTS skill_identity_evidence_${action}`);
+  for (const action of ["update", "delete"]) sql.exec(`DROP TRIGGER IF EXISTS skill_identity_revision_${action}`);
+  sql.exec(`DROP TRIGGER IF EXISTS skill_duration_claim_immutable`);
+  for (const table of ["skill_year_requests", "skill_duration_claims", "skill_use_intervals", "skill_record_identities"]) sql.exec(`DROP TABLE IF EXISTS ${table}`);
+}
+
+/** Test-only helper to reconstruct a Vault schema before email notices could be turned on. */
 export function removeNotificationMigration(sql: SqlStorage): void {
+  removeSkillYearsMigration(sql);
   sql.exec(`DROP TABLE IF EXISTS email_notices`);
 }
 

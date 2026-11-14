@@ -352,6 +352,13 @@ export class VaultOperations {
           "invalid",
           "imported content contains missing references",
         );
+      if (this.hasTable("skill_record_identities") && this.sql.exec(`
+        SELECT 1 FROM facts f LEFT JOIN skill_record_identities i ON i.kind='fact' AND i.item_id=f.id WHERE i.token IS NULL
+        UNION ALL SELECT 1 FROM roles r LEFT JOIN skill_record_identities i ON i.kind='role' AND i.item_id=r.id WHERE i.token IS NULL
+        UNION ALL SELECT 1 FROM fact_splits s LEFT JOIN skill_record_identities i ON i.kind='split' AND i.item_id=s.id WHERE i.token IS NULL
+        UNION ALL SELECT 1 FROM fact_parts p LEFT JOIN skill_record_identities i ON i.kind='part' AND i.item_id=p.id WHERE i.token IS NULL
+        UNION ALL SELECT 1 FROM record_tags t LEFT JOIN skill_record_identities i ON i.kind='tag' AND i.item_id=t.id WHERE i.token IS NULL LIMIT 1`).toArray().length)
+        throw new AppError("conflict", "the imported skill record identities are incomplete");
       // The callback must install current quota/spend and billing checkpoints, not archive values.
       const result: unknown = installCurrentControlState();
       if (result && typeof (result as { then?: unknown }).then === "function")
@@ -550,6 +557,11 @@ export class ReembedStore {
     });
   }
 
+  private ordinaryFact(alias: string): string {
+    return this.sql.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='skill_duration_claims'`).toArray().length
+      ? `NOT EXISTS (SELECT 1 FROM skill_duration_claims d WHERE d.fact_id=${alias}.id)` : "1";
+  }
+
   nextBatch(id: string, limit = 50): EmbeddingBatchItem[] {
     this.building(id);
     whole(limit);
@@ -560,7 +572,7 @@ export class ReembedStore {
       );
     return this.sql
       .exec<{ id: string; revision: number; text: string }>(
-        `SELECT f.id, f.revision, f.text FROM facts f LEFT JOIN embedding_staging s ON s.job_id = ? AND s.fact_id = f.id WHERE s.fact_id IS NULL OR s.revision != f.revision ORDER BY f.id LIMIT ?`,
+        `SELECT f.id, f.revision, f.text FROM facts f LEFT JOIN embedding_staging s ON s.job_id = ? AND s.fact_id = f.id WHERE (s.fact_id IS NULL OR s.revision != f.revision) AND ${this.ordinaryFact("f")} ORDER BY f.id LIMIT ?`,
         id,
         limit,
       )
@@ -579,11 +591,11 @@ export class ReembedStore {
     const job = this.job(id);
     if (!job) throw new AppError("not_found", "no such embedding job");
     const totalFacts = this.sql
-      .exec<{ count: number }>(`SELECT COUNT(*) AS count FROM facts`)
+      .exec<{ count: number }>(`SELECT COUNT(*) AS count FROM facts WHERE ${this.ordinaryFact("facts")}`)
       .one().count;
     const stagedFacts = this.sql
       .exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM embedding_staging s JOIN facts f ON s.fact_id = f.id AND s.revision = f.revision WHERE s.job_id = ?`,
+        `SELECT COUNT(*) AS count FROM embedding_staging s JOIN facts f ON s.fact_id = f.id AND s.revision = f.revision WHERE s.job_id = ? AND ${this.ordinaryFact("f")}`,
         id,
       )
       .one().count;
@@ -617,7 +629,7 @@ export class ReembedStore {
         catch { throw new AppError("invalid", "embedding vector has invalid dimensions or values"); }
         const current = this.sql
           .exec<{ revision: number }>(
-            `SELECT revision FROM facts WHERE id = ?`,
+            `SELECT revision FROM facts WHERE id = ? AND ${this.ordinaryFact("facts")}`,
             row.id,
           )
           .toArray()[0];
@@ -645,7 +657,7 @@ export class ReembedStore {
       if (job.state !== "active" && job.state !== "building")
         throw new AppError("conflict", "embedding job cannot be activated");
       const count = this.sql
-        .exec<{ count: number }>(`SELECT COUNT(*) AS count FROM facts`)
+        .exec<{ count: number }>(`SELECT COUNT(*) AS count FROM facts WHERE ${this.ordinaryFact("facts")}`)
         .one().count;
       if (job.state === "active")
         return { model: job.model, dimensions: job.dimensions, facts: count };
@@ -655,7 +667,7 @@ export class ReembedStore {
           "some facts still need current embeddings",
         );
       this.sql.exec(
-        `UPDATE facts SET vector = (SELECT vector FROM embedding_staging WHERE job_id = ? AND fact_id = facts.id AND revision = facts.revision)`,
+        `UPDATE facts SET vector = (SELECT vector FROM embedding_staging WHERE job_id = ? AND fact_id = facts.id AND revision = facts.revision) WHERE ${this.ordinaryFact("facts")}`,
         id,
       );
       for (const [key, value] of [

@@ -142,6 +142,8 @@ export interface Me {
     postingReader?: boolean;
     /** The owner's own card can be previewed. */
     cardPreview?: boolean;
+    /** Explicit owner-confirmed skill-use periods and totals. */
+    skillYears?: boolean;
     /** The deployment sends email notices, so Account offers them. */
     emailNotices?: boolean;
   };

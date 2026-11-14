@@ -1,3 +1,4 @@
+import { SkillDurationChoices } from "./SkillYears";
 import { useId, useState } from "react";
 import { FACT_KINDS, MAX_FACT_CHARS, type FactKind } from "../../shared/api";
 import { api } from "../api";
@@ -80,6 +81,7 @@ function GapAnswer({ requirement, applicationId, onClose }: { requirement: strin
   const [added, setAdded] = useState(false);
   const { run, pending, error } = useAction();
   const tailor = useTailor();
+  const [claimIds, setClaimIds] = useState<string[]>([]);
   const trimmed = text.trim();
   const written = isWrittenAnswer(trimmed);
 
@@ -95,8 +97,9 @@ function GapAnswer({ requirement, applicationId, onClose }: { requirement: strin
       <div className="rs-well app-gap-answer">
         <Success>Fact added.</Success>
         <p className="rs-meta">It’s marked Added by you, and the next version can use it.</p>
+        <SkillDurationChoices selected={claimIds} onChange={setClaimIds} disabled={tailor.pending} />
         <div className="rs-actions">
-          <button type="button" className="rs-btn rs-btn--sm" disabled={tailor.pending} onClick={() => void tailor.tailor(applicationId)}>
+          <button type="button" className="rs-btn rs-btn--sm" disabled={tailor.pending} onClick={() => void tailor.tailor(applicationId, claimIds)}>
             {tailor.pending ? "Starting…" : "Tailor a new version"}
           </button>
           <button type="button" className="rs-btn rs-btn--sm" onClick={onClose}>

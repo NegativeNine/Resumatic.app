@@ -1,3 +1,5 @@
+import { SkillYearsStore } from "./skill-years";
+import { MAX_SELECTED_SKILL_CLAIMS, SKILL_YEARS_OFF, type SkillIntervalInput, type SkillSubjectRef } from "../shared/skill-years";
 import { withoutFindings } from "../shared/sheet";
 import type { InterviewAnswer } from "../shared/interview";
 import { reviewViewStream } from "./review-stream";
@@ -271,6 +273,10 @@ export interface VaultExport extends RecordExport, KitExport {
   generationInputs: Record<string, string | number | null>[];
   generationItems: Record<string, string | number | null>[];
   documentRequests: Record<string, string | number | null>[];
+  skillRecordIdentities: Record<string, string | number | null>[];
+  skillUseIntervals: Record<string, string | number | null>[];
+  skillDurationClaims: Record<string, string | number | null>[];
+  skillYearRequests: Record<string, string | number | null>[];
   format: number;
   sourceRevisions: Record<string, string | number | null>[];
   evidence: Record<string, string | number | null>[];
@@ -403,6 +409,44 @@ export class Vault extends DurableObject<Env> {
   }
 
   /** Parts of a line, tags and links. Only what is kept in shadow is written so far; all of it is exported with the vault. */
+  private get skillYears(): SkillYearsStore {
+    return new SkillYearsStore(this.sql, (fn) => this.ctx.storage.transactionSync(fn));
+  }
+  private requireSkillYears(who: Who): void {
+    this.requireOwner(who);
+    if (this.env.SKILL_YEARS_ENABLED !== "true") throw new AppError("not_found", SKILL_YEARS_OFF);
+  }
+  private requireOrdinaryFacts(ids: readonly string[]): void {
+    if (ids.some((id) => this.skillYears.isBackingFact(id)))
+      throw new AppError("conflict", "Manage a confirmed skill total through its skill periods.");
+  }
+  skillYearsView(who: Who) {
+    this.requireSkillYears(who);
+    return this.skillYears.view(withheldFacts(this.sql).ids);
+  }
+  saveSkillInterval(who: Who, input: SkillIntervalInput, requestKey: string, edit?: { id: string; expectedRevision: number }) {
+    this.requireSkillYears(who);
+    const id = this.skillYears.save(input, requestKey, withheldFacts(this.sql).ids, edit);
+    return { id };
+  }
+  withdrawSkillInterval(who: Who, id: string, expectedRevision: number, requestKey: string): void {
+    this.requireSkillYears(who);
+    this.skillYears.withdraw(id, expectedRevision, requestKey);
+  }
+  async previewSkillDuration(who: Who, subject: SkillSubjectRef) {
+    this.requireSkillYears(who);
+    const result = await this.skillYears.preview(subject, withheldFacts(this.sql).ids);
+    this.requireSkillYears(who);
+    return result;
+  }
+  async confirmSkillDuration(who: Who, subject: SkillSubjectRef, asOf: string, inputHash: string, requestKey: string) {
+    this.requireSkillYears(who);
+    return this.skillYears.confirm(subject, asOf, inputHash, requestKey, () => {
+      this.requireSkillYears(who);
+      return withheldFacts(this.sql).ids;
+    });
+  }
+
   private get record(): RecordStore {
     return new RecordStore(this.sql, (fn) => this.ctx.storage.transactionSync(fn));
   }
@@ -760,6 +804,7 @@ export class Vault extends DurableObject<Env> {
         roleDateUnknownEnd: this.env.ROLE_UNKNOWN_END_ENABLED === "true",
         postingReader: this.env.POSTING_READER_ENABLED === "true",
         cardPreview: this.env.CARD_PREVIEW_ENABLED === "true",
+        skillYears: this.env.SKILL_YEARS_ENABLED === "true",
         emailNotices: emailConfigured(this.env),
       },
     };
@@ -2447,7 +2492,7 @@ export class Vault extends DurableObject<Env> {
       .toArray()
       .map((role) => ({ id: role.id, kind: role.kind, org: role.org, title: role.title, startDate: role.start_date, endDate: role.end_date, unknownEndStartDate: role.unknown_end_start_date }));
     const facts = this.sql
-      .exec<{ id: string; role_id: string | null; kind: string; text: string }>(`SELECT id, role_id, kind, text FROM facts ORDER BY rowid`)
+      .exec<{ id: string; role_id: string | null; kind: string; text: string }>(`SELECT id, role_id, kind, text FROM facts WHERE NOT EXISTS (SELECT 1 FROM skill_duration_claims d WHERE d.fact_id=facts.id) ORDER BY rowid`)
       .toArray()
       .map((fact) => ({ id: fact.id, roleId: fact.role_id, kind: fact.kind, text: fact.text }));
     const matches = identicalMatches(roles, facts);
@@ -2949,7 +2994,7 @@ export class Vault extends DurableObject<Env> {
    * It feeds nothing generated, copied or shown to anyone else. That is `usableFacts()`.
    */
   private readFacts(state?: ReviewState): FactView[] {
-    const where = state ? `WHERE f.state = ?` : ``;
+    const where = `WHERE NOT EXISTS (SELECT 1 FROM skill_duration_claims d WHERE d.fact_id=f.id)${state ? " AND f.state = ?" : ""}`;
     const params = state ? [state] : [];
     const marked = withheldFacts(this.sql).ids;
     return this.sql
@@ -2966,6 +3011,7 @@ export class Vault extends DurableObject<Env> {
   /** Confirms or rejects roles and facts by ID. Confirming a fact confirms its role; rejecting a role rejects its proposed facts. */
   async review(who: Who, r: ReviewRequest): Promise<void> {
     this.requireOwner(who);
+    this.requireOrdinaryFacts([...r.confirm, ...r.reject]);
     this.ctx.storage.transactionSync(() => {
       for (const [id, expected] of Object.entries(r.expectedRevisions ?? {})) {
         const current = this.sql
@@ -3042,6 +3088,7 @@ export class Vault extends DurableObject<Env> {
   async markSensitive(who: Who, r: SensitiveRequest): Promise<void> {
     this.requireOwner(who);
     const ids = r?.ids;
+    if (Array.isArray(ids)) this.requireOrdinaryFacts(ids);
     const expectedRevisions = r?.expectedRevisions ?? {};
     if (!Array.isArray(ids) || ids.length < 1 || ids.length > MAX_SENSITIVE_IDS || typeof r.sensitive !== "boolean" ||
         ids.some((id) => typeof id !== "string" || !id) || new Set(ids).size !== ids.length ||
@@ -3257,6 +3304,7 @@ export class Vault extends DurableObject<Env> {
    */
   async editFact(who: Who, id: string, patch: FactPatch): Promise<void> {
     this.requireOwner(who);
+    this.requireOrdinaryFacts([id]);
     const fact = this.sql
       .exec<{ text: string; revision: number; role_id: string | null; origin: string; level: string | null; level_revision: number | null }>(
         `SELECT text, revision, role_id, origin, level, level_revision FROM facts WHERE id = ?`,
@@ -3490,12 +3538,21 @@ export class Vault extends DurableObject<Env> {
     return this.tailorWithGuard(who, applicationId, requestKey, () => {});
   }
 
+  async tailorWithSkillClaims(who: Who, applicationId: string, claimIds: string[], requestKey: string) {
+    this.requireSkillYears(who);
+    if (!Array.isArray(claimIds) || claimIds.length > MAX_SELECTED_SKILL_CLAIMS ||
+        claimIds.some((id) => typeof id !== "string" || !id || id.length > 100) || new Set(claimIds).size !== claimIds.length)
+      throw new AppError("invalid", "Choose distinct current skill totals.");
+    return this.tailorWithGuard(who, applicationId, requestKey, () => this.requireSkillYears(who), [...claimIds].sort());
+  }
+
   /** The connected-app guard is rechecked after external reconciliation and before any new run. */
   private async tailorWithGuard(
     who: Who,
     applicationId: string,
     requestKey: string,
     guard: () => void,
+    skillDurationClaimIds: string[] = [],
   ): Promise<{ resumeId: string; runId: string }> {
     guard();
     this.requireOwner(who);
@@ -3507,10 +3564,11 @@ export class Vault extends DurableObject<Env> {
       .toArray()[0];
     if (!app) throw new AppError("not_found", JOB_NOT_FOUND);
     const key = `tailor:${requestKey}`;
+    const inputDigest = skillDurationClaimIds.length ? JSON.stringify([applicationId, skillDurationClaimIds]) : applicationId;
     const replay = () => {
       const previous = this.runs.findRequest(key);
       if (!previous) return null;
-      if (previous.inputDigest !== applicationId)
+      if (previous.inputDigest !== inputDigest)
         throw new AppError(
           "conflict",
           "request key was used for another application",
@@ -3549,7 +3607,7 @@ export class Vault extends DurableObject<Env> {
         kind: "tailor",
         targetId: id,
         requestKey: key,
-        inputDigest: applicationId,
+        inputDigest,
         steps: ["analyze", "select", "write", "verify"],
         quota: this.quotaBucket(),
       },
@@ -3577,8 +3635,9 @@ export class Vault extends DurableObject<Env> {
             profile: this.readProfile(),
             embeddingModel: this.activeEmbeddingModel(),
             ...(this.env.TAILOR_CONCEPTS_ENABLED === "true" ? { conceptEvidence: captureConceptEvidence(this.sql, this.usableFacts()) } : {}),
+            ...(skillDurationClaimIds.length ? { skillDurationClaimIds } : {}),
           },
-          this.usableFacts(),
+          [...this.usableFacts(), ...this.skillYears.selectedFacts(skillDurationClaimIds, withheldFacts(this.sql).ids)],
           this.confirmedRoles(),
           this.vectors(),
         );
@@ -3597,7 +3656,7 @@ export class Vault extends DurableObject<Env> {
     const saved = ready ? this.resumeVersion(row, version) : null;
     let needsGroundingReview = false;
     if (saved) {
-      try { assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence, saved.roleEvidence); }
+      try { assertGroundedResume(saved.render, saved.facts, saved.provenance, saved.evidence, saved.roleEvidence, { ids: new Set(), quotes: new Set(), invalidDerived: withheldFacts(this.sql).invalidDerived }); }
       catch { needsGroundingReview = true; }
     }
     // Its owner still reads a version that uses a fact marked since, and is told which lines and
@@ -4983,6 +5042,8 @@ export class Vault extends DurableObject<Env> {
           throw new AppError("conflict", "This version uses a fact you keep private. Remove those lines or tailor a new version, then try again.");
       }
     }
+    const skillDurationClaimIds = base?.evidence ? Object.values(base.evidence).filter((f) => f.skillDuration && base!.render.body.skills.includes(f.text)).map((f) => f.skillDuration!.claimId) : [];
+    if (skillDurationClaimIds.length) this.requireSkillYears(who);
     const id = crypto.randomUUID();
     this.quota();
     this.runs.begin(
@@ -5025,8 +5086,9 @@ export class Vault extends DurableObject<Env> {
             profile: base?.render.profile ?? this.readProfile(),
             embeddingModel: this.activeEmbeddingModel(),
             ...(this.env.TAILOR_CONCEPTS_ENABLED === "true" ? { conceptEvidence: captureConceptEvidence(this.sql, this.usableFacts()) } : {}),
+            ...(skillDurationClaimIds.length ? { skillDurationClaimIds } : {}),
           },
-          this.usableFacts(),
+          [...this.usableFacts(), ...this.skillYears.selectedFacts(skillDurationClaimIds, withheldFacts(this.sql).ids)],
           this.confirmedRoles(),
           this.vectors(),
         );
@@ -5504,6 +5566,7 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     return {
       format: 2,
+      ...this.skillYears.export(),
       interviewAnswers: this.sql
         .exec<Record<string, string | number | null>>(
           `SELECT fact_id,document_id,question_id,question,quote,created_at FROM interview_answers`,
@@ -7319,7 +7382,7 @@ export class Vault extends DurableObject<Env> {
       .exec<FactRow>(
         `SELECT f.id, f.role_id, f.kind, f.text, f.level, f.level_revision, f.origin, f.state, f.source_id, f.revision, e.quote, e.start, e.end
          FROM facts f LEFT JOIN evidence e ON e.id = f.evidence_id LEFT JOIN roles r ON r.id = f.role_id
-         WHERE f.state = 'confirmed' AND (f.role_id IS NULL OR r.state = 'confirmed')`,
+         WHERE f.state = 'confirmed' AND (f.role_id IS NULL OR r.state = 'confirmed') AND NOT EXISTS (SELECT 1 FROM skill_duration_claims d WHERE d.fact_id=f.id)`,
       )
       .toArray()
       .filter((row) => !withheld.ids.has(row.id))

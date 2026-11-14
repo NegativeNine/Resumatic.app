@@ -106,6 +106,8 @@ test("the card preview cannot be enabled in production configuration, and can in
       return (await validate({ environment, purpose: "deploy", configPath: path, env: {} })).missing;
     };
     assert.ok((await report("production", { CARD_PREVIEW_ENABLED: "true" })).includes("CARD_PREVIEW_ROLLOUT_UNVERIFIED"));
+    assert.ok((await report("production", { SKILL_YEARS_ENABLED: "true" })).includes("SKILL_YEARS_ROLLOUT_UNVERIFIED"));
+    assert.ok(!(await report("staging", {}, { SKILL_YEARS_ENABLED: "true" })).includes("SKILL_YEARS_ROLLOUT_UNVERIFIED"));
     for (const off of [{}, { CARD_PREVIEW_ENABLED: "false" }, { CARD_PREVIEW_ENABLED: "" }])
       assert.ok(!(await report("production", off)).includes("CARD_PREVIEW_ROLLOUT_UNVERIFIED"), JSON.stringify(off));
     // Staging may switch it on, where a taxonomy is bound; whether to is the owner's decision.

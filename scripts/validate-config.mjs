@@ -155,6 +155,8 @@ export async function validate({
       missing.push("TAXONOMY_INDEX_BUILD_ROLLOUT_UNVERIFIED");
     // The card preview reads confirmed tags and shows their taxonomy groups. Keep it out of
     // production until tags are measured, owner review exists and the sharing rules are decided.
+    if (environment === "production" && config.vars?.SKILL_YEARS_ENABLED === "true")
+      missing.push("SKILL_YEARS_ROLLOUT_UNVERIFIED");
     if (environment === "production" && config.vars?.CARD_PREVIEW_ENABLED === "true")
       missing.push("CARD_PREVIEW_ROLLOUT_UNVERIFIED");
     // Email notices hand the owner's address to Cloudflare Email Service, a processor the DPA

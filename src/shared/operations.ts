@@ -35,6 +35,10 @@ export const TRANSFER_TABLES = [
   "fact_parts",
   "record_tags",
   "record_links",
+  "skill_record_identities",
+  "skill_use_intervals",
+  "skill_duration_claims",
+  "skill_year_requests",
   // A coach's client list. It is not a grant and opens nothing by itself: a row says only where
   // a copy is kept, and the copy's owner's vault still decides every open from the account and
   // the address, which a replacement leaves as they were.
