@@ -92,6 +92,6 @@ Each memo states the question, what it blocks, the options, a recommendation, wh
 
 ### Delivery and acceptance on 14 November
 
-The local Chrome interface smoke passed with synthetic API stand-ins, and local PDF/Word text checks passed. These are interface and rendering checks, not real Google sign-in, Browser Run, model-quality, independent ATS or beta acceptance. The actual staging service separately passed health, Google redirect, binding preservation and taxonomy-index checks after guarded deployment.
+The [validation record](staging-validation-2026-11-14.json) captures a local Chrome interface smoke with synthetic API stand-ins and passing local PDF/Word text checks. These are interface and rendering checks, not real Google sign-in, Browser Run, model-quality, independent ATS or beta acceptance. The actual staging service separately passed health, Google redirect, binding preservation and taxonomy-index checks after guarded deployment.
 
 The [source-proof protocol](source-proof-plan.md) remains unfinished. Protected receipt, authority and manifest components are being tested in isolated branches; they are not activated or deployed, and do not remove the manual-edit or deletion-inventory release blockers. Owner inspection and account data export remain distinct from a claim of publication provenance.
