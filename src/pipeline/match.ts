@@ -77,7 +77,7 @@ export function identicalMatches(roles: readonly MatchRole[], facts: readonly Ma
 // ---------------------------------------------------------------- offers
 
 /** The check that made an offer, stamped on it. Raise the number when the questions or the pre-check change. */
-export const ENTAILMENT_METHOD = "entailment/3";
+export const ENTAILMENT_METHOD = "entailment/4";
 
 /** Two facts of one kind in one role whose wording differs. `later` was read after `earlier`. */
 export interface OfferPair {
@@ -114,12 +114,17 @@ export const MAX_OFFER_PAIRS = 60;
  * everything the other says and nothing is asked. Each direction is then asked on its own: first
  * the checks a resume line passes against its facts, which need no model and settle any pair
  * whose figures or names differ, then the judge, in the form it already answers. A direction
- * holds only if both say so. Nothing is composed and no wording changes: the answer is which of
- * the two existing facts, if either, could stand for the other.
+ * holds only if both say so. A missing or repeated answer is unknown, never evidence that a
+ * direction does not hold; both directions must be settled before any offer is made. Nothing
+ * is composed and no wording changes: the answer is which of the two existing facts, if either,
+ * could stand for the other.
  */
 export async function offers(models: Models, pairs: readonly OfferPair[]): Promise<Offer[]> {
   // "x.e": does the later fact say everything the earlier one says? "x.l": the other way round.
   const items: JudgeItem[] = [];
+  // A check can settle a direction as false. Otherwise exactly one valid judge answer must
+  // settle it: true or false. Null and absent answers are unknown, not proof of a fuller line.
+  const holds = new Map<string, boolean | null>();
   pairs.forEach((pair, index) => {
     // "Pursuing the certification" is not "Completed the certification", and "Never handled" is
     // not "Handled". The claim checks below read a denial or a plan only beside the verbs they
@@ -129,10 +134,11 @@ export async function offers(models: Models, pairs: readonly OfferPair[]): Promi
     if (qualifiers(pair.later.text).join("\n") !== qualifiers(pair.earlier.text).join("\n")) return;
     if (checkClaim(pair.earlier.text, [{ text: pair.later.text }]).ok)
       items.push({ alias: `${index + 1}.e`, text: pair.earlier.text, facts: [{ text: pair.later.text, quote: null }] });
+    else holds.set(`${index + 1}.e`, false);
     if (checkClaim(pair.later.text, [{ text: pair.earlier.text }]).ok)
       items.push({ alias: `${index + 1}.l`, text: pair.later.text, facts: [{ text: pair.earlier.text, quote: null }] });
+    else holds.set(`${index + 1}.l`, false);
   });
-  const holds = new Map<string, boolean>();
   for (let at = 0; at < items.length; at += JUDGE_ITEMS_PER_CALL) {
     const batch = items.slice(at, at + JUDGE_ITEMS_PER_CALL);
     const asked = new Set(batch.map((item) => item.alias));
@@ -142,14 +148,18 @@ export async function offers(models: Models, pairs: readonly OfferPair[]): Promi
       // An answer counts only for a question this call asked, so one call never answers for
       // another, and nothing answers a question the checks above left unasked.
       if (!asked.has(id)) continue;
-      // Two answers for one question are no answer, whatever either says.
-      holds.set(id, !holds.has(id) && verdict.verdict === "supported");
+      // Two answers for one question are unknown, whatever either says. An explicit negative
+      // must not be inferred from an absent, repeated or invalid answer.
+      const answer = verdict.verdict === "supported" ? true
+        : verdict.verdict === "unsupported" || verdict.verdict === "overstated" ? false : null;
+      holds.set(id, holds.has(id) ? null : answer);
     }
   }
   const found: Offer[] = [];
   pairs.forEach((pair, index) => {
-    const laterSaysAll = holds.get(`${index + 1}.e`) === true;
-    const earlierSaysAll = holds.get(`${index + 1}.l`) === true;
+    const laterSaysAll = holds.get(`${index + 1}.e`);
+    const earlierSaysAll = holds.get(`${index + 1}.l`);
+    if (typeof laterSaysAll !== "boolean" || typeof earlierSaysAll !== "boolean") return;
     if (laterSaysAll && earlierSaysAll) found.push({ relation: "same", from: pair.later.id, to: pair.earlier.id });
     else if (laterSaysAll) found.push({ relation: "fuller", from: pair.later.id, to: pair.earlier.id });
     else if (earlierSaysAll) found.push({ relation: "fuller", from: pair.earlier.id, to: pair.later.id });

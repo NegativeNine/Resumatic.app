@@ -278,6 +278,9 @@ export const api = {
     generate<{ factId: string }>("/api/v2/facts", fact, ["factId"]),
   editFact: (id: string, patch: FactPatch) =>
     request<void>("PATCH", `/api/facts/${encodeURIComponent(id)}`, patch),
+  groupIdenticalCopies: () => request<void>("POST", "/api/v2/record/identical", {}),
+  decideIdenticalCopy: (link: import("../shared/api").CopyLinkView, decision: "confirmed" | "rejected") =>
+    request<void>("POST", `/api/v2/record/links/${encodeURIComponent(link.id)}`, { decision, fromRevision: link.fromRevision, toRevision: link.toRevision, expectedDecisionVersion: link.decisionVersion }),
   review: (r: ReviewRequest) => request<void>("POST", "/api/review", r),
   /** Marks facts sensitive, or unmarks them. Facts with the same words go with them. */
   markSensitive: (r: SensitiveRequest) => request<void>("POST", "/api/facts/sensitive", r),

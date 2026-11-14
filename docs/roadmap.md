@@ -13,16 +13,16 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Taxonomy builder and lookup | #28 merged in #34, with review fixes. Rebuilt from the same downloads on 11 November ([manifest](taxonomy-build-2026-11-11.json), version `esco-1.2.1+onet-31.0+3f810824`) and loaded into a D1 database on the staging account, its counts checked | Build the vector index on staging (`pipeline/06-vector-index`) |
 | Shared-copy title test | #29 merged in #34 | |
 | The record: parts of a line, tags and links | #30 merged in #34 | Its migration comes before coach accounts' |
-| Dividing a line into its claims | #31 merged in #34 | Off by default, and kept in shadow where switched on. Not run against the real models; nothing has been measured |
+| Dividing a line into its claims | #31 merged in #34 | Off by default, and kept in shadow where switched on. The focused real-judge smoke refused the bad split; full model evals and quality measurement remain |
 | Finding what an upload says again | #32 merged in #34 | Off by default; notes identical roles and facts in shadow with no model, and merges nothing |
-| Two wordings of one thing | #33 merged in #34 | Off by default. Not run against the real judge. Which further words belong on the closed list of qualifying words is a starting rule to set once offers are measured |
+| Two wordings of one thing | #33 merged in #34 | Off by default. Focused real-judge controls passed; full evals and quality measurement remain. Unknown reverse judgements now decline the offer |
 | Preferences | Merged in #34; review fixes in #35 | Kept in the vault and read only by the owner's form and export. Work authorisation and remote work are not stored |
 | Sensitive facts | Merged in #34 | A mark on a fact and its words. Marking a role, and finding sensitive facts for the person, are not built. The embedding model still receives a marked fact's words on an edit or a rebuild |
 | Comments on a shared copy | Merged in #34; review fixes in #35 | A page loaded before #35 marks every comment seen until it is reloaded; the old route can go once old pages are gone |
 | Suggested wording on a shared copy | Merged in #35 | Adds the vault's next migration, the fourth of four after coach accounts, directly after comments'; only that order is deployed. Accepting is the owner's own verified line edit, so the manual-edit release blocker holds it. Real sign-ins on both sides and the real judge on suggested wording are owed |
 | Fit preview through connected apps | Merged in #35. No migration | Deployed before connected apps are switched on anywhere; then MCP in staging and a real client |
 | Hardening fixes | Merged in #35 | Denial and intention checks read any apostrophe; "upto" is a bound; cleaning keeps a star or backtick set off by spaces; an expired connected-app grant is cleared on time; direction overrides are stripped from postings. The shadow stamps these change are raised to /3 |
-| Tagging facts and roles with taxonomy concepts | Merged in #35 | Off by default, refused in production configuration, and inert without a wholly loaded taxonomy. No vault migration. The eval against the real judge has not been run and nothing has been measured; vector candidates, parts, postings, screens and any use of tags are not built |
+| Tagging facts and roles with taxonomy concepts | Merged in #35 | Off by default, refused in production configuration, and inert without a wholly loaded taxonomy. No vault migration. The full eval against the real judge has not been run; the focused smoke failed its positive C++ case. No quality measurement or model-tag rollout is approved |
 | Vector index and vector candidates | Merged in #36. No vault migration; one Directory migration (operator spend), after which production cannot be rolled back past this release | The index built on staging and measured; vector precision, its floor and caps measured on lines given with consent; the build runs only where tagging in shadow is switched on |
 | Private card preview and re-identification test | Merged in #36. No migration | Off by default, refused in production configuration, needs a wholly loaded taxonomy. No migration. No occupation or skills on real vaults until owner review confirms tags, only a band from job dates. Harness rates are synthetic; Gate 3's real test, counsel and the sharing rules remain |
 | Email notices | Merged in #36. The vault's last migration, after saved answers' | Off by default and refused in production. A sender domain onboarded to Cloudflare Email Service, then a real inbox in staging; the DPA naming the service and EU-region sending are owed |
@@ -36,6 +36,8 @@ Reconciled on 10 November 2026 from the current PRs and the owner's remaining-wo
 | Redesign stage 6: Sharing and Account | `redesign/06-sharing`, based on `redesign/02-shell`. No migration | Merges after stages 4 and 5; consent page, export, share and reminder sentences changed with their tests |
 | Redesign stage 7: outside | `redesign/07-outside`, based on `redesign/02-shell`. No migration | Landing copy pending the owner's review |
 | Redesign follow-up: one set of states, no dead CSS | `redesign/08-polish`, based on main at d9d2d82. No migration | Owner's answers on a cancelled file's mark (question 1) and the board's quota sentence (question 2) |
+| Owner review of identical copies | Built on `complete/staging-validation`: an explicit grouping action, separate/rejoin controls, source quotes retained, stale changes refused. No migration | Off by default behind `IDENTICAL_REVIEW_ENABLED`, refused in production; real-owner usability remains to check. Model parts, tags and semantic offers remain hidden |
+| Focused real-judge smoke | [14 November results](evals/pipeline-smoke-2026-11-14.json): eight settled Clef requests / 48 weighted attempts. The bad split, equivalent-wording control and stronger-credit refusal passed | Tagging's positive C++ use case failed alongside correctly declined denial/intention cases. Tagging remains off. This does not complete the full evals, Muse proposal testing or consented quality measurements |
 
 The vault migrations after coach accounts are, in order: preferences, sensitive facts, comments, suggested wording (two columns on the comments' table), saved answers and application kits (three tables), email notices (one table). Only that order is deployed.
 
@@ -55,11 +57,19 @@ The [pipeline design](taxonomy-pipelines-design.md) is agreed. The rebuilt taxon
 
 1. Load the versioned taxonomy into staging (done on 11 November) and build its vector index (the build and vector candidates are merged in #36, in shadow).
 2. Add evidence, parts, tags and links without changing existing records. Merged in #34.
-3. Evaluate splitting, tagging and duplicate matching in shadow, using consented labelled examples. Splitting ([splitting.md](splitting.md)) and matching ([merging.md](merging.md)) are merged in #34; none has been run against the real models. Tagging of facts and roles is merged in #35 ([tagging.md](tagging.md)); it is switched on nowhere, including staging, where the taxonomy it reads is bound, and has not been run against the real judge.
+3. Evaluate splitting, tagging and duplicate matching in shadow, using consented labelled examples. Splitting ([splitting.md](splitting.md)) and matching ([merging.md](merging.md)) are merged in #34; the focused real-judge smoke has run, but the full suites and consented quality measurements remain outstanding. Tagging of facts and roles is merged in #35 ([tagging.md](tagging.md)); it is switched on nowhere, including staging, where the taxonomy it reads is bound, and failed its positive C++ control in the focused real-judge smoke.
 4. Add owner review of parts, tags and merge proposals.
 5. Add matching and coverage by concept, retaining evidence checks and similarity fallback.
 6. Add skills with years only where skill-use intervals are evidenced or owner-confirmed; role dates alone are insufficient.
 7. Add the private card preview from confirmed tags. Its sharing rules still need an explicit decision. The owner-only preview is merged in #36; publishing is not built.
+
+### 14 November validation
+
+The staging D1 counts were checked again: 49,438 concepts, 207,939 labels and 265,342 relations, with the complete `3f810824` manifest. The bound Vectorize index was empty. Its reference-only build is now running against 29,981 eligible concepts, with `TAXONOMY_INDEX_BUILD_ENABLED` separate from upload tagging. A running build is not a ready index; completion still requires the manifest, count and filtered self-match checks.
+
+The [focused synthetic smoke](pipeline-smoke.md) made real Workers API calls with the production Clef judge. It is deliberately smaller than the full eval suites and cannot approve rollout. The failed positive tagging control is retained in the report rather than counted as a pass from universal refusals. A further paid diagnostic run needs an additional budget; the first run has reserved 48 of its 50 weighted attempts.
+
+Semantic offers now require a settled answer in both directions. A missing, repeated or malformed judge answer means unknown and yields no offer (`entailment/4`). Deterministic check refusals still establish a negative direction. The owner review increment exposes only deterministic identical copies; the model review stages retain their existing measurement gates.
 
 Skills with years and the card preview depend on tagging and belong in this pipeline sequence. Missing or uncertain tags remain unknown; they do not establish missing experience.
 

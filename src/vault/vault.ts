@@ -139,7 +139,7 @@ import { MAX_TODAY_LIST, MAX_TODAY_RECENT, TODAY_RECENT_MS, type Today } from ".
 import { countByState, proposedBySource } from "../shared/review-groups";
 import { TodayStore, todayView, type KitCount } from "./today";
 import { IDENTICAL_ROLE_METHOD, IDENTICAL_WORDING_METHOD, MAX_OFFER_PAIRS, OFFERS_PER_FACT, OFFER_MIN_COSINE, identicalMatches, type JudgedOffer, type OfferPair } from "../pipeline/match";
-import { roleKey, sameWording, stampProblem } from "../shared/record";
+import { roleKey, sameRole, sameWording, stampProblem } from "../shared/record";
 import { MAX_TAGS_PER_SAVE, MAX_TAG_FACTS, MAX_TAG_ROLES, TAG_JUDGE_METHOD, TAG_RULE_METHOD, TAG_VECTOR_METHOD, skillAsWritten, tagStamp, type HeldTag, type ProposedTag, type TagMade, type TagSubjects } from "../pipeline/tag";
 import type { NewPart, RecordExport } from "../shared/record";
 import { ShareStore } from "./shares";
@@ -1744,9 +1744,84 @@ export class Vault extends DurableObject<Env> {
     this.requireOwner(who);
     const view = this.ctx.storage.transactionSync(() => {
       this.requireOwner(who);
-      return { sources: this.readSources(), roles: this.readRoles(), facts: this.readFacts() };
+      return { sources: this.readSources(), ...this.copyReviewEntries() };
     });
     return new Response(reviewViewStream(view), { headers: { "content-type": "application/json", "cache-control": "private, no-store" } });
+  }
+
+  /** Group only deterministic copies on an explicit owner action. Reads never write decisions. */
+  async groupIdenticalCopies(who: Who): Promise<void> {
+    this.requireOwner(who);
+    if (this.env.IDENTICAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "copy review is not enabled");
+    this.ctx.storage.transactionSync(() => {
+      const roles = this.readRoles(); const facts = this.readFacts();
+      const roleOrder = new Map(this.sql.exec<{ id: string }>(`SELECT id FROM roles ORDER BY rowid`).toArray().map((r, i) => [r.id, i]));
+      const factOrder = new Map(this.sql.exec<{ id: string }>(`SELECT id FROM facts ORDER BY rowid`).toArray().map((r, i) => [r.id, i]));
+      const matches = identicalMatches(
+        [...roles].sort((a, b) => roleOrder.get(a.id)! - roleOrder.get(b.id)!),
+        [...facts].sort((a, b) => factOrder.get(a.id)! - factOrder.get(b.id)!),
+      );
+      for (const match of matches) {
+        try {
+          this.record.proposeLink({ ...match, relation: "same", confirm: true, stamp: {
+            proposedBy: "rule", model: null, method: match.kind === "role" ? IDENTICAL_ROLE_METHOD : IDENTICAL_WORDING_METHOD,
+            taxonomyVersion: null, confidence: null, shadow: false,
+          } });
+        } catch (error) {
+          // Separated pairs and roles stay apart. Capacity leaves copies visible.
+          if (!["conflict", "too_large", "not_found"].includes(errorCode(error) ?? "")) throw error;
+        }
+      }
+    });
+  }
+
+  /** Owner-only metadata about deterministic links. No shadow/model judgements are exposed. */
+  private copyReviewEntries(): { roles: RoleView[]; facts: FactView[] } {
+    const roles = this.readRoles(); const facts = this.readFacts();
+    if (this.env.IDENTICAL_REVIEW_ENABLED !== "true") return { roles, facts };
+    const decorate = <T extends { id: string; revision?: number }>(rows: T[], kind: "role" | "fact"): (T & { copyReview: import("../shared/api").CopyReviewView })[] => {
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      return rows.map((row) => {
+        const links = this.record.links(kind, row.id).filter((link) => link.relation === "same" &&
+          link.proposedBy === "rule" && link.method === (kind === "role" ? IDENTICAL_ROLE_METHOD : IDENTICAL_WORDING_METHOD));
+        const view = (link: (typeof links)[number]) => ({ id: link.id, from: link.from, to: link.to,
+          fromRevision: byId.get(link.from)?.revision ?? 1, toRevision: byId.get(link.to)?.revision ?? 1, decisionVersion: link.decidedAt ?? 0 });
+        return { ...row, copyReview: { rootId: this.record.root(kind, row.id),
+          links: links.filter((link) => link.state === "confirmed" && link.holds).map(view),
+          separations: links.filter((link) => link.state === "rejected" && link.decidedBy === "owner").map(view) } };
+      });
+    };
+    return { roles: decorate(roles, "role"), facts: decorate(facts, "fact") };
+  }
+
+  /** Separate or rejoin deterministic copies. An owner can never decide a shadow/model link here. */
+  async decideIdenticalCopy(who: Who, id: string, input: { decision: "confirmed" | "rejected"; fromRevision: number; toRevision: number; expectedDecisionVersion: number }): Promise<void> {
+    this.requireOwner(who);
+    if (this.env.IDENTICAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "copy review is not enabled");
+    this.ctx.storage.transactionSync(() => {
+      const link = this.sql.exec<{ kind: string; from_id: string; to_id: string; method: string; proposed_by: string; shadow: number; relation: string; decided_at: number | null }>(
+        `SELECT kind, from_id, to_id, method, proposed_by, shadow, relation, decided_at FROM record_links WHERE id = ?`, id,
+      ).toArray()[0];
+      if (!link || link.shadow || link.relation !== "same" || link.proposed_by !== "rule" ||
+        (link.kind !== "role" && link.kind !== "fact") || link.method !== (link.kind === "role" ? IDENTICAL_ROLE_METHOD : IDENTICAL_WORDING_METHOD)) throw new AppError("not_found", "no such copy link");
+      if ((link.decided_at ?? 0) !== input.expectedDecisionVersion)
+        throw new AppError("conflict", "The decision about these copies changed. Refresh the page, then try again.");
+      const table = link.kind === "role" ? "roles" : "facts";
+      const revisions = this.sql.exec<{ id: string; revision: number }>(`SELECT id, revision FROM ${table} WHERE id IN (?, ?)`, link.from_id, link.to_id).toArray();
+      if (revisions.find((r) => r.id === link.from_id)?.revision !== input.fromRevision || revisions.find((r) => r.id === link.to_id)?.revision !== input.toRevision)
+        throw new AppError("conflict", "These copies changed. Refresh the page, then try again.");
+      if (input.decision === "confirmed") {
+        if (link.kind === "role") {
+          const rows = this.readRoles();
+          if (!sameRole(rows.find((r) => r.id === link.from_id)!, rows.find((r) => r.id === link.to_id)!)) throw new AppError("conflict", "These roles are no longer identical.");
+        } else {
+          const rows = this.readFacts();
+          const a = rows.find((r) => r.id === link.from_id)!; const b = rows.find((r) => r.id === link.to_id)!;
+          if (a.kind !== b.kind || !sameWording(a.text, b.text)) throw new AppError("conflict", "These facts are no longer identical.");
+        }
+      }
+      this.record.decideLink(id, input.decision);
+    });
   }
 
   // ---------------------------------------------------------------- today
@@ -1777,7 +1852,7 @@ export class Vault extends DurableObject<Env> {
         if (refused.length || unanswered.length) kits.push({ applicationId, unanswered: unanswered.length, sensitive: refused.length });
       }
       // Roles and facts are read once: To check and where Facts stands are counted from the same rows.
-      const entries = { roles: this.readRoles(), facts: this.readFacts() };
+      const entries = this.copyReviewEntries();
       const states = countByState(entries);
       return todayView(
         {

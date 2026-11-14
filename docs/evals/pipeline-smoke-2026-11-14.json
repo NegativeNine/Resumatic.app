@@ -1,0 +1,88 @@
+{
+  "complete": true,
+  "passed": false,
+  "models": {
+    "judge": "@cf/cloudflare/clef"
+  },
+  "checks": [
+    {
+      "name": "wrong verb-object split refused",
+      "passed": true,
+      "detail": {
+        "id": "synthetic-trap",
+        "parts": null,
+        "refusal": "reads_differently"
+      }
+    },
+    {
+      "name": "equivalent wording positive control",
+      "passed": true,
+      "detail": [
+        {
+          "relation": "same",
+          "from": "later",
+          "to": "earlier"
+        }
+      ]
+    },
+    {
+      "name": "stronger credit never offered",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "tagging exercised all three judge questions",
+      "passed": true,
+      "detail": {
+        "roles": 0,
+        "facts": 3,
+        "candidates": 3,
+        "known": 0,
+        "carried": 0,
+        "byRule": 0,
+        "asked": 3,
+        "yes": 0,
+        "stored": 0,
+        "refused": 0,
+        "withheld": 0,
+        "left": {
+          "subjects": 0,
+          "words": 0,
+          "per_role": 0,
+          "per_fact": 0,
+          "per_upload": 0
+        },
+        "vector": {
+          "subjects": 0,
+          "withheld": 0,
+          "candidates": 0,
+          "known": 0,
+          "carried": 0,
+          "asked": 0,
+          "yes": 0,
+          "left": 0
+        }
+      }
+    },
+    {
+      "name": "real skill use tagged, denial and intention untagged",
+      "passed": false,
+      "detail": []
+    }
+  ],
+  "limitations": [
+    "Synthetic smoke only; no release or rollout eligibility.",
+    "A predetermined adversarial split tests the real judge; Muse proposal generation is not exercised.",
+    "No vector candidates, real taxonomy index, real resumes, deployed Workflow or full eval suite is tested.",
+    "The independent durable ledger limits this isolated run only; shared-pilot identity remains unverified and unchanged."
+  ],
+  "run": {
+    "date": "2026-11-14",
+    "sourceCommit": "6e3cb43",
+    "weightedAttemptsReserved": 48,
+    "providerRequests": 8,
+    "allRequestsSettled": true,
+    "reservedUsd": 0.080321,
+    "usageEstimatedUsd": 0.000499
+  }
+}

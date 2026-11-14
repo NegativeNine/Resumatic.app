@@ -971,6 +971,22 @@ api.patch("/facts/:id", JSON_LIMIT, async (c) => {
   return c.body(null, 204);
 });
 
+api.post("/v2/record/identical", JSON_LIMIT, async (c) => {
+  if (c.env.IDENTICAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "copy review is not enabled");
+  await jsonBody(c, z.object({}).strict());
+  await myVault(c).groupIdenticalCopies(c.get("who"));
+  return c.body(null, 204);
+});
+
+api.post("/v2/record/links/:id", JSON_LIMIT, async (c) => {
+  if (c.env.IDENTICAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "copy review is not enabled");
+  await myVault(c).decideIdenticalCopy(c.get("who"), c.req.param("id"), await jsonBody(c, z.object({
+    decision: z.enum(["confirmed", "rejected"]), fromRevision: z.number().int().positive(), toRevision: z.number().int().positive(),
+    expectedDecisionVersion: z.number().int().nonnegative().safe(),
+  }).strict()));
+  return c.body(null, 204);
+});
+
 api.post("/review", JSON_LIMIT, async (c) => {
   await myVault(c).review(
     c.get("who"),

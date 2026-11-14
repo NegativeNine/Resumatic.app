@@ -32,6 +32,8 @@
 //   GET    /api/facts?state=           { facts: FactView[] }
 //   POST   /api/facts                  NewFact -> 201 { factId }
 //   PATCH  /api/facts/:id              FactPatch -> 204          (new wording, another role, or both)
+//   POST   /api/v2/record/identical   {} -> 204; owner asks to group deterministic copies (gated)
+//   POST   /api/v2/record/links/:id  { decision, fromRevision, toRevision } -> 204; separate/rejoin copies (gated)
 //   POST   /api/review                 ReviewRequest -> 204   (role or fact IDs)
 //   POST   /api/facts/sensitive        SensitiveRequest -> 204   (mark or unmark facts, and every fact with the same words)
 //   POST   /api/applications           { jdText } -> 201 { applicationId }
@@ -175,7 +177,24 @@ export interface SourceView {
   proposed: number;
 }
 
+/** Owner-only controls for deterministic identical copies; absent while disabled. */
+export interface CopyLinkView {
+  id: string;
+  from: string;
+  to: string;
+  fromRevision: number;
+  toRevision: number;
+  /** Monotonic decision generation; protects newer owner choices even when wording is unchanged. */
+  decisionVersion: number;
+}
+export interface CopyReviewView {
+  rootId: string;
+  links: CopyLinkView[];
+  separations: CopyLinkView[];
+}
+
 export interface RoleView {
+  copyReview?: CopyReviewView;
   revision?: number;
   span?: [number, number] | null;
   id: string;
@@ -203,6 +222,7 @@ export interface RolePatch {
 }
 
 export interface FactView {
+  copyReview?: CopyReviewView;
   /** An older level was retained for history but needs the owner's confirmation. */
   levelNeedsReview?: boolean;
   previousLevel?: Level;

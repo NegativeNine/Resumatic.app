@@ -1,3 +1,4 @@
+import { GroupIdenticalCopies } from "../../components/CopyControls";
 import { Review } from "../../components/Review";
 import { ErrorNote, Loading, PageHeader } from "../../components/ui";
 import { useResource } from "../../hooks";
@@ -14,6 +15,7 @@ export function FactsRecord() {
       </PageHeader>
       {vault.error && <ErrorNote message={vault.error} onRetry={vault.reload} />}
       {!vault.data && !vault.error && <Loading>Loading your facts…</Loading>}
+      {vault.data && <GroupIdenticalCopies enabled={[...vault.data.roles, ...vault.data.facts].some((item) => !!item.copyReview)} reload={vault.reload} />}
       {vault.data && <Review vault={vault.data} reload={vault.reload} />}
     </>
   );

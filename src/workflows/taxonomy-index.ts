@@ -79,9 +79,9 @@ export function indexBuildId(contentHash: string, attempt: number): string {
   return `taxonomy-index-${contentHash.slice(0, 8)}-${attempt}`;
 }
 
-/** The switch and both bindings, or the build is refused. The index is built only where tagging could read it. */
+/** Build reference data before enabling upload tagging; both bindings and an explicit switch are required. */
 export function indexConfiguration(env: Env): { index: VectorIndex; taxonomy: D1Database } {
-  if (env.TAG_SHADOW_ENABLED !== "true" || !env.TAXONOMY || !env.TAXONOMY_VECTORS)
+  if ((env.TAG_SHADOW_ENABLED !== "true" && env.TAXONOMY_INDEX_BUILD_ENABLED !== "true") || !env.TAXONOMY || !env.TAXONOMY_VECTORS)
     throw new AppError("unavailable", "the taxonomy vector index is not configured");
   return { index: env.TAXONOMY_VECTORS, taxonomy: env.TAXONOMY };
 }
