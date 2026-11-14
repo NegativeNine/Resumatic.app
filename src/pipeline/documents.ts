@@ -138,9 +138,10 @@ export async function planDocument(
   const covered = new Map<string, string[]>();
   if (input.kind === "fit") {
     // Always measured afresh against the captured facts: a fit preview is about now.
-    selection = input.facts.length === 0
+    const context = await concepts?.(cleanAnalysis);
+    selection = input.facts.length === 0 && !context
       ? { factIds: [], skillIds: [], gaps: cleanAnalysis.requirements }
-      : await selectFacts(models, search ?? (await localSearch(models, input.facts)), cleanAnalysis, input.facts, input.roles, covered, await concepts?.(cleanAnalysis));
+      : await selectFacts(models, search ?? (await localSearch(models, input.facts)), cleanAnalysis, input.facts, input.roles, covered, context);
   } else if (input.selection) {
     const available = new Set(input.facts.map((f) => f.id));
     selection = {

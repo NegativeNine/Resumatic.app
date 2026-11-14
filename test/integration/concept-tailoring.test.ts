@@ -138,6 +138,16 @@ describe("concept tailoring in the actual Vault and generation Workflows", () =>
     expect(JSON.stringify(answer)).not.toContain(PYTHON);
   });
 
+  it("keeps requirements unknown in an owner fit preview when there is no confirmed evidence", async () => {
+    const { user, factId, applicationId } = await person();
+    expect((await user.send("POST", "/api/review", { confirm: [], reject: [factId], expectedRevisions: { [factId]: 1 } })).status).toBe(204);
+    const doc = await fit(user, applicationId);
+    expect(doc.state, doc.error ?? "").toBe("ready");
+    expect(doc.conceptCoverage?.coverage[0]).toMatchObject({ requirement: "Python services", status: "unknown", factIds: [] });
+    expect(doc.conceptCoverage?.requirements[0]?.text).toBe("Python services");
+    expect(doc.result?.fit?.requirements[0]?.factIds).toEqual([]);
+  });
+
   it("is inert by default and never promotes shadow tags into generation evidence", async () => {
     settings.TAILOR_CONCEPTS_ENABLED = undefined;
     const { user, applicationId } = await person();

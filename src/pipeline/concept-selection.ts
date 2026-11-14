@@ -125,7 +125,7 @@ export async function selectConceptFacts(
       conceptStatus: concepts.length ? "tagged" : "unknown", concepts: concepts.map((concept) => ({ id: concept.conceptId, label: concept.label,
         factIds: supported.filter((id) => hints.has(`${id}:${concept.conceptId}`)) })) });
   }
-  const factIds: string[] = [], skillIds: string[] = durations.slice(0, Math.min(12, limits.maxSkills)).map((fact) => fact.id), selected = new Set(durations.map(duplicate)), counts = new Map<string, number>();
+  const factIds: string[] = [], skillIds: string[] = [...new Set(durations.map((fact) => fact.id))].slice(0, Math.min(12, limits.maxSkills)), selected = new Set(durations.map(duplicate)), counts = new Map<string, number>();
   for (const [id] of [...best].sort((a, b) => b[1].tier - a[1].tier || b[1].score - a[1].score)) {
     const fact = byId.get(id)!;
     const key = duplicate(fact);
