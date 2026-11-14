@@ -229,10 +229,17 @@ describe("building the taxonomy's vector index", () => {
     expect((await readManifest(index))?.state).toBe("building");
   });
 
-  it("refuses without the switch or either binding", async () => {
+  it("builds reference vectors with upload tagging off when explicitly enabled by the operator", async () => {
+    const { build, calls } = setup({ env: { TAG_SHADOW_ENABLED: undefined, TAXONOMY_INDEX_BUILD_ENABLED: "true" } });
+    expect((await build()).result.state).toBe("complete");
+    expect(calls.length).toBeGreaterThan(0);
+  });
+
+  it("refuses without either switch or either binding", async () => {
     for (const [what, env] of [
       ["switch off", { TAG_SHADOW_ENABLED: undefined }],
       ["switch not exactly on", { TAG_SHADOW_ENABLED: "TRUE" }],
+      ["build switch not exactly on", { TAG_SHADOW_ENABLED: undefined, TAXONOMY_INDEX_BUILD_ENABLED: "TRUE" }],
       ["no taxonomy", { TAXONOMY: undefined }],
       ["no index", { TAXONOMY_VECTORS: undefined }],
     ] as const) {

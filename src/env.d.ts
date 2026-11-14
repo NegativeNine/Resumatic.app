@@ -51,6 +51,8 @@ interface ResumaticSecrets {
    * up. It adds judge calls to an upload, and a failure in it leaves the upload as it is read today.
    */
   TAG_SHADOW_ENABLED?: string;
+  /** Operator-only reference-index build; does not enable tagging of uploads. */
+  TAXONOMY_INDEX_BUILD_ENABLED?: string;
   /**
    * "true" shows the owner, under Sharing › Recruiters, the card a recruiter would see if they were ever found:
    * built from confirmed tags only, shown to nobody else, published nowhere. Off everywhere by

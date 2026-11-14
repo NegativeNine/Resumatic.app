@@ -24,7 +24,7 @@ const FIRST = `taxonomy-index-${TAXONOMY_FIXTURE.info.contentHash.slice(0, 8)}-1
 const SECOND = `taxonomy-index-${TAXONOMY_FIXTURE.info.contentHash.slice(0, 8)}-2`;
 const CONCEPTS = TAXONOMY_FIXTURE.concepts.filter((concept) => (TAG_KINDS as readonly string[]).includes(concept.kind)).length;
 
-const settings = env as unknown as { TAG_SHADOW_ENABLED?: string; TAXONOMY?: D1Database; TAXONOMY_VECTORS?: VectorIndex; TAXONOMY_INDEX: Workflow };
+const settings = env as unknown as { TAXONOMY_INDEX_BUILD_ENABLED?: string; TAG_SHADOW_ENABLED?: string; TAXONOMY?: D1Database; TAXONOMY_VECTORS?: VectorIndex; TAXONOMY_INDEX: Workflow };
 const AS_CONFIGURED = { tag: settings.TAG_SHADOW_ENABLED, taxonomy: settings.TAXONOMY!, vectors: settings.TAXONOMY_VECTORS, workflow: settings.TAXONOMY_INDEX };
 
 async function load(statements: readonly string[] = TAXONOMY_FIXTURE_SQL): Promise<void> {
@@ -39,6 +39,7 @@ beforeEach(async () => {
   settings.TAXONOMY_VECTORS = new MemoryVectorIndex();
 });
 afterEach(() => {
+  delete settings.TAXONOMY_INDEX_BUILD_ENABLED;
   setModels(null);
   settings.TAG_SHADOW_ENABLED = AS_CONFIGURED.tag;
   settings.TAXONOMY = AS_CONFIGURED.taxonomy;
@@ -102,7 +103,17 @@ describe("the taxonomy vector index routes", () => {
     expect(created).toEqual([]);
   });
 
-  it("answers 503 without the switch or either binding", async () => {
+  it("allows the Access-protected reference build while upload tagging stays off", async () => {
+    const { created } = instances({});
+    settings.TAG_SHADOW_ENABLED = undefined;
+    settings.TAXONOMY_INDEX_BUILD_ENABLED = "true";
+    const response = await build();
+    expect(response.status).toBe(202);
+    expect(created).toHaveLength(1);
+    expect(settings.TAG_SHADOW_ENABLED).toBeUndefined();
+  });
+
+  it("answers 503 without either switch or either binding", async () => {
     const { created } = instances({});
     for (const [what, change] of [
       ["switch off", () => (settings.TAG_SHADOW_ENABLED = undefined)],

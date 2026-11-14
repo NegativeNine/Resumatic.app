@@ -84,6 +84,8 @@ test("the posting reader cannot be enabled in production configuration, and can 
     for (const off of [{}, { TAG_SHADOW_ENABLED: "false" }, { TAG_SHADOW_ENABLED: "" }])
       assert.ok(!(await report("production", off)).includes("TAG_SHADOW_ROLLOUT_UNVERIFIED"), JSON.stringify(off));
     assert.ok(!(await report("staging", {}, { TAG_SHADOW_ENABLED: "true" })).includes("TAG_SHADOW_ROLLOUT_UNVERIFIED"));
+    assert.ok((await report("production", { TAXONOMY_INDEX_BUILD_ENABLED: "true" })).includes("TAXONOMY_INDEX_BUILD_ROLLOUT_UNVERIFIED"));
+    assert.ok(!(await report("staging", {}, { TAXONOMY_INDEX_BUILD_ENABLED: "true" })).includes("TAXONOMY_INDEX_BUILD_ROLLOUT_UNVERIFIED"));
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
