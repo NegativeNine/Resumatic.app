@@ -5,6 +5,8 @@ import type { ConceptTag, FactPart, FactSplit, JudgementState, RecordLink } from
 export interface FactProposalReview {
   fact: FactView;
   split: FactSplit | null;
+  /** Rejected non-shadow alternatives the owner may explicitly reconsider. */
+  rejectedSplits: FactSplit[];
   tags: ConceptTag[];
   partTags: { part: FactPart; tags: ConceptTag[] }[];
 }

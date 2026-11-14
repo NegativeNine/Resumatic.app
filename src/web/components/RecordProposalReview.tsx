@@ -21,11 +21,16 @@ function Proposals({ filenames }: { filenames: ReadonlyMap<string, string> }) {
     {!proposals.data && !proposals.error && <Loading>Loading your suggestions…</Loading>}
     {proposals.data && !proposals.data.facts.length && !proposals.data.roles.length && !(proposals.data.offers?.length ?? 0) &&
       <EmptyState>No parts, tags or links are available for review.</EmptyState>}
-    {proposals.data?.facts.map(({ fact, split, tags, partTags }) => <article key={fact.id} className="app-stack" aria-label={`Suggestions for ${fact.text}`}>
+    {proposals.data?.facts.map(({ fact, split, rejectedSplits, tags, partTags }) => <article key={fact.id} className="app-stack" aria-label={`Suggestions for ${fact.text}`}>
       <h3>Your line</h3>
       <p>{fact.text}</p>
       <FactEvidence fact={fact} filenames={filenames} />
-      {split && <SplitReview split={split} revision={fact.revision ?? 1} reload={proposals.reload} />}
+      {split && <SplitReview split={split} revision={fact.revision ?? 1} reload={proposals.reload} hasPartTags={partTags.length > 0} />}
+      {!!rejectedSplits?.length && <details>
+        <summary>Previously rejected parts ({rejectedSplits.length})</summary>
+        <p className="rs-meta">You can use a previous division again. Tags removed when it was rejected stay removed.</p>
+        {rejectedSplits.map((previous) => <SplitReview key={previous.id} split={previous} revision={fact.revision ?? 1} reload={proposals.reload} />)}
+      </details>}
       <Tags tags={tags} revision={fact.revision ?? 1} reload={proposals.reload} />
       {partTags.map(({ part, tags: named }) => <div key={part.id} className="app-stack">
         <p>Tags for this part: <q>{part.text}</q></p>
@@ -78,16 +83,17 @@ function OfferReview({ offer, filenames, reload }: { offer: SemanticOfferReview;
   </article>;
 }
 
-function SplitReview({ split, revision, reload }: { split: FactSplit; revision: number; reload: () => Promise<unknown> }) {
+function SplitReview({ split, revision, reload, hasPartTags = false }: { split: FactSplit; revision: number; reload: () => Promise<unknown>; hasPartTags?: boolean }) {
   const headingId = useId();
   return <div className="app-stack">
-    <h4 id={headingId}>Parts of this line</h4>
+    <h4 id={headingId}>{split.state === "rejected" ? "Parts you rejected" : "Parts of this line"}</h4>
     <ol>{split.parts.map((part) => <li key={part.id}>
       <p>{part.text}</p>
       <span className="rs-meta">{part.kind === "result" ? "Result" : part.kind === "mention" ? "Mention" : "Claim"}
         {part.resultOf ? ` of part ${split.parts.findIndex((candidate) => candidate.id === part.resultOf) + 1}` : ""}
       </span>
     </li>)}</ol>
+    {hasPartTags && <p className="rs-meta">Keeping the line whole also removes the tags on these parts. Restoring the parts keeps those tags removed.</p>}
     <Decision kind="split" judgement={split} revision={revision} reload={reload} describedBy={headingId} />
   </div>;
 }
@@ -117,7 +123,7 @@ function Decision({ kind, judgement, revision, reload, describedBy }: { kind: "s
   return <div className="app-stack">
     <p className="rs-meta">{judgement.state === "confirmed" ? "Confirmed by you" : judgement.state === "rejected" ? "Rejected by you" : "Waiting for your review"}</p>
     <div className="app-inline">
-      <button aria-describedby={describedBy} disabled={action.pending || judgement.state === "confirmed"} onClick={() => void decide("confirmed")}>{kind === "split" ? "Use these parts" : "Confirm tag"}</button>
+      <button aria-describedby={describedBy} disabled={action.pending || judgement.state === "confirmed"} onClick={() => void decide("confirmed")}>{kind === "split" ? judgement.state === "rejected" ? "Use these parts again" : "Use these parts" : "Confirm tag"}</button>
       <button aria-describedby={describedBy} disabled={action.pending || judgement.state === "rejected"} onClick={() => void decide("rejected")}>{kind === "split" ? "Keep line whole" : "Reject tag"}</button>
     </div>
     <ActionError message={action.error} />

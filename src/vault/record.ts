@@ -327,6 +327,14 @@ export class RecordStore {
     return row ? this.splitView(row) : null;
   }
 
+  /** Owner review history only: rejected visible splits, never shadow judgements. */
+  rejectedSplits(factId: string): FactSplit[] {
+    return this.sql.exec<SplitRow>(
+      `SELECT * FROM fact_splits WHERE fact_id = ? AND shadow = 0 AND state = 'rejected' ORDER BY decided_at DESC, created_at DESC, id`,
+      factId,
+    ).toArray().map((row) => this.splitView(row));
+  }
+
   /** The owner accepts a division or turns it down. Turning down one they accepted undoes it. */
   decideSplit(splitId: string, decision: "confirmed" | "rejected"): void {
     this.transaction(() => {

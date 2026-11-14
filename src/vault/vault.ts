@@ -1838,9 +1838,9 @@ export class Vault extends DurableObject<Env> {
       const roleById = new Map(roleRows.map((role) => [role.id, role]));
       const facts = factRows.map((fact) => {
         const split = this.record.split(fact.id);
-        return { fact, split, tags: this.record.tags({ kind: "fact", id: fact.id }),
+        return { fact, split, rejectedSplits: this.record.rejectedSplits(fact.id), tags: this.record.tags({ kind: "fact", id: fact.id }),
           partTags: (split?.parts ?? []).map((part) => ({ part, tags: this.record.tags({ kind: "part", id: part.id }) })).filter((row) => row.tags.length > 0) };
-      }).filter((row) => row.split !== null || row.tags.length > 0 || row.partTags.length > 0);
+      }).filter((row) => row.split !== null || row.rejectedSplits.length > 0 || row.tags.length > 0 || row.partTags.length > 0);
       const roles = roleRows.map((role) => ({ role, tags: this.record.tags({ kind: "role", id: role.id }) })).filter((row) => row.tags.length > 0);
       const offers = this.sql.exec<{ from_id: string }>(
         `SELECT DISTINCT from_id FROM record_links WHERE kind = 'fact' AND proposed_by = 'model' AND shadow = 0 AND relation IN ('same', 'fuller') ORDER BY from_id`,

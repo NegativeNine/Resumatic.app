@@ -15,9 +15,9 @@ const original = settings.RECORD_PROPOSAL_REVIEW_ENABLED;
 const stamp: Stamp = { proposedBy: "model", model: "@cf/test/judge", method: "test-proposal/1", taxonomyVersion: "test-taxonomy-1", confidence: 0.95, shadow: false };
 beforeEach(() => setModels(() => fakeModels()));
 afterEach(() => { setModels(null); settings.RECORD_PROPOSAL_REVIEW_ENABLED = original; });
-function inVault<T>(user: User, work: (record: RecordStore) => T): Promise<T> {
+function inVault<T>(user: User, work: (record: RecordStore, sql: SqlStorage) => T): Promise<T> {
   const session = JSON.parse(new TextDecoder().decode(fromBase64url(user.cookie.slice("__Host-session=".length).split(".")[0]!))) as { vid: string };
-  return runInDurableObject(vault(env, session.vid), (_instance, state) => work(new RecordStore(state.storage.sql, (fn) => state.storage.transactionSync(fn))));
+  return runInDurableObject(vault(env, session.vid), (_instance, state) => work(new RecordStore(state.storage.sql, (fn) => state.storage.transactionSync(fn)), state.storage.sql));
 }
 async function seeded() {
   const user = await signIn();
@@ -82,7 +82,38 @@ describe("gated owner review of existing split and tag proposals", () => {
     row = (await read(user)).facts[0]!;
     expect(row.split).toBeNull(); expect(row.partTags).toEqual([]); expect(row.tags[0]!.state).toBe("rejected");
     expect(row.fact).toEqual(fact);
+    expect(row.rejectedSplits.map((history) => history.id)).toEqual([shown.facts[0]!.split!.id]);
+    const previous = row.rejectedSplits[0]!;
+    expect((await decide(user, "split", previous, fact.revision!, "confirmed")).status).toBe(204);
+    row = (await read(user)).facts[0]!;
+    expect(row.split!.id).toBe(previous.id); expect(row.rejectedSplits).toEqual([]);
+    expect(row.partTags).toEqual([]); expect(row.fact).toEqual(fact);
+
   });
+  it("keeps rejected-only facts in owner history, excludes shadow history and refuses a competing active split", async () => {
+    settings.RECORD_PROPOSAL_REVIEW_ENABLED = "true";
+    const { user, fact, shadowSplitId } = await seeded();
+    const originalSplit = (await read(user)).facts[0]!.split!;
+    expect((await decide(user, "split", originalSplit, fact.revision!, "rejected")).status).toBe(204);
+    await inVault(user, (_record, sql) => {
+      sql.exec(`DELETE FROM record_tags`);
+      sql.exec(`UPDATE fact_splits SET state = 'rejected' WHERE id = ?`, shadowSplitId);
+    });
+    const onlyHistory = (await read(user)).facts;
+    expect(onlyHistory).toHaveLength(1); expect(onlyHistory[0]!.split).toBeNull();
+    expect(onlyHistory[0]!.rejectedSplits.map((split) => split.id)).toEqual([originalSplit.id]);
+    const previous = onlyHistory[0]!.rejectedSplits[0]!;
+    const replacement = await inVault(user, (record) => record.proposeSplit({ factId: fact.id, line: fact.text,
+      parts: [{ kind: "clause", ranges: [[0, fact.text.length]] }, { kind: "mention", ranges: [[fact.text.indexOf("Kubernetes"), fact.text.indexOf("Kubernetes") + "Kubernetes".length]] }], stamp }));
+    expect((await decide(user, "split", previous, fact.revision!, "confirmed")).status).toBe(409);
+    const concurrent = (await read(user)).facts[0]!;
+    expect(concurrent.split!.id).toBe(replacement.splitId); expect(concurrent.rejectedSplits.map((split) => split.id)).toContain(previous.id);
+    expect((await decide(user, "split", concurrent.split!, fact.revision!, "rejected")).status).toBe(204);
+    expect((await decide(user, "split", previous, fact.revision!, "confirmed")).status).toBe(204);
+    const restored = (await read(user)).facts[0]!;
+    expect(restored.split!.id).toBe(previous.id); expect(restored.partTags).toEqual([]);
+  });
+
   it("refuses shadow IDs, another owner's IDs, stale subject revisions and concurrent decisions", async () => {
     settings.RECORD_PROPOSAL_REVIEW_ENABLED = "true";
     const { user, fact, shadowTagId, shadowSplitId } = await seeded();
