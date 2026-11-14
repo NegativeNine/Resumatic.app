@@ -321,8 +321,8 @@ describe("reading with shadow tagging switched on", () => {
       const result = await reported(instance!);
       expect(result).toEqual(WHOLE);
       const leaves = (value: unknown): unknown[] => (value !== null && typeof value === "object" ? Object.values(value).flatMap(leaves) : [value]);
-      // Sixteen for the word-for-word part, and eight for the vector part, which did not run.
-      expect(leaves(result).map((leaf) => typeof leaf)).toEqual(Array(24).fill("number"));
+      // Eighteen for the word-for-word/part/requirement counts, and eight for the vector part, which did not run.
+      expect(leaves(result).map((leaf) => typeof leaf)).toEqual(Array(26).fill("number"));
     } finally {
       await reading.dispose();
     }
@@ -983,7 +983,7 @@ describe("what a reading may ask of a vault", () => {
         ["more tags than an upload can have", made, Array.from({ length: MAX_TAGS_PER_SAVE + 1 }, () => KUBERNETES_TAG), "invalid: too many tags for one upload"],
         ["a method that is not one of the three", made, [SQL_TAG, { ...KUBERNETES_TAG, method: "vector-judge/2" as ProposedTag["method"] }], "invalid: unknown tagging method"],
         ["no method", made, [{ ...KUBERNETES_TAG, method: undefined as unknown as ProposedTag["method"] }], "invalid: unknown tagging method"],
-        ["a part of a line", made, [SQL_TAG, { ...KUBERNETES_TAG, subject: { kind: "part" as "fact", id: "fact-kubernetes" } }], "invalid: tags are proposed for facts and job roles"],
+        ["a part without its parent guards", made, [SQL_TAG, { ...KUBERNETES_TAG, subject: { kind: "part" as "fact", id: "fact-kubernetes" } }], "invalid: part tags require their current parent and split"],
         ["a subject with no ID", made, [{ ...KUBERNETES_TAG, subject: { kind: "fact", id: 7 as unknown as string } }], "invalid: tags are proposed for facts and job roles"],
         ["something that is not a list", made, { length: 1 } as unknown as ProposedTag[], "invalid: tags are proposed for facts and job roles"],
         ["a judge with no name", { ...made, model: "" }, [SQL_TAG], "invalid: a model's judgement names the model"],

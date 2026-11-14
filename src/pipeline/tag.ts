@@ -68,7 +68,14 @@ export const TAG_RULE_METHOD = "mention-label/1";
  * them raises it.
  */
 export const TAG_VECTOR_METHOD = "vector-judge/1";
-export type TagMethod = typeof TAG_JUDGE_METHOD | typeof TAG_RULE_METHOD | typeof TAG_VECTOR_METHOD;
+export const TAG_PART_JUDGE_METHOD = "part-judge/1";
+export const TAG_PART_VECTOR_METHOD = "part-vector/1";
+export const TAG_REQUIREMENT_JUDGE_METHOD = "requirement-judge/1";
+export const TAG_REQUIREMENT_VECTOR_METHOD = "requirement-vector/1";
+export type TagMethod = typeof TAG_JUDGE_METHOD | typeof TAG_RULE_METHOD | typeof TAG_VECTOR_METHOD |
+  typeof TAG_PART_JUDGE_METHOD | typeof TAG_PART_VECTOR_METHOD | typeof TAG_REQUIREMENT_JUDGE_METHOD | typeof TAG_REQUIREMENT_VECTOR_METHOD;
+type JudgeTagMethod = Exclude<TagMethod, typeof TAG_RULE_METHOD>;
+export const TAG_RUN_DEADLINE_MS = 120_000;
 
 export const MAX_TAG_ROLES = 20;
 export const MAX_TAG_FACTS = 120;
@@ -121,25 +128,38 @@ export interface HeldTag {
   own: boolean;
 }
 
+/** A part stays tied to the exact parent revision and split that supplied its words. */
+export interface PartTagContext {
+  factId: string;
+  revision: number;
+  splitId: string;
+  line: string;
+  kind: "clause" | "result" | "mention";
+}
+export interface TagFactSubject {
+  id: string;
+  roleId: string | null;
+  kind: string;
+  text: string;
+  asWritten: boolean;
+  held: HeldTag[];
+  /** Present only for derived parts. Mention-only parts are never claims and never tagged. */
+  part?: PartTagContext;
+  /** Used only by the ephemeral requirement helper; never persisted as person tags. */
+  requirement?: boolean;
+}
 /** What one upload has to tag, as the vault reads it for the run. */
 export interface TagSubjects {
   roles: { id: string; title: string; held: HeldTag[] }[];
-  facts: {
-    id: string;
-    roleId: string | null;
-    kind: string;
-    text: string;
-    /** For a skill: its text is, character for character, one whole item of the line it was read from. */
-    asWritten: boolean;
-    held: HeldTag[];
-  }[];
-  /** How many job roles and facts the upload has in all. `roles` and `facts` are the first of them. */
-  total: { roles: number; facts: number };
+  facts: TagFactSubject[];
+  parts?: TagFactSubject[];
+  total: { roles: number; facts: number; parts?: number };
 }
 
 /** A tag that was decided, for the caller to keep. */
 export interface ProposedTag {
-  subject: { kind: "fact" | "role"; id: string };
+  subject: { kind: "fact" | "role" | "part" | "requirement"; id: string };
+  parent?: PartTagContext;
   /** The fact's text or the job's title as it was decided about. A tag is kept only while the row still says exactly this. */
   words: string;
   conceptId: string;
@@ -153,6 +173,8 @@ export interface TagReport {
   /** Job roles and facts whose words were looked through. */
   roles: number;
   facts: number;
+  parts: number;
+  requirements: number;
   /** Candidates kept once each role and each fact was cut to as many as it may have. */
   candidates: number;
   /** Candidates whose row already holds the tag from the same decider: not asked about, not proposed. */
@@ -207,7 +229,7 @@ export interface VectorReport {
 
 export function emptyTagReport(): TagReport {
   return {
-    roles: 0, facts: 0, candidates: 0, known: 0, carried: 0, byRule: 0, asked: 0, yes: 0, stored: 0, refused: 0, withheld: 0,
+    roles: 0, facts: 0, parts: 0, requirements: 0, candidates: 0, known: 0, carried: 0, byRule: 0, asked: 0, yes: 0, stored: 0, refused: 0, withheld: 0,
     left: { subjects: 0, words: 0, per_role: 0, per_fact: 0, per_upload: 0 },
     vector: { subjects: 0, withheld: 0, candidates: 0, known: 0, carried: 0, asked: 0, yes: 0, left: 0 },
   };
@@ -268,7 +290,8 @@ const ASKS: Record<TagKind, string> = {
 };
 
 /** What a question is asked of: a fact's kind and words, or a job's title. */
-export type TagQuestionSubject = { kind: "fact"; factKind: string; text: string } | { kind: "role"; title: string };
+export type TagQuestionSubject = { kind: "fact"; factKind: string; text: string } | { kind: "role"; title: string } |
+  { kind: "part"; text: string; parent: PartTagContext } | { kind: "requirement"; text: string };
 
 /**
  * One candidate as a question in the form the judge already answers: is this line supported by
@@ -279,6 +302,14 @@ export type TagQuestionSubject = { kind: "fact"; factKind: string; text: string 
  */
 export function tagQuestion(alias: string, subject: TagQuestionSubject, concept: { kind: TagKind; label: string; matched: string }): JudgeItem {
   const also = normalizeLabel(concept.label) === normalizeLabel(concept.matched) ? "" : ` (also called ${concept.matched})`;
+  if (subject.kind === "part") return { alias,
+    text: `${ASKS[concept.kind]}: ${concept.label}${also}, as demonstrated by this standalone part`,
+    facts: [{ text: subject.text, quote: null }],
+  };
+  if (subject.kind === "requirement") return { alias,
+    text: `The job posting asks the applicant to demonstrate: ${ASKS[concept.kind]}: ${concept.label}${also}`,
+    facts: [{ text: `Job requirement, not an applicant's experience: ${subject.text}`, quote: null }],
+  };
   const said =
     subject.kind === "role"
       ? `Job title: ${subject.title}`
@@ -304,7 +335,7 @@ interface Candidate {
   weak: boolean;
   at: number;
   /** What a yes about it is stamped with: a label found word for word, or a concept near the words in the vector index. */
-  method: typeof TAG_JUDGE_METHOD | typeof TAG_VECTOR_METHOD;
+  method: JudgeTagMethod;
 }
 
 type Found = Omit<Candidate, "kind" | "label" | "method">;
@@ -350,6 +381,12 @@ function holds(held: readonly HeldTag[], conceptId: string, method: TagMethod, m
 type RoleRow = TagSubjects["roles"][number];
 type FactRow = TagSubjects["facts"][number];
 
+function rowMethod(row: RoleRow | FactRow, vector: boolean): JudgeTagMethod {
+  if (!("title" in row) && row.part) return vector ? TAG_PART_VECTOR_METHOD : TAG_PART_JUDGE_METHOD;
+  if (!("title" in row) && row.requirement) return vector ? TAG_REQUIREMENT_VECTOR_METHOD : TAG_REQUIREMENT_JUDGE_METHOD;
+  return vector ? TAG_VECTOR_METHOD : TAG_JUDGE_METHOD;
+}
+
 /** One wording put to the judge once: what it is asked of, the candidate, and every row that takes the answer. */
 interface Question {
   subject: TagQuestionSubject;
@@ -370,6 +407,10 @@ export interface TagOptions {
   now?: () => number;
   /** Resolves after `ms`. The vector part's reads race it. */
   wait?: (ms: number) => Promise<void>;
+  /** May shorten, never extend, the one shared run deadline. */
+  deadlineMs?: number;
+  /** Internal counts/IDs only, for per-requirement unknown reasons. No text is exposed here. */
+  observe?: { candidates?: (id: string, count: number, capped: boolean) => void; asked?: (id: string) => void; capped?: (id: string) => void };
 }
 
 /**
@@ -400,20 +441,33 @@ export async function tagUpload(
   const now = opts.now ?? Date.now;
   const start = now();
   const report = emptyTagReport();
-  const asking = asker(models, keep, marked, report);
+  const deadlineMs = Number.isFinite(opts.deadlineMs ?? TAG_RUN_DEADLINE_MS) ? Math.min(TAG_RUN_DEADLINE_MS, Math.max(0, opts.deadlineMs ?? TAG_RUN_DEADLINE_MS)) : 0;
+  const check = () => { if (now() - start >= deadlineMs) throw new Late(); };
+  const timed = async <T>(work: () => Promise<T>): Promise<T> => { check(); const value = await work(); check(); return value; };
+  const reads: TagReads = {
+    mentions: (...args) => timed(() => taxonomy.mentions(...args)), lookup: (...args) => timed(() => taxonomy.lookup(...args)),
+    get: (...args) => timed(() => taxonomy.get(...args)), profile: (...args) => timed(() => taxonomy.profile(...args)),
+  };
+  const asking = asker(models, keep, marked, report, check, opts.observe);
   let read: WordForWord | null = null;
   try {
-    read = await tag(taxonomy, subjects, made, asking, report);
+    read = await tag(reads, subjects, made, asking, report, opts.observe);
   } catch (error) {
     // A code and nothing else: an error's own words can hold a line, a title or a provider's text.
-    report.failed = errorCode(error) ?? "error";
+    report.failed = error instanceof Late ? "timeout" : errorCode(error) ?? "error";
   }
   if (read && opts.vectors)
     try {
-      await byVector(opts.vectors, read, made, asking, marked, report, { start, now, wait: opts.wait });
+      await byVector(async () => {
+        const opened = await timed(opts.vectors!);
+        return "skipped" in opened ? opened : { vectors: {
+          queries: (...args) => timed(() => opened.vectors.queries(...args)),
+          nearest: (...args) => timed(() => opened.vectors.nearest(...args)),
+        } satisfies VectorReads };
+      }, read, made, asking, marked, report, { start, now, wait: opts.wait }, opts.observe);
     } catch (error) {
       // Every word-for-word tag was kept before this began, so they stand.
-      report.vector.failed = errorCode(error) ?? "error";
+      report.vector.failed = error instanceof Late ? "timeout" : errorCode(error) ?? "error";
     }
   return report;
 }
@@ -438,9 +492,10 @@ interface Asker {
   ask(questions: Question[], answered?: (question: Question) => void, also?: { asked: number; yes: number }): Promise<void>;
 }
 
-function asker(models: Models, keep: Keep, marked: Marked, report: TagReport): Asker {
+function asker(models: Models, keep: Keep, marked: Marked, report: TagReport, check: () => void, observe?: TagOptions["observe"]): Asker {
   const kept = async (tags: ProposedTag[]): Promise<void> => {
     if (tags.length === 0) return;
+    check();
     const { stored, refused } = await keep(tags);
     report.stored += stored;
     report.refused += refused;
@@ -448,7 +503,7 @@ function asker(models: Models, keep: Keep, marked: Marked, report: TagReport): A
   const proposal = (row: RoleRow | FactRow, candidate: Candidate, method: TagMethod): ProposedTag =>
     "title" in row
       ? { subject: { kind: "role", id: row.id }, words: row.title, conceptId: candidate.conceptId, conceptKind: candidate.kind, label: candidate.label, method }
-      : { subject: { kind: "fact", id: row.id }, words: row.text, conceptId: candidate.conceptId, conceptKind: candidate.kind, label: candidate.label, method };
+      : { subject: { kind: row.part ? "part" : row.requirement ? "requirement" : "fact", id: row.id }, ...(row.part ? { parent: row.part } : {}), words: row.text, conceptId: candidate.conceptId, conceptKind: candidate.kind, label: candidate.label, method };
 
   // One wording is one question, whichever rows say it: the kind of subject, a fact's kind, the
   // words, the concept and where the candidate came from. Every row with that wording takes the answer.
@@ -459,8 +514,8 @@ function asker(models: Models, keep: Keep, marked: Marked, report: TagReport): A
     return {
       list,
       add(row, candidate) {
-        const subject: TagQuestionSubject = "title" in row ? { kind: "role", title: row.title } : { kind: "fact", factKind: row.kind, text: row.text };
-        const key = JSON.stringify("title" in row ? ["role", null, row.title, candidate.conceptId, candidate.method] : ["fact", row.kind, row.text, candidate.conceptId, candidate.method]);
+        const subject: TagQuestionSubject = "title" in row ? { kind: "role", title: row.title } : row.part ? { kind: "part", text: row.text, parent: row.part } : row.requirement ? { kind: "requirement", text: row.text } : { kind: "fact", factKind: row.kind, text: row.text };
+        const key = JSON.stringify("title" in row ? ["role", null, row.title, candidate.conceptId, candidate.method] : [row.part ? "part" : row.requirement ? "requirement" : "fact", row.kind, row.text, candidate.conceptId, candidate.method, row.part?.line ?? null, row.part?.kind ?? null]);
         const known = byKey.get(key);
         if (known) known.rows.push(row);
         else {
@@ -477,11 +532,13 @@ function asker(models: Models, keep: Keep, marked: Marked, report: TagReport): A
    * call after it. A job's title cannot be marked, and a call about jobs alone asks nothing here.
    */
   const unmarked = async (questions: Question[]): Promise<Question[]> => {
-    const ids = [...new Set(questions.flatMap((question) => question.rows.flatMap((row) => ("title" in row ? [] : [row.id]))))];
+    const ids = [...new Set(questions.flatMap((question) => question.rows.flatMap((row) => ("title" in row ? [] : [row.part?.factId ?? row.id]))))];
     if (ids.length === 0) return questions;
+    check();
     const now = await markedNow(marked, ids);
+    check();
     return questions.flatMap((question) => {
-      const rows = question.rows.filter((row) => "title" in row || !now.has(row.id));
+      const rows = question.rows.filter((row) => "title" in row || !now.has(row.part?.factId ?? row.id));
       report.withheld += question.rows.length - rows.length;
       return rows.length ? [{ ...question, rows }] : [];
     });
@@ -492,9 +549,12 @@ function asker(models: Models, keep: Keep, marked: Marked, report: TagReport): A
       if (still.length === 0) continue;
       const batch = still.map((question) => ({ question, item: tagQuestion(`T${++asked}`, question.subject, question.candidate) }));
       const items = batch.map(({ item }) => item);
+      for (const question of still) for (const row of question.rows) observe?.asked?.(row.id);
       report.asked += items.length;
       if (also) also.asked += items.length;
+      check();
       const out = models.judge ? await models.judge(items) : await models.complete("judge", judgePrompt(items), JudgeOut);
+      check();
       // This call's answers and no other's: they are read only for the questions this call
       // asked, so one call never answers for another and a reply cannot bring in a concept of
       // its own. Two answers for one question are no answer, whatever either says. The reason
@@ -526,11 +586,12 @@ async function markedNow(marked: Marked, ids: string[]): Promise<Set<unknown>> {
   return new Set<unknown>(answer);
 }
 
-async function tag(taxonomy: TagReads, subjects: TagSubjects, made: TagMade, asking: Asker, report: TagReport): Promise<WordForWord> {
+async function tag(taxonomy: TagReads, subjects: TagSubjects, made: TagMade, asking: Asker, report: TagReport, observe?: TagOptions["observe"]): Promise<WordForWord> {
   const firstRoles = subjects.roles.slice(0, MAX_TAG_ROLES);
-  const firstFacts = subjects.facts.slice(0, MAX_TAG_FACTS);
+  const allFacts = [...subjects.facts, ...(subjects.parts ?? [])].filter((row) => !row.part || row.part.kind !== "mention");
+  const firstFacts = allFacts.slice(0, MAX_TAG_FACTS);
   report.left.subjects =
-    Math.max(subjects.total.roles, subjects.roles.length) - firstRoles.length + Math.max(subjects.total.facts, subjects.facts.length) - firstFacts.length;
+    Math.max(subjects.total.roles, subjects.roles.length) - firstRoles.length + Math.max(subjects.total.facts, subjects.facts.length) + Math.max(subjects.total.parts ?? 0, subjects.parts?.length ?? 0) - firstFacts.length;
 
   // Every read of the taxonomy comes first, one after another, so a taxonomy that cannot be
   // read ends the run before anything is asked or stored.
@@ -559,7 +620,7 @@ async function tag(taxonomy: TagReads, subjects: TagSubjects, made: TagMade, ask
   for (const fact of firstFacts) {
     if (!within(fact.text)) continue;
     found.set(fact, await taxonomy.mentions(fact.text, { kinds: FACT_TAG_KINDS }));
-    report.facts++;
+    if (fact.part) report.parts++; else if (fact.requirement) report.requirements++; else report.facts++;
   }
   const roles = firstRoles.filter((role) => found.has(role));
   const facts = firstFacts.filter((fact) => found.has(fact));
@@ -569,6 +630,7 @@ async function tag(taxonomy: TagReads, subjects: TagSubjects, made: TagMade, ask
   // and the rule stands only if that gives its one concept and no other.
   const ruled = new Set<FactRow>();
   for (const fact of facts) {
+    if (fact.part || fact.requirement) continue;
     const concept = skillRule(fact, found.get(fact)!);
     if (!concept) continue;
     const carriers = await taxonomy.lookup(fact.text);
@@ -584,7 +646,7 @@ async function tag(taxonomy: TagReads, subjects: TagSubjects, made: TagMade, ask
     strongest(found.get(row)!).flatMap((entry) => {
       const record = records.get(entry.conceptId);
       const kind = kinds.find((allowed) => allowed === record?.kind);
-      return record && kind ? [{ ...entry, kind, label: record.label, method: TAG_JUDGE_METHOD }] : [];
+      return record && kind ? [{ ...entry, kind, label: record.label, method: rowMethod(row, false) }] : [];
     });
 
   const roleCandidates = roles.map((role) => {
@@ -662,21 +724,22 @@ async function tag(taxonomy: TagReads, subjects: TagSubjects, made: TagMade, ask
     const likely = (candidate: Candidate) => involved.some((profile) => profile.has(candidate.conceptId));
     const all = candidatesOf(fact, FACT_TAG_KINDS);
     const ordered = involved.length ? [...all.filter(likely), ...all.filter((candidate) => !likely(candidate))] : all;
+    observe?.candidates?.(fact.id, ordered.length, ordered.length > MAX_FACT_CANDIDATES);
     report.left.per_fact += Math.max(0, ordered.length - MAX_FACT_CANDIDATES);
     for (const candidate of ordered.slice(0, MAX_FACT_CANDIDATES)) {
       report.candidates++;
-      const held = holds(fact.held, candidate.conceptId, TAG_JUDGE_METHOD, made);
+      const held = holds(fact.held, candidate.conceptId, candidate.method, made);
       if (held === "own") report.known++;
       else if (held === "other") {
         report.carried++;
-        carried.push(proposal(fact, candidate, TAG_JUDGE_METHOD));
+        carried.push(proposal(fact, candidate, candidate.method));
       } else aboutFacts.add(fact, candidate);
     }
   }
   await kept(carried);
   // Facts take the questions that roles left.
   const room = MAX_TAG_QUESTIONS - roleQuestions.length;
-  for (const question of aboutFacts.list.slice(room)) report.left.per_upload += question.rows.length;
+  for (const question of aboutFacts.list.slice(room)) { report.left.per_upload += question.rows.length; for (const row of question.rows) observe?.capped?.(row.id); }
   await ask(aboutFacts.list.slice(0, room));
   return { roles, facts, found, ruled };
 }
@@ -704,6 +767,7 @@ async function byVector(
   marked: Marked,
   whole: TagReport,
   clock: { start: number; now: () => number; wait?: (ms: number) => Promise<void> },
+  observe?: TagOptions["observe"],
 ): Promise<void> {
   const report = whole.vector;
   if (clock.now() - clock.start > VECTOR_START_BY_MS) {
@@ -724,7 +788,7 @@ async function byVector(
     if (late) throw new Late();
     return value;
   };
-  const reads = vectorReads(open, read, marked, report, send);
+  const reads = vectorReads(open, read, marked, report, send, observe);
   // Whatever the reads do once they have lost the race, nothing waits for it.
   reads.catch(() => {});
   let found: Awaited<typeof reads> | "timeout";
@@ -749,17 +813,17 @@ async function byVector(
     const about = wordings();
     for (const { row, candidates } of rows)
       for (const candidate of candidates) {
-        const held = holds(row.held, candidate.conceptId, TAG_VECTOR_METHOD, made);
+        const held = holds(row.held, candidate.conceptId, candidate.method, made);
         if (held === "own") report.known++;
         else if (held === "other") {
           report.carried++;
-          carried.push(proposal(row, candidate, TAG_VECTOR_METHOD));
+          carried.push(proposal(row, candidate, candidate.method));
         } else about.add(row, candidate);
       }
     await kept(carried);
     // The questions the word-for-word part left, and no more.
     const room = Math.max(0, MAX_TAG_QUESTIONS - whole.asked);
-    for (const question of about.list.slice(room)) whole.left.per_upload += question.rows.length;
+    for (const question of about.list.slice(room)) { whole.left.per_upload += question.rows.length; for (const row of question.rows) observe?.capped?.(row.id); }
     await ask(about.list.slice(0, room), () => {}, report);
   }
 }
@@ -784,6 +848,7 @@ async function vectorReads(
   marked: Marked,
   report: VectorReport,
   send: <T>(call: () => Promise<T>) => Promise<T>,
+  observe?: TagOptions["observe"],
 ): Promise<{ roles: VectorRow[]; facts: VectorRow[] } | null> {
   const index = await send(open);
   if ("skipped" in index) {
@@ -808,8 +873,8 @@ async function vectorReads(
   const unruled = read.facts.filter((fact) => !read.ruled.has(fact));
   for (let at = 0; at < unruled.length; at += VECTOR_EMBED_CHUNK) {
     const chunk = unruled.slice(at, at + VECTOR_EMBED_CHUNK);
-    const now = await send(() => markedNow(marked, chunk.map((fact) => fact.id)));
-    const still = chunk.filter((fact) => !now.has(fact.id));
+    const now = await send(() => markedNow(marked, chunk.map((fact) => fact.part?.factId ?? fact.id)));
+    const still = chunk.filter((fact) => !now.has(fact.part?.factId ?? fact.id));
     report.withheld += chunk.length - still.length;
     await embed(still.map((fact) => fact.text));
     facts.push(...still);
@@ -847,9 +912,10 @@ async function vectorReads(
       const kind = entry.kinds.find((allowed) => allowed === concept.kind);
       return kind && concept.score >= VECTOR_MIN_SCORE && !named.has(concept.id) ? [{ ...concept, kind }] : [];
     });
+    observe?.candidates?.(entry.row.id, above.length, above.length > entry.cap);
     report.left += Math.max(0, above.length - entry.cap);
     const candidates = above.slice(0, entry.cap).map(
-      (concept, rank): Candidate => ({ conceptId: concept.id, kind: concept.kind, label: concept.label, matched: concept.label, type: "preferred", weak: false, at: rank, method: TAG_VECTOR_METHOD }),
+      (concept, rank): Candidate => ({ conceptId: concept.id, kind: concept.kind, label: concept.label, matched: concept.label, type: "preferred", weak: false, at: rank, method: rowMethod(entry.row, true) }),
     );
     report.candidates += candidates.length;
     ("title" in entry.row ? roles : kept).push({ row: entry.row, candidates });

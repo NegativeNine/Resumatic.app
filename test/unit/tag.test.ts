@@ -1321,12 +1321,10 @@ describe("vector candidates", () => {
     let clock = 1_000;
     const { report } = await runNear(upload([], [fact("line", SPENT)]), {
       vectors: opened,
-      // The run begins, then everything word for word takes a little over ninety seconds.
-      now: () => {
-        const at = clock;
-        clock += VECTOR_START_BY_MS + 1;
-        return at;
-      },
+      // The reads finish after a little over ninety seconds, independently of how
+      // many times the shared deadline checks read the clock.
+      now: () => clock,
+      observe: { candidates: () => { clock = 1_000 + VECTOR_START_BY_MS + 1; } },
     });
     expect(opened).not.toHaveBeenCalled();
     expect(report.vector).toEqual({ ...emptyTagReport().vector, skipped: "late" });

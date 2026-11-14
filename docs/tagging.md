@@ -1,10 +1,10 @@
-# Tagging facts and roles with taxonomy concepts
+# Tagging facts, parts, roles and job requirements with taxonomy concepts
 
 A line of experience shows things the [taxonomy](taxonomy.md) has names for: software it uses, something it knows, a kind of work it does. A job has an occupation. This document describes how a fact or a job is given those names as tags, and what stops a tag from saying anything the person's own words don't.
 
-It is step 5 of the [pipeline design](taxonomy-pipelines-design.md), for facts and job roles, from labels found word for word and from concepts near the words in the taxonomy's vector index. The code is `src/pipeline/tag.ts`. What a tag is stored as is in [record.md](record.md).
+It is step 5 of the [pipeline design](taxonomy-pipelines-design.md), for facts, verified parts and job roles, from labels found word for word and from concepts near the words in the taxonomy's vector index. The shared engine is `src/pipeline/tag.ts`; `src/pipeline/requirement-tags.ts` applies its closed candidates and bounds to job requirements without making claims about the person. What a person tag is stored as is in [record.md](record.md).
 
-**Status: the tagger exists and is tested with stand-in models and a made-up taxonomy. It runs only where `TAG_SHADOW_ENABLED` is `"true"` and a taxonomy is bound and wholly loaded, which is nowhere. Vector candidates are built too, and are tested with a stand-in embedding and an index in memory; the [real reference index is now built and structurally verified on staging](taxonomy-index-2026-11-14.json), while vector-candidate quality remains unmeasured. The full evaluation and real vector-candidate quality have not been measured. The focused real-judge smoke failed its positive tagging control (see below).**
+**Status: the tagger exists and is tested with stand-in models and a made-up taxonomy. Upload tagging runs only where `TAG_SHADOW_ENABLED` is `"true"` and a taxonomy is bound and wholly loaded. That upload switch remains off in every checked-in environment. Part tagging additionally needs verified shadow splits from `SPLIT_SHADOW_ENABLED`, also off. The reference taxonomy and [vector index are built and structurally verified in staging](taxonomy-index-2026-11-14.json), independently of these upload stages. The focused real-judge smoke failed its positive tagging control (see below); full real-model and vector-candidate quality remain unmeasured. Building the part and requirement paths does not enable them or establish their accuracy; their new judge methods still need measurement before release.**
 
 ## Candidates
 
@@ -14,6 +14,8 @@ A candidate is one of the taxonomy's own concepts whose label stands, word for w
 | --- | --- | --- |
 | A job the reading proposed, with a title | The title | Occupations only, ESCO's and O\*NET's, by any of their labels. O\*NET's job titles are among them |
 | A fact the reading proposed | Its text | Skills, knowledge and their groups; work activities; software and its categories. Never an occupation |
+| A verified standalone clause or result in a shadow split | Only that part's exact words | The same kinds as a fact; never an occupation. A mention-only part gets no candidates |
+| A job requirement | The requirement's exact original text | The same kinds as a fact, interpreted as what the posting asks for, never as the person's experience |
 | Either | The same words | Concepts near the words in meaning, from the vector index: two for a job, three for a fact, at a similarity of 0.5 or more, never one any label in the words names |
 
 - **An occupation named in a line is not a candidate for the fact.** "Reported to the IT project manager" names someone else's occupation. A job's occupation comes from its title alone. A course, a project or volunteering is given none, and neither are the groups above occupations, whose names are not job titles.
@@ -28,6 +30,8 @@ A candidate is one of the taxonomy's own concepts whose label stands, word for w
 | The one concept a listed skill names, under the rule below | The rule. No model is asked | `mention-label/1`, by a rule |
 | Every other candidate, firm or weak | The judge | `mention-judge/1`, with the judge's model |
 | A vector candidate | The judge | `vector-judge/1` |
+| A candidate in a verified clause or result | The judge, using only the part as evidence | `part-judge/1`, or `part-vector/1` for a vector candidate |
+| A candidate in a job requirement | The judge, asking what the posting requires | `requirement-judge/1`, or `requirement-vector/1` for a vector candidate |
 
 A method names where a candidate came from, a label found in the subject's own words or a concept near them in the vector index, and what decided it. Its number is raised when its rule or the questions below change. For `vector-judge/1` it is also raised when the lookup's setup changes: the embedding model, its instruction, the form a concept is embedded in, the floor, the caps or how many concepts are asked for. Every tag also carries the taxonomy version it was made against.
 
@@ -46,6 +50,26 @@ The judge is asked in the form it already answers: is this line supported by thi
 `<label>` is the preferred label, followed by ` (also called <the label that was found>)` when the two are not the same label. The fact is the fact's text, after `Skill: ` or `Credential: ` for those kinds, or `Job title: ` and the title. The judge is shown a short alias for each question and no ID of a fact, a role or a concept.
 
 A tag needs exactly one "supported" for its question, from the call that asked it. "Unsupported", "overstated", no answer, two answers, and an answer to a question the call did not ask all leave no tag, for a firm label as for a weak one. The judge's own bar is the bar: the chat judge is told that doubt is not support, and the typed-decision judge says "supported" only at 0.8 or above. One wording is asked once, and every row with it takes the answer. A wording is the kind of subject, a fact's kind, the words and the concept.
+
+## Parts retain their parent without borrowing its evidence
+
+The upload's existing tag stage reads verified shadow splits after splitting. Only standalone clauses and results can be tagged. A part that merely names `Python` is a mention, not a claim that the person used it, and is excluded before lookup. Parts always need the judge, including a part whose words happen to be a listed-skill label.
+
+For a part, the hypothesis adds `as demonstrated by this standalone part` to the fixed concept question. The sole evidence is the part's exact text, with no source quote. The parent line is never supplied as another supporting fact: `Wrote the runbooks` cannot acquire a Python tag because a sibling says `deployed Python services`. If support needs that context, the part remains untagged. The original whole line is still available as its own subject and remains the record and citation.
+
+A proposed part tag carries its parent fact ID and revision, exact line, split ID and part kind. The vault verifies all of them against the current upload run before storing a shadow tag. An edited parent, replaced or rejected split, another upload's part, or changed part words leave no tag. The parent's privacy and sensitive-line inheritance apply both when candidates are read, before later judge and embedding calls, and again at the write. A mark arriving during a call prevents its result from being stored. Part judgements carry their own methods and are never filled from a whole-line tag or another part's cached tag.
+
+Parts share the upload's existing bounds: whole facts take their places first, then eligible parts fill the remaining slots within 120 fact/part subjects. They also share the 3,000 words, 120 questions and one 120-second engine deadline, including vector work. Splitting a line never starts another tag budget.
+
+The engine checks that shared deadline before each read, call and write, and after awaited reads and judge answers. It starts no further work once time is spent, and a late judge answer is not stored. The underlying call still has its own timeout while in flight; the upload stage also retains its outer three-minute limit.
+
+## Requirement concepts describe the job
+
+`tagRequirements(models, taxonomy, requirements, made, options)` returns a versioned `RequirementTagging` snapshot. Each input keeps its exact ID, text and order, even if its concepts remain unknown. The helper examines at most 25 requirements of at most 300 characters each, with the same shared word, question and deadline bounds. It accepts only the taxonomy's closed candidates and the judge's supported decisions; there is no listed-skill rule for a requirement.
+
+The hypothesis says `The job posting asks the applicant to demonstrate: …`, and its evidence explicitly identifies the original text as a job requirement rather than the applicant's experience. A result is a retrieval hint about the posting. It never asserts that the person has a skill, or that an untagged requirement means missing experience. Entries with no accepted concept remain `unknown`, with a reason such as `no_candidate`, `declined`, `capped` or `failed`.
+
+This helper writes no person tags, taxonomy data or new vault tables. Its caller captures the returned model, taxonomy version, exact requirement entries, methods and counts in its immutable analysis or selection snapshot. That keeps a run's requirement hints tied to the posting it actually considered, without mixing them into exports or sharing as person evidence. The later selection stage owns its release gate; adding this helper enables no pipeline stage.
 
 ## The rule
 
@@ -102,7 +126,7 @@ Where `TAXONOMY_VECTORS` holds a complete index of this taxonomy version, each t
 - Its result is counted in the stage's `vector`, with a code when it did not run (`late`, `unbound`, `not_ready`, `unreadable`) or ended early (`timeout`, or the failure's own code). Word-for-word tags were kept before it began, and stay.
 
 - It first asks the taxonomy which version it is. A database with nothing in it, one loaded part of the way, or one that cannot be reached ends the stage there.
-- It tags this upload's rows only: its first 20 jobs and first 120 facts, as the reading proposed them. A fact its owner has marked sensitive when the stage starts is left out before the cap, so its words go neither to the taxonomy's database nor to the judge. Words already marked arrive marked, so a second upload of a marked line is left out too.
+- It tags this upload's rows only: its first 20 jobs and first 120 facts and eligible parts together, as the reading proposed them. A fact its owner has marked sensitive when the stage starts is left out before the cap, along with all its parts, so their words go neither to the taxonomy's database nor to the judge. Words already marked arrive marked, so a second upload of a marked line is left out too.
 - **A line marked while the stage runs is asked about no more, and keeps no tag.** Before every judge call about facts the stage asks the vault which of them are marked now, and leaves their questions out; a call left with nothing is not sent. The vault reads the mark again as it stores each tag, and stores none for a marked fact. Three things are not undone: the lookups in the taxonomy's database, which all come at the start of the stage, a judge call already under way when the mark lands, and an embedding call of the vector part being reserved or sent when it lands. With the typed-decision judge a call of up to 20 questions goes out four at a time, so the rest of that call still goes out. The stage's result counts the candidates left out as `withheld`.
 - **Every word-for-word read of the taxonomy comes before anything is asked or stored.** A taxonomy that cannot be read ends the stage with nothing asked and nothing kept. The vector part reads only after the last word-for-word tag is kept, and its failure ends only itself.
 - **Tags are stored as they are decided:** the rule's tags, then each judge call's answers, roles before facts. A failed call, a refused reservation or running out of time ends the stage, and what was stored stays. A tag stands alone, unlike a division or an offer, so nothing is gained by discarding answers already paid for.
@@ -125,6 +149,7 @@ Whatever is over a cap is left untagged, which means unknown. The stage's result
 | --- | --- | --- |
 | Jobs in one upload | 20 | More jobs than a resume lists |
 | Facts in one upload | 120 | A long resume's lines and skills |
+| Verified parts | What remains of the same 120 fact/part subjects | Whole lines keep priority; a split opens no new budget |
 | Words looked through | 3,000 | Six lookups a word, 74 to a D1 statement: under 400 statements |
 | Candidates for one job | 4 | Two labels in a title, each in both sources |
 | Candidates for one fact | 6 | Three things in a line, each in both sources |
@@ -138,6 +163,8 @@ Whatever is over a cap is left untagged, which means unknown. The stage's result
 | Texts in one embedding call | 50 | |
 | The vector part's reads | 30 seconds | So a lookup that hangs cannot hold the stage's one try |
 | The vector part's start | 90 seconds into the stage | After it, there is no time left to ask about what it finds |
+| Shared engine deadline | 120 seconds | All subjects, taxonomy reads, judge calls and vector work share one clock |
+| Job requirements in one helper call | 25, at most 300 characters each | The analysis schema's bounds; every other entry remains unknown |
 
 The row that would take the words looked through past 3,000 is left, and so is every row after it. A cut to four or six is made before anything already decided is taken out, so a reading that is retried considers the same candidates. Roles are asked about first, in calls of 20 questions: seven calls at most for the chat judge, or 120 typed decisions.
 
@@ -145,14 +172,13 @@ These numbers come from arithmetic, not from measurement. Vector questions take 
 
 ## What is not built
 
-- **Tags on parts of a line.** A part gets none yet ([splitting.md](splitting.md)).
-- **Tags on postings** and their requirements.
-- **Live review of model tags.** Owner review of existing non-shadow tags is built in #40 behind `RECORD_PROPOSAL_REVIEW_ENABLED`, off everywhere. Shadow tags remain hidden and the pipeline creates no non-shadow proposals. Measurement is required before this screen is enabled.
-- **Any use of tags:** matching and coverage by concept, years per skill, and anything shown to someone other than its owner. A reading tags every fact it proposed that is not marked sensitive, whatever is decided about the fact later, and a fact marked after it was tagged keeps its tags. The first use of them for anyone but their owner has to leave out the tags of every fact `usableFacts()` leaves out. The owner's card preview, where switched on, reads only confirmed tags, which no stage writes, so it shows nothing yet; and it bars every concept that any tag on a fact marked sensitive names, in any state, even where an unmarked fact shows it too ([visibility-design.md](visibility-design.md)).
+- **Automatic promotion of shadow tags.** The owner review panel in #40 is behind `RECORD_PROPOSAL_REVIEW_ENABLED`, off everywhere, and reads only non-shadow proposals. Measurement is required before enabling it. No upload stage creates those proposals or promotes measured shadow judgements into them.
+- **Release of concept-based matching, coverage or years per skill.** Those consumers have separate gates and validation. Any consumer has to leave out tags of every fact `usableFacts()` leaves out, including a part's parent. The owner's card preview, where switched on, reads only confirmed tags, which no stage writes; and it bars every concept that any tag on a fact marked sensitive names, in any state, even where an unmarked fact shows it too ([visibility-design.md](visibility-design.md)).
 
 ## What has and has not been measured
 
 - **Tested with stand-in models and a made-up taxonomy:** candidates, the rule, the questions and their answers, the caps and what was decided before, on labelled examples that include wrong tags only the judge can stop (`test/unit/tag.test.ts`); the stage off, on, without a taxonomy, beside a line marked sensitive before it starts and while it asks the judge, retried, failing and out of time, and where its tags go (`test/integration/tag-shadow.test.ts`).
+- **Tested for parts and requirements:** standalone evidence, excluded mentions, sibling-only vector tools, shared subject/question/deadline caps and exact requirement snapshots (`test/unit/part-requirement-tags.test.ts`); both stages through an upload, privacy changes during part judgement, export, stale parent revisions, replaced splits, superseded source runs and cross-source parts (`test/integration/part-tag-shadow.test.ts`). These are stand-in decisions, not real-model precision measurements.
 - **Not run:** the eval against the real judge (`npm run evals`, `test/evals/tag.eval.ts`). It needs model credentials. It asks the judge the way the Worker does for the configuration it reads, fails if a candidate labelled wrong is tagged, refuses a run that found no candidate or in which a method proposed no tag where the labels expect some, and reports precision for each method.
 - **Tested with a stand-in embedding and an index in memory:** vector candidates, their floor, caps and deadline, what they never include, and that a failure or a slow lookup leaves the word-for-word tags as they would be without an index (`test/unit/tag.test.ts`, "vector candidates"; `test/integration/tag-vectors.test.ts`). The labelled examples include lines said in other words, two of them noes (`decidedBy: "vector"`).
 - **Not measured:** vector precision, the floor and the caps.
