@@ -971,6 +971,33 @@ api.patch("/facts/:id", JSON_LIMIT, async (c) => {
   return c.body(null, 204);
 });
 
+api.get("/v2/record/proposals", async (c) => {
+  if (c.env.RECORD_PROPOSAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "proposal review is not enabled");
+  return c.json(await myVault(c).recordProposals(c.get("who")));
+});
+
+api.post("/v2/record/offers/:id", JSON_LIMIT, async (c) => {
+  if (c.env.RECORD_PROPOSAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "proposal review is not enabled");
+  await myVault(c).decideSemanticOffer(c.get("who"), c.req.param("id"), await jsonBody(c, z.object({
+    decision: z.enum(["confirmed", "rejected"]), expectedFromRevision: z.number().int().positive().safe(),
+    expectedToRevision: z.number().int().positive().safe(), expectedFromRoleRevision: z.number().int().positive().safe().nullable(),
+    expectedToRoleRevision: z.number().int().positive().safe().nullable(), expectedState: z.enum(["proposed", "confirmed", "rejected"]),
+    expectedDecidedAt: z.number().int().nonnegative().safe().nullable(),
+  }).strict()));
+  return c.body(null, 204);
+});
+
+api.post("/v2/record/proposals/:kind/:id", JSON_LIMIT, async (c) => {
+  if (c.env.RECORD_PROPOSAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "proposal review is not enabled");
+  const kind = c.req.param("kind");
+  if (kind !== "split" && kind !== "tag") throw new AppError("invalid", "unknown proposal kind");
+  await myVault(c).decideRecordProposal(c.get("who"), kind, c.req.param("id"), await jsonBody(c, z.object({
+    decision: z.enum(["confirmed", "rejected"]), expectedSubjectRevision: z.number().int().positive(),
+    expectedState: z.enum(["proposed", "confirmed", "rejected"]), expectedDecidedAt: z.number().int().nonnegative().nullable(),
+  }).strict()));
+  return c.body(null, 204);
+});
+
 api.post("/v2/record/identical", JSON_LIMIT, async (c) => {
   if (c.env.IDENTICAL_REVIEW_ENABLED !== "true") throw new AppError("unavailable", "copy review is not enabled");
   await jsonBody(c, z.object({}).strict());

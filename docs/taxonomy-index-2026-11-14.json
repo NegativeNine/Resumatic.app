@@ -1,0 +1,46 @@
+{
+  "checkedAt": "2026-11-14T04:11:15.328808+00:00",
+  "environment": "staging",
+  "taxonomyVersion": "esco-1.2.1+onet-31.0+3f810824",
+  "index": "resumatic-taxonomy-3f810824",
+  "manifest": {
+    "after": "onet:toolcat:2.E.9.o",
+    "completedAt": 1794629307724,
+    "count": 29981,
+    "dimensions": 1024,
+    "document": "label-kind-description/1",
+    "format": 1,
+    "kind": "manifest",
+    "kinds": "activity,knowledge,occupation,skill,skill-group,tool,tool-category",
+    "model": "@cf/qwen/qwen3-embedding-0.6b",
+    "runId": "taxonomy-index-3f810824-3",
+    "startedAt": 1794626426278,
+    "state": "complete",
+    "taxonomyVersion": "esco-1.2.1+onet-31.0+3f810824"
+  },
+  "vectorCount": 29982,
+  "metric": "cosine",
+  "bindingsMatch": true,
+  "selfChecks": [
+    {
+      "id": "esco:isced-f:00",
+      "kind": "skill-group",
+      "returnedId": "esco:isced-f:00",
+      "score": 1.0,
+      "exactScoring": true
+    },
+    {
+      "id": "onet:toolcat:2.E.9.o",
+      "kind": "tool-category",
+      "returnedId": "onet:toolcat:2.E.9.o",
+      "score": 1.0,
+      "exactScoring": true
+    }
+  ],
+  "verificationSourceCommit": "9c2367151a24a5c38e72e638b9085699ba8ad652",
+  "limitations": [
+    "Structural index readiness only; semantic tag precision, similarity floor and caps remain unmeasured.",
+    "Upload shadow stages and model-proposal review remain disabled.",
+    "The first two embedding attempts stopped and resumed from their saved checkpoints; exact-score verification completed without re-embedding."
+  ]
+}

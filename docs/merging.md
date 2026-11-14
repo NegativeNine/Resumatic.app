@@ -71,6 +71,8 @@ Like the matcher, this step cannot fail an upload and gets one try of at most th
 ## What is not built
 
 - **Offering roles that are nearly the same**, such as the same job with a different title, which is also what a promotion looks like.
-- **Merges that show.** The record already confirms identical copies without the owner when it is asked to. What is missing is the review screens (step 7): a merged fact has to be shown as one fact with each of its quotes, and the owner has to be able to separate it, before any merge takes effect.
+- **Live use of model offers.** Deterministic copy review is merged in #39, including explicit grouping and persistent separation. The owner panel for existing non-shadow semantic fact offers is built in #40, behind `RECORD_PROPOSAL_REVIEW_ENABLED` and off everywhere. It shows both original lines and evidence with explicit confirm, reject and undo controls. Shadow offers remain hidden; measured quality is still required before model proposals are shown.
 - **The eval against the real judge**, which needs model credentials and has not been run. It asks the judge the way the Worker does for the configuration it reads: in staging that is one typed decision for each question, held to the Worker's threshold.
 - **Measurement.** How often two facts offered as the same are not has to be measured on real records before any offer is shown, and before anything but identical wording merges without asking.
+
+The [14 November focused smoke](evals/pipeline-smoke-2026-11-14.json) used the real Clef judge: its equivalent-wording and stronger-credit controls passed. It did not complete the full matching eval or establish a false-offer rate.

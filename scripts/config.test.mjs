@@ -71,6 +71,8 @@ test("the posting reader cannot be enabled in production configuration, and can 
     for (const off of [{}, { SPLIT_SHADOW_ENABLED: "false" }, { SPLIT_SHADOW_ENABLED: "" }])
       assert.ok(!(await report("production", off)).includes("SPLIT_SHADOW_ROLLOUT_UNVERIFIED"), JSON.stringify(off));
     assert.ok(!(await report("staging", {}, { SPLIT_SHADOW_ENABLED: "true" })).includes("SPLIT_SHADOW_ROLLOUT_UNVERIFIED"));
+    assert.ok((await report("production", { RECORD_PROPOSAL_REVIEW_ENABLED: "true" })).includes("RECORD_PROPOSAL_REVIEW_ROLLOUT_UNVERIFIED"));
+    assert.ok(!(await report("staging", {}, { RECORD_PROPOSAL_REVIEW_ENABLED: "true" })).includes("RECORD_PROPOSAL_REVIEW_ROLLOUT_UNVERIFIED"));
     assert.ok((await report("production", { IDENTICAL_REVIEW_ENABLED: "true" })).includes("IDENTICAL_REVIEW_ROLLOUT_UNVERIFIED"));
     assert.ok(!(await report("staging", {}, { IDENTICAL_REVIEW_ENABLED: "true" })).includes("IDENTICAL_REVIEW_ROLLOUT_UNVERIFIED"));
     assert.ok((await report("production", { MATCH_SHADOW_ENABLED: "true" })).includes("MATCH_SHADOW_ROLLOUT_UNVERIFIED"));

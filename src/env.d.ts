@@ -38,6 +38,8 @@ interface ResumaticSecrets {
   MATCH_SHADOW_ENABLED?: string;
   /** Owner review of deterministic copies only. No model judgements are exposed. */
   IDENTICAL_REVIEW_ENABLED?: string;
+  /** Owner UI for eligible non-shadow splits/tags. Never promotes shadow judgements. */
+  RECORD_PROPOSAL_REVIEW_ENABLED?: string;
   /**
    * "true" has the reading of an upload also ask the judge whether lines that differ in wording
    * say the same thing as lines already in the record, and keep each answer as an offer in
